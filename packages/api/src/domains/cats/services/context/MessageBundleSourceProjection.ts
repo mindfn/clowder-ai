@@ -1,10 +1,12 @@
 import {
   cleanCliToolLabel,
   type MessageContent,
+  projectCliToolEventRows,
   projectCliToolUseLabel,
   projectMarkdownReadableText,
   type RichBlock,
 } from '@cat-cafe/shared';
+import { messageFrom } from '../stores/message-from.js';
 import type { StoredMessage, StoredToolEvent } from '../stores/ports/MessageStore.js';
 import type { Thread } from '../stores/ports/ThreadStore.js';
 import {
@@ -73,6 +75,23 @@ export function projectCliSegment(records: readonly StoredMessage[], segmentId: 
   const kind = segmentId.slice(0, separator);
   const eventId = segmentId.slice(separator + 1);
   const tool = projectCliTools(records).find((candidate) => candidate.id === eventId);
+  if (!tool) return null;
+  if (kind === 'tool-label') return tool.label;
+  if (kind === 'tool-detail') return tool.detail?.length ? tool.detail : null;
+  return null;
+}
+
+/**
+ * Tool-label/detail plane for the new reply record. Keep it separate from the
+ * historical v1 CLI plane so already persisted carrier digests never change.
+ */
+export function projectCliSegmentV3(records: readonly StoredMessage[], segmentId: string): string | null {
+  const separator = segmentId.indexOf(':');
+  if (separator <= 0) return null;
+  const kind = segmentId.slice(0, separator);
+  const eventId = segmentId.slice(separator + 1);
+  const rows = projectCliToolEventRows(records.flatMap((record) => record.toolEvents ?? []));
+  const tool = rows.find((candidate) => candidate.id === eventId);
   if (!tool) return null;
   if (kind === 'tool-label') return tool.label;
   if (kind === 'tool-detail') return tool.detail?.length ? tool.detail : null;
@@ -156,6 +175,9 @@ function readContentBlockFallback(block: MessageContent): string | null {
       const attachment = block.attachment;
       if (attachment.kind === 'quote') return `[引用]\n${attachment.text}`;
       if (attachment.kind === 'thread') return `[对话: ${attachment.title}]`;
+      if (attachment.kind === 'media') return `[作品: ${attachment.title}]`;
+      if (attachment.kind === 'project-screening')
+        return `[审片: ${attachment.title} · 输入 v${attachment.input.ownerRevision}]`;
       return `[文件: ${attachment.path}]`;
     }
     case 'tool_call':
@@ -213,14 +235,18 @@ export function readRichBlockFallback(block: RichBlock): string {
   }
 }
 
-export function projectMessageBundleReadableContent(
+export function projectMessageBundleReadableContentWithCoverage(
   message: Pick<StoredMessage, 'content' | 'contentBlocks' | 'extra'>,
-): string {
+): { content: string; fullyRepresented: boolean } {
   const parts: string[] = [];
+  let fullyRepresented = true;
   if (message.content.trim()) parts.push(message.content);
   for (const block of message.contentBlocks ?? []) {
     const fallback = readContentBlockFallback(block);
-    if (!fallback?.trim()) continue;
+    if (!fallback?.trim()) {
+      fullyRepresented = false;
+      continue;
+    }
     if (block.type === 'text' && message.content.trim()) continue;
     parts.push(fallback);
   }
@@ -228,7 +254,13 @@ export function projectMessageBundleReadableContent(
     const fallback = readRichBlockFallback(block);
     if (fallback?.trim()) parts.push(fallback);
   }
-  return parts.join('\n');
+  return { content: parts.join('\n'), fullyRepresented };
+}
+
+export function projectMessageBundleReadableContent(
+  message: Pick<StoredMessage, 'content' | 'contentBlocks' | 'extra'>,
+): string {
+  return projectMessageBundleReadableContentWithCoverage(message).content;
 }
 
 /**
@@ -254,10 +286,7 @@ export function projectMessageBundleQuoteSourceV1(
   return projectMessageBundleReadableContent(message);
 }
 
-/**
- * v2 quote plane: the visible characters a reader sees, not the raw Markdown.
- * A selection made in the browser can only be validated in the plane it was made in.
- */
+/** v2 quote plane: visible browser characters, validated in the plane the human selected. */
 export function projectMessageBundleQuoteSourceV2(
   message: Pick<StoredMessage, 'content' | 'contentBlocks' | 'extra'>,
 ): string {
@@ -273,12 +302,11 @@ export function isAccessibleSourceRecord(
   sourceThreadId: string,
   auth: MessageSelectionAuth,
 ): message is StoredMessage {
+  const from = message ? messageFrom(message) : null;
   const ownerAuthored =
     message?.userId === auth.userId &&
-    message.userId !== 'system' &&
-    message.userId !== 'scheduler' &&
-    message.catId !== 'system' &&
-    message.source === undefined &&
+    from?.kind !== 'system' &&
+    from?.kind !== 'external' &&
     message.origin !== 'briefing';
   const managedHoldConnector = message ? isOwnerVisibleManagedHoldConnector(message, auth.userId) : false;
   return Boolean(
@@ -317,7 +345,7 @@ export function isSelectableMessage(
 
 export function sortSourceRecords(records: StoredMessage[]): StoredMessage[] {
   return records.sort((left, right) => {
-    // Mirror packages/web/src/stores/bubble-projection.ts compareRecords.
+    // Stable source-record order; message identity is never folded or reconstructed.
     const timeDelta = left.timestamp - right.timestamp;
     return timeDelta || left.id.localeCompare(right.id);
   });

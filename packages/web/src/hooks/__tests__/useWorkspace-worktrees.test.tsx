@@ -133,6 +133,41 @@ describe('useWorkspace worktree refresh', () => {
     expect(treeAndFileCalls.some((url) => url.includes('worktreeId=230809_cat-cafe'))).toBe(true);
   });
 
+  it('recognizes a discovered durable owner without weakening its read coordinate', async () => {
+    const rootIdentity = `f063_root_v1_${'a'.repeat(64)}`;
+    useChatStore.setState({ workspaceWorktreeId: rootIdentity });
+    apiFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        worktrees: [
+          {
+            id: '230809_original',
+            canonicalId: 'original',
+            rootIdentity,
+            root: '/tmp/current-project',
+            branch: 'main',
+            head: 'a',
+          },
+        ],
+      }),
+    } as Response);
+    await act(async () => root.render(React.createElement(NavigationHost)));
+    await flushEffects();
+    expect(useChatStore.getState().workspaceWorktreeId).toBe(rootIdentity);
+    expect(useChatStore.getState().workspaceOpenFilePath).toBe('docs/study.md');
+    expect(useChatStore.getState().workspaceOpenTabs).toEqual(['docs/study.md']);
+  });
+
+  it('retains an absent durable owner instead of guessing another project root', async () => {
+    const rootIdentity = `f063_root_v1_${'a'.repeat(64)}`;
+    useChatStore.setState({ workspaceWorktreeId: rootIdentity });
+    await act(async () => root.render(React.createElement(NavigationHost)));
+    await flushEffects();
+    expect(useChatStore.getState().workspaceWorktreeId).toBe(rootIdentity);
+    expect(useChatStore.getState().workspaceOpenFilePath).toBe('docs/study.md');
+    expect(useChatStore.getState().workspaceOpenTabs).toEqual(['docs/study.md']);
+  });
+
   it('automatically selects the worktree matching the current project when there is no current selection', async () => {
     useChatStore.setState({
       workspaceWorktreeId: null,

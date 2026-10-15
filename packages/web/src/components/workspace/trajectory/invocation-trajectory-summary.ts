@@ -35,9 +35,26 @@ export function reconcileInvocationSummary(
     errorCount: max(list.errorCount, detail.errorCount),
     toolNames: [...new Set([...list.toolNames, ...detail.toolNames])],
     keyMessages: [...new Set([...list.keyMessages, ...detail.keyMessages])],
+    firstAssistantOutputEvidence:
+      detail.eventCount >= list.eventCount
+        ? (detail.firstAssistantOutputEvidence ?? list.firstAssistantOutputEvidence)
+        : (list.firstAssistantOutputEvidence ?? detail.firstAssistantOutputEvidence),
     ...(list.endedAt !== undefined || detail.endedAt !== undefined
       ? { endedAt: Math.max(list.endedAt ?? 0, detail.endedAt ?? 0) }
       : {}),
     ...(Object.keys(tokens).length > 0 ? { tokens } : {}),
   };
+}
+
+export function rankInvocationSummariesForRecall<
+  T extends { invocationId: string; status: InvocationTrajectoryStatus; startedAt: number },
+>(summaries: readonly T[]): T[] {
+  const abnormal = (status: InvocationTrajectoryStatus) =>
+    status === 'error' || status === 'cancelled' || status === 'timeout';
+  return [...summaries]
+    .sort((left, right) => {
+      const abnormalDelta = Number(abnormal(right.status)) - Number(abnormal(left.status));
+      return abnormalDelta || right.startedAt - left.startedAt || left.invocationId.localeCompare(right.invocationId);
+    })
+    .slice(0, 3);
 }

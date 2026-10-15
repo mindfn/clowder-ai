@@ -1,0 +1,109 @@
+.viewOptions {
+  position: absolute;
+  z-index: 6;
+  top: 10px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--cafe-text-secondary);
+  font-size: var(--console-font-xs);
+}
+.menu {
+  position: relative;
+}
+.menu summary {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  list-style: none;
+  cursor: pointer;
+  border-radius: 8px;
+  background: var(--shell-paper, var(--cafe-surface-canvas));
+}
+.menu summary::-webkit-details-marker {
+  display: none;
+}
+.menuBody {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 170px;
+  padding: 6px;
+  border: 1px solid var(--cafe-border-subtle);
+  border-radius: 12px;
+  background: var(--shell-paper, var(--cafe-surface-canvas));
+  box-shadow: var(--shadow-elevation-2);
+}
+.menuBody > * {
+  padding: 8px 10px;
+  text-align: left;
+  border: 0;
+}
+.menuBody > *:hover {
+  background: var(--cafe-surface);
+}
+.tools {
+  position: absolute;
+  z-index: 5;
+  bottom: 14px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.tools > * {
+  pointer-events: auto;
+  max-width: calc(100% - 16px);
+}
+.tools details > div {
+  top: auto;
+  bottom: calc(100% + 10px);
+}
+.dock {
+  display: flex;
+  align-items: center;
+  padding: 4px;
+  border: 1px solid var(--cafe-border-subtle);
+  border-radius: 14px;
+  background: var(--shell-paper, var(--cafe-surface-canvas));
+  box-shadow: var(--shadow-elevation-2);
+}
+.dock button {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 13px;
+  border-radius: 9px;
+  color: var(--cafe-text-secondary);
+  font-size: var(--console-font-xs);
+}
+.dock button:hover,
+.dock button[aria-pressed="true"] {
+  background: var(--cafe-surface);
+  color: var(--cafe-accent);
+}
+.dock button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.dock button:focus-visible,
+.menu summary:focus-visible {
+  outline: 2px solid var(--cafe-accent);
+  outline-offset: 2px;
+}
+.dock svg {
+  width: 18px;
+  height: 18px;
+}
+.separator {
+  width: 1px;
+  height: 18px;
+  background: var(--cafe-border-subtle);
+}

@@ -12,13 +12,23 @@ const UNPAIRED_USER_ID = 'unpaired-user';
 declare module 'fastify' {
   interface FastifyRequest {
     sessionUserId?: string;
+    /** Browser-session-only CSRF secret. Never accepted from a caller-controlled identity header. */
+    sessionCsrfToken?: string;
+    /** Opaque issuance binding used to prove which browser session authorized an owner action. */
+    sessionBindingId?: string;
   }
 }
 
 const DEFAULT_MAX_SESSIONS = 10_000;
 
+export interface BrowserSessionRecord {
+  userId: string;
+  csrfToken: string;
+  bindingId: string;
+}
+
 export class SessionStore {
-  private sessions = new Map<string, string>();
+  private sessions = new Map<string, BrowserSessionRecord>();
   private maxSessions: number;
 
   constructor(opts?: { maxSessions?: number }) {
@@ -31,28 +41,50 @@ export class SessionStore {
       if (oldest !== undefined) this.sessions.delete(oldest);
     }
     const token = randomBytes(TOKEN_BYTES).toString('hex');
-    this.sessions.set(token, userId);
+    this.sessions.set(token, {
+      userId,
+      csrfToken: randomBytes(TOKEN_BYTES).toString('base64url'),
+      bindingId: randomBytes(TOKEN_BYTES).toString('base64url'),
+    });
     return token;
   }
 
   validate(token: string): string | null {
+    return this.resolve(token)?.userId ?? null;
+  }
+
+  resolve(token: string): BrowserSessionRecord | null {
     if (!token) return null;
-    return this.sessions.get(token) ?? null;
+    const record = this.sessions.get(token);
+    return record ? { ...record } : null;
   }
 }
 
 const globalStore = new SessionStore();
 
+/** Read the same session principal used by HTTP; headers cannot replace it. */
+export function sessionUserIdForCookies(cookies: Record<string, string | undefined>): string | null {
+  const token = cookies[COOKIE_NAME];
+  return token ? globalStore.validate(token) : null;
+}
+
+/** Resolve the complete server-issued browser session. Caller headers can never manufacture this record. */
+export function browserSessionForCookies(cookies: Record<string, string | undefined>): BrowserSessionRecord | null {
+  const token = cookies[COOKIE_NAME];
+  return token ? globalStore.resolve(token) : null;
+}
+
 function sessionAuth(app: FastifyInstance, _opts: Record<string, never>, done: () => void) {
   app.decorateRequest('sessionUserId', undefined);
+  app.decorateRequest('sessionCsrfToken', undefined);
+  app.decorateRequest('sessionBindingId', undefined);
 
   app.addHook('onRequest', (request, _reply, next) => {
-    const token = request.cookies?.[COOKIE_NAME];
-    if (token) {
-      const userId = globalStore.validate(token);
-      if (userId) {
-        request.sessionUserId = userId;
-      }
+    const session = browserSessionForCookies(request.cookies ?? {});
+    if (session) {
+      request.sessionUserId = session.userId;
+      request.sessionCsrfToken = session.csrfToken;
+      request.sessionBindingId = session.bindingId;
     }
     next();
   });
@@ -74,8 +106,12 @@ function sessionRoutePlugin(app: FastifyInstance, opts: SessionRouteOptions, don
   if (!ownerUserId) throw new Error('[session-auth] ownerUserId must not be blank');
 
   app.get('/api/session', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
     if (request.sessionUserId) {
-      return { userId: request.sessionUserId };
+      return {
+        userId: request.sessionUserId,
+        ...(request.sessionCsrfToken ? { csrfToken: request.sessionCsrfToken } : {}),
+      };
     }
 
     const fwdProto = (request.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim().toLowerCase();
@@ -87,13 +123,15 @@ function sessionRoutePlugin(app: FastifyInstance, opts: SessionRouteOptions, don
         : DEFAULT_USER_ID;
 
     const token = globalStore.create(bootstrapUserId);
+    const session = globalStore.resolve(token);
+    if (!session) throw new Error('[session-auth] issued browser session disappeared');
     reply.setCookie(COOKIE_NAME, token, {
       httpOnly: true,
       sameSite: 'strict',
       path: '/',
       ...(isSecure ? { secure: true } : {}),
     });
-    return { userId: bootstrapUserId };
+    return { userId: bootstrapUserId, csrfToken: session.csrfToken };
   });
 
   done();

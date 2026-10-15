@@ -88,6 +88,9 @@ export interface IAuthInvocationBackend {
 
   /** F153: Persist caller trace context on an invocation for cross-route A2A propagation. */
   setTraceContext(invocationId: string, ctx: CallerTraceContext): Promise<void>;
+
+  /** #1542 guard 4: persist the launch plan's carrier identity on the durable principal. */
+  setExpectedCompactionCarrier(invocationId: string, identity: string): Promise<void>;
 }
 
 export interface AuthInvocationMigrationResult {

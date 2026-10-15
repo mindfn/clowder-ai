@@ -13,7 +13,10 @@ export const mockPush = hoistedMocks.mockPush;
 export const mockApiFetch = hoistedMocks.mockApiFetch;
 export const addToastMock = hoistedMocks.addToastMock;
 
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push: mockPush }) }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: mockPush }),
+  usePathname: () => window.location.pathname,
+}));
 
 vi.mock('@/utils/api-client', () => ({
   apiFetch: (...args: unknown[]) => mockApiFetch(...args),

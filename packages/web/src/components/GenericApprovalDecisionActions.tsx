@@ -4,6 +4,7 @@ import {
   type EntityConflictContext,
   type EntityConflictResolutionRequest,
 } from '@cat-cafe/shared';
+import { useApprovalHost } from './ApprovalHost';
 import { ApprovalProvenanceLinks } from './ApprovalProvenanceLinks';
 import { EntityConflictResolutionPanel } from './EntityConflictResolutionPanel';
 import { PersonMemoryClaimSelector } from './PersonMemoryClaimSelector';
@@ -31,6 +32,8 @@ export function GenericApprovalDecisionActions({
 }) {
   const originCardOwnsPendingDecision = approvalProducerMeta(item.sourceFeatureId).decisionSurface === 'origin_card';
   const canDecide = item.resolution === 'open';
+  // A host that has locked writes keeps the card readable and its links working; the producer buttons wait.
+  const { writesLocked, presentation, originalPlaceAction, decisionWords } = useApprovalHost();
   return (
     <div className="space-y-2">
       {canDecide && entityConflict && (
@@ -50,28 +53,44 @@ export function GenericApprovalDecisionActions({
             <button
               type="button"
               onClick={onApprove}
-              disabled={Boolean(decidingState)}
+              disabled={Boolean(decidingState) || writesLocked}
               className="rounded-md bg-[var(--semantic-success)] px-3 py-1 text-micro font-medium text-[var(--cafe-accent-foreground)] disabled:opacity-50"
+              style={
+                presentation === 'mailbox'
+                  ? { background: 'var(--shell-primary)', color: 'var(--shell-primary-on)' }
+                  : undefined
+              }
               data-testid="approve-btn"
             >
-              {decidingState === 'approving' ? '...' : '批准'}
+              {decidingState === 'approving'
+                ? '...'
+                : presentation === 'mailbox'
+                  ? (decisionWords?.approve ?? '同意')
+                  : '批准'}
             </button>
           )}
           {canDecide && !entityConflict && !originCardOwnsPendingDecision && (
             <button
               type="button"
               onClick={onReject}
-              disabled={Boolean(decidingState)}
+              disabled={Boolean(decidingState) || writesLocked}
               className="rounded-md border border-cafe px-3 py-1 text-micro font-medium hover:bg-[var(--semantic-error)] hover:text-[var(--cafe-accent-foreground)] disabled:opacity-50"
               data-testid="reject-btn"
             >
-              {decidingState === 'rejecting' ? '...' : isStale ? '清除' : '拒绝'}
+              {decidingState === 'rejecting'
+                ? '...'
+                : isStale
+                  ? (decisionWords?.clear ?? '清除')
+                  : (decisionWords?.reject ?? '拒绝')}
             </button>
           )}
-          <ApprovalProvenanceLinks navigation={item.navigation} onBeforeNavigate={onBeforeNavigate} />
+          {presentation === 'mailbox' ? <span className="ml-auto">{originalPlaceAction}</span> : null}
+          {presentation === 'mailbox' ? null : (
+            <ApprovalProvenanceLinks navigation={item.navigation} onBeforeNavigate={onBeforeNavigate} />
+          )}
         </div>
       )}
-      {isPersonMemoryClaimSelect && (
+      {isPersonMemoryClaimSelect && presentation !== 'mailbox' && (
         <ApprovalProvenanceLinks navigation={item.navigation} onBeforeNavigate={onBeforeNavigate} />
       )}
     </div>

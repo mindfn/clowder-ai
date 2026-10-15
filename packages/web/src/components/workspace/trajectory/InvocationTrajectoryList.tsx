@@ -1,10 +1,14 @@
 import type { InvocationTrajectorySummary } from '@cat-cafe/shared';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
+import { InvocationTrajectoryListV2 } from './InvocationTrajectoryListV2';
 import {
   copyInvocationRef,
   formatTrajectoryDuration,
   TRAJECTORY_STATUS_CLASS,
   TRAJECTORY_STATUS_LABEL,
 } from './invocation-trajectory-ui';
+import { trajectoryCopy } from './trajectory.shell-copy';
+import { useTrajectoryCopy } from './use-trajectory-copy';
 
 export function InvocationTrajectoryList({
   invocations,
@@ -21,7 +25,10 @@ export function InvocationTrajectoryList({
   onRetry: () => void;
   targetInvocationId?: string;
 }) {
-  if (loading) return <div className="p-6 text-sm text-cafe-muted">正在召回 invocation 轨迹…</div>;
+  const isV2 = useShellPresentation() === 'v2';
+  const t = useTrajectoryCopy(trajectoryCopy);
+  if (loading)
+    return <div className="p-6 text-sm text-cafe-muted">{isV2 ? t.loading : '正在召回 invocation 轨迹…'}</div>;
   if (error) {
     return (
       <div className="m-4 rounded-lg bg-conn-red-bg p-3 text-sm text-conn-red-text">
@@ -32,7 +39,7 @@ export function InvocationTrajectoryList({
             onClick={() => copyInvocationRef(targetInvocationId)}
             className="mt-2 block font-mono text-xs underline"
           >
-            复制 inv:{targetInvocationId}
+            {t.copyRef(targetInvocationId)}
           </button>
         )}
         <button
@@ -40,7 +47,7 @@ export function InvocationTrajectoryList({
           onClick={onRetry}
           className="mt-2 rounded-lg border border-conn-red-ring px-2 py-1 text-xs font-semibold"
         >
-          重试
+          {t.retry}
         </button>
       </div>
     );
@@ -48,11 +55,12 @@ export function InvocationTrajectoryList({
   if (invocations.length === 0) {
     return (
       <div className="m-4 rounded-xl border border-dashed border-cafe-subtle p-8 text-center">
-        <p className="text-sm font-semibold text-cafe">这段对话还没有 invocation 轨迹</p>
-        <p className="mt-1 text-xs text-cafe-secondary">猫猫开始工作后，当前轮和封存轮都会出现在这里。</p>
+        <p className="text-sm font-semibold text-cafe">{isV2 ? t.empty : '这段对话还没有 invocation 轨迹'}</p>
+        <p className="mt-1 text-xs text-cafe-secondary">{t.emptyHint}</p>
       </div>
     );
   }
+  if (isV2) return <InvocationTrajectoryListV2 invocations={invocations} onOpen={onOpen} />;
   return (
     <div className="space-y-2 p-3" data-testid="invocation-trajectory-list">
       {invocations.map((summary) => (

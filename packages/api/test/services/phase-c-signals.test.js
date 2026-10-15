@@ -2,22 +2,17 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 
 /**
- * F222 Phase C: A2A timeout + retry burst + issue list tests.
+ * F222 Phase C: A2A timeout, historical card serialization and issue list tests.
  */
 
-let shouldTrigger, resetDedup, RETRY_BURST_THRESHOLD;
-let detectRetryBurst;
+let shouldTrigger, resetDedup;
 let buildFrustrationIssueCard;
 
 beforeEach(async () => {
   const detector = await import('../../dist/domains/cats/services/frustration/FrustrationDetector.js');
   shouldTrigger = detector.shouldTrigger;
   resetDedup = detector.resetDedup;
-  RETRY_BURST_THRESHOLD = detector.RETRY_BURST_THRESHOLD;
   resetDedup();
-
-  const retry = await import('../../dist/domains/cats/services/frustration/retry-burst-detector.js');
-  detectRetryBurst = retry.detectRetryBurst;
 
   const cardBuilder = await import('../../dist/domains/cats/services/frustration/frustration-card-builder.js');
   buildFrustrationIssueCard = cardBuilder.buildFrustrationIssueCard;
@@ -36,81 +31,6 @@ describe('F222 Phase C: shouldTrigger — a2a_timeout', () => {
 
   it('triggers for long timeout (> 60s)', () => {
     assert.equal(shouldTrigger({ type: 'a2a_timeout', targetCatId: 'opus', elapsedMs: 120000 }), true);
-  });
-});
-
-// ── shouldTrigger: retry_burst ─────────────────────────────
-
-describe('F222 Phase C: shouldTrigger — retry_burst', () => {
-  it('triggers when matchCount >= threshold', () => {
-    assert.equal(shouldTrigger({ type: 'retry_burst', matchCount: 3, repeatedPrefix: '帮我看看这个代码' }), true);
-  });
-
-  it('does NOT trigger when matchCount < threshold', () => {
-    assert.equal(shouldTrigger({ type: 'retry_burst', matchCount: 2, repeatedPrefix: '帮我看看' }), false);
-  });
-});
-
-// ── detectRetryBurst ───────────────────────────────────────
-
-describe('F222 Phase C: detectRetryBurst', () => {
-  it('triggers on 3rd send — recentUserMessages includes current (integration path)', () => {
-    // In real integration: detection runs after storedUserMessage.append(),
-    // so recentUserMessages from getByThread already contains the current message.
-    // 3rd send: recent = [current(3rd), 2nd, 1st] → 3 matches ≥ threshold.
-    const current = '帮我看看这个代码有什么问题';
-    const recent = [current, current, current]; // all 3 sends including current
-    const result = detectRetryBurst(current, recent);
-    assert.equal(result.matched, true);
-    assert.equal(result.matchCount, 3);
-  });
-
-  it('does NOT trigger on 2nd send (recent = [current, 1st] = 2 matches)', () => {
-    const current = '帮我看看这个代码';
-    const recent = [current, '帮我看看这个代码']; // current + 1 history = 2
-    const result = detectRetryBurst(current, recent);
-    assert.equal(result.matched, false);
-  });
-
-  it('ignores very short messages (< 5 chars)', () => {
-    const result = detectRetryBurst('好', ['好', '好', '好']);
-    assert.equal(result.matched, false);
-  });
-
-  it('empty input → matched=false', () => {
-    assert.equal(detectRetryBurst('', []).matched, false);
-    assert.equal(detectRetryBurst('hello', []).matched, false);
-  });
-
-  it('does NOT trigger on different messages with same short prefix (A2A review false positive fix)', () => {
-    // Bug: A2A review messages share similar openings ("@codex review...") but
-    // have different bodies. Old 30-char prefix match caused false positives.
-    const prefix = '这是一段超过三十个字的消息内容用来测试前缀匹配逻辑是否正确工作';
-    const current = prefix + ' 变体 A';
-    const recent = [prefix + ' 变体 B', prefix + ' 变体 C', prefix + ' 变体 D'];
-    const result = detectRetryBurst(current, recent);
-    assert.equal(result.matched, false, 'different messages sharing a prefix should NOT trigger');
-  });
-
-  it('triggers on truly identical messages (genuine retry)', () => {
-    const msg = '@codex 请帮我 review 这个 PR 的改动，重点看安全性';
-    const recent = [msg, msg, msg];
-    const result = detectRetryBurst(msg, recent);
-    assert.equal(result.matched, true);
-    assert.equal(result.matchCount, 3);
-  });
-
-  it('does NOT trigger on A2A review handoff messages with similar openings', () => {
-    // Real scenario: user relaying review rounds to cloud codex
-    const recent = [
-      '@codex R5 cloud verdict — 检查 inline P0/P1/P2 findings',
-      '@codex R4 review feedback — approve with minor nit',
-      '@codex R3 请看看这几个 blocking issues',
-    ];
-    const current = '@codex R5 cloud verdict — 检查 inline P0/P1/P2 findings';
-    const result = detectRetryBurst(current, recent);
-    // Only 1 exact match (current itself in recent), not ≥3
-    assert.equal(result.matched, false);
   });
 });
 

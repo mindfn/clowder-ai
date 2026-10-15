@@ -21,7 +21,8 @@ export type ApprovalProducerId =
   | 'F266'
   | 'F276'
   | 'F292'
-  | 'F306';
+  | 'F306'
+  | 'F321';
 
 /** @deprecated Use ApprovalProducerId. Kept as a source-compatible alias during Phase I. */
 export type ApprovalFeatureId = ApprovalProducerId;
@@ -96,6 +97,12 @@ export interface ApprovalItem {
   expiresAt?: number;
   createdAt: number;
   entrustedWorkTaskRef?: EntrustedWorkTaskRefV1;
+  /** Read-only exact aliases issued by the canonical F292/F306 projection, never a writer revision. */
+  needsMeDecisionRefs?: {
+    producerId: 'f292.repair' | 'f306.runtime_interaction';
+    subjectRef: string;
+    revision: number;
+  }[];
 }
 
 /** Canonical renderer DTO. Legacy producer status words stop at the API registry boundary. */

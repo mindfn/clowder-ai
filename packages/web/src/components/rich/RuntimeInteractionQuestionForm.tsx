@@ -1,5 +1,6 @@
 import type { RuntimeInteractionRequest, RuntimeInteractionResponse } from '@cat-cafe/shared';
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
+import { CLASSIC_RUNTIME_INTERACTION_COPY, type RuntimeInteractionCopy } from './RuntimeInteractionCopy';
 
 type QuestionRequest = Extract<RuntimeInteractionRequest, { kind: 'question' }>;
 type Question = QuestionRequest['questions'][number];
@@ -9,8 +10,10 @@ export function RuntimeInteractionQuestionForm({
   disabled,
   onSubmit,
   onReject,
+  copy = CLASSIC_RUNTIME_INTERACTION_COPY.form,
 }: {
   request: QuestionRequest;
+  copy?: RuntimeInteractionCopy['form'];
   disabled: boolean;
   onSubmit: (response: RuntimeInteractionResponse) => void;
   onReject: () => void;
@@ -45,6 +48,7 @@ export function RuntimeInteractionQuestionForm({
         <QuestionField
           key={question.id}
           question={question}
+          copy={copy}
           value={values[question.id] ?? ''}
           otherValue={otherValues[question.id] ?? ''}
           disabled={disabled}
@@ -65,14 +69,14 @@ export function RuntimeInteractionQuestionForm({
           onClick={onReject}
           className="min-h-10 rounded-xl border border-cafe px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
         >
-          不回答
+          {copy.skip}
         </button>
         <button
           type="submit"
           disabled={!complete || disabled}
           className="min-h-10 rounded-xl bg-[var(--semantic-success)] px-3 py-2 text-sm font-medium text-[var(--cafe-accent-foreground)] disabled:cursor-not-allowed disabled:opacity-50"
         >
-          提交回答
+          {copy.submit}
         </button>
       </div>
     </form>
@@ -81,6 +85,7 @@ export function RuntimeInteractionQuestionForm({
 
 function QuestionField({
   question,
+  copy,
   value,
   otherValue,
   disabled,
@@ -88,13 +93,15 @@ function QuestionField({
   onOtherValueChange,
 }: {
   question: Question;
+  copy: RuntimeInteractionCopy['form'];
   value: string;
   otherValue: string;
   disabled: boolean;
   onValueChange: (value: string) => void;
   onOtherValueChange: (value: string) => void;
 }) {
-  const inputId = `runtime-question-${question.id}`;
+  const instanceId = useId();
+  const inputId = `runtime-question-${question.id}-${instanceId}`;
   const otherInputId = `${inputId}-other`;
   return (
     <fieldset className="space-y-1.5" disabled={disabled}>
@@ -111,7 +118,7 @@ function QuestionField({
           onChange={(event) => onValueChange(event.target.value)}
           className="min-h-10 w-full rounded-xl border border-cafe bg-cafe-surface px-3 text-sm"
         >
-          <option value="">请选择</option>
+          <option value="">{copy.choose}</option>
           {question.options.map((option) => (
             <option key={option.label} value={option.label}>
               {option.label}
@@ -133,13 +140,13 @@ function QuestionField({
       {question.isOther ? (
         <>
           <label htmlFor={otherInputId} className="sr-only">
-            其他答案：{question.question}
+            {copy.otherLabel(question.question)}
           </label>
           <input
             id={otherInputId}
             name={`${question.id}-other`}
             type={question.isSecret ? 'password' : 'text'}
-            placeholder="其他答案"
+            placeholder={copy.other}
             value={otherValue}
             onChange={(event) => onOtherValueChange(event.target.value)}
             className="min-h-10 w-full rounded-xl border border-cafe bg-cafe-surface px-3 text-sm"

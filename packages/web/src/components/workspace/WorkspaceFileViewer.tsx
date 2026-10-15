@@ -1,286 +1,169 @@
 'use client';
 
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { createFileContextAttachment, createQuoteContextAttachment } from '@/components/chat-context-reference';
 import { useChatStore } from '@/stores/chatStore';
 import { API_URL } from '@/utils/api-client';
-import { createQuoteContextAttachment } from '../chat-context-reference';
+import { useShellPresentation } from '../shell/shell-presentation';
+import { ClassicWorkspaceFileChrome } from './ClassicWorkspaceFileChrome';
 import { FileContentRenderer } from './FileContentRenderer';
-import { FileIcon } from './FileIcons';
+import { PublishedTextFileChrome } from './PublishedTextFileChrome';
 import { type MarkdownSelectionAction, useMarkdownSelectionAction } from './useMarkdownSelectionAction';
 import { useWorkspaceListenMode } from './useWorkspaceListenMode';
-import type { WorkspaceFileViewerProps } from './WorkspaceFileViewer.types';
+import { V2WorkspaceFileChrome } from './V2WorkspaceFileChrome';
+import { WorkspaceFilePreviewDraftNotice } from './WorkspaceFileDraftNotice';
+import type { PublishedTextViewerProps, WorkspaceFileViewerProps } from './WorkspaceFileViewer.types';
 import { WorkspaceListenActions } from './WorkspaceListenActions';
-import { WorkspaceToolbarButton as ToolbarBtn } from './WorkspaceToolbarButton';
+import { addQuoteToChat, addWorkspaceFileQuoteToChat } from './workspace-file-quote';
 
-const CloseIcon = () => (
-  <svg
-    width="10"
-    height="10"
-    viewBox="0 0 10 10"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-    aria-hidden="true"
-  >
-    <path d="M1 1l8 8M9 1l-8 8" />
-  </svg>
-);
-
-export function WorkspaceFileViewer({
-  file,
-  openFilePath,
-  openTabs,
-  canEdit,
-  editMode,
-  isMarkdown,
-  isHtml,
-  isJsx,
-  markdownRendered,
-  htmlPreview,
-  jsxPreview,
-  saveError,
-  scrollToLine,
-  worktreeId,
-  currentWorktree,
-  setOpenFile,
-  closeTab,
-  onCloseCurrentTab,
-  onToggleEdit,
-  onToggleMarkdownRendered,
-  onToggleHtmlPreview,
-  onToggleJsxPreview,
-  onSave,
-  onDirtyChange,
-  pendingExternalSha,
-  onApplyExternalChange,
-  onDismissExternalChange,
-  revealInFinder,
-  onFocusMode,
-  focusDisabled,
-  restoreScrollTop,
-  restoreKey,
-  onScrollTopChange,
-}: WorkspaceFileViewerProps) {
-  const setPendingChatInsert = useChatStore((s) => s.setPendingChatInsert);
+export function WorkspaceFileViewer(props: WorkspaceFileViewerProps | PublishedTextViewerProps) {
+  const published = 'publication' in props ? props : null;
+  const workspace = 'publication' in props ? null : props;
+  const { file } = props;
+  const [rendered, setRendered] = useState(true);
+  const {
+    openFilePath,
+    editMode,
+    isMarkdown,
+    markdownRendered,
+    isHtml,
+    isJsx,
+    htmlPreview,
+    jsxPreview,
+    worktreeId,
+    currentWorktree,
+  } = workspace ?? {
+    openFilePath: file.path,
+    editMode: false,
+    isMarkdown: /\.(md|markdown)$/i.test(file.path),
+    markdownRendered: rendered,
+    isHtml: false,
+    isJsx: false,
+    htmlPreview: false,
+    jsxPreview: false,
+    worktreeId: null,
+    currentWorktree: undefined,
+  };
+  const quoteSource = published ? (published.publication.quoteSource ?? false) : undefined;
+  const isV2 = useShellPresentation() === 'v2';
   const currentThreadId = useChatStore((s) => s.currentThreadId);
+  const onQuoteSelected = workspace?.onQuoteSelected;
   const mdContainerRef = useRef<HTMLDivElement>(null);
   const mdSelectionAction = useMarkdownSelectionAction(
     mdContainerRef,
-    isMarkdown && markdownRendered && !editMode,
+    isMarkdown && markdownRendered && !editMode && quoteSource !== false,
     openFilePath,
+    // The loaded file's version, only when it is the file this tab names.
+    file.path === openFilePath ? file.sha256 : null,
   );
 
   const handleMdAddToChat = useCallback(
     (action: MarkdownSelectionAction, comment: string) => {
       if (!openFilePath) return;
-      setPendingChatInsert({
-        threadId: currentThreadId,
-        text: '',
-        contextAttachments: [
-          createQuoteContextAttachment(
-            action.text,
-            {
-              kind: 'workspace_file',
-              path: openFilePath,
-              ...(worktreeId ? { worktreeId } : {}),
-              ...(currentWorktree?.branch ? { branch: currentWorktree.branch } : {}),
-              language: 'markdown',
-            },
-            {
+      if (quoteSource === false) return false;
+      if (quoteSource) {
+        if (quoteSource.artifactFile?.displayDigest !== `sha256:${action.version}`) return false;
+        return (
+          addQuoteToChat(
+            currentThreadId,
+            createQuoteContextAttachment(action.text, quoteSource, {
               comment,
-              ...(action.selectionStart !== undefined && action.selectionEnd !== undefined
-                ? {
-                    selectionStart: action.selectionStart,
-                    selectionEnd: action.selectionEnd,
-                  }
-                : {}),
-            },
-          ),
-        ],
+              selectionStart: action.selectionStart,
+              selectionEnd: action.selectionEnd,
+            }),
+          ).kind === 'added'
+        );
+      }
+      const result = addWorkspaceFileQuoteToChat(currentThreadId, {
+        text: action.text,
+        comment,
+        path: openFilePath,
+        // The version the selected words were made in (taken with the selection), not the one on screen at save time.
+        revision: action.version ?? null,
+        worktreeId,
+        branch: currentWorktree?.branch,
+        language: 'markdown',
+        selectionStart: action.selectionStart,
+        selectionEnd: action.selectionEnd,
       });
+      if (result.kind !== 'added') return false;
+      onQuoteSelected?.('');
+      return true;
     },
-    [currentThreadId, currentWorktree, openFilePath, setPendingChatInsert, worktreeId],
+    [currentThreadId, currentWorktree, openFilePath, worktreeId, quoteSource, onQuoteSelected],
   );
 
   const rawUrl = (path: string) =>
-    `${API_URL}/api/workspace/file/raw?worktreeId=${encodeURIComponent(worktreeId ?? '')}&path=${encodeURIComponent(path)}`;
+    published
+      ? published.publication.url
+      : `${API_URL}/api/workspace/file/raw?worktreeId=${encodeURIComponent(worktreeId ?? '')}&path=${encodeURIComponent(path)}`;
   const listenMode = useWorkspaceListenMode({
     file,
     openFilePath,
     worktreeId,
-    enabled: isMarkdown && markdownRendered && !editMode && !file.truncated,
+    enabled: !!workspace && isMarkdown && markdownRendered && !editMode && !file.truncated,
   });
+
+  const handleAskCat = () => {
+    if (!workspace) return;
+    if (workspace.onRequestModification) return workspace.onRequestModification();
+    if (!openFilePath) return;
+    useChatStore.getState().setPendingChatInsert({
+      threadId: currentThreadId,
+      text: '请帮我修改这份文件：',
+      contextAttachments: [createFileContextAttachment(openFilePath, worktreeId)],
+    });
+  };
+  const listenProps = {
+    active: listenMode.active,
+    cache: listenMode.cache,
+    hasSentences: listenMode.sentences.length > 0,
+    onCancelCache: listenMode.cancelCache,
+    onStartCache: listenMode.startCache,
+    onStartListen: () => listenMode.start(),
+  };
+  const listenAvailable = !!workspace && isMarkdown && markdownRendered && !editMode;
+  const listenAction = listenAvailable ? (
+    <WorkspaceListenActions {...listenProps} action="listen" listenLabel="朗读" />
+  ) : null;
+  const cacheAction = listenAvailable ? <WorkspaceListenActions {...listenProps} action="cache" /> : null;
 
   return (
     <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col animate-fade-in" data-testid="workspace-file-viewer">
-      {/* Tab bar */}
-      {openTabs.length > 0 && (
-        <div className="flex bg-[var(--ws-editor-bg)] border-b border-[var(--ws-editor-surface)] overflow-x-auto scrollbar-none">
-          {openTabs.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setOpenFile(tab)}
-              className={`group flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono border-r border-[var(--ws-editor-surface)] flex-shrink-0 transition-colors ${
-                tab === openFilePath
-                  ? 'bg-[var(--ws-editor-surface)] text-cafe-muted'
-                  : 'text-cafe-secondary hover:text-cafe-muted hover:bg-[var(--ws-editor-hover)]'
-              }`}
-              title={tab}
-            >
-              <FileIcon name={tab} />
-              <span className="truncate max-w-[120px]">{tab.split('/').pop()}</span>
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  closeTab(tab);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.stopPropagation();
-                    closeTab(tab);
-                  }
-                }}
-                className="ml-0.5 w-4 h-4 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-cafe-surface/10 transition-opacity text-cafe-secondary hover:text-cafe-muted"
-                title="关闭"
-                aria-label={`关闭 ${tab.split('/').pop() ?? tab}`}
-              >
-                ×
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
+      {published ? (
+        <PublishedTextFileChrome
+          props={published}
+          rendered={rendered}
+          onToggle={isMarkdown ? () => setRendered((value) => !value) : undefined}
+        />
+      ) : workspace && isV2 ? (
+        <V2WorkspaceFileChrome props={workspace} listen={listenAction} cache={cacheAction} onAsk={handleAskCat} />
+      ) : workspace ? (
+        <ClassicWorkspaceFileChrome props={workspace} listenMode={listenMode} />
+      ) : null}
 
-      {/* Toolbar */}
-      <div
-        data-testid="workspace-file-toolbar"
-        className="w-full min-w-0 overflow-x-auto overscroll-x-contain bg-[var(--ws-editor-bg)] px-3 py-1"
-        role="toolbar"
-        aria-label="文件操作工具栏，可横向滚动"
-      >
-        <div
-          data-testid="workspace-file-toolbar-content"
-          className="flex w-max min-w-full items-center justify-between gap-3"
-        >
-          <div className="flex shrink-0 items-center gap-2">
-            {file.size > 0 && (
-              <span className="text-micro text-cafe-secondary font-mono flex-shrink-0">
-                {file.size < 1024 ? `${file.size}B` : `${Math.round(file.size / 1024)}KB`}
-              </span>
-            )}
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            {isMarkdown && !editMode && (
-              <ToolbarBtn
-                active={markdownRendered}
-                onClick={onToggleMarkdownRendered}
-                title={markdownRendered ? '\u5207\u6362\u5230\u6E90\u7801' : '\u5207\u6362\u5230\u6E32\u67D3'}
-              >
-                {markdownRendered ? 'Rendered' : 'Raw'}
-              </ToolbarBtn>
-            )}
-            {isMarkdown && markdownRendered && !editMode && (
-              <WorkspaceListenActions
-                active={listenMode.active}
-                cache={listenMode.cache}
-                hasSentences={listenMode.sentences.length > 0}
-                onCancelCache={listenMode.cancelCache}
-                onStartCache={listenMode.startCache}
-                onStartListen={() => listenMode.start()}
-              />
-            )}
-            {isHtml && !editMode && (
-              <ToolbarBtn
-                active={htmlPreview}
-                onClick={onToggleHtmlPreview}
-                title={htmlPreview ? '\u5207\u6362\u5230\u6E90\u7801' : '\u9884\u89C8 HTML'}
-              >
-                {htmlPreview ? 'Preview' : 'Code'}
-              </ToolbarBtn>
-            )}
-            {isJsx && !editMode && (
-              <ToolbarBtn
-                active={jsxPreview}
-                onClick={onToggleJsxPreview}
-                title={jsxPreview ? '\u5207\u6362\u5230\u6E90\u7801' : '\u9884\u89C8 JSX/TSX'}
-                activeClass="bg-blue-600/80 text-[var(--cafe-surface)] hover:bg-conn-blue-text"
-              >
-                {jsxPreview ? 'Preview' : 'Code'}
-              </ToolbarBtn>
-            )}
-            {file.content != null && (
-              <ToolbarBtn
-                onClick={() => void navigator.clipboard.writeText(file.content)}
-                title={
-                  file.truncated ? '\u590D\u5236\u5DF2\u52A0\u8F7D\u5185\u5BB9' : '\u590D\u5236\u6587\u4EF6\u5168\u6587'
-                }
-              >
-                {file.truncated ? 'Copy\u2026' : 'Copy'}
-              </ToolbarBtn>
-            )}
-            <ToolbarBtn
-              onClick={() => {
-                if (!openFilePath) return;
-                const abs = currentWorktree ? `${currentWorktree.root}/${openFilePath}` : openFilePath;
-                void navigator.clipboard.writeText(abs);
-              }}
-              title="\u590D\u5236\u7EDD\u5BF9\u8DEF\u5F84"
-            >
-              Path
-            </ToolbarBtn>
-            <ToolbarBtn
-              onClick={() => {
-                if (openFilePath) void revealInFinder(openFilePath);
-              }}
-              title="\u5728 Finder \u4E2D\u663E\u793A"
-            >
-              Finder
-            </ToolbarBtn>
-            {canEdit && (
-              <ToolbarBtn
-                active={editMode}
-                onClick={onToggleEdit}
-                title={editMode ? '\u9000\u51FA\u7F16\u8F91' : '\u7F16\u8F91\u6587\u4EF6'}
-                activeClass="bg-green-600/80 text-[var(--cafe-surface)] hover:bg-conn-green-text"
-              >
-                {editMode ? '\u7F16\u8F91\u4E2D' : '\u7F16\u8F91'}
-              </ToolbarBtn>
-            )}
-            {onFocusMode && (
-              <ToolbarBtn onClick={onFocusMode} title="\u4E13\u6CE8\u6A21\u5F0F" disabled={focusDisabled}>
-                专注
-              </ToolbarBtn>
-            )}
-            <button
-              type="button"
-              onClick={onCloseCurrentTab}
-              className="w-5 h-5 flex items-center justify-center rounded text-cafe-secondary hover:text-cafe-muted hover:bg-cafe-surface/10 transition-colors"
-              title="关闭标签页"
-              aria-label="关闭标签页"
-            >
-              <CloseIcon />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {saveError && (
+      {workspace?.saveError && (
         <div className="px-3 py-1.5 text-micro text-conn-red-text bg-[var(--semantic-critical-surface)] border-b border-[var(--semantic-critical)]">
-          {saveError}
+          {workspace.saveError}
         </div>
       )}
 
-      {pendingExternalSha && (
+      {workspace?.pendingExternalSha && (
         <div className="px-3 py-1.5 text-micro text-conn-amber-text bg-[var(--semantic-warning-surface)] border-b border-[var(--semantic-warning)] flex items-center justify-between">
           <span>文件已被外部修改</span>
           <span className="flex gap-2">
-            <button type="button" onClick={onApplyExternalChange} className="underline hover:text-conn-amber-text">
+            <button
+              type="button"
+              onClick={workspace.onApplyExternalChange}
+              className="underline hover:text-conn-amber-text"
+            >
               重新加载
             </button>
-            <button type="button" onClick={onDismissExternalChange} className="underline hover:text-conn-amber-text">
+            <button
+              type="button"
+              onClick={workspace.onDismissExternalChange}
+              className="underline hover:text-conn-amber-text"
+            >
               忽略
             </button>
           </span>
@@ -288,6 +171,16 @@ export function WorkspaceFileViewer({
       )}
 
       {/* File content */}
+      {workspace &&
+        !editMode &&
+        ((isMarkdown && markdownRendered) || (isHtml && htmlPreview) || (isJsx && jsxPreview)) && (
+          <WorkspaceFilePreviewDraftNotice
+            worktreeId={worktreeId}
+            path={file.path}
+            sha256={file.sha256}
+            content={file.content}
+          />
+        )}
       <FileContentRenderer
         file={file}
         openFilePath={openFilePath}
@@ -298,22 +191,26 @@ export function WorkspaceFileViewer({
         htmlPreview={htmlPreview}
         jsxPreview={jsxPreview}
         editMode={editMode}
-        scrollToLine={scrollToLine}
+        scrollToLine={workspace?.scrollToLine ?? null}
         worktreeId={worktreeId}
         currentWorktree={currentWorktree}
         mdContainerRef={mdContainerRef}
         mdSelectionAction={mdSelectionAction}
         onMdAddToChat={handleMdAddToChat}
-        onSave={onSave}
-        onDirtyChange={onDirtyChange}
+        onSave={workspace?.onSave}
+        onDirtyChange={workspace?.onDirtyChange}
         rawUrl={rawUrl}
-        revealInFinder={revealInFinder}
-        restoreScrollTop={restoreScrollTop}
-        restoreKey={restoreKey}
-        onScrollTopChange={onScrollTopChange}
+        revealInFinder={workspace?.revealInFinder}
+        restoreScrollTop={workspace?.restoreScrollTop}
+        restoreKey={workspace?.restoreKey}
+        onScrollTopChange={workspace?.onScrollTopChange}
         listenSentences={listenMode.active ? listenMode.sentences : undefined}
         activeListenAnchor={listenMode.activeAnchor}
         onListenSentenceStart={listenMode.active ? listenMode.start : undefined}
+        showFileQuotes={workspace?.showFileQuotes}
+        onQuoteSelected={workspace?.onQuoteSelected}
+        quoteSource={quoteSource}
+        publishedQuoteSource={published?.publication.quoteSource}
       />
 
       {file.truncated && (

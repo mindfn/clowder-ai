@@ -104,6 +104,13 @@ describe('F168 ExternalReviewCoordinator', () => {
     assert.equal(await coordinator.shouldContinueTracking('acme/widgets', 7), false);
 
     configure();
+    assert.equal(await coordinator.shouldContinueTracking('acme/widgets', 7), false, 'absence is not an open case');
+
+    await objectStore.save({
+      subjectKey: 'pr:acme/widgets#7',
+      state: 'in_review',
+      externalReview: { lifecycle: 'awaiting_ci' },
+    });
     assert.equal(await coordinator.shouldContinueTracking('acme/widgets', 7), true);
 
     await objectStore.save({
@@ -111,6 +118,32 @@ describe('F168 ExternalReviewCoordinator', () => {
       externalReview: { lifecycle: 'terminal' },
     });
     assert.equal(await coordinator.shouldContinueTracking('acme/widgets', 7), false);
+  });
+
+  it('stops historical terminal cases even when their review aggregate still awaits CI', async () => {
+    configure();
+    for (const state of ['fixed', 'closed']) {
+      await objectStore.save({
+        subjectKey: 'pr:acme/widgets#7',
+        state,
+        externalReview: { lifecycle: 'awaiting_ci' },
+      });
+      assert.equal(await coordinator.shouldContinueTracking('acme/widgets', 7), false);
+    }
+  });
+
+  it('does not initialize review collection on an already closed PR projection', async () => {
+    configure();
+    await objectStore.save({ subjectKey: 'pr:acme/widgets#7', state: 'closed', externalReview: null });
+    assert.deepEqual(await coordinator.recordCi(ci(), tracking), { kind: 'not_tracked' });
+    assert.deepEqual(
+      await coordinator.recordCloud(
+        { repoFullName: 'acme/widgets', prNumber: 7, headSha: 'head-7', status: 'running' },
+        tracking,
+      ),
+      { kind: 'not_tracked' },
+    );
+    assert.equal(eventLog.events.length, 0);
   });
 
   it('records required-cloud readiness but never projects it into a connector wake', async () => {

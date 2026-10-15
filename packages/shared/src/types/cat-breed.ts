@@ -11,8 +11,10 @@
  * CLI invocation config for a variant
  */
 import type { CliEffortValue } from '../cli-effort.js';
+import type { AccountQuotaObservation, CodexManagedAccount } from '../codex-account.js';
 import type { CodexSpeedValue } from '../codex-speed.js';
 import type { AgyProfileConfig, CatColor, ClientId } from './cat.js';
+import type { CatCarrier } from './cat-carrier.js';
 import type { CatId } from './ids.js';
 import type { VoiceConfig } from './tts.js';
 
@@ -27,13 +29,6 @@ export interface CliConfig {
    * Defaults: 'max' (claude) / 'xhigh' (codex).
    */
   readonly effort?: CliEffortValue;
-  /**
-   * Codex-only carrier override (F254 D2): 'exec_json' (one-shot `codex exec`)
-   * or 'app_server' (pooled app-server host). Absent = follow the process-level
-   * CAT_CAFE_CODEX_CARRIER env. Only meaningful for clientId 'openai'; the cats
-   * API rejects it for other clients.
-   */
-  readonly carrier?: 'exec_json' | 'app_server';
   /** F291: Codex OAuth request tier. Absent inherits the Codex user config. */
   readonly serviceTier?: CodexSpeedValue;
 }
@@ -49,6 +44,8 @@ export interface CatVariant {
   readonly id: string; // 'opus-4.6', 'codex-default'
   /** Override breed-level catId to register as an independent cat (F32-b) */
   readonly catId?: string;
+  /** Independent relationship persona; breed membership must not migrate a primer. */
+  readonly relationshipKey?: string;
   /** Override breed-level name for this independent member */
   readonly name?: string;
   /** Override breed-level displayName (F32-b) */
@@ -62,13 +59,18 @@ export interface CatVariant {
   readonly mentionPatterns?: readonly string[];
   /** F127: member-side binding to a concrete account config (built-in or API key). */
   readonly accountRef?: string;
+  /** A local tool's selection, or an explicit per-member exception. */
+  readonly accountBindingMode?: 'follow' | 'override';
   /** clowder-ai#340 P5: CLI client identity (renamed from `provider`). */
   readonly clientId: ClientId;
+  /** Canonical member access mode. Config reads default to `cli`. */
+  readonly carrier?: CatCarrier;
   readonly defaultModel: string;
   readonly mcpSupport: boolean;
   readonly cli: CliConfig;
   /** F210 Phase G: optional isolated Antigravity CLI profile binding. */
-  readonly agyProfile?: AgyProfileConfig;
+  /** null explicitly clears a template profile in a runtime catalog overlay. */
+  readonly agyProfile?: AgyProfileConfig | null;
   /** F127: explicit CLI args for bridge-style members such as Antigravity. */
   readonly commandArgs?: readonly string[];
   /** Optional per-variant override for roleDescription; falls back to breed.roleDescription. */
@@ -221,6 +223,10 @@ export type AccountProtocol = 'anthropic' | 'openai' | 'openai-responses' | 'goo
  * Maps an accountRef to its LLM endpoint metadata (no secrets).
  */
 export interface AccountConfig {
+  /** Official CLI inference token, private in CredentialEntry.accessToken; no identity claim. */
+  readonly claude?: { readonly kind: 'long_lived_token' };
+  readonly codex?: CodexManagedAccount;
+  readonly quota?: AccountQuotaObservation;
   readonly authType: 'oauth' | 'api_key';
   /** F171: Explicit client identity for API key accounts (e.g. 'anthropic', 'openai'). */
   readonly clientId?: string;
@@ -251,6 +257,7 @@ export interface CredentialEntry {
 export interface CatCafeConfigV1 {
   readonly version: 1;
   readonly breeds: readonly CatBreed[];
+  readonly selectedAccountRefs?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -259,7 +266,7 @@ export interface CatCafeConfigV1 {
 export interface CoCreatorConfig {
   /** Primary display name (e.g. "You") */
   readonly name: string;
-  /** Alternative names cats may use (e.g. ["L.S.", "Lysander"]) */
+  /** Alternative names cats may use (e.g. ["L.S.", "you"]) */
   readonly aliases: readonly string[];
   /** Line-start mention patterns for routing detection (e.g. ["@co-creator", "@co-creator"]) */
   readonly mentionPatterns: readonly string[];
@@ -277,6 +284,7 @@ export interface CoCreatorConfig {
 export interface CatCafeConfigV2 {
   readonly version: 2;
   readonly breeds: readonly CatBreed[];
+  readonly selectedAccountRefs?: Readonly<Record<string, string>>;
   readonly roster: Roster;
   readonly reviewPolicy: ReviewPolicy;
   readonly coCreator?: CoCreatorConfig;

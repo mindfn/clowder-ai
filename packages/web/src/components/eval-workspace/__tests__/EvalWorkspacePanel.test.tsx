@@ -1,6 +1,8 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { writeShellLanguage } from '@/components/shell/shell-language';
+import { writeShellPresentation } from '@/components/shell/shell-presentation';
 import { useChatStore } from '@/stores/chatStore';
 import type { EvalHubItem, EvalHubSummary } from '../../HubEvalTypes';
 
@@ -104,6 +106,10 @@ describe('EvalWorkspacePanel', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
+    act(() => {
+      writeShellPresentation('v2');
+      writeShellLanguage('zh');
+    });
     mocks.apiFetch.mockReset();
     useChatStore.setState({
       currentProjectPath: undefined,
@@ -117,7 +123,10 @@ describe('EvalWorkspacePanel', () => {
   });
 
   afterEach(() => {
-    act(() => root.unmount());
+    act(() => {
+      root.unmount();
+      writeShellLanguage('zh');
+    });
     container.remove();
   });
 
@@ -146,8 +155,76 @@ describe('EvalWorkspacePanel', () => {
     expect(container.textContent).toContain('有结论但没传球');
     expect(container.textContent).toContain('结论已经给出，却没有交给下一棒');
     expect(container.textContent).toContain('越低越好');
-    expect(container.textContent).toContain('查看台账');
+    expect(container.textContent).toContain('周期与台账');
     expect(container.querySelector('.font-mono')?.classList.contains('break-all')).toBe(true);
+  });
+
+  it('uses English fixed labels while retaining producer text and the original periodic owner', async () => {
+    act(() => writeShellLanguage('en'));
+    const summary = buildSummary([baseItem]);
+    summary.domains[0].nextCronFireAt = '2030-01-01T00:00:00Z';
+    mocks.apiFetch.mockResolvedValue({ ok: true, json: async () => summary });
+    await act(async () => root.render(<EvalWorkspacePanel />));
+    expect(container.textContent).toContain('Needs attention');
+    expect(container.textContent).toContain('Verdict file');
+    expect(container.textContent).not.toContain('结论文件');
+    expect(container.textContent).toContain(baseItem.operatorNarrative.headline);
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="eval-open-ledger"]')?.click());
+    const ledger = container.querySelector('[data-testid="eval-workspace-ledger"]');
+    expect(ledger?.textContent).toContain('Evaluation domains');
+    expect(ledger?.textContent).toContain('Next evaluation');
+    expect(ledger?.textContent).toContain('Duty & audit');
+    expect(ledger?.textContent).not.toContain('待首次评估');
+    expect(ledger?.textContent).toContain(summary.domains[0].descriptionForHuman);
+  });
+
+  it('uses English loading and failure feedback', async () => {
+    act(() => writeShellLanguage('en'));
+    mocks.apiFetch.mockImplementation(() => new Promise(() => {}));
+    await act(async () => root.render(<EvalWorkspacePanel />));
+    expect(container.textContent).toContain('Loading evaluation events');
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    mocks.apiFetch.mockResolvedValue({ ok: false, status: 503 });
+    await act(async () => root.render(<EvalWorkspacePanel />));
+    expect(
+      Array.from(container.querySelectorAll('[role="alert"]')).some((alert) =>
+        alert.textContent?.includes('Evaluations are temporarily unavailable'),
+      ),
+    ).toBe(true);
+  });
+
+  it('preserves the established classic ledger entry', async () => {
+    act(() => {
+      writeShellPresentation('classic');
+      writeShellLanguage('en');
+    });
+    mocks.apiFetch.mockResolvedValue({ ok: true, json: async () => buildSummary([baseItem]) });
+    await act(async () => root.render(<EvalWorkspacePanel />));
+    await act(async () => {});
+    expect(container.querySelector('h2')?.textContent).toBe('评估');
+    expect(container.querySelector('[data-testid="eval-open-ledger"]')).toBeNull();
+    expect(
+      Array.from(container.querySelectorAll('a')).some(
+        (link) => link.getAttribute('href') === '/settings?ops=observability&obs=eval',
+      ),
+    ).toBe(true);
+    act(() => {
+      writeShellPresentation('v2');
+      writeShellLanguage('zh');
+    });
+  });
+
+  it('opens the original periodic domains and ledger in the same Workspace owner', async () => {
+    mocks.apiFetch.mockResolvedValue({ ok: true, json: async () => buildSummary([baseItem]) });
+    await act(async () => root.render(<EvalWorkspacePanel />));
+    const entry = container.querySelector<HTMLButtonElement>('[data-testid="eval-open-ledger"]');
+    expect(entry).not.toBeNull();
+    expect(container.querySelector('a[href="/settings?ops=observability&obs=eval"]')).toBeNull();
+    await act(async () => entry?.click());
+    expect(container.querySelector('[data-testid="eval-workspace-ledger"]')?.textContent).toContain('评估域总览');
+    expect(container.querySelector('[data-testid="eval-workspace-ledger"]')?.textContent).toContain('A2A Harness Eval');
+    expect(useChatStore.getState().currentThreadId).toBe('thread-eval-origin');
   });
 
   it('renders quiet checking evidence when only keep-observe events exist', async () => {

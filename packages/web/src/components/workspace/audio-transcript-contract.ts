@@ -56,6 +56,8 @@ export interface AudioStatus {
   paused?: boolean;
   source?: string;
   app_name?: string;
+  /** The thread that owns the active capture session (producer's own identity — review R3-P1). */
+  thread_id?: string;
   duration_s?: number;
   chunk_count?: number;
   avg_asr_latency?: number;
@@ -82,6 +84,8 @@ export interface AudioSseEvent extends Partial<TranscriptLine> {
   status?: string;
   source?: string;
   app_name?: string;
+  /** Capture-owning thread, present on the producer's `started` broadcast (review R3-P1). */
+  thread_id?: string;
   inputs?: AudioInputStatus[];
   health?: AudioStatus['health'];
   transcript_path?: string;

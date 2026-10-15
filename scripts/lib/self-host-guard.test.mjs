@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-
+import { isSelfOrDescendantOf } from './process-tree.mjs';
 import { assessSideEffect } from './self-host-guard.mjs';
 
 /**
@@ -37,7 +37,76 @@ function fixtureSelfFacet(overrides = {}) {
 const self = fixtureSelfFacet();
 const verdictOf = (command, cwd = '/tmp', facet = self) => assessSideEffect(command, cwd, facet).verdict;
 
+describe('assessSideEffect: dependency direction, not an entire descendant tree', () => {
+  // launcher -> api -> cli -> tool -> feature; web is a sibling of api.
+  const parents = new Map([
+    [20, 10],
+    [21, 20],
+    [30, 21],
+    [31, 30],
+    [40, 31],
+    [50, 31],
+    [51, 50],
+    [60, 10],
+  ]);
+  const hosted = fixtureSelfFacet({
+    hostDependencies: [
+      { kind: 'api', port: 18080 },
+      { kind: 'daemon', port: 18081 },
+    ],
+  });
+  hosted.runtime = { launcherPid: 10, apiPort: 18080, sourceRef: DAEMON_REF };
+  hosted.launcherPids = [10];
+  const observation = {
+    observerPid: 40,
+    isHostDescendant: (pid, ancestor) =>
+      isSelfOrDescendantOf(pid, ancestor, { readParent: (p) => parents.get(p) ?? 1 }),
+    readHostPids: () => ({ pids: [21, 60], complete: true }),
+  };
+  const decide = (command, overrides = {}) =>
+    assessSideEffect(command, '/tmp', hosted, { ...observation, ...overrides }).verdict;
+
+  it('allows stopping the feature branch without inferring a reverse dependency', () => {
+    assert.equal(decide('kill -TERM 50'), 'allow');
+    assert.equal(decide('kill -TERM 51'), 'allow');
+  });
+
+  it('still protects the launcher, actual services, their wrappers and current execution chain', () => {
+    for (const pid of [10, 20, 21, 30, 31, 40, 60]) assert.equal(decide(`kill -TERM ${pid}`), 'self_host', String(pid));
+    assert.equal(decide('kill -TERM 50 21'), 'self_host');
+  });
+
+  it('does not claim a dependency or permission when host membership cannot be established', () => {
+    assert.equal(decide('kill -TERM 50', { readHostPids: () => ({ pids: [21], complete: false }) }), 'unknown');
+    assert.equal(decide('kill -TERM 50', { isHostDescendant: () => undefined }), 'unknown');
+    for (const [options, reason] of [
+      [{ readHostPids: () => ({ pids: [], complete: false }) }, /listener ownership/],
+      [{ isHostDescendant: () => undefined }, /ancestor chain/],
+    ]) {
+      assert.match(assessSideEffect('kill -TERM 50', '/tmp', hosted, { ...observation, ...options }).reason, reason);
+    }
+    assert.equal(decide('kill -TERM 50 21', { readHostPids: () => ({ pids: [21], complete: false }) }), 'self_host');
+  });
+
+  it('does not measure processes for an ordinary read or a direct recorded match', () => {
+    const readHostPids = () => {
+      throw new Error('unexpected observation');
+    };
+    assert.equal(decide('git status', { readHostPids }), 'allow');
+    assert.equal(decide('kill -TERM 10', { readHostPids }), 'self_host');
+  });
+});
+
 describe('assessSideEffect: C0 self-host', () => {
+  it('retains host stop commands after comment backslashes in direct and nested shells', () => {
+    for (const command of [
+      'echo ok # c\\\nkill -9 4242',
+      "bash -c 'echo a # c \\\nkill -9 4242'",
+      'echo "$(echo a # c \\\nkill -9 4242)"',
+    ]) {
+      assert.notEqual(verdictOf(command), 'allow', command);
+    }
+  });
   it('refuses stopping the deployment that is hosting this cat', () => {
     assert.equal(verdictOf('pnpm runtime:stop', SELF_WORKTREE), 'self_host');
   });
@@ -52,6 +121,24 @@ describe('assessSideEffect: C0 self-host', () => {
 
   it('refuses signalling our own api pid', () => {
     assert.equal(verdictOf('kill -TERM 4242'), 'self_host');
+  });
+
+  it('retains stop targets resolved through a positional execution frame', () => {
+    for (const command of ['set -- kill -TERM 4242; "$@"', 'set -- pnpm runtime:stop; "$@"']) {
+      assert.equal(verdictOf(command), 'self_host', command);
+    }
+    assert.notEqual(verdictOf('set -- pkill -f node; "$@"'), 'allow');
+    assert.equal(verdictOf("(echo 'kill -TERM 4242') | sh"), 'self_host');
+    assert.equal(verdictOf('set -- echo kill -TERM 4242; "$@"'), 'allow');
+  });
+
+  it('reads compact shell groups without treating quoted or escaped parentheses as execution', () => {
+    for (const command of ['(kill -TERM 4242)', '( (kill -TERM 4242))', '(lsof -ti tcp:3002 | xargs kill)']) {
+      assert.equal(verdictOf(command), 'self_host', command);
+    }
+    for (const command of ["printf '%s' '(kill -TERM 4242)'", 'echo \\(kill -TERM 4242\\)']) {
+      assert.equal(verdictOf(command), 'allow', command);
+    }
   });
 
   it('allows signalling a pid that is not one of ours', () => {
@@ -99,7 +186,8 @@ describe('assessSideEffect: C5 sanctuary', () => {
     assert.equal(verdictOf('redis-cli -p 6399 flushall'), 'sanctuary');
   });
 
-  it('allows the alpha redis on 6398', () => {
+  it('allows read-only probes of dedicated Alpha and development Redis', () => {
+    assert.equal(verdictOf('redis-cli -p 6397 ping'), 'allow');
     assert.equal(verdictOf('redis-cli -p 6398 ping'), 'allow');
   });
 
@@ -144,21 +232,22 @@ describe('assessSideEffect: unresolvable targets fail closed', () => {
     assert.equal(verdictOf(`pnpm --dir ${SELF_WORKTREE} dev:stop`, '/tmp'), 'self_host');
   });
 
-  // The daemon state records only the launcher; the API is an unrecorded child.
-  it('asks about ancestry for a pid it does not recognise', () => {
+  // A listener resolves the unrecorded API; descent alone no longer protects it.
+  it('asks about service ancestors for a pid it does not recognise', () => {
     const hosted = fixtureSelfFacet({ hostDependencies: [] });
     hosted.runtime = { worktree: SELF_WORKTREE, head: '', launcherPid: 2622, sourceRef: DAEMON_REF };
     hosted.launcherPids = [2622];
 
-    const isDescendant = (pid, ancestor) => (pid === 4242 && ancestor === 2622 ? true : false);
+    const isDescendant = (pid, ancestor) => pid === ancestor;
+    const readHostPids = () => ({ pids: [4242], complete: true });
     assert.equal(
-      assessSideEffect('kill -TERM 4242', '/tmp', hosted, { isHostDescendant: isDescendant }).verdict,
+      assessSideEffect('kill -TERM 4242', '/tmp', hosted, { isHostDescendant: isDescendant, readHostPids }).verdict,
       'self_host',
     );
 
     const unreadable = () => undefined;
     assert.equal(
-      assessSideEffect('kill -TERM 4242', '/tmp', hosted, { isHostDescendant: unreadable }).verdict,
+      assessSideEffect('kill -TERM 4242', '/tmp', hosted, { isHostDescendant: unreadable, readHostPids }).verdict,
       'unknown',
     );
 
@@ -302,12 +391,34 @@ describe('assessSideEffect: executed content is executed wherever it sits', () =
     });
   }
 
-  it('fails closed on a wrapper option it has not modelled', () => {
-    assert.equal(verdictOf('sudo --made-up-option kill -TERM 4242', SELF_WORKTREE), 'unknown');
+  it('does not infer a stop from words behind an unparsed wrapper', () => {
+    assert.equal(verdictOf('sudo --made-up-option kill -TERM 4242', SELF_WORKTREE), 'allow');
   });
 
-  it('fails closed when the executed string itself cannot be read', () => {
-    assert.equal(verdictOf('bash -c "$STOP_COMMAND"', SELF_WORKTREE), 'unknown');
+  it('does not infer a stop from an unreadable script variable name', () => {
+    assert.equal(verdictOf('bash -c "$STOP_COMMAND"', SELF_WORKTREE), 'allow');
+  });
+
+  it('does not interpret stop words in opaque source as process operations', () => {
+    for (const command of [
+      `node -e 'console.log("stop restart kill shutdown")'`,
+      `node -e 'const message = "pkill -f node"; console.log(message)'`,
+      'python3 - <<\'PY\'\n"""stop matching after the last record"""\nprint("restart")\nPY',
+    ])
+      assert.equal(verdictOf(command, SELF_WORKTREE), 'allow', command);
+  });
+
+  it('still rejects recognised stops with unresolved targets independently of prose', () => {
+    for (const command of [
+      'kill "$PID"',
+      'pkill -f node',
+      'bash -c \'kill "$PID"\'',
+      'echo "$(pkill node)"',
+      'echo "`pkill node`"',
+    ]) {
+      assert.equal(verdictOf(command, SELF_WORKTREE), 'unknown', command);
+    }
+    assert.equal(verdictOf('echo "\\`pkill node\\`"', SELF_WORKTREE), 'allow');
   });
 });
 

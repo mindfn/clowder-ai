@@ -29,6 +29,96 @@ const MESSAGE_BUNDLE = {
 };
 
 describe('durable message extra carriers survive Redis round-trips', () => {
+  it('preserves exact conversation-return provenance and drops malformed coordinates', async () => {
+    const { serializeExtra, safeParseExtra } = await import(
+      '../dist/domains/cats/services/stores/redis/redis-message-parsers.js'
+    );
+    const runtimeInteractionReturn = {
+      interactionId: 'conversation-1',
+      operationId: 'operation-1',
+      author: 'owner',
+      requesterCatId: 'codex-sol',
+      cardMessageId: 'card-message-1',
+    };
+    assert.deepEqual(
+      safeParseExtra(serializeExtra({ runtimeInteractionReturn }))?.runtimeInteractionReturn,
+      runtimeInteractionReturn,
+    );
+    const malformed = safeParseExtra(
+      serializeExtra({
+        runtimeInteractionReturn: { ...runtimeInteractionReturn, operationId: '' },
+        targetCats: ['codex-sol'],
+      }),
+    );
+    assert.equal(malformed?.runtimeInteractionReturn, undefined);
+    assert.deepEqual(malformed?.targetCats, ['codex-sol']);
+    const runtimeInteractionCard = {
+      version: 1,
+      interactionId: 'conversation-1',
+      blockId: 'decision-block',
+      requestKind: 'conversation_decision',
+    };
+    assert.deepEqual(
+      safeParseExtra(serializeExtra({ runtimeInteractionCard }))?.runtimeInteractionCard,
+      runtimeInteractionCard,
+    );
+  });
+
+  it('preserves the local-review original rich request digest while discarding malformed digests', async () => {
+    const { serializeExtra, safeParseExtra } = await import(
+      '../dist/domains/cats/services/stores/redis/redis-message-parsers.js'
+    );
+    const digest = 'a'.repeat(64);
+    assert.equal(
+      safeParseExtra(serializeExtra({ callbackRichRequestDigest: digest }))?.callbackRichRequestDigest,
+      digest,
+    );
+    const malformed = safeParseExtra(
+      JSON.stringify({ callbackRichRequestDigest: 'not-a-digest', isExplicitPost: true }),
+    );
+    assert.equal(malformed.callbackRichRequestDigest, undefined);
+    assert.equal(malformed.isExplicitPost, true);
+  });
+
+  it('F317 preserves spoken-source identity and rejects malformed fields without dropping siblings', async () => {
+    const { serializeExtra, safeParseExtra } = await import(
+      '../dist/domains/cats/services/stores/redis/redis-message-parsers.js'
+    );
+    const liveCompanion = {
+      callId: 'call-1',
+      nativeThreadId: 'native-1',
+      realtimeSessionId: 'realtime-1',
+      nativeItemId: 'segment-1',
+      modality: 'voice',
+    };
+    assert.deepEqual(safeParseExtra(serializeExtra({ liveCompanion }))?.liveCompanion, liveCompanion);
+    const identity = {
+      v: 1,
+      name: '猫猫球',
+      partner: { catId: 'fable-5', displayName: '宪宪', skin: 'black-cat' },
+      live: { catId: 'codex-astra', displayName: '砚砚', transport: 'gpt_live_v3', verifiedModel: null },
+      deep: { catId: 'fable-5', displayName: '宪宪', verifiedModel: null },
+    };
+    const result = { ...liveCompanion, nativeItemId: 'answer-1', modality: 'result', nativeTurnId: 'turn-1', identity };
+    assert.deepEqual(safeParseExtra(serializeExtra({ liveCompanion: result }))?.liveCompanion, result);
+    const { identity: _discarded, ...resultWithoutIdentity } = result;
+    assert.deepEqual(
+      safeParseExtra(serializeExtra({ liveCompanion: { ...result, identity: { ...identity, name: 'other' } } }))
+        ?.liveCompanion,
+      resultWithoutIdentity,
+      'a bad display snapshot must not delete the canonical Live source',
+    );
+    for (const malformed of [
+      null,
+      { ...liveCompanion, modality: 'video' },
+      { ...liveCompanion, nativeItemId: '' },
+      { ...liveCompanion, callId: 'x'.repeat(161) },
+    ]) {
+      const read = safeParseExtra(serializeExtra({ liveCompanion: malformed, targetCats: ['codex-astra'] }));
+      assert.equal(read?.liveCompanion, undefined);
+      assert.deepEqual(read?.targetCats, ['codex-astra']);
+    }
+  });
   it('F311 preserves a valid preparation submission and drops malformed content without dropping siblings', async () => {
     const { serializeExtra, safeParseExtra } = await import(
       '../dist/domains/cats/services/stores/redis/redis-message-parsers.js'
@@ -97,6 +187,13 @@ describe('durable message extra carriers survive Redis round-trips', () => {
         disposition: 'rejected',
         automaticRetryAt: 30_000,
         reasons: [{ code: 'routing_signal_unavailable', summary: 'quota_exhausted', sourceRefs: ['failure:1'] }],
+        contextualSignals: [
+          {
+            code: 'capability_anti_signal',
+            summary: 'Independent review benefits from a complementary reviewer',
+            sourceRefs: ['dossier:sol'],
+          },
+        ],
         alternatives: [],
       },
     };

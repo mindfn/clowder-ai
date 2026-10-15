@@ -28,7 +28,9 @@ function surface(id: string, type: WorkspaceSurfaceDescriptor['type'] = 'file'):
     'agent-run': 'agent-run',
     review: 'review-summary',
     terminal: 'terminal-session',
+    'thread-replay': 'thread-replay',
     workspace: 'workspace-destination',
+    'video-project': 'video-project-review',
   };
   const objectKindByType: Record<WorkspaceSurfaceDescriptor['type'], WorkspaceSurfaceDescriptor['objectRef']['kind']> =
     {
@@ -41,7 +43,9 @@ function surface(id: string, type: WorkspaceSurfaceDescriptor['type'] = 'file'):
       'agent-run': 'agent-run',
       review: 'review',
       terminal: 'terminal-session',
+      'thread-replay': 'thread-replay',
       workspace: 'workspace-destination',
+      'video-project': 'video-project',
     };
   return {
     id,

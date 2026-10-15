@@ -13,6 +13,7 @@ import { GlobalControlStore } from '../../dist/infrastructure/scheduler/GlobalCo
 import { RunLedger } from '../../dist/infrastructure/scheduler/RunLedger.js';
 import { TaskRunnerV2 } from '../../dist/infrastructure/scheduler/TaskRunnerV2.js';
 import { templateRegistry } from '../../dist/infrastructure/scheduler/templates/registry.js';
+import { createRepoActivityTemplate } from '../../dist/infrastructure/scheduler/templates/repo-activity.js';
 
 describe('F139 Phase 4 E2E', () => {
   let db;
@@ -39,9 +40,17 @@ describe('F139 Phase 4 E2E', () => {
       broadcastToRoom: mock.fn(),
       emitToUser: mock.fn(),
     };
+    // RFC §5.1: a scheduled wake crosses the durable-admission seam, not a bare append.
+    const mockPersistedQueueDelivery = {
+      async deliver(input) {
+        const id = `msg-${Date.now()}`;
+        return { state: 'started', entryId: `entry-${id}`, message: { id, ...input } };
+      },
+    };
     deliverMock = createDeliverFn({
       messageStore: mockMessageStore,
       socketManager: mockSocketManager,
+      persistedQueueDelivery: mockPersistedQueueDelivery,
     });
 
     // Wrap to capture calls
@@ -135,20 +144,67 @@ describe('F139 Phase 4 E2E', () => {
     assert.equal(deliverCalls.length, 1);
     assert.equal(deliverCalls[0].threadId, 'thread-news-123');
     assert.ok(deliverCalls[0].content.includes('搜三天内 Anthropic 新闻'));
-    assert.equal(deliverCalls[0].userId, 'scheduler');
-    assert.equal(deliverCalls[0].extra?.scheduler?.hiddenTrigger, true);
-
-    // 2. invokeTrigger was called with the REAL messageId from deliver
-    assert.equal(triggerCalls.length, 1);
-    assert.equal(triggerCalls[0][0], 'thread-news-123'); // threadId
-    assert.equal(triggerCalls[0][1], 'opus'); // catId (default, no actor resolver)
-    assert.equal(triggerCalls[0][2], 'default-user'); // userId (from triggerUserId param, not hardcoded 'scheduler')
-    assert.ok(triggerCalls[0][3].includes('搜三天内 Anthropic 新闻')); // message contains reminder
-    assert.ok(triggerCalls[0][4].startsWith('msg-'), 'messageId should be real stored ID');
+    // F117 ADR-043 D.4 (sol adjudication R4): stored trigger-message userId is the
+    // verified trigger owner (triggerUserId), not the author 'scheduler'. Scheduler
+    // authorship is expressed via from: system:scheduler in createDeliverFn instead.
+    assert.equal(deliverCalls[0].userId, 'default-user'); // === triggerUserId
+    // RFC §5.2: the envelope names its member and admission is the wake — one seam, not two.
+    assert.equal(deliverCalls.length, 1, 'one envelope, one admission');
+    assert.equal(deliverCalls[0].threadId, 'thread-news-123');
+    assert.equal(deliverCalls[0].targetCatId, 'opus'); // default, no actor resolver
+    assert.equal(deliverCalls[0].sourceCategory, 'scheduled');
+    assert.ok(deliverCalls[0].idempotencyKey, 'a scheduled wake carries a stable admission identity');
 
     // Ledger still records RUN_DELIVERED
     const runs = ledger.query('remind-cat-wake', 1);
     assert.equal(runs[0].outcome, 'RUN_DELIVERED');
+  });
+
+  test('hold continuation stays queued and urgent until canonical Queue admission publishes it', async () => {
+    const triggerCalls = [];
+    const runnerWithTrigger = new TaskRunnerV2({
+      logger: { info: () => {}, error: () => {} },
+      ledger,
+      globalControlStore,
+      deliver: async (opts) => {
+        deliverCalls.push(opts);
+        return deliverMock(opts);
+      },
+      invokeTrigger: { trigger: (...args) => triggerCalls.push(args) },
+    });
+    const fireAt = Date.now() + 60_000;
+    store.insert({
+      id: 'hold-ball-timer-1',
+      templateId: 'reminder',
+      trigger: { type: 'once', fireAt },
+      params: {
+        message: '等待 CI 完成后复核',
+        targetCatId: 'codex-sol',
+        triggerUserId: 'user-1',
+        holdLifecycle: {
+          mode: 'timer',
+          status: 'active',
+          wakeAt: fireAt,
+          createdBy: 'hold-ball:codex-sol',
+        },
+      },
+      display: { label: 'hold', category: 'system' },
+      deliveryThreadId: 'thread-hold-1',
+      enabled: true,
+      createdBy: 'hold-ball:codex-sol',
+      createdAt: new Date().toISOString(),
+    });
+    runnerWithTrigger.hydrateDynamic(store, templateRegistry);
+
+    await runnerWithTrigger.triggerNow('hold-ball-timer-1', { manual: true });
+
+    // One envelope carries the hold's identity, urgency and member; admission is the wake.
+    assert.equal(deliverCalls.length, 1);
+    assert.equal(deliverCalls[0].source.connector, 'hold-ball');
+    assert.equal(deliverCalls[0].source.meta.phase, 'wake');
+    assert.equal(deliverCalls[0].targetCatId, 'codex-sol');
+    assert.equal(deliverCalls[0].priority, 'urgent');
+    assert.equal(deliverCalls[0].sourceCategory, 'scheduled');
   });
 
   test('AC-H4: builtin task pause via override → trigger skipped', async () => {
@@ -304,18 +360,18 @@ describe('F139 Phase 4 E2E', () => {
     assert.equal(fetchMock.mock.calls.length, 1);
     assert.equal(deliverCalls.length, 1);
     assert.equal(deliverCalls[0].threadId, 'thread-browser');
-    assert.equal(deliverCalls[0].userId, 'scheduler');
+    // F117 ADR-043 D.4 (sol adjudication R4): stored trigger-message userId is the
+    // verified trigger owner (triggerUserId), not the author 'scheduler'. Scheduler
+    // authorship is expressed via from: system:scheduler in createDeliverFn instead.
+    assert.equal(deliverCalls[0].userId, 'default-user'); // === triggerUserId
     assert.ok(deliverCalls[0].content.includes('browser-automation'));
     assert.ok(deliverCalls[0].content.includes('https://x.com/anthropic'));
     assert.ok(deliverCalls[0].content.includes('今天 AI 新闻'));
 
-    assert.equal(triggerCalls.length, 1);
-    assert.equal(triggerCalls[0][0], 'thread-browser');
-    assert.equal(triggerCalls[0][1], 'gpt52');
-    assert.equal(triggerCalls[0][2], 'default-user'); // userId (from triggerUserId param)
-    assert.ok(triggerCalls[0][3].includes('browser-automation'));
-    assert.ok(triggerCalls[0][4].startsWith('msg-'));
-    assert.equal(triggerCalls[0][6]?.suggestedSkill, 'browser-automation');
+    // The skill hint travels in the envelope the admission persists, not in a second wake call.
+    assert.equal(deliverCalls[0].targetCatId, 'gpt52');
+    assert.equal(deliverCalls[0].suggestedSkill, 'browser-automation');
+    assert.equal(deliverCalls[0].sourceCategory, 'scheduled');
 
     const runs = ledger.query('digest-browser', 1);
     assert.equal(runs[0].outcome, 'RUN_DELIVERED');
@@ -338,42 +394,47 @@ describe('F139 Phase 4 E2E', () => {
         user: { login: 'bob' },
       },
     ];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = mock.fn(async () => ({ ok: true, json: async () => ghIssues }));
-    try {
-      store.insert({
-        id: 'repo-watch',
-        templateId: 'repo-activity',
-        trigger: { type: 'interval', ms: 3600_000 },
-        params: { repo: 'anthropics/claude-code' },
-        display: { label: 'claude-code 动态', category: 'repo', description: 'Watch repo' },
-        deliveryThreadId: 'thread-dev',
-        enabled: true,
-        createdBy: 'opus',
-        createdAt: new Date().toISOString(),
-      });
-      runner.hydrateDynamic(store, templateRegistry);
+    const executeGh = mock.fn(async () => ({ stdout: JSON.stringify(ghIssues) }));
+    const repoTemplate = createRepoActivityTemplate({
+      getGitHubToken: () => 'phase4-fixture-token',
+      execFileAsync: executeGh,
+    });
+    store.insert({
+      id: 'repo-watch',
+      templateId: 'repo-activity',
+      trigger: { type: 'interval', ms: 3600_000 },
+      params: { repo: 'anthropics/claude-code' },
+      display: { label: 'claude-code 动态', category: 'repo', description: 'Watch repo' },
+      deliveryThreadId: 'thread-dev',
+      enabled: true,
+      createdBy: 'opus',
+      createdAt: new Date().toISOString(),
+    });
+    runner.hydrateDynamic(store, {
+      get: (id) => (id === repoTemplate.templateId ? repoTemplate : templateRegistry.get(id)),
+    });
 
-      await runner.triggerNow('repo-watch', { manual: true });
+    await runner.triggerNow('repo-watch', { manual: true });
 
-      // Must have called GitHub API
-      assert.equal(globalThis.fetch.mock.calls.length, 1);
-      const fetchUrl = globalThis.fetch.mock.calls[0].arguments[0];
-      assert.ok(fetchUrl.includes('api.github.com/repos/anthropics/claude-code'));
+    // Must have called GitHub API
+    assert.equal(executeGh.mock.calls.length, 1);
+    const [file, args, options] = executeGh.mock.calls[0].arguments;
+    assert.equal(file, 'gh');
+    assert.equal(args[0], 'api');
+    assert.ok(args[1].startsWith('/repos/anthropics/claude-code/issues?'));
+    assert.equal(options.env.GITHUB_TOKEN, 'phase4-fixture-token');
+    assert.ok(options.signal instanceof AbortSignal);
 
-      // Delivered content includes real issue/PR data
-      assert.equal(deliverCalls.length, 1);
-      assert.ok(deliverCalls[0].content.includes('#10'));
-      assert.ok(deliverCalls[0].content.includes('Add streaming'));
-      assert.ok(deliverCalls[0].content.includes('#11'));
-      assert.equal(deliverCalls[0].threadId, 'thread-dev');
+    // Delivered content includes real issue/PR data
+    assert.equal(deliverCalls.length, 1);
+    assert.ok(deliverCalls[0].content.includes('#10'));
+    assert.ok(deliverCalls[0].content.includes('Add streaming'));
+    assert.ok(deliverCalls[0].content.includes('#11'));
+    assert.equal(deliverCalls[0].threadId, 'thread-dev');
 
-      // Verify ledger
-      const runs = ledger.query('repo-watch', 1);
-      assert.equal(runs[0].outcome, 'RUN_DELIVERED');
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    // Verify ledger
+    const runs = ledger.query('repo-watch', 1);
+    assert.equal(runs[0].outcome, 'RUN_DELIVERED');
   });
 
   test('AC-D1: global pause stops all non-manual triggers', async () => {

@@ -150,6 +150,7 @@ describe('RedisActionSuccessorLeaseStore', { skip: redisIsolationSkipReason(REDI
     assert.equal(normalized.holderThreadId, 'legacy:unknown');
     assert.equal(normalized.issuerStandingEvidenceRef, 'message:legacy-claim');
     assert.deepEqual(normalized.returnTransitions, []);
+    assert.deepEqual(normalized.replacementTransitions, []);
     assert.equal(normalized.predecessorCatId, undefined);
     assert.deepEqual(await store.preflight(legacy.leaseId, 1), { ok: true, reason: 'active' });
 
@@ -216,6 +217,13 @@ describe('RedisActionSuccessorLeaseStore', { skip: redisIsolationSkipReason(REDI
     const persisted = await store.get(claimed.lease.leaseId);
     assert.equal(persisted.generation, 2);
     assert.equal(persisted.holderCatIds.length, 1);
+    assert.equal(persisted.replacementTransitions.length, 1);
+    assert.equal(persisted.replacementTransitions[0].fromGeneration, 1);
+    assert.equal(persisted.replacementTransitions[0].toGeneration, 2);
+    assert.equal(persisted.replacementTransitions[0].reason, 'holder_terminal');
+    assert.deepEqual(persisted.replacementTransitions[0].holderOutcomes, {
+      'codex-terra': { outcome: 'unavailable', evidenceRef: 'runtime:quota-exhausted', at: 120 },
+    });
   });
 
   it('persists an existing-standing replacement without inventing a predecessor route', async () => {
@@ -1381,5 +1389,121 @@ describe('RedisActionSuccessorLeaseStore', { skip: redisIsolationSkipReason(REDI
     assert.equal(await store.getSubjectTerminal('pr:owner/repo#2868'), null);
     assert.equal(await redis.scard(ActionSuccessorKeys.subjectTerminalHistory('pr:owner/repo#2868')), 2);
     assert.equal(await redis.ttl(ActionSuccessorKeys.subjectTerminalHistory('pr:owner/repo#2868')), -1);
+  });
+  describe('refreshHandledCarrier (F167 carrier refresh)', () => {
+    const directClaim = (overrides = {}) =>
+      claimInput({
+        leaseId: 'lease-refresh',
+        subjectRef: 'subject:task:task-1',
+        actionFamily: 'implement',
+        successorSlot: 'implementer',
+        terminalPredicate: taskPredicate(),
+        dispatchId: 'cross-post:original',
+        ...overrides,
+      });
+
+    const refreshInput = (lease, overrides = {}) => ({
+      expectedGeneration: lease.generation,
+      expectedRevision: lease.revision,
+      predecessorCatId: lease.predecessorCatId,
+      predecessorThreadId: lease.predecessorThreadId,
+      holderCatIds: [...lease.holderCatIds],
+      holderThreadId: lease.holderThreadId,
+      mode: lease.mode,
+      terminalPredicateDigest: lease.terminalPredicate.digest,
+      dispatchId: 'cross-post:refresh-a',
+      evidenceRef: 'callback:invocation-a:refresh-a',
+      now: 200,
+      ...overrides,
+    });
+
+    it('advances one generation durably and keeps the lease keys persistent', async () => {
+      const claimed = await store.claim(directClaim());
+      assert.equal(claimed.outcome, 'claimed');
+
+      const result = await store.refreshHandledCarrier(claimed.lease.leaseId, refreshInput(claimed.lease));
+
+      assert.equal(result.outcome, 'refreshed');
+      const persisted = await store.get(claimed.lease.leaseId);
+      assert.equal(persisted.generation, 2);
+      assert.equal(persisted.revision, claimed.lease.revision + 1);
+      assert.equal(persisted.dispatchId, 'cross-post:refresh-a');
+      assert.equal(persisted.status, 'active');
+      assert.equal(persisted.issuerStandingEvidenceRef, 'callback:invocation-a:refresh-a');
+      assert.ok(persisted.evidenceRefs.includes(`carrier-refresh:${claimed.lease.leaseId}:g2`));
+      assert.equal(await redis.ttl(ActionSuccessorKeys.detail(claimed.lease.leaseId)), -1);
+      // The identity index still resolves to the same, advanced lease.
+      assert.equal((await store.getByIdentity(claimed.lease)).generation, 2);
+    });
+
+    it('lets exactly one of two concurrent refreshes of the same lease commit', async () => {
+      const claimed = await store.claim(directClaim());
+
+      const [a, b] = await Promise.all([
+        store.refreshHandledCarrier(claimed.lease.leaseId, refreshInput(claimed.lease)),
+        store.refreshHandledCarrier(
+          claimed.lease.leaseId,
+          refreshInput(claimed.lease, {
+            dispatchId: 'cross-post:refresh-b',
+            evidenceRef: 'callback:invocation-b:refresh-b',
+            now: 201,
+          }),
+        ),
+      ]);
+
+      assert.deepEqual(new Set([a.outcome, b.outcome]), new Set(['refreshed', 'stale_generation']));
+      const persisted = await store.get(claimed.lease.leaseId);
+      assert.equal(persisted.generation, 2, 'the generation advanced exactly once');
+      assert.equal(persisted.revision, claimed.lease.revision + 1);
+      const winner = a.outcome === 'refreshed' ? 'cross-post:refresh-a' : 'cross-post:refresh-b';
+      assert.equal(persisted.dispatchId, winner);
+      const loser = a.outcome === 'refreshed' ? b : a;
+      assert.equal(loser.lease.generation, 2, 'the loser is handed the advanced lease');
+    });
+
+    it('does not refresh once durable subject terminal truth exists', async () => {
+      const claimed = await store.claim(directClaim());
+      await store.markSubjectTerminal({
+        subjectRef: claimed.lease.subjectRef,
+        state: 'closed',
+        evidenceRef: 'task:task-1:done',
+        now: 150,
+      });
+
+      const result = await store.refreshHandledCarrier(claimed.lease.leaseId, refreshInput(claimed.lease));
+
+      assert.equal(result.outcome, 'subject_terminal');
+      assert.equal((await store.get(claimed.lease.leaseId)).generation, 1);
+    });
+
+    it('refuses a lease that already recorded a holder outcome', async () => {
+      const claimed = await store.claim(directClaim());
+      const settled = await store.commitOutcome(claimed.lease.leaseId, {
+        generation: 1,
+        catId: 'codex-terra',
+        outcome: 'unavailable',
+        evidenceRef: 'runtime:quota-exhausted',
+        now: 120,
+      });
+      assert.equal(settled.outcome, 'recorded');
+
+      const result = await store.refreshHandledCarrier(
+        claimed.lease.leaseId,
+        refreshInput(settled.lease, { expectedRevision: settled.lease.revision }),
+      );
+
+      assert.equal(result.outcome, 'lease_not_active');
+      assert.equal((await store.get(claimed.lease.leaseId)).generation, 1);
+    });
+
+    it('rejects a request built from a stale revision without writing', async () => {
+      const claimed = await store.claim(directClaim());
+      const result = await store.refreshHandledCarrier(
+        claimed.lease.leaseId,
+        refreshInput(claimed.lease, { expectedRevision: claimed.lease.revision + 5 }),
+      );
+      assert.equal(result.outcome, 'stale_revision');
+      assert.equal((await store.get(claimed.lease.leaseId)).revision, claimed.lease.revision);
+    });
   });
 });

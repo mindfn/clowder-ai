@@ -16,8 +16,16 @@ function getBrowserLocation(): Location | null {
   return candidate ?? null;
 }
 
-function isLoopbackLocation(location: Location | null): boolean {
+function isLoopbackLocation(location: Location | null): location is Location {
   return location != null && (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+}
+
+const LOOPBACK_API_ORIGIN = /^(https?:\/\/)(?:localhost|127\.0\.0\.1)(?=[:/]|$)/;
+
+function alignLoopbackApiHostname(envUrl: string, location: Location | null): string {
+  if (!isLoopbackLocation(location)) return envUrl;
+  // SameSite=Strict session cookies require the page and local API to use the same hostname.
+  return envUrl.replace(LOOPBACK_API_ORIGIN, `$1${location.hostname}`);
 }
 
 /** @internal Exported for testing — prefer using `API_URL` constant. */
@@ -30,14 +38,14 @@ export function resolveApiUrl(): string {
   }
   const envUrl = process.env.NEXT_PUBLIC_API_URL;
   if (envUrl) {
-    const isLocalhostDefault = /^https?:\/\/(localhost|127\.0\.0\.1)[:/]/.test(envUrl);
+    const isLocalhostDefault = LOOPBACK_API_ORIGIN.test(envUrl);
     const isLocalAccess = isLoopbackLocation(location);
     const isRemoteAccess = location != null && !isLocalAccess;
     // Skip envUrl when it mismatches actual access origin:
     //   - localhost env + remote browser → reverse-proxy users would hit dev's loopback
     //   - cloud env + local browser → would force a Cloudflare Tunnel round-trip for nothing
     const mismatch = (isLocalhostDefault && isRemoteAccess) || (!isLocalhostDefault && isLocalAccess);
-    if (!mismatch) return envUrl;
+    if (!mismatch) return alignLoopbackApiHostname(envUrl, location);
   }
   if (typeof window === 'undefined') return 'http://localhost:3004';
   const protocol = location?.protocol ?? 'http:';
@@ -56,7 +64,30 @@ const SESSION_BOOTSTRAP_TIMEOUT_MS = 10_000;
 const API_REQUEST_TIMEOUT_MS = 30_000;
 
 let sessionGate: Promise<void> | null = null;
+let sessionRefresh: Promise<void> | null = null;
+let sessionCsrfToken: string | null = null;
 let lastSessionFailureToastAt = 0;
+
+const reportedConnectionErrors = new WeakSet<object>();
+let lastConnectionFailureAt = Number.NEGATIVE_INFINITY;
+
+/** Shared transport feedback; a lost response does not prove a mutation failed. */
+export function reportApiConnectionFailure(error: unknown): boolean {
+  if (!(error instanceof Error) || (error.name !== 'TypeError' && error.name !== 'TimeoutError')) return false;
+  if (reportedConnectionErrors.has(error)) return true;
+  reportedConnectionErrors.add(error);
+  const now = Date.now();
+  if (now - lastConnectionFailureAt >= 5_000) {
+    lastConnectionFailureAt = now;
+    useToastStore.getState().addToast({
+      type: 'error',
+      title: '后端连接异常',
+      message: '未能取得后端响应，请检查服务并刷新确认操作结果。',
+      duration: 5000,
+    });
+  }
+  return true;
+}
 
 export interface ApiFetchOptions {
   /**
@@ -104,21 +135,67 @@ function notifySessionFailure() {
 function ensureSession(): Promise<void> {
   if (sessionGate) return sessionGate;
   const gate = boundedFetch(`${API_URL}/api/session`, { credentials: 'include' }, SESSION_BOOTSTRAP_TIMEOUT_MS)
-    .then((res) => {
+    .then(async (res) => {
       if (!res.ok) {
         throw new Error(`session bootstrap failed (${res.status})`);
       }
+      const body = (typeof res.json === 'function' ? await res.json().catch(() => null) : null) as {
+        csrfToken?: unknown;
+      } | null;
+      sessionCsrfToken = typeof body?.csrfToken === 'string' && body.csrfToken ? body.csrfToken : null;
     })
     .catch((err) => {
-      if (sessionGate === gate) sessionGate = null;
+      if (sessionGate === gate) {
+        sessionGate = null;
+        sessionCsrfToken = null;
+      }
       throw err;
     });
   sessionGate = gate;
   return gate;
 }
 
+/** Revalidate the HttpOnly cookie before a new physical Socket handshake.
+ * Parallel surfaces share one refresh; an older bootstrap finishes first so
+ * its late Set-Cookie cannot overwrite the new server's session.
+ */
+export function refreshApiSession(): Promise<void> {
+  if (sessionRefresh) return sessionRefresh;
+  const previous = sessionGate;
+  const gate = (previous ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(async () => {
+      const res = await boundedFetch(
+        `${API_URL}/api/session`,
+        { credentials: 'include' },
+        SESSION_BOOTSTRAP_TIMEOUT_MS,
+      );
+      if (!res.ok) throw new Error(`session bootstrap failed (${res.status})`);
+      const body = (typeof res.json === 'function' ? await res.json().catch(() => null) : null) as {
+        csrfToken?: unknown;
+      } | null;
+      sessionCsrfToken = typeof body?.csrfToken === 'string' && body.csrfToken ? body.csrfToken : null;
+    })
+    .catch((err) => {
+      if (sessionGate === gate) {
+        sessionGate = null;
+        sessionCsrfToken = null;
+      }
+      throw err;
+    })
+    .finally(() => {
+      if (sessionRefresh === gate) sessionRefresh = null;
+    });
+  sessionGate = gate;
+  sessionRefresh = gate;
+  return gate;
+}
+
 function invalidateSession(observedGate: Promise<void>) {
-  if (sessionGate === observedGate) sessionGate = null;
+  if (sessionGate === observedGate) {
+    sessionGate = null;
+    sessionCsrfToken = null;
+  }
 }
 
 /**
@@ -142,6 +219,14 @@ function ensureBodyForMutation(init?: RequestInit): RequestInit | undefined {
 
 function requestMethod(init?: RequestInit): string {
   return (init?.method ?? 'GET').toUpperCase();
+}
+
+function withSessionCsrf(init?: RequestInit): RequestInit | undefined {
+  const method = requestMethod(init);
+  if (method === 'GET' || method === 'HEAD' || !sessionCsrfToken) return init;
+  const headers = new Headers(init?.headers);
+  headers.set('x-csrf-token', sessionCsrfToken);
+  return { ...init, headers };
 }
 
 function exactGetKey(path: string, init?: RequestInit): string {
@@ -173,9 +258,18 @@ function withoutCallerSignal(init?: RequestInit): RequestInit | undefined {
 }
 
 async function performApiFetch(path: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await performSessionRequest(path, init);
+  } catch (error) {
+    if (!init?.signal?.aborted) reportApiConnectionFailure(error);
+    throw error;
+  }
+}
+
+async function performSessionRequest(path: string, init?: RequestInit): Promise<Response> {
   const initialSessionGate = ensureSession();
   await waitForPromiseWithSignal(initialSessionGate, init?.signal);
-  const normalized = ensureBodyForMutation(init);
+  const normalized = withSessionCsrf(ensureBodyForMutation(init));
   const res = await boundedFetch(
     `${API_URL}${path}`,
     {
@@ -190,10 +284,11 @@ async function performApiFetch(path: string, init?: RequestInit): Promise<Respon
   invalidateSession(initialSessionGate);
   const refreshedSessionGate = ensureSession();
   await waitForPromiseWithSignal(refreshedSessionGate, init?.signal);
+  const refreshed = withSessionCsrf(ensureBodyForMutation(init));
   const retryRes = await boundedFetch(
     `${API_URL}${path}`,
     {
-      ...normalized,
+      ...refreshed,
       credentials: 'include',
     },
     API_REQUEST_TIMEOUT_MS,

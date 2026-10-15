@@ -1,12 +1,14 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MEMORY_BOOK_STAR_PATH } from '@/components/shell/memory-book-star-path';
 import { WORKSPACE_MODES } from '@/lib/workspace-modes';
 
 const mocks = vi.hoisted(() => ({
   workspaceMode: 'dev',
   setWorkspaceMode: vi.fn(),
   setRightPanelOpen: vi.fn(),
+  setRightPanelMode: vi.fn(),
   apiFetch: vi.fn(),
   openInvocationTrajectory: vi.fn(),
 }));
@@ -22,6 +24,7 @@ vi.mock('@/stores/chatStore', () => ({
         workspaceMode: mocks.workspaceMode,
         setWorkspaceMode: mocks.setWorkspaceMode,
         setRightPanelOpen: mocks.setRightPanelOpen,
+        setRightPanelMode: mocks.setRightPanelMode,
         threads: [{ id: 'thread-launcher', title: 'Launcher thread' }],
       }),
     {
@@ -29,6 +32,7 @@ vi.mock('@/stores/chatStore', () => ({
         workspaceMode: mocks.workspaceMode,
         setWorkspaceMode: mocks.setWorkspaceMode,
         setRightPanelOpen: mocks.setRightPanelOpen,
+        setRightPanelMode: mocks.setRightPanelMode,
         threads: [{ id: 'thread-launcher', title: 'Launcher thread' }],
       }),
     },
@@ -49,6 +53,10 @@ vi.mock('@/components/story-player/TheaterReplayContent', () => ({
   ),
 }));
 
+import { openTheaterReplay } from '@/components/ThreadSidebar/theater-navigation';
+import { useF307ExperienceWorkbenchStore } from '@/components/workbench/experience-workbench-store';
+import { createInitialWorkbenchState } from '@/components/workbench/workbench-initial-state';
+import { writeShellPresentation } from '../../shell/shell-presentation';
 import { TheaterReplayHost } from '../../story-player/TheaterReplayHost';
 import { WorkspaceLauncher } from '../WorkspaceLauncher';
 
@@ -82,6 +90,55 @@ describe('F284 WorkspaceLauncher', () => {
   afterAll(() => {
     delete (globalThis as { React?: typeof React }).React;
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  });
+
+  it('delegates v2 replay to the real Home host without opening a second Theater overlay', async () => {
+    writeShellPresentation('v2');
+    const onSelectDestination = vi.fn();
+    try {
+      await act(async () =>
+        root.render(
+          <>
+            <WorkspaceLauncher threadId="thread-launcher" onSelectDestination={onSelectDestination} />
+            <TheaterReplayHost />
+          </>,
+        ),
+      );
+      await act(async () =>
+        container.querySelector<HTMLElement>('[data-testid="workspace-launcher-theater"]')?.click(),
+      );
+      expect(onSelectDestination).toHaveBeenCalledWith(expect.objectContaining({ kind: 'action', id: 'theater' }));
+      expect(document.body.querySelector('[data-testid="theater-replay-content"]')).toBeNull();
+    } finally {
+      writeShellPresentation('classic');
+    }
+  });
+
+  it('routes a v2 sidebar replay event to one bootstrapped F307 owner, keeping the legacy overlay absent', async () => {
+    writeShellPresentation('v2');
+    const store = useF307ExperienceWorkbenchStore;
+    const old = store.getState();
+    const hydrate = vi.fn(() => store.setState({ hydrated: true, layout: createInitialWorkbenchState() }));
+    store.setState({ hydrated: false, hydrate, layout: createInitialWorkbenchState() });
+    // Simulate the existing panel mount/hydration triggered by its native mode selection.
+    mocks.setRightPanelMode.mockImplementationOnce(() => store.getState().hydrate());
+    try {
+      await act(async () => root.render(<TheaterReplayHost />));
+      await act(async () => openTheaterReplay('thread-launcher'));
+      expect(store.getState().layout.surfaces).toEqual([
+        expect.objectContaining({
+          type: 'thread-replay',
+          context: 'Launcher thread',
+          objectRef: { kind: 'thread-replay', id: 'thread-launcher' },
+        }),
+      ]);
+      expect(hydrate).toHaveBeenCalledTimes(1);
+      expect(mocks.setRightPanelMode).toHaveBeenCalledWith('workspace');
+      expect(document.body.querySelector('[data-testid="theater-replay-content"]')).toBeNull();
+    } finally {
+      writeShellPresentation('classic');
+      store.setState(old);
+    }
   });
 
   async function renderLauncher() {
@@ -384,6 +441,20 @@ describe('F284 WorkspaceLauncher', () => {
     expect(mocks.setWorkspaceMode).toHaveBeenCalledWith('dev');
     expect(onSelectDevSurface).toHaveBeenCalledWith('browser');
     expect(container.querySelector('[data-testid="workspace-dev-mode-tabs"]')).toBeNull();
+  });
+
+  it('draws the 记忆 tile with the one decided memory icon and leaves its neighbours alone', async () => {
+    await renderLauncher();
+
+    const recall = container.querySelector('[data-testid="workspace-launcher-recall"] svg');
+    expect(recall?.getAttribute('aria-hidden')).toBe('true');
+    expect(recall?.getAttribute('class')).toContain('h-5 w-5');
+    expect(recall?.querySelector('path')?.getAttribute('d')).toBe(MEMORY_BOOK_STAR_PATH);
+
+    const tasks = container.querySelector('[data-testid="workspace-launcher-tasks"] svg');
+    expect(tasks?.getAttribute('stroke')).toBe('currentColor');
+    expect(tasks?.querySelector('path, circle')).not.toBeNull();
+    expect(tasks?.innerHTML).not.toContain(MEMORY_BOOK_STAR_PATH);
   });
 
   it('recalls the latest three invocations with abnormal ones first', async () => {

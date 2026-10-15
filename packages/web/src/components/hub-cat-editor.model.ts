@@ -1,6 +1,8 @@
 import {
   builtinAccountFamilyForClient,
+  type CatCarrier,
   type CliEffortPreset,
+  getCatCarrierOptions,
   getCliEffortOptionsForProvider,
   builtinAccountIdForClient as sharedBuiltinAccountIdForClient,
 } from '@cat-cafe/shared';
@@ -33,16 +35,22 @@ export interface HubCatEditorFormState {
   strengths: string;
   clientId: ClientId;
   accountRef: string;
+  accountBindingMode?: 'follow' | 'override';
   defaultModel: string;
   commandArgs: string;
   cliConfigArgs: string[];
   cliEffort: string;
   /** F291: '' inherits Codex user config. Optional keeps legacy form fixtures source-compatible. */
   codexSpeed?: '' | 'standard' | 'fast';
-  /** F254 D2: Codex carrier override. '' = 跟随服务端 CAT_CAFE_CODEX_CARRIER 环境变量。 */
-  codexCarrier: '' | 'exec_json' | 'app_server';
+  /** Canonical member access mode. */
+  carrier: CatCarrier;
   provider: string;
-  acpEnabled: boolean;
+  agyNativeEnabled?: boolean;
+  agyProfileEnabled?: boolean;
+  agyAutoApprove?: boolean;
+  agyProfileId?: string;
+  agyHomeRoot?: string;
+  agyTrustedWorkspaces?: string;
   acpTransport: 'stdio' | 'httpstream';
   acpCommand: string;
   acpStartupArgs: string;
@@ -93,10 +101,9 @@ export interface StrategyFormState {
 export const CLIENT_OPTIONS: Array<{ value: ClientId; label: string }> = [
   { value: 'anthropic', label: 'Claude' },
   { value: 'openai', label: 'Codex' },
-  { value: 'google', label: 'Gemini' },
+  { value: 'google', label: 'Google / AGY Native' },
   { value: 'kimi', label: 'Kimi' },
   { value: 'opencode', label: 'OpenCode' },
-  { value: 'antigravity', label: 'Antigravity' },
   { value: 'catagent', label: 'CatAgent' },
   { value: 'acp', label: 'ACP Client' },
 ];
@@ -112,20 +119,21 @@ export const SESSION_STRATEGY_OPTIONS: Array<{ value: StrategyType; label: strin
   { value: 'hybrid', label: 'hybrid' },
 ];
 
-export const CODEX_CARRIER_OPTIONS: Array<{ value: HubCatEditorFormState['codexCarrier']; label: string }> = [
-  { value: '', label: '默认（跟随服务端环境）' },
-  { value: 'exec_json', label: 'CLI（codex exec）' },
-  { value: 'app_server', label: 'App Server（池化常驻宿主）' },
-];
+const CARRIER_LABELS: Readonly<Record<CatCarrier, string>> = {
+  cli: 'CLI',
+  sdk: 'SDK',
+  app_server: 'App Server',
+  acp: 'ACP',
+};
+
+export function carrierOptionsForClient(clientId: ClientId): Array<{ value: CatCarrier; label: string }> {
+  return getCatCarrierOptions(clientId).map((value) => ({ value, label: CARRIER_LABELS[value] }));
+}
 
 export { defaultAcpCommandForClient, defaultAcpStartupArgsForClient };
 export {
-  ACP_TRANSPORT_OPTIONS,
-  type AcpTransportValue,
   acpStartupArgsPlaceholder,
   getAcpWarning,
-  isAcpOnlyClient,
-  showTransportSelector,
 } from './hub-cat-editor.acp';
 
 export const DEFAULT_ANTIGRAVITY_COMMAND_ARGS = '. --remote-debugging-port=9000';
@@ -144,9 +152,12 @@ export function getCliEffortOptionsForClient(
 }
 
 /** True only for transports that persist the generic CLI extension fields. */
-export function usesCliTransport(form: Pick<HubCatEditorFormState, 'clientId' | 'acpEnabled'>): boolean {
+export function usesCliCarrier(
+  form: Pick<HubCatEditorFormState, 'clientId' | 'carrier' | 'agyNativeEnabled'>,
+): boolean {
   return (
-    !form.acpEnabled &&
+    form.carrier !== 'acp' &&
+    !(form.clientId === 'google' && form.agyNativeEnabled) &&
     (form.clientId === 'anthropic' ||
       form.clientId === 'openai' ||
       form.clientId === 'google' ||
@@ -348,6 +359,7 @@ export function autoSlug(name: string, currentId?: string): string {
 
 export function initialState(cat?: CatData | null, draft?: HubCatEditorDraft | null): HubCatEditorFormState {
   const createDraft = !cat ? draft : null;
+  const clientId = (cat?.clientId as ClientId | undefined) ?? createDraft?.clientId ?? 'anthropic';
   const persistedCliEffort = cat?.cli?.effort;
   const voiceConfig = cat?.voiceConfig;
   const acpConfig = cat?.acp;
@@ -369,33 +381,35 @@ export function initialState(cat?: CatData | null, draft?: HubCatEditorDraft | n
     teamStrengths: cat?.teamStrengths ?? createDraft?.templateTeamStrengths ?? '',
     caution: cat?.caution ?? '',
     strengths: cat?.strengths?.join(', ') ?? '',
-    clientId: (cat?.clientId as ClientId | undefined) ?? createDraft?.clientId ?? 'anthropic',
+    clientId,
     accountRef: cat?.accountRef ?? createDraft?.accountRef ?? '',
-    defaultModel: cat?.defaultModel ?? createDraft?.defaultModel ?? '',
+    accountBindingMode: cat?.accountBindingMode,
+    defaultModel:
+      (cat?.agyProfile?.carrier === 'native' ? cat.agyProfile.model : undefined) ??
+      cat?.defaultModel ??
+      createDraft?.defaultModel ??
+      '',
     commandArgs: cat?.commandArgs?.join(' ') ?? createDraft?.commandArgs ?? '',
     cliConfigArgs: [...(cat?.cliConfigArgs ?? [])],
     cliEffort: persistedCliEffort ?? '',
     codexSpeed: cat?.cli?.serviceTier ?? '',
-    codexCarrier: cat?.cli?.carrier ?? '',
+    carrier: cat?.carrier ?? getCatCarrierOptions(clientId)[0] ?? 'cli',
     provider: cat?.provider ?? '',
-    acpEnabled:
-      Boolean(acpConfig) || (cat?.clientId as ClientId | undefined) === 'acp' || createDraft?.clientId === 'acp',
+    agyNativeEnabled: cat?.clientId === 'google' && cat?.agyProfile?.carrier === 'native',
+    agyProfileEnabled: cat?.agyProfile ? cat.agyProfile.enabled === true : true,
+    agyProfileId: cat?.agyProfile?.profileId ?? catId,
+    agyAutoApprove: cat?.agyProfile?.carrier === 'native' && cat.agyProfile.autoApprove === true,
+    agyHomeRoot: cat?.agyProfile?.homeRoot ?? '',
+    agyTrustedWorkspaces: cat?.agyProfile?.trustedWorkspaces?.join('\n') ?? '',
     acpTransport: (acpConfig?.transport as 'stdio' | 'httpstream' | undefined) ?? 'stdio',
-    acpCommand:
-      acpConfig?.command ??
-      defaultAcpCommandForClient((cat?.clientId as ClientId | undefined) ?? createDraft?.clientId ?? 'anthropic'),
+    acpCommand: acpConfig?.command ?? defaultAcpCommandForClient(clientId),
     acpStartupArgs:
       acpConfig?.startupArgs?.join(' ') ??
-      defaultAcpStartupArgsForClient(
-        (cat?.clientId as ClientId | undefined) ?? createDraft?.clientId ?? 'anthropic',
-        (acpConfig?.transport as 'stdio' | 'httpstream' | undefined) ?? 'stdio',
-      ),
+      defaultAcpStartupArgsForClient(clientId, (acpConfig?.transport as 'stdio' | 'httpstream' | undefined) ?? 'stdio'),
     acpMaxLiveProcesses: acpConfig?.pool?.maxLiveProcesses !== undefined ? String(acpConfig.pool.maxLiveProcesses) : '',
     acpIdleTtlMinutes:
       acpConfig?.pool?.idleTtlMs !== undefined ? String(Math.round(acpConfig.pool.idleTtlMs / 60_000)) : '',
-    mcpSupport:
-      cat?.mcpSupport ??
-      defaultMcpSupportForClient((cat?.clientId as ClientId | undefined) ?? createDraft?.clientId ?? 'anthropic'),
+    mcpSupport: cat?.mcpSupport ?? defaultMcpSupportForClient(clientId),
     sessionChain: String(cat?.sessionChain ?? true) as SessionChainValue,
     contextWindow: cat?.contextWindow ? String(cat.contextWindow) : '',
     voiceVoice: voiceStr(voiceConfig?.voice),

@@ -1,11 +1,11 @@
 ---
 name: memory-search-best-practices
 description: >
-  记忆系统多刀检索 + recall coverage 策略（8 类题型 recipe）。
+  按问题与证据缺口选择记忆检索范围（8 类题型参考）。
   Use when: 任务是 "哪些地方提过 X" / "X 的来源 / source map" / "有没有提过 Y / absence check" / "上次到现在变了什么 / delta" / 冷启动 onboard 复杂主题 / 任何召回任务搜了一刀觉得不够。
   Not for: 只是选哪个入口走第一刀（用 memory-navigation）/ 已知精确 anchor 单 Read（直接 Read）/ 代码符号查（Grep/LSP）/ 新功能开发（不是 recall 任务）。
-  Output: 单一 owner 在一条任务链内完成多 query / 多 scope union + coverage matrix（item/source/谁提到/直接 vs 间接）+ 一次终局交付。
-  GOTCHA: 和 memory-navigation 互补不重叠 — memory-navigation 决定**第一刀走哪个工具**（search vs graph vs list_recent），本 skill 决定**要不要补刀 + 题型对应几刀几路 + 何时停**。Ragdoll家族必加载：opus 系治"我能猜出来 / 碎片够了"停太早病，fable 系治"再确认一轮"停太晚病（双向校准见正文）。
+  Output: 单一 owner 汇总原始证据、实际覆盖与未验证边界，一次交付。
+  GOTCHA: memory-navigation 选择入口；本 skill 处理证据缺口与覆盖边界，不按模型家族或固定轮次决定停止。
 triggers:
   - "哪些 thread"
   - "哪些 md"
@@ -24,134 +24,77 @@ triggers:
   - "全集"
 ---
 
-# Memory Search Best Practices（多刀检索 + 全集召回）
+# Memory Search Best Practices（按问题检索与收敛）
 
-> 单刀 top-k 不是全集；recall 任务需要 multi-query union + Read 原文 + 知道何时停。
+## 价值门禁
 
-## 核心命题
+家里的决策散在文档、thread 原话与关系图中。一次 top-k 命中只能证明找到了候选，不能证明全集或首次出现。
+本 skill 提供这些本地入口的使用方法；已知精确 anchor、代码符号查询或新功能实现不需要套用整套检索。
 
-**Query expansion 由 agent 做，不是系统做**（KD-8 同源：dumb system + smart agent）：
+## 按证据缺口判断
 
-- 系统不知道 "AUDHD" 在我们家关联 sensory gating / 2e / RSD / PDA — 那是领域知识
-- Agent（LLM）有领域知识，但**经常觉得"够了"就停**（Ragdoll家族尤甚——2026-05-17 dogfood 实证：三猫搜同题各拿 10 条，全集需三猫合）
-- 解法：教 agent **题型对应 recipe** + **何时停下来**判据，不在系统层加黑盒 expansion
+按问题与证据缺口决定检索范围。用于结论的关键证据应读原文；涉及覆盖、来源或“没有发生过”的判断，检查容易遗漏的措辞与来源。
+继续查证应针对会改变结论的具体缺口；证据足够，或剩余未知已能清楚说明时，就收敛交付。
+不按模型家族规定搜索轮次，不为凑次数重复搜索，也不要求通读未被采用的所有命中。
 
-### 单一 owner 闭环（检索切片不是用户要追的 feed）
+`Query expansion` 由 agent 根据已经发现的语义关系选择，不让搜索服务猜用户的完整意图。
+匹配分数用于排序，不替代原始证据的可靠性、适用范围和时效判断。
 
-多刀是同一只猫内部扩大召回的证据步骤，不是把一个结果拆成多份 custody：
+## 单一 owner 闭环
 
-- 一个召回目标只保留**单一 owner**，由它持有 union、去重、Read 原文与停止判据，最后**一次终局交付**。
-- query、scope、语言或工具切片不得升级成需要用户分别跟踪的独立 feed、任务或半份报告。
-- 可以在同一 invocation 内并行调用只读工具以缩短墙钟时间，但调用完成后仍由当前 owner 统一收敛；中间切片不向用户索要推进决定。
-- 只有用户明确要求独立多猫观点，或子任务本身有不同、可独立验收的交付物时，才建立多 custody；这不属于普通 coverage 搜索。
+一个召回目标由同一 owner 汇总、去重、核原文并交付。query、scope、语言和工具切片不得拆成用户需要分别跟踪的独立任务或 feed。
+独立只读查询可以并行；中间结果由 owner 统一收敛，不向用户逐项索要推进决定。
+只有用户要求独立观点，或存在可独立验收的交付物时，才另行分工。
 
-## 8 类题型 → recipe
+## 8 类题型参考
 
-| 题型 | 例 query | Recipe（≥几刀几路）| 关键 |
-|------|---------|------------------|------|
-| **是什么** | "F200 是什么" | 1 刀：`search_evidence(query, hybrid, scope=docs)` + Read top doc | 单刀够用 |
-| **周边关系** | "F200 关联什么" | 1 刀：`graph_resolve(anchor, depth=1, relations=[feature_ref,related_to])` | 配 relations filter 防 hub 爆炸 |
-| **决策考古** | "为什么当时选 X 而不是 Y" | `graph_resolve(anchor)` → Read ADR/spec → 抽 thread anchor → `get_thread_context` 看原话 | 必 Read ADR 原文 + thread 原话 |
-| **冷启动 onboard** | "新猫接手 F200 要知道什么" | docs(hybrid) + graph + trajectories + Read spec | 三入口全用 |
-| **coverage 全集** | "哪些地方提过 X" | **≥3 刀**：docs/hybrid + threads/semantic + agent expand 同义/缩写/中英二轮 + graph_resolve 命中 anchor 后追 source threads + union dedup | **不是单 top-k**；agent 自己 expand |
-| **source-map / provenance** | "X 这个想法的源头是哪个 thread" | canonical doc 命中后从文档抽 source thread ids → `get_thread_context` Read 原文 | canonical doc 自带 provenance link，跟着走 |
-| **absence check** | "我们提过 Y 没有" | 正反两路：`search(Y)` + `search(Y 相关概念/反义)` 都 0 命中才算 absent | 单刀 0 命中不等于不存在 |
-| **delta** | "上次到现在 X 变了什么" | `list_recent(scope=threads, since=N天)` + 对比 graph 邻居增减 + Read 关键 diff。**压缩恢复子场景起手**：先看 TodoWrite + session digest 拿到"上次已知状态" → 再 list_recent 补增量（46 review P3 补） | 时间窗口 + 增量视角 |
+下表是寻找证据的路径，不是必跑次数或所有工具必用清单。
 
-## AUDHD coverage 案例 5 步 recipe（operator真实任务）
+| 题型 | 例子 | 可用路径 | 收敛依据 |
+|------|------|----------|----------|
+| 是什么 | F200 是什么 | 精确 anchor 用 graph_resolve；模糊概念用 search_evidence(scope=docs, mode=hybrid)，读相关原文 | 原文足以回答当前问题 |
+| 周边关系 | F200 关联什么 | graph_resolve(anchor, depth=1)，按需限定 relations | 相关关系与本题的联系已明确 |
+| 决策考古 | 为什么选 X | 找 ADR/spec，沿其中的 thread/message 坐标读当时原话 | 区分当时理由、后来解释和未确认处 |
+| 冷启动 | 接手 F200 要知道什么 | 读当前 spec/Task，按缺口补 graph、近期 thread 或会话摘要 | 能说清原目标、当前事实和下一动作 |
+| coverage | 哪些地方提过 X | 分别查 docs 与 threads，按实际线索扩展同义词、缩写、语言或关联概念；合并去重并读采用的原文 | 主要相关来源已覆盖，继续查询不再增加实质线索；报告实际边界 |
+| source-map | 这个想法源于哪里 | 从文档 provenance 追 source thread/message，必要时补早期候选 | 结论能回到原始来源；有限检索不冒充最早或完整来源 |
+| absence | 提过 Y 吗 | 核查询范围与索引状态，检查相关措辞及相反表述 | 只能说明已查范围未发现；零命中不证明全局不存在 |
+| delta | 上次以来变了什么 | 先确定旧状态与时间窗口，再用 list_recent、当前真相和相关 diff 比较 | 变化有前后依据，未覆盖部分明确 |
 
-```
-1. search_evidence("audhd adhd asd", hybrid, scope=docs, limit=10)
-   → 命中 user_audhd_crossdomain + audhd-self-observation/ 三件套 + F085/F195/F196/F169
-2. search_evidence("audhd adhd asd", semantic, scope=threads, limit=10)
-   → 命中 5 个直接 thread
-3. Agent 用领域知识 expand（不让系统猜）:
-     audhd → sensory gating / 2e / RSD / PDA / hyperfocus / 倦怠 / 梦境 / 自闭 / 多动 / 神经多样性
-   对每个二轮搜（中文一遍 + 英文/缩写一遍）
-4. Read top canonical doc (operator-audhd-operating-manual.md)
-   → 从文档抽 source thread ids → 二轮 get_thread_context Read 原文
-5. 输出 coverage matrix（item / source / 谁提到 / 直接 vs 间接 / 置信度）
-```
+## 复杂 coverage 的本地经验
 
-## 接系统递的铲子（F256 Related directions）
+历史 AUDHD 检索曾因查询词不同，各自只取到一部分材料。相关概念可能以中英文、缩写或生活场景出现。
+据已经发现的内容选择扩展，例如 sensory gating、2e、RSD、PDA、hyperfocus；这只是该案例的线索，不是每题固定词表。
+文档与对话回答不同问题：文档便于定位当前结论，对话用于核原话、参与者与时间。
+输出可以用 item／source／谁提到／直接或间接／未知边界的简表；简单问题不需要矩阵。
 
-F256 Phase B/C 起，`search_evidence` topk 结果末尾默认渲染 `📎 Related directions` 块——系统把三路 expansion provenance 投影给你。接法：
+## F256 Related directions
 
-- **Hint 是种子不是结论**：指方向、不证明相关；不相关就忽略——hints 是每刀的顺手加菜，**不替代 coverage 多刀**（照旧 ≥3 刀多路）
-- **按 provenance 桶定信任**：`convention-edge`（静态代码/文档关系）> `source-thread`（doc↔讨论溯源）> `frontmatter-alias`（关键词启发式——2026-07-08 三刀实测全为 backlog/architecture/lessons 类 super-hub 泛词，低信任，别当 anchor 用）
-- **Follow 必 Read**：F200 记 followup rate，Read / `graph_resolve` 命中 hint anchor 才算 consumption
+`search_evidence` 的 Related directions 是带 provenance 的候选线索，不是结论或必读清单。
 
-## Ragdoll家族停止判据校准（双向）
+- 看它是否能补当前缺口，再决定是否跟进。
+- `convention-edge`、`source-thread` 和 `frontmatter-alias` 表示不同来源；泛词 alias 曾把结果带向 BACKLOG 等大目录，不能据此认定直接相关。
+- 采用候选支持结论时，使用返回的 graph／文件／thread 坐标读原始材料；未采用的候选无需全部通读。
+- 工具返回 truncated、scanCapped 或 degraded 时，保留这一覆盖限制；必要的分页和补查由问题决定。
 
-同一张停止判据表两种读法：**opus 系读下限（≥3 路才准停），fable 系读上限（无新 anchor 即必停）**——校准随 F256 Phase D per-family telemetry 迭代。
+## 常见误判
 
-### Opus 系（46/47/48/4.5/sonnet）：停太早——magic words 是油门
+| 误判 | 处置 |
+|------|------|
+| 拿 top-k 或摘要当全集 | 核原文，按实际来源与措辞补缺口，交代覆盖范围 |
+| 没有新证据仍为凑轮次重复搜 | 停止重复查询，交付已支持的结论与剩余未知 |
+| 只搜一种措辞就断言不存在 | 检查相关表述与索引边界，只声明已查范围未发现 |
+| 命中 canonical doc 就把转述当原话 | 沿来源坐标核对应的 thread/message |
+| 盲跟全部 Related directions | 只追能改变结论或补缺口的候选 |
+| 把 list_recent(scope=docs) 当全集 | 该入口曾有 timestamp/混合范围限制；结合所需来源，保留返回的范围限制 |
 
-operator experience："**Ragdoll太聪明太自信，搜到足够推理就不搜了**"（2026-05-17 AUDHD dogfood 实证）。
+## 和其他 Skill 的区别
 
-- "**我能猜出来**" → 停，Read 源文件。摘要是索引不是答案
-- "**碎片够了**" → 停，至少再搜一轮不同角度，doc anchor 全部 Read 原文
-- "**应该是 X**" / "**大概知道**" → 不算搜过，必须 ≥3 路真搜 + Read
+- `memory-navigation` 选择首次入口；本 skill 判断如何补缺口与收敛。
+- `debugging` 处理 bug 根因，不要求普通实现任务先做一次历史普查。
+- `cross-cat-handoff` 处理交接；检索本身不产生额外协作责任。
 
-### Fable 系：停太晚——magic words 是刹车
+## 下一步与相关来源
 
-档案："不给停止条件，会把假设空间收敛到唯一解才停"（2026-07-08 档案预测 + 行为层自述，待 AC-D1 per-family 分桶验证）。
-
-- "**再确认一轮**" → 停，自问：上一刀有新 anchor 吗？没有 = 判据已满足，立刻收手写结论
-- "**万一还有呢**" → absence 判据是正反两路 + 相关概念 0 命中，满足即断言，不遍历宇宙
-
-**coverage 类召回铁律（仅 coverage / source-map / absence 三题型；精确题按上表 recipe 停——"是什么"1 刀命中 Read 完即止）**（2026-07-15 修订：旧版"任何召回任务 ≥3 路"与 recipe 表自相矛盾，对 opus 系治停太早、对 fable 系反向助推停太晚）：
-
-- ≥3 路命中无新 anchor 才停（不是"找到第一个 high confidence 就停"，也不是"永不停"）
-- 高置信命中 → 必 Read 原文（不止步摘要——**此条全题型通用**）
-- 跨语言至少两遍（中文一遍 + 英文/缩写一遍）
-
-## 何时停下来判据
-
-| 题型 | 停止条件 |
-|------|---------|
-| 是什么 / 周边关系 | 1 刀命中高置信 doc + Read 完即停 |
-| 决策考古 | ADR + ≥1 个 thread 原话 Read 完即停 |
-| 冷启动 | 三入口 + spec Read 完 + 列 question 清单即停 |
-| coverage 全集 | **≥3 路 + agent expand 二轮 + Read canonical → 无新 anchor 出现** 才停 |
-| source-map | canonical doc 列出的 source thread 全部 Read 完即停 |
-| absence | 正反两路 + ≥1 个相关概念都 0 命中即可断言 absent |
-| delta | 时间窗口扫完 + 邻居增减列出即停 |
-
-## Common Mistakes
-
-| 错误 | 后果 | 修复 |
-|------|------|------|
-| 单刀 search → 拿摘要推理 → 直接答 | 漏全集（AUDHD 实证：每猫拿 10 条但全集需三猫合）| coverage 题型 ≥3 路 + 必 Read 原文 |
-| 觉得 "我能猜出来" 不搜了 | Ragdoll家族病，输 dogfood 比赛 | 当 magic word 拉刹车，强制 ≥3 路 |
-| 让系统 expand "AUDHD→10 个词" | 黑盒推理，污染（KD-8 违例）| Agent 自己 expand（用 LLM 领域知识 + 可解释） |
-| 跨语言只搜英文 | 中文文档漏 | 中英各搜一遍 |
-| canonical doc 命中后不追 source thread | source-map / provenance 残缺 | doc 内的 thread id / wikilink 全 Read |
-| 单刀 0 命中就断 absent | 假阴性（可能用别的措辞写了）| 正反两路 + 相关概念都搜 |
-| `list_recent(scope=docs)` 当全集用 | DF-1 已知 docs scope timestamp 失真 / 被 global:memory 淹 | coverage 任务别只靠 list_recent，配 search+graph |
-| 把 memory-navigation 和本 skill 混淆 | 重复或漏 | memory-navigation 选**第一刀**；本 skill 决定**补刀策略** |
-| 盲 follow 全部 Related directions hints | frontmatter-alias 泛词把你带去 super-hub 总目录（backlog/lessons）| 按 provenance 桶定信任；不相关就忽略 |
-
-## 和其他 Skill 的区别（防误触发）
-
-| Skill | 干什么 | 何时用 |
-|-------|--------|------|
-| **memory-search-best-practices**（本 skill）| 多刀检索 + 题型 recipe + 何时停 | 召回任务、coverage、source-map、delta、absence |
-| `memory-navigation` | **第一刀走哪个工具** + 噪音控制 + 入口决策树 | 不知道用哪个入口 |
-| `debugging` | bug 根因调查 | 遇到 bug 而非 recall |
-| `cross-cat-handoff` | 找别的猫问 | 自己搜不到求助队友 |
-
-**关系**：memory-navigation 决定**第一刀走哪个工具**；本 skill 决定**要不要补刀 + 题型对应几刀几路 + 何时停**。先用 memory-navigation 选入口，再用本 skill 决定后续。
-
-## 链入下一步
-
-- 找到决策后想立项 → `feat-lifecycle`
-- 找到 bug 线索 → `debugging`
-- 找到 thread 后想看原文 → `cat_cafe_get_thread_context`
-- 找到一个有意思的方向想跨猫讨论 → `collaborative-thinking`
-
-## 相关
-
-- **Spec**: `docs/features/F200-memory-recall-eval.md` v1.2 SW-1 / `docs/features/F256-memory-search-strategy-evolution.md`（Phase A 链入 session hook；Phase B/C 上线 Related directions）
-- **Related**: `memory-navigation`（前置入口决策） / `../.cat-cafe-shared-refs/memory-routing-partial.md`
-- **触发案例**: operator AUDHD recall 任务（2026-05-17）暴露三猫搜出不同子集，催生本 skill；2026-07-08 operator触发 Lint → 补 F256 接法 + 双向校准
+找到材料后完成用户原任务。需要实现时按原授权继续；只有方向仍待讨论才进入 `collaborative-thinking`。
+历史与系统边界见 `docs/features/F200-memory-recall-eval.md`、`docs/features/F256-memory-search-strategy-evolution.md` 和 `../.cat-cafe-shared-refs/memory-routing-partial.md`。

@@ -198,12 +198,10 @@ describe('L0 Staging Protocol PR-B-impl (ADR-038)', () => {
       assert.doesNotMatch(freshnessClause, /list_recent/);
     });
 
-    sourceOnlyTest('四象限 renders as an unknowns-first Magic Word', () => {
+    sourceOnlyTest('四象限 is owned by compiled L0, not duplicated in staging', () => {
       const out = buildStagingPrepend('codex');
-      assert.match(out, /「四象限」/);
-      assert.match(out, /KK\/KU\/UK\/UU/);
-      assert.match(out, /最大盲区/);
-      assert.match(out, /禁止只填表/);
+      assert.doesNotMatch(out, /四象限|unknown-first/);
+      assert.ok(!loadStagingManifest().items.some((item) => item.id === 'four-quadrants-magic-word'));
     });
 
     sourceOnlyTest('F302 renders one portable workspace reflex with runtime ports and repo truth', () => {

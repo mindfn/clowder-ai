@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { createRoutingDossierFixture } from './helpers/routing-dossier-fixture.js';
+
+const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
 function candidate(catId, overrides = {}) {
   return {
@@ -58,11 +64,79 @@ function preference(overrides = {}) {
 }
 
 describe('F293 RoutingContextPromptProjector', () => {
+  // The home manifest is not exported. A missing or malformed home dossier
+  // still fails this case; public contracts keep using the synthetic dossier.
+  if (existsSync(resolve(repositoryRoot, 'sync-manifest.yaml'))) {
+    it('projects the installed home dossier scarce policy without relying on the synthetic fixture', async () => {
+      const { RoutingContextPromptProjector } = await import(
+        '../dist/domains/routing-context/RoutingContextPromptProjector.js'
+      );
+      const { loadDossierProfiles } = await import('@cat-cafe/shared/dossier');
+      const profiles = loadDossierProfiles(repositoryRoot);
+      const policy = profiles.get('fable-5')?.engagementPolicy;
+      assert.equal(policy?.quota, 'weekly_subscription_scarce');
+      assert.equal(policy.defaultMode, 'one_shot_calibration');
+      assert.equal(policy.routineRepairReturn, 'author_then_routine_reviewer_if_needed');
+      assert.equal(policy.reentry, 'only_for_new_architecture_or_decision_judgment_or_explicit_cvo_request');
+      const projection = new RoutingContextPromptProjector({
+        getEngagementPolicy: (catId) => profiles.get(catId)?.engagementPolicy,
+      }).project(readModel([candidate('fable-5'), candidate('codex')]));
+      const payload = JSON.parse(projection.split('\n')[2]);
+      assert.deepEqual(payload.scarceSeats, [{ catId: 'fable-5', quotaPoolType: 'weekly_subscription_scarce' }]);
+    });
+  }
+
+  it('projects scarce quota pool type and attributed cold-start cost even when availability is healthy', async (t) => {
+    const { RoutingContextPromptProjector, ROUTING_CONTEXT_PROMPT_MAX_CHARS } = await import(
+      '../dist/domains/routing-context/RoutingContextPromptProjector.js'
+    );
+    const { loadDossierProfiles } = await import('@cat-cafe/shared/dossier');
+    const dossier = createRoutingDossierFixture();
+    t.after(dossier.close);
+    const profiles = loadDossierProfiles(dossier.root);
+    const projector = new RoutingContextPromptProjector({
+      getEngagementPolicy: (catId) => profiles.get(catId)?.engagementPolicy,
+    });
+    const projection = projector.project(readModel([candidate('fable-5'), candidate('codex')]));
+    const payload = JSON.parse(projection.split('\n')[2]);
+    assert.deepEqual(
+      payload.scarceSeats.map((seat) => seat.catId),
+      ['fable-5'],
+    );
+    assert.equal(payload.scarceSeats[0].quotaPoolType, 'weekly_subscription_scarce');
+    assert.equal(payload.scarceSeatColdStartObservation.catId, 'fable-5');
+    assert.match(payload.scarceSeatColdStartObservation.note, /长线程冷启动约占周额度 2%（operator 10-06 观测）/);
+    assert.match(payload.scarceSeatColdStartObservation.sourceRef, /thread_msl9i0iius52mpkh/);
+    assert.ok(projection.length <= ROUTING_CONTEXT_PROMPT_MAX_CHARS);
+  });
+
   it('emits nothing for all-available context without an active preference', async () => {
     const { RoutingContextPromptProjector } = await import(
       '../dist/domains/routing-context/RoutingContextPromptProjector.js'
     );
     assert.equal(new RoutingContextPromptProjector().project(readModel([candidate('sol')])), '');
+  });
+
+  it('bounds a projection with many scarce seats and anomalies', async () => {
+    const { RoutingContextPromptProjector } = await import(
+      '../dist/domains/routing-context/RoutingContextPromptProjector.js'
+    );
+    const projector = new RoutingContextPromptProjector({
+      getEngagementPolicy: () => ({ quota: 'weekly_subscription_scarce' }),
+    });
+    const projection = projector.project(
+      readModel(
+        Array.from({ length: 30 }, (_, index) =>
+          candidate(`cat-${index}`, {
+            availability: 'degraded',
+            freshness: 'fresh',
+            effect: 'advisory',
+            reasons: [{ code: 'routing_signal_degraded', summary: 'x'.repeat(1000), sourceRefs: [`signal:${index}`] }],
+          }),
+        ),
+      ),
+    );
+    assert.ok(projection.length <= 3200, `projection has ${projection.length} chars`);
   });
 
   it('emits only anomalies and active preference guidance with bounded provenance', async () => {

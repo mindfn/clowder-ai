@@ -73,7 +73,9 @@ function recoverProgramReading(value: unknown): EvolutionReading | undefined {
 interface ReadingStore {
   programs: Record<string, EvolutionReading>;
   workspaceProgramIds: Record<string, string | null>;
+  workspacePages: Record<string, 'programs' | 'eval'>;
   selectWorkspaceProgram: (workspaceKey: string, programId: string | null) => void;
+  selectWorkspacePage: (workspaceKey: string, page: 'programs' | 'eval') => void;
   update: (programId: string, change: Partial<EvolutionReading>) => void;
   clearOwnerSelections: () => void;
 }
@@ -84,11 +86,15 @@ export const useEvolutionReading = create<ReadingStore>()(
     (set) => ({
       programs: {},
       workspaceProgramIds: {},
+      workspacePages: {},
+      selectWorkspacePage: (workspaceKey, page) =>
+        set((state) => ({ workspacePages: { ...state.workspacePages, [workspaceKey]: page } })),
       selectWorkspaceProgram: (workspaceKey, programId) =>
         set((state) => ({ workspaceProgramIds: { ...state.workspaceProgramIds, [workspaceKey]: programId } })),
       clearOwnerSelections: () =>
         set((state) => ({
           workspaceProgramIds: {},
+          workspacePages: {},
           programs: Object.fromEntries(
             Object.entries(state.programs).map(
               ([id, { view, scroll, journeyMoment, preparationSection, preparationGtSourceKey, exploration }]) => [

@@ -9,8 +9,8 @@
  * because: (1) shared-rules parsing is compile-time in governance-l0.ts,
  * (2) the word list changes rarely, (3) runtime regex is simpler and faster.
  *
- * Sources of truth for magic words: shared-rules.md §Magic Words table and
- * ADR-038 l0-staging-content.md entries awaiting L0 budget.
+ * Source of truth: shared-rules.md §Magic Words summary table, with aliases
+ * expanded. Retired words stay in existing event records, not new detections.
  */
 
 export interface MagicWordHit {
@@ -24,17 +24,15 @@ export interface MagicWordHit {
  * Each entry is the word inside「」brackets.
  */
 export const MAGIC_WORD_PATTERNS: readonly string[] = [
-  '脚手架',
-  '绕路了',
-  '喵约',
   '星星罐子',
+  '脚手架',
   '第一性原理',
   '数学之美',
-  '下次一定',
-  '我能猜出来',
-  '碎片够了',
   '补锅匠',
   '四象限',
+  'unknown-first',
+  '钛合金裤衩子',
+  '钛合金内裤',
 ];
 
 /**

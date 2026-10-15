@@ -1,5 +1,14 @@
 const labels = { markup: '标注', comment: '评论' };
 
+/** PNG saves live in the editing menu; the original video save remains directly reachable. */
+export async function openAnnotationSave(page) {
+  const save = page.getByRole('button', { name: '保存批注', exact: true });
+  const actions = page.getByLabel('批注操作', { exact: true });
+  if ((await actions.count()) > 0 && !(await save.isVisible())) await actions.click();
+  await save.waitFor();
+  return save;
+}
+
 export async function selectReviewMode(page, mode) {
   const toolbar = page.getByRole('region', { name: '作品画布工具' });
   const current = await toolbar.getAttribute('data-review-mode');
@@ -24,7 +33,7 @@ export async function selectMarkupColor(page, color) {
 
 export async function openReviewPanel(page, panel) {
   const targets = {
-    comments: { landmark: '作品讨论', button: /^查看讨论/ },
+    comments: { landmark: '作品讨论', button: '打开作品讨论' },
     decision: { landmark: '审阅结论', button: '完成审阅' },
     details: { landmark: '版本与历史', button: '审阅详情' },
   };

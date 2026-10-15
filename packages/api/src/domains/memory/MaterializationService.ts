@@ -2,7 +2,7 @@
 // Phase A: basic skeleton; Phase B: full .md patch + git commit
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type {
   EvidenceKind,
@@ -43,6 +43,14 @@ export class MaterializationService implements IMaterializationService {
     private readonly docsRoot: string,
     private readonly indexBuilder?: Pick<IIndexBuilder, 'incrementalUpdate'>,
   ) {}
+
+  isDefaultTargetRoot(targetRoot: string): boolean {
+    try {
+      return realpathSync(targetRoot) === realpathSync(this.docsRoot);
+    } catch {
+      return false;
+    }
+  }
 
   async canMaterialize(markerId: string): Promise<boolean> {
     const markers = await this.markerQueue.list();

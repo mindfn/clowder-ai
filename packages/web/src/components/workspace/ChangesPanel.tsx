@@ -1,20 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import type { PullRequestChangesTarget } from '@cat-cafe/shared';
+import { useLayoutEffect, useState } from 'react';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import { ThreadNativeReviewSettingsContent } from '@/components/ThreadSidebar/ThreadNativeReviewSettings';
-import { apiFetch } from '@/utils/api-client';
+import { ChangesPanelV2 } from './ChangesPanelV2';
 import { DiffViewer } from './DiffViewer';
 import { FileIcon } from './FileIcons';
-
-interface ChangedFile {
-  status: string;
-  path: string;
-}
-
-interface DiffData {
-  changedFiles: ChangedFile[];
-  diff: string;
-}
+import { PullRequestChangesEmpty, PullRequestChangesStatus } from './PullRequestChangesStatus';
+import { useChangesDiff } from './useChangesDiff';
 
 const statusLabels: Record<string, { label: string; color: string }> = {
   M: { label: 'M', color: 'text-amber-400' },
@@ -33,36 +27,15 @@ interface ChangesPanelProps {
   worktreeId: string | null;
   basisPct: number;
   threadId?: string | null;
+  onOpenFile?: (path: string) => void;
+  pullRequestTarget?: PullRequestChangesTarget;
+  onBack?: () => void;
 }
 
-export function ChangesPanel({ worktreeId, basisPct, threadId }: ChangesPanelProps) {
-  const [data, setData] = useState<DiffData | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+function ChangesPanelClassic({ worktreeId, basisPct, threadId, pullRequestTarget, onBack }: ChangesPanelProps) {
+  const { data, loading, error, refresh, targetKey } = useChangesDiff(worktreeId, pullRequestTarget);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-
-  const fetchDiff = useCallback(async () => {
-    if (!worktreeId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await apiFetch(`/api/workspace/diff?worktreeId=${encodeURIComponent(worktreeId)}`);
-      if (!res.ok) {
-        setError('Failed to fetch changes');
-        return;
-      }
-      const json = await res.json();
-      setData(json);
-    } catch {
-      setError('Network error');
-    } finally {
-      setLoading(false);
-    }
-  }, [worktreeId]);
-
-  useEffect(() => {
-    fetchDiff();
-  }, [fetchDiff]);
+  useLayoutEffect(() => setSelectedFile(null), [targetKey]);
 
   if (!worktreeId) {
     return <div className="p-4 text-center text-cafe-secondary text-xs">No worktree selected</div>;
@@ -70,7 +43,10 @@ export function ChangesPanel({ worktreeId, basisPct, threadId }: ChangesPanelPro
 
   return (
     <div className="flex flex-col min-h-0 flex-1">
-      {threadId && (
+      {pullRequestTarget && (
+        <PullRequestChangesStatus target={pullRequestTarget} data={data} error={error} onBack={onBack} />
+      )}
+      {threadId && !pullRequestTarget && (
         <details
           className="flex-shrink-0 border-b border-cafe-subtle/40 bg-cafe-surface/40"
           data-testid="native-review-workspace-strip"
@@ -92,7 +68,7 @@ export function ChangesPanel({ worktreeId, basisPct, threadId }: ChangesPanelPro
           </span>
           <button
             type="button"
-            onClick={fetchDiff}
+            onClick={() => void refresh()}
             disabled={loading}
             className="text-micro text-cafe-interactive/40 hover:text-cafe-interactive transition-colors disabled:opacity-50"
             title="Refresh"
@@ -100,7 +76,11 @@ export function ChangesPanel({ worktreeId, basisPct, threadId }: ChangesPanelPro
             {loading ? '...' : '↻'}
           </button>
         </div>
-        {error && <div className="px-3 py-1.5 text-micro text-conn-red-text">{error}</div>}
+        {error && !pullRequestTarget && (
+          <div className="px-3 py-1.5 text-micro text-conn-red-text">
+            {error === 'fetch_failed' ? 'Failed to fetch changes' : 'Network error'}
+          </div>
+        )}
         {data?.changedFiles.map((f) => {
           const info = getStatusInfo(f.status);
           return (
@@ -122,7 +102,9 @@ export function ChangesPanel({ worktreeId, basisPct, threadId }: ChangesPanelPro
           );
         })}
         {data && data.changedFiles.length === 0 && (
-          <div className="px-3 py-4 text-center text-cafe-muted text-xs">No uncommitted changes</div>
+          <div className="px-3 py-4 text-center text-cafe-muted text-xs">
+            {pullRequestTarget ? <PullRequestChangesEmpty /> : 'No uncommitted changes'}
+          </div>
         )}
       </div>
 
@@ -138,4 +120,9 @@ export function ChangesPanel({ worktreeId, basisPct, threadId }: ChangesPanelPro
       </div>
     </div>
   );
+}
+
+export function ChangesPanel(props: ChangesPanelProps) {
+  const presentation = useShellPresentation();
+  return presentation === 'v2' ? <ChangesPanelV2 {...props} /> : <ChangesPanelClassic {...props} />;
 }

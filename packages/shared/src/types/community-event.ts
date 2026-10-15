@@ -34,6 +34,7 @@ export type CommunityEventKind =
   | 'case.fix_evidence_recorded'
   // External review lifecycle events (F168 Phase F-Step3)
   | 'case.external_review_assigned'
+  | 'case.external_review_reassigned'
   | 'case.head_observed'
   | 'case.ci_observed'
   | 'case.cloud_review_observed'
@@ -249,6 +250,10 @@ export interface ExternalReviewAggregate {
   readonly pendingVerdict: PendingExternalReviewVerdict | null;
   readonly reviewerCatId: string | null;
   readonly reviewerThreadId: string | null;
+  /** Explicit handover generation. Absent historical projections mean zero. */
+  readonly reviewerAssignmentRevision?: number;
+  /** Rebuildable one-shot grant consumption, derived only from accepted transfer events. */
+  readonly consumedDelegations?: readonly { readonly proposalId: string; readonly sourceEventId: string }[];
   readonly actionLeaseRef: {
     readonly leaseId: string;
     readonly generation: number;

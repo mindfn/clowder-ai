@@ -59,7 +59,11 @@ export function RebuildButton({ onComplete }: { onComplete: () => void }) {
       } else {
         const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         const msg =
-          res.status === 409 ? '已有重建任务进行中' : ((body as { error?: string }).error ?? `HTTP ${res.status}`);
+          res.status === 403
+            ? '没有权限重建索引'
+            : res.status === 409
+              ? '已有重建任务进行中'
+              : ((body as { error?: string }).error ?? `HTTP ${res.status}`);
         setJob({ id: '', status: 'error', phase: '', percent: 0, startedAt: Date.now(), error: msg });
       }
     } catch {
@@ -106,13 +110,14 @@ export function RebuildButton({ onComplete }: { onComplete: () => void }) {
 
   if (job?.status === 'error') {
     return (
-      <div data-testid="rebuild-error" className="flex items-center gap-2">
-        <span className="rounded bg-conn-red-bg px-2 py-1 text-micro text-conn-red-text">{job.error}</span>
+      <div data-testid="rebuild-error" role="alert" className="flex flex-wrap items-center gap-2">
+        <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-semantic-critical" />
+        <span className="text-micro text-cafe-secondary">{job.error}</span>
         <button
           type="button"
           disabled={starting}
           onClick={handleStart}
-          className={`rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-3 py-1.5 text-xs text-conn-red-text transition-colors hover:bg-conn-red-bg ${starting ? 'opacity-50' : ''}`}
+          className={`rounded-lg bg-[var(--console-card-bg)] px-3 py-1.5 text-xs text-cafe-secondary shadow-sm transition-colors hover:bg-[var(--console-hover-bg)] ${starting ? 'opacity-50' : ''}`}
         >
           重试
         </button>

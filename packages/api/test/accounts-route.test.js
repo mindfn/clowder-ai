@@ -569,11 +569,11 @@ describe('accounts routes', () => {
         undefined,
         'unmapped oauth account must not have clientId (let frontend heuristic work)',
       );
-      assert.equal(claude2.builtin, true, 'unmapped oauth account should still be builtin');
+      assert.equal(claude2.builtin, false, 'only well-known default account aliases are builtin');
 
       const glm = providers.find((p) => p.id === 'glm');
       assert.equal(glm.clientId, undefined, 'unmapped oauth account must not have clientId');
-      assert.equal(glm.builtin, true, 'unmapped oauth account should still be builtin');
+      assert.equal(glm.builtin, false, 'only well-known default account aliases are builtin');
     } finally {
       restoreGlobalRoot();
       await rm(projectDir, { recursive: true, force: true });

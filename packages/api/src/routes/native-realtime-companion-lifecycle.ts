@@ -44,12 +44,15 @@ export async function consumeRealtimeCompanionEvent(
   const stored = await dependencies.messageStore.append({
     userId: session.userId,
     threadId: session.threadId,
-    catId: createCatId(session.catId),
+    from: { kind: 'agent', catId: createCatId(session.catId) },
     content: event.text,
     mentions: [],
     timestamp: event.occurredAt,
     origin: 'stream',
     idempotencyKey: `realtime:${session.idempotencyScope}:${session.outputOrdinal}`,
+    ...(session.provider.executionAccount
+      ? { metadata: { provider: 'openai', model: 'realtime', executionAccount: session.provider.executionAccount } }
+      : {}),
     extra: {
       realtimeCompanion: {
         consumer: session.consumer,
@@ -91,5 +94,6 @@ export function projectActiveRealtimeCompanion(session: ActiveCompanion) {
     runtimeSessionId: session.provider.runtimeSessionId,
     realtimeSessionId: session.provider.realtimeSessionId,
     version: session.provider.version,
+    ...(session.provider.executionAccount ? { executionAccount: session.provider.executionAccount } : {}),
   };
 }

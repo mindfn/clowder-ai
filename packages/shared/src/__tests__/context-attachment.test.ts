@@ -3,8 +3,14 @@ import {
   ContextAttachmentContentSchema,
   ContextAttachmentSchema,
   ContextAttachmentsSchema,
+  contentModificationRequestContractSchema,
+  contentModificationRequestSchema,
+  contentModificationTakeoverSchema,
   MessageContentSchema,
   MessageContentsSchema,
+  normalizeModificationSelections,
+  respondContentTextSchema,
+  VersionBoundContextAttachmentsSchema,
 } from '../index.js';
 
 const threadAttachment = {
@@ -26,10 +32,35 @@ describe('ContextAttachmentSchema', () => {
         path: 'packages/web/src/components/ChatInput.tsx',
         worktreeId: 'wt-f063',
         branch: 'feat/f063-context-attachments',
+        revision: `sha256:${'a'.repeat(64)}`,
         lineStart: 177,
         lineEnd: 245,
       }),
-    ).toMatchObject({ kind: 'workspace_file', lineStart: 177, lineEnd: 245 });
+    ).toMatchObject({
+      kind: 'workspace_file',
+      revision: `sha256:${'a'.repeat(64)}`,
+      lineStart: 177,
+      lineEnd: 245,
+    });
+    expect(
+      ContextAttachmentSchema.parse({
+        v: 1,
+        id: 'ctx-workspace-quote-1',
+        kind: 'quote',
+        text: 'const answer = 42;',
+        source: {
+          kind: 'workspace_file',
+          path: 'src/answer.ts',
+          worktreeId: 'wt-f063',
+          revision: `sha256:${'b'.repeat(64)}`,
+          lineStart: 3,
+          lineEnd: 3,
+        },
+      }),
+    ).toMatchObject({
+      kind: 'quote',
+      source: { kind: 'workspace_file', revision: `sha256:${'b'.repeat(64)}` },
+    });
     expect(
       ContextAttachmentSchema.parse({
         v: 1,
@@ -97,6 +128,15 @@ describe('ContextAttachmentSchema', () => {
     expect(
       ContextAttachmentSchema.safeParse({
         v: 1,
+        id: 'ctx-file-bad-revision',
+        kind: 'workspace_file',
+        path: 'README.md',
+        revision: 'v1',
+      }).success,
+    ).toBe(false);
+    expect(
+      ContextAttachmentSchema.safeParse({
+        v: 1,
         id: 'ctx-quote-2',
         kind: 'quote',
         text: 'x'.repeat(20_001),
@@ -142,5 +182,170 @@ describe('ContextAttachmentSchema', () => {
     };
     expect(MessageContentSchema.safeParse(file).success).toBe(true);
     expect(MessageContentSchema.safeParse({ ...file, url: '/uploads/../evidence.pdf' }).success).toBe(false);
+  });
+
+  it('keeps legacy unversioned references readable but rejects them on the new Cat writer boundary', () => {
+    const legacy = {
+      v: 1 as const,
+      id: 'ctx-legacy-file',
+      kind: 'workspace_file' as const,
+      path: 'docs/legacy.md',
+    };
+    expect(ContextAttachmentsSchema.safeParse([legacy]).success).toBe(true);
+    expect(VersionBoundContextAttachmentsSchema.safeParse([legacy]).success).toBe(false);
+    expect(
+      VersionBoundContextAttachmentsSchema.safeParse([{ ...legacy, revision: `sha256:${'f'.repeat(64)}` }]).success,
+    ).toBe(true);
+  });
+});
+
+describe('message-origin content modification contract', () => {
+  const revision = `sha256:${'a'.repeat(64)}`;
+  const anchor = (quote: string, start: number) => ({
+    kind: 'text_quote' as const,
+    baseRevision: revision,
+    start,
+    end: start + quote.length,
+    quote,
+    quoteDigest: `sha256:${'b'.repeat(64)}`,
+    contextDigest: `sha256:${'c'.repeat(64)}`,
+  });
+  const base = {
+    operationId: '11111111-1111-4111-8111-111111111111',
+    targetCatId: 'codex-astra',
+    threadId: 'thread-a',
+    source: {
+      kind: 'workspace' as const,
+      locator: { worktreeId: 'worktree-a', path: 'guide.md' },
+      expectedSourceRevision: revision,
+      reviewId: 'review-a',
+      expectedReviewRevision: 1,
+    },
+  };
+
+  it('keeps the request object schema available to field-level consumers', () => {
+    expect(contentModificationRequestSchema.shape.intent).toBeDefined();
+  });
+
+  it('keeps the legacy single selection and accepts stable multi-selection items', () => {
+    expect(
+      contentModificationRequestSchema.safeParse({
+        ...base,
+        intent: { body: 'legacy', selection: anchor('Guide', 2) },
+      }).success,
+    ).toBe(true);
+
+    const parsed = contentModificationRequestSchema.parse({
+      ...base,
+      intent: {
+        body: 'Change both passages once.',
+        selections: [
+          { id: 'ctx-1', selection: anchor('Guide', 2), instruction: 'Use a clearer heading.' },
+          { id: 'ctx-2', selection: anchor('Summary', 20) },
+        ],
+      },
+    });
+    expect(parsed.intent.selections?.map((item) => item.id)).toEqual(['ctx-1', 'ctx-2']);
+  });
+
+  it('normalizes legacy and multi selections while rejecting two different truths', () => {
+    const first = { id: 'ctx-1', selection: anchor('Guide', 2) };
+    const compatible = contentModificationRequestSchema.parse({
+      ...base,
+      intent: { body: 'compatible alias', selection: first.selection, selections: [first] },
+    });
+    expect(normalizeModificationSelections(compatible.intent)).toEqual([first]);
+    const legacy = contentModificationRequestSchema.parse({
+      ...base,
+      intent: { body: 'legacy alias', selection: first.selection },
+    });
+    expect(normalizeModificationSelections(legacy.intent)).toEqual([{ id: 'legacy-1', selection: first.selection }]);
+    expect(
+      contentModificationRequestSchema.safeParse({
+        ...base,
+        intent: {
+          body: 'ambiguous shape',
+          selection: anchor('Summary', 20),
+          selections: [first],
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects duplicate ids and a selection from another base, but accepts per-selection instruction only', () => {
+    const first = { id: 'ctx-1', selection: anchor('Guide', 2) };
+    expect(
+      contentModificationRequestSchema.safeParse({
+        ...base,
+        intent: { body: 'duplicate ids', selections: [first, { ...first, selection: anchor('Summary', 20) }] },
+      }).success,
+    ).toBe(false);
+    expect(
+      contentModificationRequestContractSchema.safeParse({
+        ...base,
+        intent: {
+          body: 'wrong base',
+          selections: [
+            first,
+            { id: 'ctx-2', selection: { ...anchor('Summary', 20), baseRevision: `sha256:${'d'.repeat(64)}` } },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      contentModificationRequestContractSchema.safeParse({
+        ...base,
+        source: { kind: 'artifact-review', reviewId: 'review-a', round: 1, expectedReviewRevision: 1 },
+        intent: { body: 'wrong source', selections: [first] },
+      }).success,
+    ).toBe(false);
+    expect(
+      contentModificationRequestSchema.safeParse({
+        ...base,
+        intent: { body: '', selections: [{ ...first, instruction: 'Only this heading changes.' }] },
+      }).success,
+    ).toBe(true);
+  });
+
+  it('lets a returned text edit explicitly name one requested selection without guessing by range', () => {
+    const command = respondContentTextSchema.parse({
+      requestId: 'request-1',
+      operationId: '11111111-1111-4111-8111-111111111111',
+      expectedTaskRevision: 1,
+      expectedProposalRevision: 0,
+      baseRevision: revision,
+      edits: [
+        {
+          selectionId: 'ctx-1',
+          start: 2,
+          end: 7,
+          expectedText: 'Guide',
+          replacement: 'Precise guide',
+        },
+        { start: 20, end: 20, expectedText: '', replacement: 'Extra context' },
+      ],
+      response: 'Updated the requested heading and added one unscoped clarification.',
+    });
+    expect(command.edits[0]?.selectionId).toBe('ctx-1');
+    expect(command.edits[1]?.selectionId).toBeUndefined();
+  });
+
+  it('exposes a minimal takeover command with no caller-supplied actor or content coordinates', () => {
+    expect(
+      contentModificationTakeoverSchema.parse({
+        sourceMessageId: 'message-1',
+        operationId: '22222222-2222-4222-8222-222222222222',
+      }),
+    ).toEqual({
+      sourceMessageId: 'message-1',
+      operationId: '22222222-2222-4222-8222-222222222222',
+    });
+    expect(
+      contentModificationTakeoverSchema.safeParse({
+        sourceMessageId: 'message-1',
+        operationId: '22222222-2222-4222-8222-222222222222',
+        targetCatId: 'forged-human-choice',
+      }).success,
+    ).toBe(false);
   });
 });

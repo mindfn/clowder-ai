@@ -8,8 +8,8 @@
  *     (compile-time contract — this test guards against accidental removal)
  *
  * These are structural / wiring tests — the actual bridge dispatch behavior
- * is tested by b1c-2-invoke-single-cat-bridge-wiring.test.js (existing) and
- * b1c-3-pinchtab-bridge-adapter.test.js (new).
+ * is tested by b1c-2-invoke-single-cat-bridge-wiring.test.js and
+ * b1c-2-cloud-invoke-bridge.test.js.
  */
 
 import assert from 'node:assert/strict';
@@ -78,12 +78,16 @@ describe('F247 AC-B1c-3 PR-C: AgentRouter.getStrategyDeps() plumbing', () => {
     assert.equal(deps.invocationDeps.cloudInvokeBridge, undefined);
   });
 
-  it('passes the exact A2A disposition producer only when provided', () => {
-    const dispositionService = { complete: async () => ({ outcome: 'applied' }) };
-    const wired = makeMinimalAgentRouter({ a2aDispatchDispositionService: dispositionService }).getStrategyDeps();
-    const absent = makeMinimalAgentRouter().getStrategyDeps();
-    assert.strictEqual(wired.invocationDeps.a2aDispatchDispositionService, dispositionService);
-    assert.equal(absent.invocationDeps.a2aDispatchDispositionService, undefined);
+  it('keeps the public API port fallback when API_SERVER_PORT is absent', () => {
+    const previous = process.env.API_SERVER_PORT;
+    delete process.env.API_SERVER_PORT;
+    try {
+      const deps = makeMinimalAgentRouter().getStrategyDeps();
+      assert.equal(deps.invocationDeps.apiUrl, 'http://127.0.0.1:3004');
+    } finally {
+      if (previous === undefined) delete process.env.API_SERVER_PORT;
+      else process.env.API_SERVER_PORT = previous;
+    }
   });
 });
 

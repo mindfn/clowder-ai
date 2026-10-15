@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CollectionCatalog } from '../CollectionCatalog';
 
+const apiMock = vi.hoisted(() => vi.fn());
+vi.mock('@/utils/api-client', () => ({ apiFetch: apiMock }));
+
 const CATALOG_RESPONSE = {
   collections: [
     {
@@ -46,6 +49,8 @@ describe('CollectionCatalog expand/collapse', () => {
         return Promise.resolve({ json: () => Promise.resolve({}) });
       }),
     );
+    apiMock.mockReset();
+    apiMock.mockImplementation(fetch);
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -104,5 +109,15 @@ describe('CollectionCatalog expand/collapse', () => {
     });
     expect(headerBtn.getAttribute('aria-expanded')).toBe('false');
     expect(card.querySelector('[data-testid="collection-detail-world:pilot"]')).toBeNull();
+  });
+  it('existing rebuild and archive actions use session transport, preserving the legacy page under writer guards', async () => {
+    await act(async () => root.render(<CollectionCatalog />));
+    const rebuild = container.querySelector<HTMLButtonElement>('[data-testid="rebuild-world:pilot"]');
+    expect(rebuild).not.toBeNull();
+    await act(async () => rebuild?.click());
+    expect(apiMock).toHaveBeenCalledWith('/api/library/world%3Apilot/rebuild', { method: 'POST' });
+    const archive = container.querySelector<HTMLButtonElement>('[data-testid="archive-world:pilot"]');
+    await act(async () => archive?.click());
+    expect(apiMock).toHaveBeenCalledWith('/api/library/world%3Apilot/archive', { method: 'POST' });
   });
 });

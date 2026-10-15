@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtemp, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -84,6 +84,68 @@ test('an import operation cannot replay into another Task or publication identit
     ContentOwnerIdempotencyError,
   );
   assert.equal((await owner.listOutbox(request.contentRef)).length, 1);
+});
+
+test('owner manifests reject incomplete revision, receipt, and operation truth', async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'f309-owner-manifest-integrity-'));
+  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  const owner = new ProjectContentOwnerService({ dataDir });
+  const contentRef = 'project:integrity/document.docx';
+  const mediaType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  await owner.importContent({
+    contentRef,
+    bytes: Buffer.from('v1'),
+    mediaType,
+    actor,
+    operationId: 'integrity-v1',
+  });
+  await owner.settle({
+    contentRef,
+    expectedOwnerRevision: 1,
+    bytes: Buffer.from('v2'),
+    actor: { kind: 'cat', actorId: 'codex-sol' },
+    operationId: 'integrity-v2',
+  });
+  const path = join(
+    dataDir,
+    'projects',
+    'content-owner-v1',
+    createHash('sha256').update(contentRef).digest('hex'),
+    'state.json',
+  );
+  type MutableManifest = {
+    currentOwnerRevision: number;
+    revisions: Array<{ ownerRevision: number; parentRevision: number | null }>;
+    receipts: Array<{ operationId: string; receiptId: string }>;
+    operations: Record<string, { fingerprint: string; receiptId: string }>;
+  };
+  const original = JSON.parse(await readFile(path, 'utf8')) as MutableManifest;
+  const corruptions: Array<[string, (state: typeof original) => void]> = [
+    ['non-positive current revision', (state) => (state.currentOwnerRevision = 0)],
+    ['missing current revision', (state) => state.revisions.pop()],
+    ['duplicate revision', (state) => (state.revisions[1].ownerRevision = 1)],
+    ['broken parent link', (state) => (state.revisions[1].parentRevision = null)],
+    ['missing receipt', (state) => state.receipts.pop()],
+    ['receipt/revision mismatch', (state) => (state.receipts[1].operationId = 'wrong-operation')],
+    ['missing operation', (state) => delete state.operations['integrity-v2']],
+    ['operation/receipt mismatch', (state) => (state.operations['integrity-v2'].receiptId = 'wrong-receipt')],
+    [
+      'extra operation',
+      (state) =>
+        (state.operations.extra = {
+          fingerprint: `sha256:${'f'.repeat(64)}`,
+          receiptId: state.receipts[0].receiptId,
+        }),
+    ],
+  ];
+  for (const [label, corrupt] of corruptions) {
+    const state = structuredClone(original);
+    corrupt(state);
+    await writeFile(path, JSON.stringify(state), 'utf8');
+    await assert.rejects(new ProjectContentOwnerService({ dataDir }).describe(contentRef), /Corrupt/, label);
+  }
+  await writeFile(path, JSON.stringify(original), 'utf8');
+  assert.equal((await new ProjectContentOwnerService({ dataDir }).describe(contentRef)).currentOwnerRevision, 2);
 });
 
 test('verified media handles support repeated bounded ranges and close after streaming', async (t) => {

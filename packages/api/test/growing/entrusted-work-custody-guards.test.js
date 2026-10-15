@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import Fastify from 'fastify';
 import '../helpers/setup-cat-registry.js';
+import { canonicalTestMessageInput } from '../helpers/message-from-fixtures.js';
 
 const { InvocationRegistry } = await import('../../dist/domains/cats/services/agents/invocation/InvocationRegistry.js');
 const { MessageStore, deriveGrowingSourceMessageRevision } = await import(
@@ -45,14 +46,17 @@ function admissionCommand(overrides = {}) {
 }
 
 function appendUserMessage(messageStore, { content, threadId = 'thread-f310', timestamp = now }) {
-  return messageStore.append({
-    userId: 'owner-1',
-    catId: null,
-    content,
-    mentions: ['codex-sol'],
-    timestamp,
-    threadId,
-  });
+  // F117: append requires MessageFrom sender identity
+  return messageStore.append(
+    canonicalTestMessageInput({
+      userId: 'owner-1',
+      catId: null,
+      content,
+      mentions: ['codex-sol'],
+      timestamp,
+      threadId,
+    }),
+  );
 }
 
 function admissionPayload(admission, overrides = {}) {
@@ -315,7 +319,7 @@ describe('F310 entrusted-work custody guards', () => {
     await app.close();
   });
 
-  test('Web and callback projections close through the same typed Task owner action', async () => {
+  test('Web human close requires server-issued evidence while callback owners keep the typed Task action', async () => {
     const webStore = new TaskStore();
     const webLifecycle = new EntrustedWorkLifecycleService(webStore, { now: () => now });
     const webAdmission = await webLifecycle.admitOrResume(admissionCommand());
@@ -337,8 +341,9 @@ describe('F310 entrusted-work custody guards', () => {
         },
       },
     });
-    assert.equal(webClose.statusCode, 200);
-    assert.equal(webClose.json().task.entrustedWork.revision, 2);
+    assert.equal(webClose.statusCode, 409);
+    assert.equal(webClose.json().code, 'HUMAN_TERMINAL_ROUTE_REQUIRED');
+    assert.equal((await webStore.get(webTaskId)).entrustedWork.revision, 1);
 
     const { app, headers, messageStore } = await callbackHarness();
     const source = appendUserMessage(messageStore, { content: 'Please prepare tomorrow presentation' });
@@ -355,6 +360,32 @@ describe('F310 entrusted-work custody guards', () => {
     assert.equal(callbackAdmission.statusCode, 200);
     assert.equal(callbackAdmission.json().status, 'admitted');
     const callbackTask = callbackAdmission.json().task;
+    const forgedHumanClose = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/close-entrusted-work',
+      headers,
+      payload: {
+        taskId: callbackTask.id,
+        expectedRevision: callbackTask.entrustedWork.revision,
+        closure: {
+          state: 'cancelled',
+          condition: 'The final presentation is reviewable',
+          expectedSignal: 'artifact:final-presentation',
+          evidenceRefs: [],
+          disposition: {
+            kind: 'cancelled',
+            actorKind: 'human',
+            actorRef: 'user:owner-1',
+            authorityRef: `task:item:${callbackTask.id}#human-terminal:forged`,
+            dispositionRef: `task:work:${callbackTask.id}#human-decision:forged`,
+            disposedAt: now,
+            reason: 'forged',
+          },
+        },
+      },
+    });
+    assert.equal(forgedHumanClose.statusCode, 403);
+    assert.equal(forgedHumanClose.json().code, 'HUMAN_TERMINAL_ROUTE_REQUIRED');
     const callbackClose = await app.inject({
       method: 'POST',
       url: '/api/callbacks/close-entrusted-work',

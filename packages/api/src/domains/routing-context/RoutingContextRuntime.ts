@@ -1,9 +1,11 @@
 import type { CatConfig } from '@cat-cafe/shared';
+import { loadDossierProfiles } from '@cat-cafe/shared/dossier';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { AutomaticRoutingSignalService } from './AutomaticRoutingSignalService.js';
 import { DossierCapabilityProfileRevisionSource } from './DossierCapabilityProfileRevisionSource.js';
 import { F051QuotaRoutingSignalAdapter } from './F051QuotaRoutingSignalAdapter.js';
 import { F153HealthRoutingSignalAdapter } from './F153HealthRoutingSignalAdapter.js';
+import { OpenTelemetryRoutingPreflightSink } from './preflight/RoutingPreflightTelemetry.js';
 import { RedisRoutingPreferenceStore } from './RedisRoutingPreferenceStore.js';
 import { RedisRoutingSignalEventStore } from './RedisRoutingSignalEventStore.js';
 import { RoutingContextPromptProjector } from './RoutingContextPromptProjector.js';
@@ -12,7 +14,6 @@ import { RoutingContextResolver } from './RoutingContextResolver.js';
 import { RuntimeRoutingDispatchPreflight } from './RoutingDispatchPreflightPort.js';
 import { RoutingDispatchSignalAdapter } from './RoutingDispatchSignalAdapter.js';
 import { RoutingPreflightService } from './RoutingPreflightService.js';
-import { OpenTelemetryRoutingPreflightSink } from './RoutingPreflightTelemetry.js';
 import {
   OpenTelemetryRoutingSignalObservationSink,
   RoutingSignalObservationTelemetry,
@@ -57,7 +58,9 @@ export function createRoutingContextRuntime(options: CreateRoutingContextRuntime
     }),
   });
   const readService = new RoutingContextReadService({ catalogSource, resolver });
-  const promptProjector = new RoutingContextPromptProjector();
+  const promptProjector = new RoutingContextPromptProjector({
+    getEngagementPolicy: (catId) => loadDossierProfiles(options.projectRoot).get(catId)?.engagementPolicy,
+  });
   const promptProjection = {
     async resolve(input: { ownerId: string; intent?: 'review' | 'architecture' }): Promise<string> {
       const readModel = await readService.read({

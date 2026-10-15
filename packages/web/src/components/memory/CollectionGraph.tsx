@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useCallback, useMemo, useRef, useState } from 'react';
-import typographyTokens from '@/styles/typography-tokens.json';
-import { edgePath, type GraphNode, type GraphResult, relationColor } from './CollectionGraphModel';
-import { GraphInspector, GraphNodeGlyph, GraphTooltip } from './CollectionGraphParts';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { GraphCanvas } from './CollectionGraphCanvas';
+import type { GraphNode, GraphResult } from './CollectionGraphModel';
+import { GraphInspector } from './CollectionGraphParts';
 import {
   GraphCandidates,
   GraphNoEdgesNote,
@@ -11,7 +11,8 @@ import {
   type GraphQueryCandidate,
   GraphSearchForm,
 } from './CollectionGraphQueryStates';
-import { forceLayout, readableHubLayoutHeight, usesReadableHubLayout } from './graph-layout';
+import { GraphTitleInspector } from './CollectionGraphTitleParts';
+import { forceLayout, readableHubLayout, readableHubLayoutHeight, usesReadableHubLayout } from './graph-layout';
 
 const W = 940;
 const H = 620;
@@ -39,113 +40,15 @@ type GraphQueryResolution =
       examples: string[];
     };
 
-function GraphCanvas({
-  center,
-  graph,
-  hovered,
-  onHover,
-  onNodeClick,
-  positions,
-  showEdgeLabels,
-  visibleEdges,
-  viewHeight,
+export function CollectionGraph({
+  initialAnchor,
+  initialCollection,
+  presentation = 'coordinates',
 }: {
-  center: string | undefined;
-  graph: GraphResult;
-  hovered: GraphNode | null;
-  onHover: (node: GraphNode | null) => void;
-  onNodeClick: (anchor: string, collectionId?: string) => void;
-  positions: Map<string, { x: number; y: number }>;
-  showEdgeLabels: boolean;
-  visibleEdges: GraphResult['edges'];
-  viewHeight: number;
-}) {
-  const renderedHeight = Math.round((viewHeight / H) * 560);
-  return (
-    <div className="relative min-w-0 overflow-auto rounded-md bg-[var(--console-card-bg)]">
-      <svg
-        viewBox={`0 0 ${W} ${viewHeight}`}
-        className="w-full"
-        style={{ height: `${renderedHeight}px` }}
-        preserveAspectRatio="xMidYMid meet"
-        role="img"
-        aria-label="知识图谱"
-        data-testid="graph-svg"
-      >
-        <defs>
-          <filter id="node-shadow">
-            <feDropShadow dx="0" dy="1" stdDeviation="2" floodOpacity="0.15" />
-          </filter>
-        </defs>
-
-        {visibleEdges.map((edge) => {
-          const fp = positions.get(edge.from);
-          const tp = positions.get(edge.to);
-          if (!fp || !tp) return null;
-          const color = relationColor(edge.relation);
-          return (
-            <React.Fragment key={`${edge.from}-${edge.to}-${edge.relation}`}>
-              <path
-                d={edgePath(fp.x, fp.y, tp.x, tp.y)}
-                fill="none"
-                stroke={color}
-                strokeWidth={edge.crossCollection ? 2.5 : 1.5}
-                strokeDasharray={edge.redacted ? '6 3' : undefined}
-                opacity={0.5}
-              />
-              {showEdgeLabels && <SparseEdgeLabel edge={edge} from={fp} to={tp} />}
-            </React.Fragment>
-          );
-        })}
-
-        {graph.nodes.map((node) => {
-          const pos = positions.get(node.anchor);
-          if (!pos) return null;
-          return (
-            <GraphNodeGlyph
-              centerAnchor={center}
-              key={node.anchor}
-              node={node}
-              onHover={onHover}
-              onNodeClick={onNodeClick}
-              pos={pos}
-            />
-          );
-        })}
-      </svg>
-      {hovered && <GraphTooltip node={hovered} />}
-    </div>
-  );
-}
-
-function SparseEdgeLabel({
-  edge,
-  from,
-  to,
-}: {
-  edge: GraphResult['edges'][number];
-  from: { x: number; y: number };
-  to: { x: number; y: number };
-}) {
-  const labelX = (from.x + to.x) / 2;
-  const labelY = (from.y + to.y) / 2;
-  const color = relationColor(edge.relation);
-  return (
-    <text
-      x={labelX}
-      y={labelY - 6}
-      textAnchor="middle"
-      fontSize={typographyTokens.fontSizePx.micro}
-      fill={color}
-      fontWeight="700"
-      data-testid={`graph-edge-label-${edge.from}-${edge.to}-${edge.relation}`}
-    >
-      {edge.relation.replace(/_/g, ' ')}
-    </text>
-  );
-}
-
-export function CollectionGraph() {
+  initialAnchor?: string;
+  initialCollection?: string;
+  presentation?: 'coordinates' | 'titles';
+} = {}) {
   const [graph, setGraph] = useState<GraphResult | null>(null);
   const [graphNote, setGraphNote] = useState<'no_edges' | null>(null);
   const [candidates, setCandidates] = useState<GraphQueryCandidate[]>([]);
@@ -187,6 +90,10 @@ export function CollectionGraph() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (initialAnchor) fetchGraph(initialAnchor, initialCollection);
+  }, [initialAnchor, initialCollection, fetchGraph]);
 
   const resolveQuery = useCallback(
     (query: string) => {
@@ -257,22 +164,19 @@ export function CollectionGraph() {
     [graph?.edges],
   );
   const uniqueKinds = useMemo(() => [...new Set((graph?.nodes ?? []).map((node) => node.kind))], [graph?.nodes]);
-  const positions = graph ? forceLayout(graph.nodes, visibleEdges, graph.center, W, H) : new Map();
+  const titles = presentation === 'titles';
+  const { positions, viewHeight } = graphGeometry(graph, visibleEdges, titles);
   const selectedNode = useSelectedNode(graph, selectedAnchor);
   const selectedEdges = useMemo(() => {
     if (!graph || !selectedNode) return [];
     return visibleEdges.filter((edge) => edge.from === selectedNode.anchor || edge.to === selectedNode.anchor);
   }, [graph, selectedNode, visibleEdges]);
   const nodeByAnchor = useMemo(() => new Map((graph?.nodes ?? []).map((node) => [node.anchor, node])), [graph?.nodes]);
-  const viewHeight =
-    graph && usesReadableHubLayout(graph.nodes, visibleEdges, graph.center)
-      ? readableHubLayoutHeight(graph.nodes.length, H)
-      : H;
   const showEdgeLabels = visibleEdges.length <= 10;
 
   return (
     <div data-testid="collection-graph">
-      <GraphSearchForm inputRef={inputRef} onSubmit={handleSubmit} />
+      {!titles && <GraphSearchForm inputRef={inputRef} onSubmit={handleSubmit} />}
 
       {loading && <div className="text-sm text-cafe-secondary">加载图谱...</div>}
       {error && <div className="text-sm text-conn-red-text">错误: {error}</div>}
@@ -296,22 +200,45 @@ export function CollectionGraph() {
               showEdgeLabels={showEdgeLabels}
               visibleEdges={visibleEdges}
               viewHeight={viewHeight}
+              titles={titles}
             />
-            <GraphInspector
-              graph={graph}
-              hiddenRelations={hiddenRelations}
-              nodeByAnchor={nodeByAnchor}
-              selectedEdges={selectedEdges}
-              selectedNode={selectedNode}
-              toggleRelation={toggleRelation}
-              uniqueKinds={uniqueKinds}
-              uniqueRelations={uniqueRelations}
-            />
+            {titles ? (
+              <GraphTitleInspector
+                graph={graph}
+                selectedNode={selectedNode}
+                selectedEdges={selectedEdges}
+                nodeByAnchor={nodeByAnchor}
+              />
+            ) : (
+              <GraphInspector
+                graph={graph}
+                hiddenRelations={hiddenRelations}
+                nodeByAnchor={nodeByAnchor}
+                selectedEdges={selectedEdges}
+                selectedNode={selectedNode}
+                toggleRelation={toggleRelation}
+                uniqueKinds={uniqueKinds}
+                uniqueRelations={uniqueRelations}
+              />
+            )}
           </div>
         </div>
       )}
     </div>
   );
+}
+
+function graphGeometry(graph: GraphResult | null, visibleEdges: GraphResult['edges'], titles: boolean) {
+  if (!graph) return { positions: new Map<string, { x: number; y: number }>(), viewHeight: H };
+  const viewHeight =
+    titles || usesReadableHubLayout(graph.nodes, visibleEdges, graph.center)
+      ? readableHubLayoutHeight(graph.nodes.length, H)
+      : H;
+  const positions =
+    titles && graph.center
+      ? readableHubLayout(graph.nodes, graph.center, W, viewHeight)
+      : forceLayout(graph.nodes, visibleEdges, graph.center, W, H);
+  return { positions, viewHeight };
 }
 
 function useSelectedNode(graph: GraphResult | null, selectedAnchor: string | null): GraphNode | null {

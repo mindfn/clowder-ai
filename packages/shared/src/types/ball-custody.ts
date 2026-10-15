@@ -13,8 +13,8 @@
  */
 
 // ---------------------------------------------------------------------------
-// Event kinds（全 19 种，每种在 state-machine 转移表必有一行——INV-10 穷举钉死）
-// Phase B 13 种 + Phase C 3 安乐死 + Phase P 1 wakeWhen + F167 2 invocation-bound dispositions
+// Event kinds（全 20 种，每种在 state-machine 转移表必有一行——INV-10 穷举钉死）
+// Phase B 13 种 + Phase C 3 安乐死 + Phase P 1 wakeWhen + F167 3 invocation-bound dispositions
 // ---------------------------------------------------------------------------
 
 export type BallEventKind =
@@ -34,6 +34,7 @@ export type BallEventKind =
   | 'ball.wake_condition_met' // F167 Phase P: wakeWhen managed command completed → cat woken with result
   | 'ball.hold_dispositioned' // F167×F254: exact invocation handled/completed the managed hold wake
   | 'ball.dispatch_dispositioned' // F167: exact invocation handled/completed the ordinary A2A dispatch
+  | 'ball.wait_dispositioned' // F167: exact invocation handled/completed the matched event-wait wake it was woken by
   // ---------- Phase C 安乐死（KD-C1/C2，operator 6-18 拍板） ----------
   | 'ball.frozen' // 冷冻：暂停推进可解冻（payload: { why, by, kind:'frozen' }）→ resolved
   | 'ball.degraded' // 降级：明确降优先级（payload: { why, by, kind:'degraded' }）→ resolved
@@ -56,6 +57,8 @@ export interface BallCustodyEvent {
    * - ball.wake_condition_met：`wakecond:{taskId}`
    * - ball.hold_dispositioned：`hold-disposition:{invocationId}:{sourceMessageId}:{taskId}`
    * - ball.dispatch_dispositioned：`dispatch-disposition:{invocationId}:{sourceMessageId}`
+   * - ball.wait_dispositioned：`wait-disposition:{catId}:{waitId}:{outcomeId}`（wake 的身份是 (cat, wait, outcome)，不是碰巧结算它的 invocation；
+   *   outcomeId 在同一 deployment 的两个 Task 间相同，waitId 才区分它们）
    * - 安乐死类（Phase C，ball.frozen/degraded/abandoned）：`euthanasia:{subjectKey}:{kind}:{at}`
    *   含 kind（KD-C2 三独立 kind 语义独立）。同一 ball 同一 kind 同一 ms 视为同事件（Lua append
    *   幂等去重）；跨 ms 或跨 kind 视为独立事件（事件流时间轴诚实 + 同 ms 三 kind 可并存进事件流）。

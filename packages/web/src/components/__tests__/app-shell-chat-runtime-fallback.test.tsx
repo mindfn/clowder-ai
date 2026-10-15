@@ -9,6 +9,7 @@ const runtimeState = vi.hoisted(() => ({
 }));
 
 vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn() }),
   usePathname: () => '/thread/deep-link-thread',
   useSearchParams: () => {
     throw new Promise<never>(() => undefined);

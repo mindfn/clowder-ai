@@ -4,12 +4,11 @@ related_features: [F148, F063, F095, F131]
 topics: [artifacts, thread, workspace, ui]
 doc_kind: spec
 created: 2026-06-11
-tips_exempt: "2026-09-02 docs-only User Journey and history clarification for the already-shipped Artifacts workspace surface; no runtime behavior or new entry action was added."
 ---
 
 # F232: Thread Artifacts Panel — Thread 产物视图
 
-> **Status**: in-progress（Phase A 全部 merged；**Phase B foundation merged PR #2285 + grouping merged PR #2288 + cat filter merged PR #2290**（AC-B1 ✅）；source-code artifact classification hardening merged PR #2362；视觉待 alpha）| **Owner**: Ragdoll Opus-4.8 | **Priority**: P1
+> **Status**: in-progress（Phase A 全部 merged；**Phase B foundation merged PR #2285 + grouping merged PR #2288 + cat filter merged PR #2290**（AC-B1 ✅）；source-code artifact classification hardening merged PR #2362；视觉待 alpha）| **Owner**: Ragdoll Opus-5.5（承 Opus-4.8；4.8 已于 2026-09-23 归档） | **Priority**: P1
 
 ## Why
 
@@ -105,6 +104,8 @@ operator dogfood 发现（2026-06-12）：产物面板**漏了视频类型**。�
 ### Phase B（全局产物中心）🚧 foundation merged PR #2285 + grouping merged PR #2288 + cat filter merged PR #2290（tooltip/Redis 优化待 follow-up）
 - [x] AC-B1: 全局产物搜索页，跨 thread 按名字 / 类型 / 时间 / 猫聚合检索。**Foundation slice merged**：`[当前对话] [全局]` scope toggle + `GET /api/artifacts` 全局聚合 API + `useGlobalArtifacts` hook + thread badge + cross-thread teleport。**Grouping slice merged (PR #2288)**：三种分组模式（时间/对话/猫）可切换 chips + 可折叠分组 section + stable group id（P1 duplicate-label fix）+ 18 单元测试。**Cat filter + server-side query merged (PR #2290)**：`extractCatChips()` + `filterByCat()` 纯函数 + cat chip UI + `GET /api/artifacts?type=X&cat=X&q=keyword` server-side filtering + null catId→'—' sentinel 归一化（P1 fix）+ duplicate query param defense（cloud P2 fix）+ 11 web 测试 + 13 API 测试。**待 follow-up**：tooltip（OQ-B1）、Redis 索引优化（OQ-B2）。
 - [x] AC-B2: 复用 Phase A 聚合管线，不重写采集层。（`GET /api/artifacts` 内部调 `aggregateThreadArtifacts()` per-thread，flatten + sort）
+- [x] AC-B3: `/api/artifacts` 带 F309 作品版本投影（KD-8）：`GlobalArtifactDTO.work` 只在唯一、已授权的 exact 对应时出现，`workLineage` 区分"已读全"和"读不全"；有 Redis/文件系统真实 owner 数据的测试覆盖 v1→v3 同族、未导入、choice-required、无权限、读失败五种情况。F322 新对话页「最近的作品」的版本去重依赖这一条。**PR #5250 merged**：一次 owner manifest walk、unique + exact + freshly authorized landing 才投影 `work`；owner 读取或 manifest 整体不完整时 response-wide `unavailable` 且不保留 partial `work`。
+- [x] AC-B4: 全局作品有界读取（KD-9）：`GET /api/artifacts?view=recent-works&limit=N` 只读到凑够 N 件或到读取上限为止，不再逐个 thread 扫完整历史；响应带 `complete`。有测试覆盖：不调用逐 thread 全历史扫描、响应条数不超过 limit、0 件且读不全时不当成"空"。原无参数 `/api/artifacts` 语义不变。**PR #5274 merged**：owner-global MessageStore 原始行与作品候选各有独立 512 上限；同时间组未读全时整组暂不冒充 canonical prefix，版本族在一次 F309 batch 后折叠、最后才应用用户 `limit`；前端显示可用 partial，只有 0 件且 `complete=false` 进入可重试失败。
 
 ## Dependencies
 
@@ -132,6 +133,7 @@ operator dogfood 发现（2026-06-12）：产物面板**漏了视频类型**。�
 | KD-5 | 视频产物支持开独立 **Phase A.2**，不塞 A.1 收尾 PR | 视频是跨 shared `ThreadArtifactType` 类型层的新增（image/audio 已支持，video 缺）；A.1（PR #2259）已过两轮 review 接近收尾，塞入会让其重新变大、需重新完整 review。operator 拍板 | 2026-06-12 |
 | KD-6 | 产物从 PanelTabs 独立 tab 升为 workspaceMode 顶层入口（AC-A8 修订） | operator dogfood 觉得产物做独立 panel tab 像"狗皮膏药"——位置不自然。operator 拍板 (b)：产物与开发/记忆/调度/任务/社区平级做 workspaceMode，PanelTabs 只剩 3 tab。实现上 rightPanelMode 移除 'artifacts'、workspaceMode 新增 'artifacts'、ArtifactsPanel 挂到 WorkspacePanel 条件渲染 | 2026-06-13 |
 | KD-7 | html_widget / interactive 块收录为 `type='widget'` 产物，classify 走 fallback（跳回原消息看内容） | widget 内容（HTML/交互组件）存在 RichBlock 里而非 ThreadArtifactDTO。扩展 DTO 放 HTML 成本高且跨安全边界；listing 让用户能找到 widget，点击跳回原消息查看是最简路径。operator 2026-06-24 确认收录 | 2026-06-24 |
+| KD-9 | **全局作品的有界读取是加法扩展，不改原口子。** `GET /api/artifacts?view=recent-works&limit=N`：`limit` 1～12，默认 3，越界拒绝。服务端按 owner 全局消息时间从新到旧读，先做作品准入（北极星「作品」门槛），再按 KD-8 一次批量投影 F309 版本、去重、定序、截断；复用 F232 现有 projector，不造 familyId，权限仍 owner-only。读取设上限，响应带 `complete: boolean`。因为是从新到旧读，已经找到的就是最近的前几件，顺序可信：**找到 1 件以上**照常返回，页面照常显示，`complete=false` 只表示可能不足 N 件；**0 件且 complete=true** 是真的没有，页面显示空状态；**0 件且 complete=false** 是不知道，页面进失败加重试，不能写成"还没有作品"。`workLineage` 照 KD-8 传 | 新对话页每次落地都拉全量作品库（实测 92 秒、约 84MB），只为显示 3 张卡，页面一直停在骨架。只在凑不满时报失败，会让有作品的人也看到失败；只有"一件都没读到又没读完"才是未知 | 2026-10-09 |
 
 ## Design Gate
 

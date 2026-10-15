@@ -1,4 +1,4 @@
-import type { WaitOutcomeV1 } from '@cat-cafe/shared';
+import type { GitHubWaitOutcomeV1 } from '@cat-cafe/shared';
 import { prSubjectKey } from '@cat-cafe/shared';
 import type { FastifyBaseLogger } from 'fastify';
 import type { ITaskStore } from '../../domains/cats/services/stores/ports/TaskStore.js';
@@ -24,7 +24,21 @@ export type ConflictRouteResult =
        * "notified". A consumer that writes to a repository has to know WHICH condition matched: an
        * expiry and a conflict are both deliveries, and only one of them is a conflict.
        */
-      readonly outcome: WaitOutcomeV1;
+      readonly outcome: GitHubWaitOutcomeV1;
+    }
+  | {
+      /**
+       * The wait matched and its outcome is durably terminalized, but nothing has been announced
+       * yet. Phase C AC-C1: a conflict the scheduler can repair itself should not disturb the
+       * owner, and deciding that requires holding the authorization without the announcement. The
+       * caller owes exactly one of `publish` or `settleWithoutWake`; if it dies owing that, the
+       * outcome stays in the outbox and the next observation tells the owner anyway.
+       */
+      readonly kind: 'matched_pending';
+      readonly taskId: string;
+      readonly threadId: string;
+      readonly catId: string;
+      readonly outcome: GitHubWaitOutcomeV1;
     }
   | { readonly kind: 'deduped' | 'skipped'; readonly reason: string };
 
@@ -46,6 +60,8 @@ export class ConflictRouter {
 
     const result = await this.opts.waitLifecycle.observe({
       taskId: task.id,
+      // Hold the announcement: this router's caller may be able to fix the conflict itself.
+      deferDelivery: true,
       facts: {
         headSha: signal.headSha,
         conflict: { mergeState: signal.mergeState },
@@ -57,6 +73,15 @@ export class ConflictRouter {
         },
       },
     });
+    if (result.kind === 'pending_delivery') {
+      return {
+        kind: 'matched_pending',
+        taskId: result.task.id,
+        threadId: result.task.threadId,
+        catId: result.task.ownerCatId ?? '',
+        outcome: result.outcome,
+      };
+    }
     if (result.kind !== 'notified') {
       return {
         kind: result.kind === 'deduped' || result.kind === 'unrecorded' ? 'deduped' : 'skipped',
@@ -71,6 +96,27 @@ export class ConflictRouter {
       content: result.content,
       outcome: result.outcome,
     };
+  }
+
+  /** Announce a deferred outcome: exactly one wake, or none if the outbox already flushed. */
+  async publish(taskId: string, outcome: GitHubWaitOutcomeV1): Promise<ConflictRouteResult> {
+    const result = await this.opts.waitLifecycle.publishDeferred(taskId, outcome.outcomeId);
+    if (result.kind !== 'notified') {
+      return { kind: result.kind === 'not_tracked' ? 'skipped' : 'deduped', reason: result.reason };
+    }
+    return {
+      kind: 'notified',
+      threadId: result.task.threadId,
+      catId: result.task.ownerCatId ?? '',
+      messageId: result.messageId,
+      content: result.content,
+      outcome: result.outcome,
+    };
+  }
+
+  /** Close a deferred outcome the caller resolved itself, without waking the owner. */
+  async settleWithoutWake(taskId: string, outcome: GitHubWaitOutcomeV1, reason: string): Promise<boolean> {
+    return this.opts.waitLifecycle.settleDeferredWithoutWake(taskId, outcome.outcomeId, reason);
   }
 }
 

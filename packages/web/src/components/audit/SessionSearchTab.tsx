@@ -1,6 +1,9 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { sessionChainCopy } from '@/components/session-chain.shell-copy';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
+import { useTrajectoryCopy } from '@/components/workspace/trajectory/use-trajectory-copy';
 import { useIMEGuard } from '@/hooks/useIMEGuard';
 import { apiFetch } from '@/utils/api-client';
 
@@ -34,6 +37,8 @@ const KIND_BADGE: Record<string, { bg: string; text: string }> = {
 
 export function SessionSearchTab({ threadId, onViewSession, onViewInvocation }: SessionSearchTabProps) {
   const ime = useIMEGuard();
+  const t = useTrajectoryCopy(sessionChainCopy);
+  const isV2 = useShellPresentation() === 'v2';
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState<'both' | 'digests' | 'transcripts'>('both');
   const [resultSet, setResultSet] = useState<SearchResultSet | null>(null);
@@ -97,7 +102,7 @@ export function SessionSearchTab({ threadId, onViewSession, onViewInvocation }: 
           onKeyDown={(e) => {
             if (e.key === 'Enter' && ime.isComposing()) e.preventDefault();
           }}
-          placeholder="搜索 session 内容..."
+          placeholder={t.searchPlaceholder}
           className="flex-1 text-xs rounded-[10px] border-transparent bg-[var(--console-field-bg,var(--console-card-bg))] px-2 py-1 focus:outline-none focus:ring-1 focus:ring-cafe-accent"
         />
         <button
@@ -105,12 +110,12 @@ export function SessionSearchTab({ threadId, onViewSession, onViewInvocation }: 
           disabled={loading || !query.trim()}
           className="rounded-lg bg-cafe-accent px-3 py-1.5 text-xs font-semibold text-[var(--cafe-surface)] transition-colors hover:bg-cafe-accent-hover disabled:opacity-50"
         >
-          搜索
+          {t.search}
         </button>
       </form>
 
       <div className="flex items-center gap-1 text-micro text-cafe-muted">
-        <span>范围:</span>
+        <span>{t.scope}</span>
         {(['both', 'transcripts', 'digests'] as const).map((s) => (
           <button
             type="button"
@@ -118,19 +123,19 @@ export function SessionSearchTab({ threadId, onViewSession, onViewInvocation }: 
             onClick={() => setScope(s)}
             className={`px-1.5 py-0.5 rounded ${scope === s ? 'bg-conn-blue-bg text-conn-blue-text' : 'hover:bg-cafe-surface-elevated'}`}
           >
-            {s === 'both' ? '全部' : s === 'transcripts' ? '对话' : '摘要'}
+            {s === 'both' ? t.all : s === 'transcripts' ? t.transcripts : t.digests}
           </button>
         ))}
       </div>
 
-      {loading && <div className="text-xs text-cafe-muted py-2">搜索中...</div>}
-      {error && <div className="text-xs text-conn-red-text py-2">搜索失败</div>}
+      {loading && <div className="text-xs text-cafe-muted py-2">{t.searching}</div>}
+      {error && <div className="text-xs text-conn-red-text py-2">{t.searchFailed}</div>}
 
       {visibleResultSet !== null &&
         !loading &&
         !error &&
         (visibleResultSet.hits.length === 0 ? (
-          <div className="text-xs text-cafe-muted py-2">无匹配结果</div>
+          <div className="text-xs text-cafe-muted py-2">{t.noMatches}</div>
         ) : (
           <div className="space-y-1.5 max-h-48 overflow-y-auto">
             {visibleResultSet.hits.map((hit, i) => {
@@ -142,7 +147,7 @@ export function SessionSearchTab({ threadId, onViewSession, onViewInvocation }: 
                 >
                   <div className="flex items-center gap-1.5 text-xs">
                     <span className={`px-1 py-0.5 rounded text-micro font-medium ${badge.bg} ${badge.text}`}>
-                      {hit.kind}
+                      {isV2 ? (hit.kind === 'digest' ? t.digests : t.event) : hit.kind}
                     </span>
                     <button
                       type="button"
@@ -161,7 +166,9 @@ export function SessionSearchTab({ threadId, onViewSession, onViewInvocation }: 
                   </div>
                   <p className="text-xs text-cafe-secondary mt-0.5">{hit.snippet}</p>
                   {hit.pointer.eventNo != null && (
-                    <span className="text-micro text-cafe-muted">event #{hit.pointer.eventNo}</span>
+                    <span className="text-micro text-cafe-muted">
+                      {isV2 ? t.event : 'event'} #{hit.pointer.eventNo}
+                    </span>
                   )}
                 </div>
               );

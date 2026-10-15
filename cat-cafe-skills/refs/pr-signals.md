@@ -44,7 +44,7 @@ live baseline + typed predicate + nextStep + expiresAt(可选) + autoRenew(默�
 |---|---|
 | `pr_head_changed` | 等 external author push 新 HEAD |
 | `pr_review_result_available` + `triggerCommentId` | 等 exact `@codex review` 的结果 |
-| `pr_review_decision_changed` | 等 GitHub review decision 变化 |
+| `pr_review_decision_changed` | 等 GitHub review decision 变化：新的 approve / request changes，或已有的被撤销（dismissed） |
 | `pr_review_thread_changed` + `reviewThreadIds` | 等指定 review thread 变化 |
 | `pr_ci_terminal` | 等 CI 从非终态进入 pass/fail |
 | `pr_became_conflicting` | 等 PR 首次变为 conflicting |
@@ -110,6 +110,7 @@ comment/review body、CI 原始 description、legacy caller instructions 和未�
 
 - `pr_head_changed`：重新锁定 exact HEAD，失效旧 verdict，再按当前 review SOP 走。
 - `pr_review_result_available` / review predicate：加载 `receive-review`，逐项验证并处理。
+- review `… → DISMISSED`：已有的 approve / request changes 被撤销。GitHub 原地撤销，review id 不变，投递里带 `github:pr-review:<id>`。去 GitHub 读当前 review 状态和撤销说明；被撤销的若是 approve，不能再按"已批准"推进 merge-gate。
 - `pr_ci_terminal`：查真实 checks；pass 继续 merge-gate，fail 读日志并修复。
 - `pr_became_conflicting`：在对应 worktree rebase；复杂冲突再升级。
 - `pr_conversation_comment_added` / `pr_inline_comment_added`：读对应评论（行内评论带文件与行号），按 `receive-review` 回应或修改。投递里只有评论 id 与作者，正文需自己去读，不会被复制进消息。

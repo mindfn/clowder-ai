@@ -8,9 +8,21 @@ interface BrowserTabBarProps {
   onSelect: (tabId: string) => void;
   onClose: (tabId: string) => void;
   onAdd: () => void;
+  /** Title for tabs created without an explicit one; defaults to the classic literal. */
+  defaultTitle?: string;
+  /** Hover title of the + button; defaults to the classic literal. */
+  addTitle?: string;
 }
 
-export function BrowserTabBar({ tabs, activeTabId, onSelect, onClose, onAdd }: BrowserTabBarProps) {
+export function BrowserTabBar({
+  tabs,
+  activeTabId,
+  onSelect,
+  onClose,
+  onAdd,
+  defaultTitle = 'New Tab',
+  addTitle = 'New tab',
+}: BrowserTabBarProps) {
   return (
     <div className="flex items-center bg-[var(--ws-surface-warm)] console-divider-b overflow-x-auto">
       {tabs.map((tab) => {
@@ -26,7 +38,7 @@ export function BrowserTabBar({ tabs, activeTabId, onSelect, onClose, onAdd }: B
                 : 'text-[var(--ws-text)]/60 hover:text-[var(--ws-text)] hover:bg-[var(--ws-surface)]/50'
             }`}
           >
-            <span className="truncate">{tab.title}</span>
+            <span className="truncate">{tab.title ?? defaultTitle}</span>
             <span
               onClick={(e) => {
                 e.stopPropagation();
@@ -46,7 +58,7 @@ export function BrowserTabBar({ tabs, activeTabId, onSelect, onClose, onAdd }: B
         type="button"
         onClick={onAdd}
         className="px-2 py-1.5 text-xs text-[var(--ws-text)]/40 hover:text-[var(--ws-text)] hover:bg-[var(--ws-surface)]/50 transition-colors shrink-0"
-        title="New tab"
+        title={addTitle}
       >
         +
       </button>

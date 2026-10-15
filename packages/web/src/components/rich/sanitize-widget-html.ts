@@ -20,7 +20,9 @@ import DOMPurify from 'dompurify';
 
 export function sanitizeWidgetHtml(html: string): string {
   // Hooks belong only to this call, never the shared purifier used elsewhere.
-  const purifier = DOMPurify(window);
+  // The factory defaults to the current window. Avoid comparing nominal
+  // Trusted Types declarations from separately resolved dependency copies.
+  const purifier = DOMPurify();
   const scriptText = new WeakMap<Node, string>();
   purifier.addHook('beforeSanitizeElements', (node) => {
     if (

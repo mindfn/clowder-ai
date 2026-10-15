@@ -124,6 +124,8 @@ export interface MachineOfficialPluginCatalogOptions {
   readonly validateCatalog: (value: unknown) => MachineCatalogValidationResult;
   /** Host-owned authority; catalog metadata is never allowed to widen this policy. */
   readonly hostPolicies: readonly MachineCatalogHostPolicy[];
+  /** Host-shipped packages have no remote archive; installation still uses Host inventory. */
+  readonly bundledEntries?: readonly OfficialPluginCatalogEntry[];
   readonly refreshTtlMs?: number;
   readonly now?: () => number;
 }
@@ -191,6 +193,9 @@ export class MachineOfficialPluginCatalog implements OfficialPluginCatalogProvid
   private inFlight: Promise<OfficialPluginCatalogSnapshot> | undefined;
 
   constructor(private readonly options: MachineOfficialPluginCatalogOptions) {
+    if (options.bundledEntries?.some((entry) => entry.distribution !== 'bundled')) {
+      throw new TypeError('Host bundled discovery accepts only bundled package entries');
+    }
     this.now = options.now ?? Date.now;
     this.policies = new Map(options.hostPolicies.map((policy) => [policy.pluginId, policy]));
     this.refreshTtlMs = options.refreshTtlMs ?? DEFAULT_REFRESH_TTL_MS;
@@ -246,8 +251,10 @@ export class MachineOfficialPluginCatalog implements OfficialPluginCatalogProvid
   }
 
   private project(): OfficialPluginCatalogSnapshot {
+    const bundled = this.options.bundledEntries ?? [];
+    const reservedIds = new Set(bundled.map((entry) => entry.pluginId));
     return {
-      entries: this.lastGoodEntries,
+      entries: [...bundled, ...this.lastGoodEntries.filter((entry) => !reservedIds.has(entry.pluginId))],
       status: this.status,
       checkedAt: this.checkedAt,
       ...(this.errorCode === undefined ? {} : { errorCode: this.errorCode }),

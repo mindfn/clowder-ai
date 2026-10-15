@@ -18,7 +18,6 @@
 
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
@@ -33,9 +32,15 @@ import {
   type SkillConsumptionVerificationFailure,
   WORKSPACE_NAVIGATOR_CONSUMER_ID,
 } from '../domains/cats/services/tool-usage/SkillConsumptionReceiptService.js';
+import type { PullRequestChangesDependencies } from '../domains/workspace/pull-request-changes.js';
+import { canonicalLinkedRootId, readLinkedRootState } from '../domains/workspace/roots/workspace-linked-root-store.js';
 import { guessMime, readWorkspaceFilePreview } from '../domains/workspace/workspace-file-read.js';
 import type { WorkspaceNavigationEmitter } from '../domains/workspace/workspace-navigation-delivery.js';
-import { resolveWorkspaceDocumentHref } from '../domains/workspace/workspace-path-resolution.js';
+import {
+  resolveWorkspacePathLinkHref,
+  WorkspacePathNotFoundError,
+  WorkspacePathNotRegisteredError,
+} from '../domains/workspace/workspace-path-resolution.js';
 import {
   addLinkedRoot,
   getLinkedRootsAsync,
@@ -47,6 +52,10 @@ import {
   resolveWorkspaceFilesystemPath,
   WorkspaceSecurityError,
 } from '../domains/workspace/workspace-security.js';
+import {
+  canonicalWorkspaceIdentityRoot,
+  durableIdForCanonicalRoot,
+} from '../domains/workspace/workspace-worktree-identity.js';
 import { resolveDirectLocalAuthorizationUserId, resolveSessionUserId } from '../utils/request-identity.js';
 import {
   type AgentKeyAuthRegistry,
@@ -55,16 +64,21 @@ import {
 } from './callback-auth-prehandler.js';
 import { resolvePrincipalThread } from './callback-scope-helpers.js';
 import { parseWorkspaceChangedFiles } from './workspace-diff.js';
+import { workspaceDirectHuman } from './workspace-direct-human.js';
+import { registerWorkspaceFileSourceRoutes } from './workspace-file-source-routes.js';
+import { sendWorkspaceMedia } from './workspace-media-response.js';
 import {
   handleWorkspaceNavigateBody,
   parseWorkspaceNavigateBody,
   type ResolveWorktreeIdByPathForNavigate,
   type WorkspaceNavigateBody,
 } from './workspace-navigate-handler.js';
+import { registerWorkspacePullRequestChangesRoutes } from './workspace-pull-request-changes.js';
+import { registerWorkspaceRootConnectionRoutes } from './workspace-root-connection-routes.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_FILE_SIZE = 1024 * 1024; // 1 MB text preview
-const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10 MB image preview
+const MAX_IMAGE_AUDIO_SIZE = 10 * 1024 * 1024; // 10 MB image/audio preview
 const MAX_SEARCH_RESULTS = 100;
 const MAX_TREE_DEPTH = 5;
 const MAX_CONTENT_SEARCH_FILE_SIZE = 10 * 1024 * 1024; // 10 MB per searchable text file
@@ -74,19 +88,23 @@ async function resolveDocumentLinkRouteResult(href: string): Promise<{
   body: unknown;
 }> {
   try {
-    return { statusCode: 200, body: await resolveWorkspaceDocumentHref(href) };
+    return { statusCode: 200, body: await resolveWorkspacePathLinkHref(href) };
   } catch (error) {
     if (!(error instanceof WorkspaceSecurityError)) {
-      return { statusCode: 500, body: { error: 'Internal error' } };
+      return { statusCode: 500, body: { code: 'PATH_RESOLUTION_FAILED' } };
+    }
+    if (error instanceof WorkspacePathNotRegisteredError) {
+      return { statusCode: 404, body: { code: 'PATH_NOT_IN_REGISTERED_WORKSPACE' } };
+    }
+    if (error instanceof WorkspacePathNotFoundError) {
+      return { statusCode: 404, body: { code: 'PATH_NOT_FOUND' } };
+    }
+    if (error.code === 'DENIED' || error.code === 'TRAVERSAL') {
+      return { statusCode: 403, body: { code: 'PATH_ACCESS_DENIED' } };
     }
     return {
-      statusCode: error.code === 'NOT_FOUND' ? 404 : 403,
-      body: {
-        error:
-          error.code === 'NOT_FOUND'
-            ? 'Document is not in a registered workspace'
-            : 'Document is not safe to open in Workspace',
-      },
+      statusCode: error.code === 'NOT_FOUND' ? 404 : 500,
+      body: { code: 'PATH_RESOLUTION_FAILED' },
     };
   }
 }
@@ -246,6 +264,11 @@ async function searchWorkspaceContent(
   return { results, truncated };
 }
 
+/** The tree listing's own visibility rule: dot entries (except .claude/.kimi) and SKIP_DIRS are not shown. */
+function hiddenFromTree(name: string): boolean {
+  return (name.startsWith('.') && name !== '.claude' && name !== '.kimi') || SKIP_DIRS.has(name);
+}
+
 async function buildTree(root: string, dirPath: string, depth: number, maxDepth: number): Promise<TreeNode[]> {
   if (depth >= maxDepth) return [];
   const entries = await readdir(dirPath, { withFileTypes: true });
@@ -258,8 +281,7 @@ async function buildTree(root: string, dirPath: string, depth: number, maxDepth:
   });
 
   for (const entry of sorted) {
-    if (entry.name.startsWith('.') && entry.name !== '.claude' && entry.name !== '.kimi') continue;
-    if (SKIP_DIRS.has(entry.name)) continue;
+    if (hiddenFromTree(entry.name)) continue;
 
     const fullPath = join(dirPath, entry.name);
     const relPath = normalizeWorkspaceRelativePath(relative(root, fullPath));
@@ -281,6 +303,7 @@ async function buildTree(root: string, dirPath: string, depth: number, maxDepth:
 }
 
 interface WorkspaceRouteOpts extends WorkspaceNavigationEmitter {
+  pullRequestChangesDependencies?: PullRequestChangesDependencies;
   auditLog?: EventAuditLog;
   resolveWorktreeIdByPathForNavigate?: ResolveWorktreeIdByPathForNavigate;
   callbackRegistry?: CallbackAuthRegistry;
@@ -399,6 +422,13 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRouteOpts> = async (ap
   if (opts.callbackRegistry) {
     registerCallbackAuthHook(app, opts.callbackRegistry, { agentKeyRegistry: opts.agentKeyRegistry });
   }
+  registerWorkspaceFileSourceRoutes(app, resolveWorkspaceInteractiveUserId);
+  registerWorkspacePullRequestChangesRoutes(
+    app,
+    resolveWorkspaceInteractiveUserId,
+    opts.pullRequestChangesDependencies,
+  );
+  registerWorkspaceRootConnectionRoutes(app, resolveWorkspaceInteractiveUserId);
   // GET /api/workspace/worktrees (includes linked roots)
   app.get<{ Querystring: { repoRoot?: string } }>('/api/workspace/worktrees', async (request, reply) => {
     const { repoRoot } = request.query;
@@ -426,7 +456,20 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRouteOpts> = async (ap
       }
     }
     const linked = await getLinkedRootsAsync();
-    const all = [...entries, ...linked];
+    const rootState = readLinkedRootState();
+    const all = await Promise.all(
+      [...entries, ...linked].map(async (entry) => {
+        const resolvedRoot = await canonicalWorkspaceIdentityRoot(entry);
+        return {
+          ...entry,
+          // Discovery relates a display alias to the existing F063 owner; it grants no filesystem access.
+          rootIdentity: resolvedRoot ? durableIdForCanonicalRoot(resolvedRoot) : undefined,
+          ...(resolvedRoot
+            ? { resolvedRoot, rootEpoch: rootState.rootEpochs[canonicalLinkedRootId(resolvedRoot)] ?? 0 }
+            : {}),
+        };
+      }),
+    );
     registerWorktrees(all);
     return { worktrees: all };
   });
@@ -447,11 +490,20 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRouteOpts> = async (ap
       const root = await getWorktreeRoot(worktreeId);
       const resolved = subpath ? await resolveWorkspaceFilesystemPath(root, subpath) : root;
       const tree = await buildTree(root, resolved, 0, depth);
-      return { root: subpath ? normalizeWorkspaceRelativePath(subpath) : '.', worktreeId, tree };
+      if (!subpath) return { root: '.', worktreeId, tree };
+      const normalized = normalizeWorkspaceRelativePath(subpath);
+      // A listable sub-path the parent listing would still leave out: the answer a caller can show as a reason.
+      const hidden = normalized.split('/').some((segment) => segment !== '.' && hiddenFromTree(segment));
+      return { root: normalized, worktreeId, tree, hiddenFromTree: hidden };
     } catch (e) {
       if (e instanceof WorkspaceSecurityError) {
         reply.status(e.code === 'NOT_FOUND' ? 404 : 403);
         return { error: e.message };
+      }
+      // Path resolution tolerates a missing target (writes create it); a listing of one is simply absent.
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+        reply.status(404);
+        return { error: 'Path not found' };
       }
       reply.status(500);
       return { error: 'Internal error' };
@@ -461,12 +513,12 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRouteOpts> = async (ap
   app.post<{ Body: { href?: unknown } }>('/api/workspace/resolve-document-link', async (request, reply) => {
     if (!resolveWorkspaceInteractiveUserId(request)) {
       reply.status(401);
-      return { error: 'Authentication required' };
+      return { code: 'AUTHENTICATION_REQUIRED' };
     }
     const { href } = request.body ?? {};
     if (typeof href !== 'string' || href.trim().length === 0) {
       reply.status(400);
-      return { error: 'href required' };
+      return { code: 'INVALID_HREF' };
     }
     const result = await resolveDocumentLinkRouteResult(href);
     reply.status(result.statusCode);
@@ -548,14 +600,11 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRouteOpts> = async (ap
         reply.status(400);
         return { error: 'Raw endpoint only serves image, audio, and video files' };
       }
-      if (fileStat.size > MAX_IMAGE_SIZE) {
+      if (!mime.startsWith('video/') && fileStat.size > MAX_IMAGE_AUDIO_SIZE) {
         reply.status(413);
         return { error: `File too large (${Math.round(fileStat.size / 1024 / 1024)}MB, max 10MB)` };
       }
-      reply.header('Content-Type', mime);
-      reply.header('Content-Length', fileStat.size);
-      reply.header('Cache-Control', 'private, max-age=60');
-      return reply.send(createReadStream(resolved));
+      return sendWorkspaceMedia(request, reply, resolved, fileStat.size, mime);
     } catch (e) {
       if (e instanceof WorkspaceSecurityError) {
         reply.status(e.code === 'NOT_FOUND' ? 404 : 403);
@@ -724,6 +773,8 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRouteOpts> = async (ap
   app.post<{
     Body: { name?: string; path?: string };
   }>('/api/workspace/linked-roots', async (request, reply) => {
+    if (!workspaceDirectHuman(request, resolveWorkspaceInteractiveUserId))
+      return reply.code(401).send({ error: 'identity_required' });
     const { name, path: rootPath } = request.body ?? {};
     if (!name || !rootPath) {
       reply.status(400);
@@ -748,19 +799,23 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRouteOpts> = async (ap
 
   // DELETE /api/workspace/linked-roots?id=
   app.delete<{
-    Querystring: { id?: string };
+    Querystring: { id?: string; expectedEpoch?: string };
   }>('/api/workspace/linked-roots', async (request, reply) => {
-    const { id } = request.query;
-    if (!id) {
+    if (!workspaceDirectHuman(request, resolveWorkspaceInteractiveUserId))
+      return reply.code(401).send({ error: 'identity_required' });
+    const { id, expectedEpoch } = request.query;
+    const epoch = expectedEpoch !== undefined && /^\d+$/.test(expectedEpoch) ? Number(expectedEpoch) : NaN;
+    if (!id || !Number.isSafeInteger(epoch) || epoch < 0) {
       reply.status(400);
-      return { error: 'id is required' };
+      return { error: 'id and expectedEpoch are required' };
     }
-    const removed = await removeLinkedRoot(id);
-    if (!removed) {
-      reply.status(404);
-      return { error: 'Linked root not found in config' };
+    try {
+      const removed = await removeLinkedRoot(id, epoch);
+      return { ok: true, removed };
+    } catch (error) {
+      if (error instanceof WorkspaceSecurityError) return reply.code(409).send({ error: 'connection_changed' });
+      return reply.code(503).send({ error: 'connection_state_unavailable' });
     }
-    return { ok: true };
   });
 
   // POST /api/workspace/reveal — open file/directory in system file manager

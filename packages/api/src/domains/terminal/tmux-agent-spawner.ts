@@ -17,7 +17,6 @@ import { createModuleLogger } from '../../infrastructure/logger.js';
 import { buildCliDiagnostics } from '../../utils/cli-diagnostics.js';
 import { withCatCliProcessContext } from '../../utils/cli-process-environment.js';
 import { maybeCollectStreamError } from '../../utils/cli-spawn.js';
-import { resolveCliTimeoutMs } from '../../utils/cli-timeout.js';
 import type { CliSpawnOptions } from '../../utils/cli-types.js';
 // parseNDJSON not used directly — we create readline inline for killability.
 import type { SpawnCliOverride } from '../cats/services/types.js';
@@ -94,7 +93,10 @@ export async function* spawnCliInTmux(
 ): AsyncGenerator<unknown, TmuxSpawnResult, undefined> {
   options.signal?.throwIfAborted();
   const { tmuxGateway } = deps;
-  const idleTimeoutMs = resolveCliTimeoutMs(options.timeoutMs);
+  // Only a caller that asks for an idle timeout gets one. F117 KD-22: a dispatched member's timeout
+  // is its invocation's, driven by CLI_TIMEOUT_MS; the first-event watchdog below still guards a
+  // member that never comes up.
+  const idleTimeoutMs = options.timeoutMs ?? 0;
   const firstEventTimeoutMs =
     options.firstEventTimeoutMs ??
     (options.outputMode === 'plainText' ? idleTimeoutMs : DEFAULT_FIRST_EVENT_TIMEOUT_MS);
@@ -539,6 +541,7 @@ export function createTmuxSpawnOverride(
   userId: string,
   tmuxGateway: TmuxGateway,
   agentPaneRegistry?: AgentPaneRegistry,
+  catId?: string,
 ): SpawnCliOverride {
   return async function* tmuxOverride(cliOpts: CliSpawnOptions) {
     if (cliOpts.bindExecutionOwner === true) {
@@ -567,7 +570,7 @@ export function createTmuxSpawnOverride(
         const ev = value as Record<string, unknown>;
         if (ev.__tmuxPaneCreated && typeof ev.paneId === 'string') {
           paneId = ev.paneId;
-          agentPaneRegistry?.register(invocationId, worktreeId, paneId, userId);
+          agentPaneRegistry?.register(invocationId, worktreeId, paneId, userId, catId);
         }
         yield value;
       }

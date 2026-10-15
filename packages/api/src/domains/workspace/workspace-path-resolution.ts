@@ -20,6 +20,28 @@ export interface WorkspaceAbsolutePathTarget {
 }
 
 const MARKDOWN_DOCUMENT_HREF_RE = /^(.*\.mdx?)(?::([1-9]\d*))?$/i;
+const WORKSPACE_PATH_LINE_SUFFIX_RE = /^(.*):([1-9]\d*)$/;
+const WORKSPACE_PATH_LINE_COLUMN_SUFFIX_RE = /^(.*):([1-9]\d*):([1-9]\d*)$/;
+
+export class WorkspacePathNotRegisteredError extends WorkspaceSecurityError {
+  constructor() {
+    super('Path is not in a registered workspace', 'NOT_FOUND');
+    this.name = 'WorkspacePathNotRegisteredError';
+  }
+}
+
+export class WorkspacePathNotFoundError extends WorkspaceSecurityError {
+  constructor() {
+    super('Workspace path not found', 'NOT_FOUND');
+    this.name = 'WorkspacePathNotFoundError';
+  }
+}
+
+function isWorkspacePathCandidateMiss(
+  error: unknown,
+): error is WorkspacePathNotFoundError | WorkspacePathNotRegisteredError {
+  return error instanceof WorkspacePathNotFoundError || error instanceof WorkspacePathNotRegisteredError;
+}
 
 function containsPath(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(`${root}${sep}`);
@@ -54,7 +76,7 @@ async function selectWorkspaceRoot(
 
   const selected = matches.sort((a, b) => b.resolvedRoot.length - a.resolvedRoot.length)[0];
   if (!selected) {
-    throw new WorkspaceSecurityError('Path is not in a registered workspace', 'NOT_FOUND');
+    throw new WorkspacePathNotRegisteredError();
   }
   return {
     entry: selected.entry,
@@ -74,12 +96,12 @@ export async function resolveWorkspaceAbsolutePath(
   const resolvedPath = await resolveWorkspaceFilesystemPath(selected.entry.root, selected.relativePath);
   const pathStat = await stat(resolvedPath).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT') {
-      throw new WorkspaceSecurityError('Workspace path not found', 'NOT_FOUND');
+      throw new WorkspacePathNotFoundError();
     }
     throw error;
   });
   if (!pathStat.isFile() && !pathStat.isDirectory()) {
-    throw new WorkspaceSecurityError('Workspace path not found', 'NOT_FOUND');
+    throw new WorkspacePathNotFoundError();
   }
   return {
     worktreeId: selected.entry.id,
@@ -104,4 +126,38 @@ export async function resolveWorkspaceDocumentHref(href: string, repoRoot?: stri
     path: target.path,
     line: match[2] ? Number.parseInt(match[2], 10) : null,
   };
+}
+
+export interface WorkspacePathLinkTarget extends WorkspaceAbsolutePathTarget {
+  line: number | null;
+}
+
+/** Resolve a chat link to any registered Workspace file or directory. */
+export async function resolveWorkspacePathLinkHref(href: string, repoRoot?: string): Promise<WorkspacePathLinkTarget> {
+  const candidates: Array<{ href: string; line: number | null }> = [{ href, line: null }];
+  for (const match of [href.match(WORKSPACE_PATH_LINE_COLUMN_SUFFIX_RE), href.match(WORKSPACE_PATH_LINE_SUFFIX_RE)]) {
+    if (match?.[1]) {
+      candidates.push({
+        href: match[1],
+        line: Number.parseInt(match[2], 10),
+      });
+    }
+  }
+
+  let lastCandidateError: WorkspacePathNotFoundError | WorkspacePathNotRegisteredError | null = null;
+  for (const candidate of candidates) {
+    try {
+      const target = await resolveWorkspaceAbsolutePath(candidate.href, repoRoot);
+      return {
+        ...target,
+        line: target.kind === 'file' ? candidate.line : null,
+      };
+    } catch (error) {
+      if (!isWorkspacePathCandidateMiss(error)) throw error;
+      lastCandidateError = error;
+    }
+  }
+
+  if (lastCandidateError) throw lastCandidateError;
+  throw new WorkspacePathNotFoundError();
 }

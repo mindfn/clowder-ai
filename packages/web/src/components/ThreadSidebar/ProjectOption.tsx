@@ -9,10 +9,21 @@ interface ProjectOptionProps {
   path: string;
   selected: boolean;
   badge?: string;
+  nameLabel?: string;
+  pathLabel?: string;
+  selectAriaLabel?: string;
   onSelect: () => void;
 }
 
-export function ProjectOption({ path, selected, badge, onSelect }: ProjectOptionProps) {
+export function ProjectOption({
+  path,
+  selected,
+  badge,
+  nameLabel = '项目名称',
+  pathLabel = '项目路径',
+  selectAriaLabel,
+  onSelect,
+}: ProjectOptionProps) {
   const displayName = projectDisplayName(path);
   const selectFromRow = (event: MouseEvent<HTMLDivElement>) => {
     if (isRowPrimaryActionTarget(event.target, event.currentTarget)) onSelect();
@@ -29,14 +40,14 @@ export function ProjectOption({ path, selected, badge, onSelect }: ProjectOption
     >
       <FolderIcon />
       <div className="min-w-0 flex-1">
-        <CompactLabel label="项目名称" value={displayName} className="font-medium" />
-        <CompactLabel label="项目路径" value={path} className="text-micro text-cafe-muted" />
+        <CompactLabel label={nameLabel} value={displayName} className="font-medium" />
+        <CompactLabel label={pathLabel} value={path} className="text-micro text-cafe-muted" />
       </div>
       {badge && <span className="shrink-0 text-micro text-cafe-accent">{badge}</span>}
       <button
         type="button"
         onClick={onSelect}
-        aria-label={`选择项目 ${displayName}，路径 ${path}`}
+        aria-label={selectAriaLabel ?? `选择项目 ${displayName}，路径 ${path}`}
         aria-pressed={selected}
         data-project-path={path}
         className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cafe-accent ${

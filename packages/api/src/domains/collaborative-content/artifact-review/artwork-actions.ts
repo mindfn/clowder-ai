@@ -3,10 +3,12 @@ import {
   type ArtifactReviewAction,
   type ArtifactReviewActor,
   type ArtifactReviewRound,
+  imageModificationInstruction,
   reviewDrawingFitsMedia,
 } from '@cat-cafe/shared';
 import { annotate } from './annotation-actions.js';
 import { ArtifactReviewError } from './errors.js';
+import { mediaEditAnnotations } from './media-edit-selections.js';
 
 interface ArtworkContext {
   actor: ArtifactReviewActor;
@@ -67,10 +69,7 @@ export function requestImageEdit(
           width: round.asset.media.width,
           height: round.asset.media.height,
         };
-  const instruction =
-    action.edit.kind === 'erase-region'
-      ? '请移除选中区域内的内容，并自然补全背景，保留区域外的画面。'
-      : `请以当前图片为参考，生成 ${action.edit.ratio} 比例的新版本，保持主体与风格，并核对成品宽高比。`;
+  const instruction = imageModificationInstruction(action.edit);
   const body = action.note ? `${instruction}\n${action.note}` : instruction;
   annotate(
     review,
@@ -82,4 +81,19 @@ export function requestImageEdit(
   if (!annotation) throw new ArtifactReviewError('invalid_action');
   annotation.imageEdit = action.edit;
   return body;
+}
+
+export function requestMediaEdit(
+  review: ArtifactReview,
+  round: ArtifactReviewRound,
+  action: Extract<ArtifactReviewAction, { kind: 'request_media_edit' }>,
+  context: ArtworkContext,
+): string {
+  if (context.actor.kind !== 'human') throw new ArtifactReviewError('human_required');
+  if (action.mediaType !== round.asset.mediaType) throw new ArtifactReviewError('invalid_action');
+  const annotations = mediaEditAnnotations(action, round.asset.media);
+  if (annotations.some((item) => round.annotations.some((existing) => existing.id === item.annotationId)))
+    throw new ArtifactReviewError('invalid_action');
+  for (const annotation of annotations) annotate(review, round, annotation, context);
+  return action.body;
 }

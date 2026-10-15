@@ -31,7 +31,9 @@ import { createRepoScanTaskSpec } from '../dist/infrastructure/connectors/github
 // TaskSpec factories (for custom id tests)
 import { createCiCdCheckTaskSpec } from '../dist/infrastructure/email/CiCdCheckTaskSpec.js';
 import { createConflictCheckTaskSpec } from '../dist/infrastructure/email/ConflictCheckTaskSpec.js';
+import { deliverConnectorMessage } from '../dist/infrastructure/email/deliver-connector-message.js';
 import { createReviewFeedbackTaskSpec } from '../dist/infrastructure/email/ReviewFeedbackTaskSpec.js';
+import { connectorDeliveryHarness } from './helpers/connector-delivery-harness.js';
 
 const stubLog = {
   info: () => {},
@@ -74,8 +76,8 @@ function makeGitHubDeps(overrides = {}) {
       markBaselineEstablished: async () => {},
     },
     bindingStore: { getByExternal: async () => null },
-    deliverFn: async () => ({ status: 'delivered', threadId: 't1' }),
-    deliveryDeps: { messageStore: {}, socketManager: {} },
+    deliverFn: deliverConnectorMessage,
+    deliveryDeps: connectorDeliveryHarness().deliveryDeps,
     fetchOpenPRs: async () => [],
     fetchOpenIssues: async () => [],
     // F202 Phase 2D: issue-tracking deps
@@ -172,8 +174,8 @@ describe('TaskSpec factory custom id (F202-2B Task 1)', () => {
         markBaselineEstablished: async () => {},
       },
       bindingStore: { getByExternal: async () => null },
-      deliverFn: async () => ({ status: 'delivered', threadId: 't1' }),
-      deliveryDeps: { messageStore: {}, socketManager: {} },
+      deliverFn: deliverConnectorMessage,
+      deliveryDeps: connectorDeliveryHarness().deliveryDeps,
       invokeTrigger: { trigger: () => {} },
       fetchOpenPRs: async () => [],
       fetchOpenIssues: async () => [],
@@ -334,7 +336,7 @@ describe('GitHub schedule factory registration (F202-2B Task 3)', () => {
     const spec = factory.createTaskSpec(
       'schedule:github:cicd-check',
       makeGitHubDeps({
-        taskStore: { listByKind: async () => [task] },
+        taskStore: { listByKind: async () => [task], get: async () => task },
         cicdRouter: {
           route: async (poll) => {
             routed.push(poll.prNumber);
@@ -402,6 +404,54 @@ describe('GitHub schedule factory registration (F202-2B Task 3)', () => {
     const spec = factory.createTaskSpec('schedule:github:repo-scan', makeGitHubDeps());
     assert.strictEqual(spec.id, 'schedule:github:repo-scan');
     assert.strictEqual(spec.profile, 'poller');
+  });
+
+  test('github.repo-scan factory forwards the dynamic inbox owner resolver', async () => {
+    const registry = new ScheduleFactoryRegistry();
+    registerGitHubScheduleFactories(registry);
+    const factory = registry.get('github.repo-scan');
+    assert.ok(factory);
+
+    const delivered = [];
+    const connector = connectorDeliveryHarness();
+    const resolverCalls = [];
+    const spec = factory.createTaskSpec(
+      'schedule:github:repo-scan',
+      makeGitHubDeps({
+        inboxCatId: 'stale-env-owner',
+        resolveInboxCatId: async (repoFullName) => {
+          resolverCalls.push(repoFullName);
+          return 'codex61-sol';
+        },
+        bindingStore: {
+          getByExternal: async () => ({ threadId: 'thread-repo-inbox', userId: 'user-1' }),
+        },
+        fetchOpenPRs: async () => [
+          {
+            number: 7,
+            title: 'Community PR',
+            html_url: 'https://github.com/owner/repo/pull/7',
+            user: 'contributor',
+            author_association: 'CONTRIBUTOR',
+            draft: false,
+          },
+        ],
+        deliveryDeps: connector.deliveryDeps,
+        deliverFn: async (deps, input) => {
+          delivered.push(input);
+          return deliverConnectorMessage(deps, input);
+        },
+      }),
+    );
+
+    const gate = await spec.admission.gate();
+    assert.equal(gate.run, true);
+    await spec.run.execute(gate.workItems[0].signal, gate.workItems[0].subjectKey, {});
+
+    assert.deepEqual(resolverCalls, ['owner/repo']);
+    assert.equal(delivered[0].catId, 'codex61-sol');
+    assert.equal(connector.wakes[0].catId, 'codex61-sol');
+    assert.equal(connector.admitted('thread-repo-inbox', 'user-1').length, 1);
   });
 
   test('github.repo-scan factory throws when repoAllowlist missing', () => {

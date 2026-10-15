@@ -25,6 +25,19 @@ import { createInitialWorkbenchState } from '../workbench-model';
 import { restoreWorkbenchState } from '../workbench-restore';
 
 describe('F307 real surface adapters', () => {
+  it.each([
+    { name: 'guide.md', type: 'file' as const, context: 'Markdown' },
+    { name: 'guide.MARKDOWN', type: 'file' as const, context: 'Markdown' },
+    { name: 'report.pdf', type: 'file' as const, context: '文件' },
+    { name: 'photo.png', type: 'image' as const, context: '图片' },
+    { name: 'example.ts', type: 'code' as const, context: '代码' },
+  ])('names $name with a human-readable artifact type', ({ name, type, context }) => {
+    const artifact: ThreadArtifactDTO = { name, type, catId: null, sourceMessageId: null, createdAt: 1 };
+    const surface = createArtifactSurface({ threadId: 'thread-artifact-copy', artifact });
+    expect(surface.context).toBe(context);
+    expect(resolveArtifactTarget(surface)?.artifactId).toBe(surface.objectRef.id);
+  });
+
   it('persists only F309 content/session refs for a DOCX editor surface', () => {
     const contentRef = 'project:alpha/assets/proposal.docx';
     const sessionRef = `editor-session:${'a'.repeat(64)}`;
@@ -128,6 +141,39 @@ describe('F307 real surface adapters', () => {
       scrollToLine: 37,
     });
     expect(restoreWorkbenchState(createInitialWorkbenchState([searchMatch])).surfaces).toEqual([searchMatch]);
+  });
+
+  it('keeps a typed ordinary-entry origin separate from the file target and Task return edge', () => {
+    const surface = createFileSurface({
+      worktreeId: 'worktree-main',
+      path: 'docs/guide.md',
+      navigationOrigin: { kind: 'workspace-home-search', query: 'collaboration' },
+    });
+
+    expect(surface.navigationOrigin).toEqual({ kind: 'workspace-home-search', query: 'collaboration' });
+    expect(surface.returnTargetRef).toBeUndefined();
+    expect(restoreWorkbenchState(createInitialWorkbenchState([surface])).surfaces).toEqual([surface]);
+
+    const malformed = {
+      ...surface,
+      navigationOrigin: { kind: 'chat-file-link' as const, threadId: 'thread\u0000forged', messageId: 'message-a' },
+    };
+    expect(restoreWorkbenchState(createInitialWorkbenchState([malformed])).surfaces).toEqual([]);
+  });
+
+  it('restores an explicit directory choice and its connection epoch without treating it as an owner grant', () => {
+    const surface = createFileSurface({
+      worktreeId: 'old-display-alias',
+      path: 'notes.txt',
+      rootSelection: { root: '/chosen/A', branch: 'feature-A', expectedEpoch: 4 },
+    });
+    const restored = restoreWorkbenchState(JSON.parse(JSON.stringify(createInitialWorkbenchState([surface]))));
+    expect(restored.surfaces).toEqual([surface]);
+    expect(restored.surfaces[0]?.ownerStateRef).toEqual(surface.ownerStateRef);
+    const incomplete = { ...surface, rootSelection: { root: '/chosen/A', branch: 'feature-A' } };
+    expect(
+      restoreWorkbenchState({ ...createInitialWorkbenchState([surface]), surfaces: [incomplete] }).surfaces,
+    ).toEqual([]);
   });
 
   it('keeps Browser and Terminal lifecycle keyed to their real owners', () => {

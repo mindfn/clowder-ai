@@ -53,47 +53,6 @@ describe('POST /api/workspace/navigate (F131)', () => {
     assert.ok(body.error);
   });
 
-  it('resolves an absolute Markdown document link to a typed Workspace target', async () => {
-    const href = resolve(repoRoot, 'docs/features/F063-hub-workspace-explorer.md');
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/workspace/resolve-document-link',
-      headers: { 'x-cat-cafe-user': 'default-user' },
-      payload: { href: `${href}:59` },
-    });
-
-    assert.equal(res.statusCode, 200);
-    assert.deepEqual(JSON.parse(res.body), {
-      worktreeId: canonicalWorktreeId,
-      path: 'docs/features/F063-hub-workspace-explorer.md',
-      line: 59,
-    });
-  });
-
-  it('rejects document links outside registered worktrees', async () => {
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/workspace/resolve-document-link',
-      headers: { 'x-cat-cafe-user': 'default-user' },
-      payload: { href: '/definitely/not/registered/guide.md' },
-    });
-
-    assert.equal(res.statusCode, 404);
-    assert.match(JSON.parse(res.body).error, /registered workspace/i);
-  });
-
-  it('rejects an unauthenticated document resolver request before exposing filesystem truth', async () => {
-    const href = resolve(repoRoot, 'docs/features/F063-hub-workspace-explorer.md');
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/workspace/resolve-document-link',
-      payload: { href },
-    });
-
-    assert.equal(res.statusCode, 401);
-    assert.match(JSON.parse(res.body).error, /authentication required/i);
-  });
-
   it('returns 400 when worktreeId is missing', async () => {
     const res = await app.inject({
       method: 'POST',
@@ -104,24 +63,6 @@ describe('POST /api/workspace/navigate (F131)', () => {
     assert.equal(res.statusCode, 400);
     const body = JSON.parse(res.body);
     assert.ok(body.error);
-  });
-
-  it('accepts a Codex-native absolute path without worktreeId and emits a relative typed target', async () => {
-    emittedEvents.length = 0;
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/workspace/navigate',
-      headers: NAVIGATE_HEADERS,
-      payload: { path: resolve(repoRoot, 'package.json'), action: 'open', line: 7 },
-    });
-
-    assert.equal(res.statusCode, 200);
-    const body = JSON.parse(res.body);
-    assert.equal(body.path, 'package.json');
-    assert.equal(body.worktreeId, canonicalWorktreeId);
-    assert.equal(emittedEvents[0].data.path, 'package.json');
-    assert.equal(emittedEvents[0].data.worktreeId, canonicalWorktreeId);
-    assert.equal(emittedEvents[0].data.line, 7);
   });
 
   it('returns 404 for non-existent path', async () => {

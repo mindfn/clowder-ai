@@ -4,7 +4,7 @@ import type { RichCardBlock, RichMessageExtra } from '@cat-cafe/shared';
 import { getCoCreatorConfig } from '../../../../../config/cat-config-loader.js';
 import { formatInjectionProvenance } from '../../../../memory/injection-provenance.js';
 import { formatPromptTime, formatPromptTimeRange } from '../../format-time.js';
-import type { ContextSurfaceProjection } from '../../session/context-surface-projection.js';
+import type { ContextSurfaceProjection } from '../../session/context/context-surface-projection.js';
 import type { AppendMessageInput } from '../../stores/ports/MessageStore.js';
 import type { RecentArtifact } from './artifact-tracking.js';
 import type { CoverageMap } from './context-transport.js';
@@ -258,9 +258,9 @@ export function buildBriefingMessage(
   const rich: RichMessageExtra = { v: 1, blocks: [card] };
 
   return {
+    from: { kind: 'system', service: 'context-briefing' },
     threadId,
     userId: 'system',
-    catId: null,
     content: navTitle,
     mentions: [],
     timestamp: Date.now(),

@@ -9,7 +9,13 @@ import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
 import { registerDefaultEntryJourney } from './default-entry-journey.harness.mjs';
+import { registerChatFileTabJourneys } from './f307-chat-file-tabs.journey.mjs';
+import { registerHomeSearchReturnJourneys } from './f307-home-search-return.journey.mjs';
+import { closeMobileSidebarIfOpen } from './f307-mobile-sidebar.harness.mjs';
+import { registerPluginScrollJourneys } from './f307-plugin-scroll.journey.mjs';
+import { registerPullRequestChangesJourneys } from './f307-pull-request-changes.journey.mjs';
 import {
+  canonicalWorktreeId,
   EVOLUTION_PROGRAM_ID,
   fixedFixture,
   INVOCATION_ID,
@@ -20,11 +26,26 @@ import {
   THREAD_ID,
   WORKTREE_ID,
 } from './f307-real-surface-fixtures.mjs';
+import { registerV2FocusExitJourneys } from './f307-v2-focus-exit.journey.mjs';
 import { ensureWorkspaceOpen } from './f307-workspace-open.mjs';
 
 const WEB_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const NEXT_BIN = path.resolve(WEB_ROOT, '../../node_modules/next/dist/bin/next');
 const EVIDENCE_DIR = process.env.F307_EVIDENCE_DIR ?? path.join(tmpdir(), 'cat-cafe-evidence', 'f307-phase-c');
+// F309 AC-U3: every file entrance resolves its alias to the one durable F063 root before mounting.
+const FILE_OWNER_WORKTREE_ID = canonicalWorktreeId(WORKTREE_ID);
+const FILE_SURFACE_ID = `file-owner:${FILE_OWNER_WORKTREE_ID}`;
+
+// F309 AC-U1 (docs/features/F309-collaborative-content-plane.md:701) and the Phase U plan
+// (docs/plans/2026-09-19-f309-phase-u-step1-packet.md:30): an ordinary file lands in its
+// collaboration surface; the file viewer stays reachable through the explicit 文件工具 action.
+async function openFileTools(page) {
+  await page
+    .getByTestId('f307-experience-workbench')
+    .locator(`[data-surface-id="${FILE_SURFACE_ID}"]`)
+    .getByRole('button', { name: '文件工具', exact: true })
+    .click();
+}
 
 async function findFreePort() {
   const socket = createServer();
@@ -101,6 +122,20 @@ async function assertOwnerRootFillsPane(surfacePane, ownerRoot) {
   return ownerBox;
 }
 
+async function assertEmptyRecallOwner(recallOwner) {
+  await recallOwner
+    .getByText('这条对话还没有召回记录。猫检索记忆或收到系统递送后，会显示在这里。', { exact: true })
+    .waitFor();
+  assert.equal(await recallOwner.getByRole('alert').count(), 0, 'empty Recall must not be a failed read');
+  assert.equal(await recallOwner.getByRole('status').count(), 0, 'empty Recall must finish reading its empty history');
+  assert.equal(
+    await recallOwner.locator('[data-recall-group]').count(),
+    0,
+    'empty Recall must not contain event groups',
+  );
+  assert.equal(await recallOwner.locator(':scope > p').count(), 1, 'geometry regression covers the empty Recall feed');
+}
+
 async function assertOwnerSurfaceFillsPane(surfacePane, ownerRoot) {
   const ownerBox = await assertOwnerRootFillsPane(surfacePane, ownerRoot);
   const renderedOwnerBox = await ownerRoot.locator(':scope > div').boundingBox();
@@ -112,6 +147,83 @@ async function assertOwnerSurfaceFillsPane(surfacePane, ownerRoot) {
   assert.ok(
     Math.abs(renderedOwnerBox.height - ownerBox.height) <= 1,
     `owner renderer must fill its host height (${renderedOwnerBox.height}px vs ${ownerBox.height}px)`,
+  );
+}
+
+async function assertFocusModeRoundTrip(page, { surfaceId, evidenceName }) {
+  const workbench = page.getByTestId('f307-experience-workbench');
+  const surfacePane = workbench.locator(`[data-surface-id="${surfaceId}"]`);
+  const ownerRoot = surfacePane.locator('[data-owner-preview]');
+  const previewContent = surfacePane.getByTestId('preview-unavailable');
+  const topologyBefore = await workbench.evaluate((node) => ({
+    activeSurface: node.getAttribute('data-active-surface'),
+    layoutKind: node.getAttribute('data-layout-kind'),
+    pinnedSurfaces: node.getAttribute('data-pinned-surfaces'),
+    sidecarSurface: node.getAttribute('data-sidecar-surface'),
+    splitPrimary: node.getAttribute('data-split-primary'),
+    splitSecondary: node.getAttribute('data-split-secondary'),
+    surfaceCount: node.getAttribute('data-surface-count'),
+    surfaceOrder: node.getAttribute('data-surface-order'),
+  }));
+  const contentBefore = await previewContent.boundingBox();
+  assert.ok(contentBefore, 'Browser content must have measurable geometry before focus');
+  await ownerRoot.evaluate((node) => {
+    window.__f307FocusOwner = node;
+  });
+
+  await surfacePane.getByTestId('workspace-focus-enter').click();
+  await page.waitForFunction(
+    (expectedSurfaceId) =>
+      document.querySelector('[data-testid="f307-experience-workbench"]')?.getAttribute('data-focus-surface') ===
+      expectedSurfaceId,
+    surfaceId,
+  );
+  await page.getByTestId('workspace-focus-exit').waitFor();
+
+  assert.equal(await page.getByTestId('f307-tab-actions').count(), 0, 'focus hides the Workbench tab/control rail');
+  assert.equal(await surfacePane.locator(':scope > header').count(), 0, 'focus hides the surface header');
+  assert.equal(await surfacePane.getByPlaceholder('localhost:3000').count(), 0, 'focus hides the Browser toolbar');
+  assert.equal(await surfacePane.getByTitle('New tab').count(), 0, 'focus hides the Browser tab bar');
+  assert.equal(
+    await ownerRoot.evaluate((node) => window.__f307FocusOwner === node && node.isConnected),
+    true,
+    'focus must preserve the exact Browser owner DOM instance',
+  );
+  assert.deepEqual(
+    await workbench.evaluate((node) => ({
+      activeSurface: node.getAttribute('data-active-surface'),
+      layoutKind: node.getAttribute('data-layout-kind'),
+      pinnedSurfaces: node.getAttribute('data-pinned-surfaces'),
+      sidecarSurface: node.getAttribute('data-sidecar-surface'),
+      splitPrimary: node.getAttribute('data-split-primary'),
+      splitSecondary: node.getAttribute('data-split-secondary'),
+      surfaceCount: node.getAttribute('data-surface-count'),
+      surfaceOrder: node.getAttribute('data-surface-order'),
+    })),
+    topologyBefore,
+    'focus must not rewrite working-set topology',
+  );
+  const contentFocused = await previewContent.boundingBox();
+  assert.ok(contentFocused, 'Browser content must have measurable geometry in focus');
+  assert.ok(
+    contentFocused.height >= contentBefore.height + 80,
+    `focus must return meaningful vertical room to the preview (${contentBefore.height}px → ${contentFocused.height}px)`,
+  );
+  await page.screenshot({ path: path.join(EVIDENCE_DIR, evidenceName), fullPage: true });
+
+  await page.getByTestId('workspace-focus-exit').click();
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[data-testid="f307-experience-workbench"]')?.getAttribute('data-focus-surface') === '',
+  );
+  assert.equal(await page.getByTestId('f307-tab-actions').count(), 1, 'exit restores the Workbench controls');
+  assert.equal(await surfacePane.locator(':scope > header').count(), 1, 'exit restores the surface header');
+  assert.equal(await surfacePane.getByPlaceholder('localhost:3000').count(), 1, 'exit restores the Browser toolbar');
+  assert.equal(await surfacePane.getByTitle('New tab').count(), 1, 'exit restores the Browser tab bar');
+  assert.equal(
+    await ownerRoot.evaluate((node) => window.__f307FocusOwner === node && node.isConnected),
+    true,
+    'exit must preserve the exact Browser owner DOM instance',
   );
 }
 
@@ -180,6 +292,100 @@ async function assertMainAreaAttentionRoundTrip(page, { surfaceId, closeTestId, 
   });
 }
 
+async function assertArtifactFullWindowRoundTrip(page) {
+  const workbench = page.getByTestId('f307-experience-workbench');
+  const surfaceId = await workbench.getAttribute('data-active-surface');
+  assert.ok(surfaceId?.startsWith('artifact:'), `expected an active Artifact surface, got ${surfaceId}`);
+  const surfacePane = workbench.locator(`[data-surface-id="${surfaceId}"]`);
+  const ownerRoot = surfacePane.locator('[data-testid="f307-owner-surface-host"] > :first-child');
+  const chatHost = page.getByTestId('thread-chat-host');
+  const chatSurface = page.locator('[data-thread-chat-surface]');
+  const chatHistory = page.locator('[data-thread-chat-history]');
+  const chatFooter = page.locator('[data-thread-chat-footer]');
+  const workspaceHost = page.getByTestId('contextual-workspace-host');
+  const resizeHandle = page.getByRole('separator', { name: '右侧面板分隔条', exact: true });
+  await resizeHandle.press('ArrowRight');
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="thread-chat-host"]')?.style.flexBasis !== '30%',
+  );
+  const splitBasis = await chatHost.evaluate((node) => node.style.flexBasis);
+  assert.notEqual(splitBasis, '30%', 'the real resize handle must change the independent Artifact work ratio');
+  const storedBasis = await page.evaluate(() => Number(localStorage.getItem('cat-cafe:artifactWorkChatBasis')));
+  assert.ok(
+    Math.abs(storedBasis - Number.parseFloat(splitBasis)) < 0.000_01,
+    'the changed Artifact work ratio must be persisted by its own writer',
+  );
+  await ownerRoot.evaluate((node) => {
+    window.__f307ArtifactFullWindowOwner = node;
+  });
+  await chatSurface.evaluate((node) => {
+    window.__f307ArtifactFullWindowChat = node;
+  });
+
+  await surfacePane.getByTestId('f307-artifact-enter-full-window').click();
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[data-testid="thread-chat-host"]')?.getAttribute('data-presentation') ===
+        'artifact-full-window' &&
+      document.querySelector('[data-testid="contextual-workspace-host"]')?.getAttribute('data-presentation') ===
+        'artifact-full-window',
+  );
+
+  assert.equal(await workbench.getAttribute('data-main-area-attention'), '');
+  assert.equal(await chatHost.getAttribute('aria-hidden'), null, 'full-window keeps canonical Chat accessible');
+  assert.equal(await chatHistory.getAttribute('aria-hidden'), 'true');
+  assert.equal(await chatHistory.evaluate((node) => node.hasAttribute('inert')), true);
+  assert.equal(await chatFooter.isVisible(), true, 'the original Chat footer/composer stays visible');
+  const composer = chatFooter.getByRole('textbox', { name: '消息输入框', exact: true });
+  const draft = '整窗作品里的原输入草稿';
+  await composer.click();
+  await composer.fill(draft);
+  assert.equal(await composer.inputValue(), draft, 'the original composer must remain interactive in full-window');
+  assert.equal(
+    await ownerRoot.evaluate((node) => window.__f307ArtifactFullWindowOwner === node && node.isConnected),
+    true,
+    'full-window preserves the exact Artifact owner DOM instance',
+  );
+  assert.equal(
+    await chatSurface.evaluate((node) => window.__f307ArtifactFullWindowChat === node && node.isConnected),
+    true,
+    'full-window preserves the exact canonical Chat DOM instance',
+  );
+  const workspaceBox = await workspaceHost.boundingBox();
+  const footerBox = await chatFooter.boundingBox();
+  assert.ok(workspaceBox && footerBox, 'full-window Artifact and canonical composer geometry must be measurable');
+  assert.ok(
+    workspaceBox.y + workspaceBox.height <= footerBox.y + 1,
+    'the Artifact owns the window above, without covering the canonical composer',
+  );
+  await page.screenshot({ path: path.join(EVIDENCE_DIR, '15-artifact-full-window.png'), fullPage: true });
+
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[data-testid="thread-chat-host"]')?.getAttribute('data-presentation') ===
+        'conversation' &&
+      document.querySelector('[data-testid="contextual-workspace-host"]')?.getAttribute('data-presentation') ===
+        'right-rail',
+  );
+  assert.equal(await chatHistory.evaluate((node) => node.hasAttribute('inert')), false);
+  assert.equal(await chatHost.evaluate((node) => node.style.flexBasis), splitBasis, 'Escape restores the prior ratio');
+  assert.equal(
+    await composer.inputValue(),
+    draft,
+    'Escape must restore layout without replacing or clearing the draft',
+  );
+  assert.equal(
+    await ownerRoot.evaluate((node) => window.__f307ArtifactFullWindowOwner === node && node.isConnected),
+    true,
+  );
+  assert.equal(
+    await chatSurface.evaluate((node) => window.__f307ArtifactFullWindowChat === node && node.isConnected),
+    true,
+  );
+  await composer.fill('');
+}
+
 let server;
 let browser;
 let baseUrl;
@@ -238,6 +444,12 @@ after(async () => {
   if (testTsconfigPath) await rm(testTsconfigPath, { force: true });
 });
 
+registerHomeSearchReturnJourneys(() => ({ browser, baseUrl, evidenceDir: EVIDENCE_DIR }));
+registerPullRequestChangesJourneys(() => ({ browser, baseUrl, evidenceDir: EVIDENCE_DIR }));
+registerChatFileTabJourneys(() => ({ browser, baseUrl, evidenceDir: EVIDENCE_DIR }));
+registerV2FocusExitJourneys(() => ({ browser, baseUrl }));
+registerPluginScrollJourneys(() => ({ browser, baseUrl, evidenceDir: EVIDENCE_DIR }));
+
 test('Workspace open waits for client interactivity instead of clicking server-rendered chrome', async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -274,6 +486,54 @@ test('Workspace open waits for client interactivity instead of clicking server-r
   }
 });
 
+test('mobile sidebar close waits for the delayed overlay commit before clicking', async () => {
+  const calls = [];
+  let releaseOverlay;
+  const overlayReady = new Promise((resolve) => {
+    releaseOverlay = resolve;
+  });
+  let closed = false;
+  const backdrop = {
+    last: () => backdrop,
+    waitFor: async () => {
+      calls.push('backdrop-wait');
+      await overlayReady;
+    },
+    boundingBox: async () => ({ x: 0, y: 0, width: 390, height: 844 }),
+    click: async () => {
+      calls.push('backdrop-click');
+      closed = true;
+    },
+  };
+  const page = {
+    getByRole: (_role, { name }) =>
+      name === 'Hide sidebar'
+        ? { count: async () => 1 }
+        : {
+            waitFor: async () => {
+              calls.push('show-wait');
+              assert.equal(closed, true, 'Show sidebar cannot appear until the mounted backdrop closes the overlay');
+            },
+          },
+    locator: (selector) => {
+      assert.equal(selector, '[aria-hidden="true"][class*="console-overlay-backdrop"]');
+      return backdrop;
+    },
+    mouse: {
+      click: async () => {
+        calls.push('blind-click');
+      },
+    },
+  };
+
+  const closing = closeMobileSidebarIfOpen(page, { timeout: 1_000 }).catch((error) => error);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ['backdrop-wait'], 'the harness must observe the delayed close target before clicking');
+  releaseOverlay();
+  assert.equal(await closing, true);
+  assert.deepEqual(calls, ['backdrop-wait', 'backdrop-click', 'show-wait']);
+});
+
 // Design-gate claim evidence (docs/design-gate-claims/f307-phase-a-real-shell.json):
 // the product shell reaches the Workbench from its default entry, no query string.
 registerDefaultEntryJourney(
@@ -296,6 +556,125 @@ registerDefaultEntryJourney(
       await page.getByRole('navigation', { name: '主导航' }).waitFor({ timeout: 20_000 });
       await ensureWorkspaceOpen(page);
       await journey.arrive(page);
+    } finally {
+      await context.close();
+    }
+  },
+);
+
+// Design-gate claim evidence (docs/design-gate-claims/f323-deployment-waits.json):
+// the real Workspace Home keeps active work beside durable deployment waits.
+registerDefaultEntryJourney(
+  {
+    journeyId: 'f323-deployment-waits-default-entry',
+    surfaceTestId: 'f323-deployment-wait-surface',
+    title: 'the real Workspace Home shows waiting and ready-to-return deployment work',
+    timeout: 90_000,
+  },
+  async (journey) => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await context.addInitScript(() => window.localStorage.clear());
+    const page = await context.newPage();
+    let waitReads = 0;
+    await page.route('**/api/**', (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname === '/api/runtime-deployment/waits') {
+        waitReads += 1;
+        return json(route, {
+          projectPath: '/project/cat-cafe',
+          items: [
+            {
+              taskId: 'task-f323-waiting-sentinel',
+              threadId: THREAD_ID,
+              threadTitle: 'F323 等待登记现场',
+              taskTitle: '验证候选版本中的等待清单',
+              ownerCatId: 'codex-sol',
+              sourceMessageId: 'message-f323-waiting-sentinel',
+              subjectRef: 'deployment:installation-f323:runtime',
+              deploymentId: 'runtime',
+              generation: 1,
+              createdAt: Date.parse('2026-09-27T08:00:00Z'),
+              nextStep: '回原对话检查真实清单和来源。',
+              condition: {
+                kind: 'revision_included',
+                revision: 'a'.repeat(40),
+                services: ['api', 'web'],
+              },
+              state: 'waiting_for_update',
+            },
+            {
+              taskId: 'task-f323-ready-sentinel',
+              threadId: OTHER_THREAD_ID,
+              threadTitle: 'F323 可以接回现场',
+              taskTitle: '核对重启后的实际体验',
+              ownerCatId: 'kimi',
+              subjectRef: 'deployment:installation-f323:runtime',
+              deploymentId: 'runtime',
+              generation: 1,
+              createdAt: Date.parse('2026-09-27T08:15:00Z'),
+              matchedAt: Date.parse('2026-09-27T08:45:00Z'),
+              nextStep: '回原对话完成验收，不直接写任务完成。',
+              condition: { kind: 'new_ready_boot', services: ['api', 'web'] },
+              state: 'ready_to_return',
+              delivery: 'pending',
+              observation: {
+                bootId: 'boot-f323-ready',
+                bootSequence: 2,
+                runningRevision: 'b'.repeat(40),
+                readyServices: ['api', 'web'],
+                observedAt: Date.parse('2026-09-27T08:45:00Z'),
+              },
+            },
+          ],
+          candidate: {
+            revision: 'b'.repeat(40),
+            observedAt: Date.parse('2026-09-27T09:00:00Z'),
+            satisfiableCount: 1,
+            unknownCount: 0,
+          },
+        });
+      }
+      const response = realSurfaceApiResponse(route.request(), true);
+      return json(route, response.body, response.status);
+    });
+    let stage = 'enter';
+    try {
+      await journey.enter(page, baseUrl);
+      stage = 'navigation';
+      await page.getByRole('navigation', { name: '主导航' }).waitFor({ timeout: 20_000 });
+      stage = 'workspace';
+      await ensureWorkspaceOpen(page);
+      stage = 'wait surface';
+      await journey.arrive(page).catch(async (error) => {
+        const diagnostic = `F323 wait surface did not arrive; waitReads=${waitReads}; body=${(await page.locator('body').innerText()).slice(0, 4_000)}; cause=${String(error)}`;
+        console.error(diagnostic);
+        throw new Error(diagnostic);
+      });
+      const surface = page.getByTestId('f323-deployment-wait-surface');
+      await surface.getByText('验证候选版本中的等待清单', { exact: true }).waitFor();
+      await surface.getByText('核对重启后的实际体验', { exact: true }).waitFor();
+      await surface.getByText('预计满足 1 项', { exact: true }).waitFor();
+      assert.deepEqual(await surface.locator('h3').allTextContents(), ['等待更新 · 1', '可以接回 · 1']);
+      assert.equal(await surface.locator('[data-testid^="deployment-wait-state-"]').count(), 0);
+      assert.equal(await page.getByTestId('workspace-running-object').count(), 1);
+      assert.equal(await surface.getByTestId('workspace-deployment-wait-item').count(), 2);
+      await page.screenshot({ path: path.join(EVIDENCE_DIR, 'f323-deployment-waits-desktop.png'), fullPage: true });
+
+      await page.setViewportSize({ width: 390, height: 844 });
+      const surfaceBox = await surface.boundingBox();
+      assert.ok(surfaceBox && surfaceBox.x >= 0 && surfaceBox.width <= 390);
+      await surface.getByText('回原对话完成验收，不直接写任务完成。').waitFor();
+      await page.screenshot({ path: path.join(EVIDENCE_DIR, 'f323-deployment-waits-mobile.png'), fullPage: true });
+    } catch (error) {
+      console.error(
+        `F323 journey failed at ${stage}; waitReads=${waitReads}; url=${page.url()}; body=${String(
+          await page
+            .locator('body')
+            .innerText({ timeout: 1_000 })
+            .catch(() => '<unavailable>'),
+        ).slice(0, 2_000)}; cause=${String(error)}`,
+      );
+      throw error;
     } finally {
       await context.close();
     }
@@ -347,11 +726,7 @@ test('root reply keeps child identity distinct after hydration at desktop and 39
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
       if (width === 390) {
-        const hideSidebar = page.getByRole('button', { name: 'Hide sidebar' });
-        if ((await hideSidebar.count()) > 0) {
-          await page.mouse.click(350, 100);
-          await page.getByRole('button', { name: 'Show sidebar' }).waitFor();
-        }
+        await closeMobileSidebarIfOpen(page);
       }
       await rootMessage.scrollIntoViewIfNeeded();
       await rootMessage.getByText('主 agent 最终交付仍然可见。', { exact: true }).waitFor();
@@ -462,11 +837,7 @@ test(
       const recallPane = workbench.locator('[data-surface-id="workspace:mode:recall"]');
       const recallOwner = recallPane.getByTestId('recall-feed');
       await recallOwner.waitFor();
-      assert.equal(
-        await recallOwner.locator(':scope > p').count(),
-        1,
-        'geometry regression covers the empty Recall feed',
-      );
+      await assertEmptyRecallOwner(recallOwner);
       await assertOwnerRootFillsPane(recallPane, recallOwner);
       await page.screenshot({ path: path.join(EVIDENCE_DIR, '03-recall-owner-desktop.png'), fullPage: true });
       await page.getByTestId('f307-close-workspace').click();
@@ -474,14 +845,15 @@ test(
 
       await home.getByTestId('workspace-launcher-search').fill('F307');
       await home.getByTestId('workspace-launcher-file-result').first().click();
+      await openFileTools(page);
       await page.getByTestId('workspace-file-viewer').waitFor();
-      assert.equal(await workbench.getAttribute('data-active-surface'), `file-owner:${WORKTREE_ID}`);
+      assert.equal(await workbench.getAttribute('data-active-surface'), `file-owner:${FILE_OWNER_WORKTREE_ID}`);
       assert.equal(await workbench.getAttribute('data-surface-count'), '1');
       assert.equal(await workbench.getAttribute('data-workbench-focus'), 'surface');
       assert.equal(await page.getByTestId('f307-tab-code').isVisible(), true);
       await page.getByText(`Owner file: ${WORKTREE_ID}`, { exact: false }).waitFor({ timeout: 5_000 });
       await assertMainAreaAttentionRoundTrip(page, {
-        surfaceId: `file-owner:${WORKTREE_ID}`,
+        surfaceId: `file-owner:${FILE_OWNER_WORKTREE_ID}`,
         closeTestId: 'f307-close-code',
         evidenceName: '09-shared-attention-file.png',
       });
@@ -548,6 +920,10 @@ test(
         () => document.querySelector('[data-owner-preview]')?.getAttribute('data-owner-path') === '/owner-a',
       );
       assert.equal(await browserPane.locator('[data-owner-preview]').getAttribute('data-owner-port'), '4173');
+      await assertFocusModeRoundTrip(page, {
+        surfaceId: `browser-owner:${WORKTREE_ID}`,
+        evidenceName: '14-browser-focus-desktop.png',
+      });
       await assertMainAreaAttentionRoundTrip(page, {
         surfaceId: `browser-owner:${WORKTREE_ID}`,
         closeTestId: 'f307-close-browser',
@@ -560,14 +936,19 @@ test(
       await artifactRows.filter({ hasText: 'real-surface-adapters.ts' }).click();
       assert.match(await workbench.getAttribute('data-active-surface'), /^artifact:/);
       await page.getByTestId('f307-tab-artifact').waitFor();
+      await assertArtifactFullWindowRoundTrip(page);
 
       await page.getByTestId('f307-tab-workspace').click();
+      const artifactsSurfaceId = await workbench.getAttribute('data-active-surface');
       await artifactRows.filter({ hasText: 'PR #307 Real Surface Adapters' }).click();
-      assert.match(await workbench.getAttribute('data-active-surface'), /^review:/);
-      await page.getByTestId('f307-tab-review').waitFor();
+      const prSurfaceId = `workspace:surface:changes:pr:${encodeURIComponent(
+        JSON.stringify(['pr:owner/cat-cafe#307', WORKTREE_ID]),
+      )}`;
+      assert.equal(await workbench.getAttribute('data-active-surface'), prSurfaceId);
+      await workbench.locator(`[data-tab-surface-id="${prSurfaceId}"] [role="tab"]`).waitFor();
       assert.equal(await workbench.getAttribute('data-surface-count'), '6');
 
-      await page.getByTestId('f307-tab-workspace').click();
+      await workbench.locator(`[data-tab-surface-id="${artifactsSurfaceId}"] [role="tab"]`).click();
       await page.getByRole('button', { name: '全局', exact: true }).click();
       const ownerBArtifact = page.locator('[data-artifact-row]').filter({ hasText: 'owner-b.ts' });
       await ownerBArtifact.waitFor();
@@ -675,7 +1056,7 @@ test(
       assert.equal(await workbench.getAttribute('data-active-surface'), `browser-owner:${WORKTREE_ID}`);
       assert.match(await workbench.getAttribute('data-surface-order'), /artifact:/);
       assert.match(await workbench.getAttribute('data-surface-order'), new RegExp(`artifact:${OTHER_THREAD_ID}:`));
-      assert.match(await workbench.getAttribute('data-surface-order'), /review:/);
+      assert.ok((await workbench.getAttribute('data-surface-order')).split(',').includes(prSurfaceId));
       assert.match(await workbench.getAttribute('data-surface-order'), /agent-run:/);
       await page.getByRole('tab', { name: 'owner-b.ts', exact: true }).click();
       assert.match(await workbench.getAttribute('data-active-surface'), new RegExp(`^artifact:${OTHER_THREAD_ID}:`));
@@ -698,9 +1079,12 @@ test(
           );
         });
       await page.getByTestId('f307-tab-code').click();
-      const exactFileOwner = workbench.locator(`[data-surface-id="file-owner:${WORKTREE_ID}"] [data-owner-worktree]`);
+      const exactFileOwner = workbench.locator(
+        `[data-surface-id="file-owner:${FILE_OWNER_WORKTREE_ID}"] [data-owner-worktree]`,
+      );
+      await openFileTools(page);
       await exactFileOwner.waitFor();
-      assert.equal(await exactFileOwner.getAttribute('data-owner-worktree'), WORKTREE_ID);
+      assert.equal(await exactFileOwner.getAttribute('data-owner-worktree'), FILE_OWNER_WORKTREE_ID);
       await page.getByText(`Owner file: ${WORKTREE_ID}`, { exact: false }).waitFor();
       await page.getByTestId('f307-tab-browser').click();
       const exactBrowserOwner = browserPane.locator('[data-owner-preview]');
@@ -711,8 +1095,9 @@ test(
       await page.reload({ waitUntil: 'domcontentloaded' });
       await ensureWorkspaceOpen(page);
       await page.getByTestId('f307-tab-code').click();
+      await openFileTools(page);
       await exactFileOwner.waitFor();
-      assert.equal(await exactFileOwner.getAttribute('data-owner-worktree'), WORKTREE_ID);
+      assert.equal(await exactFileOwner.getAttribute('data-owner-worktree'), FILE_OWNER_WORKTREE_ID);
       await page.getByText(`Owner file: ${WORKTREE_ID}`, { exact: false }).waitFor();
       await page.getByTestId('f307-tab-browser').click();
       assert.equal(await exactBrowserOwner.getAttribute('data-owner-port'), '4173');
@@ -749,11 +1134,16 @@ test(
       assert.notEqual(await workbench.getAttribute('data-split-primary'), '');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
       await assertOwnerSurfaceFillsPane(browserPane, exactBrowserOwner);
+      await assertFocusModeRoundTrip(page, {
+        surfaceId: `browser-owner:${WORKTREE_ID}`,
+        evidenceName: '15-browser-focus-narrow.png',
+      });
       await page.screenshot({ path: path.join(EVIDENCE_DIR, '02-browser-owner-narrow.png'), fullPage: true });
       await page.getByTestId('f307-add-surface').click();
       await home.waitFor();
       await home.getByTestId('workspace-launcher-recall').click();
       await recallOwner.waitFor();
+      await assertEmptyRecallOwner(recallOwner);
       await assertOwnerRootFillsPane(recallPane, recallOwner);
       await page.screenshot({ path: path.join(EVIDENCE_DIR, '03-recall-owner-narrow.png'), fullPage: true });
       await page.getByTestId('f307-add-surface').click();
@@ -1138,6 +1528,7 @@ test(
       await searchInput.press('Enter');
       await treeSurface.getByText('内容匹配 (1)', { exact: true }).waitFor();
       await treeSurface.locator('[data-search-result-line="120"]').last().click();
+      await openFileTools(page);
       await page.getByTestId('workspace-file-viewer').waitFor();
       const fileViewer = page.getByTestId('workspace-file-viewer');
       await fileViewer.locator('.cm-content').waitFor();
@@ -1151,7 +1542,7 @@ test(
       );
       assert.ok(scrollOffset > 0);
       assert.equal(await workbench.getAttribute('data-surface-count'), '2');
-      assert.equal(await workbench.getAttribute('data-active-surface'), `file-owner:${WORKTREE_ID}`);
+      assert.equal(await workbench.getAttribute('data-active-surface'), `file-owner:${FILE_OWNER_WORKTREE_ID}`);
       await page.getByText(`Owner file: ${WORKTREE_ID}`, { exact: false }).waitFor();
       await page.screenshot({ path: path.join(EVIDENCE_DIR, '05-files-owner-tree-to-file.png'), fullPage: true });
     } finally {
@@ -1394,6 +1785,91 @@ test('the real Thread shell resolves invalid persisted surfaces to canonical Hom
 });
 
 test(
+  'explicit Schedule input uses the original wide owner and returns to the saved rail',
+  { timeout: 90_000 },
+  async () => {
+    for (const width of [1440, 390]) {
+      const context = await browser.newContext({ viewport: { width, height: 900 } });
+      await context.addInitScript(() => window.localStorage.clear());
+      const page = await context.newPage();
+      await page.route('**/api/**', (route) => {
+        const url = new URL(route.request().url());
+        if (url.pathname === '/api/entrusted-work/needs-me') return json(route, { ownerReads: [] });
+        const response = realSurfaceApiResponse(route.request(), false);
+        return json(route, response.body, response.status);
+      });
+      try {
+        await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+        await ensureWorkspaceOpen(page);
+        const workbench = page.getByTestId('f307-experience-workbench');
+        await page.getByTestId('workspace-launcher-needs-me').click();
+        const input = page.getByTestId('needs-me-goto-schedule');
+        await input.waitFor();
+        const railBefore = await workbench.boundingBox();
+        const composer = page.locator('textarea').last();
+        const draft = 'Schedule original Chat draft';
+        if (width === 1440) await composer.fill(draft);
+        await input.focus();
+        await input.press('Enter');
+        const panel = page.getByTestId('product-schedule-panel');
+        await panel.waitFor();
+        const surfaceId = 'workspace:mode:product-schedule';
+        await page.waitForFunction(
+          (id) =>
+            document.querySelector('[data-testid="f307-experience-workbench"]')?.getAttribute('data-active-surface') ===
+            id,
+          surfaceId,
+        );
+        if (width === 1440) {
+          await page.waitForFunction(
+            () =>
+              document.querySelector('[data-testid="contextual-workspace-host"]')?.getAttribute('data-presentation') ===
+              'wide-workspace',
+          );
+          assert.equal(await workbench.getAttribute('data-main-area-attention'), surfaceId);
+          const wide = await panel.boundingBox();
+          const chat = page.getByTestId('thread-chat-host');
+          const chatBox = await chat.boundingBox();
+          assert.ok(wide && railBefore && wide.width > railBefore.width, 'Schedule expands the original Workspace');
+          assert.ok(await chat.isVisible(), 'the signed wide layout keeps the original Chat visible');
+          assert.ok(
+            wide && chatBox && chatBox.width > 0 && chatBox.x + chatBox.width <= wide.x + 1,
+            'Chat stays to the left of the wide Workspace without overlap',
+          );
+          await page.screenshot({
+            path: path.join(EVIDENCE_DIR, 'schedule-explicit-desktop-wide.png'),
+            fullPage: true,
+          });
+          await page.getByTestId('f307-return-from-main-area').click();
+          await page.waitForFunction(
+            () =>
+              document.querySelector('[data-testid="contextual-workspace-host"]')?.getAttribute('data-presentation') ===
+              'right-rail',
+          );
+          const railAfter = await workbench.boundingBox();
+          assert.ok(
+            railBefore && railAfter && Math.abs(railBefore.width - railAfter.width) <= 1,
+            'exit restores the original rail width',
+          );
+          assert.equal(await workbench.getAttribute('data-main-area-attention'), '');
+          assert.equal(await composer.inputValue(), draft, 'attention and exit preserve the original Chat draft');
+          assert.equal(await workbench.getAttribute('data-active-surface'), surfaceId);
+        } else {
+          assert.equal(await workbench.getAttribute('data-main-area-attention'), '');
+          assert.ok(
+            await panel.evaluate((node) => node.scrollWidth <= node.clientWidth + 1),
+            'mobile retains the original full-screen owner without horizontal overflow',
+          );
+          await page.screenshot({ path: path.join(EVIDENCE_DIR, 'schedule-explicit-mobile.png'), fullPage: true });
+        }
+      } finally {
+        await context.close();
+      }
+    }
+  },
+);
+
+test(
   'F310 exact prepared publication returns to the same Schedule/Needs Me item at desktop and 390px',
   { timeout: 180_000 },
   async () => {
@@ -1431,21 +1907,36 @@ test(
           },
         ];
         let artifactRevision = 700;
-        let releaseCatalog;
-        const catalogReady = new Promise((resolve) => {
-          releaseCatalog = resolve;
+        let globalCatalogReads = 0;
+        let threadArtifactReads = 0;
+        let holdThreadRead = false;
+        let signalThreadRead;
+        const threadReadStarted = new Promise((resolve) => {
+          signalThreadRead = resolve;
         });
-        await page.route('**/api/**', async (route) => {
+        let releaseThreadRead;
+        const threadReadReady = new Promise((resolve) => {
+          releaseThreadRead = resolve;
+        });
+        await page.route('**/api/**', (route) => {
           const url = new URL(route.request().url());
           if (url.pathname === '/api/entrusted-work/owner-reads' || url.pathname === '/api/entrusted-work/needs-me') {
             return json(route, { ownerReads: [ownerRead] });
           }
-          if (url.pathname === '/api/artifacts') await catalogReady;
-          if (url.pathname === '/api/artifacts' || url.pathname === `/api/threads/${THREAD_ID}/artifacts`) {
-            return json(route, { threadId: THREAD_ID, artifacts: [{ ...artifact, createdAt: artifactRevision }] });
-          }
           const result = realSurfaceApiResponse(route.request(), false);
           return json(route, result.body, result.status);
+        });
+        await page.route('**/api/artifacts', (route) => {
+          globalCatalogReads++;
+          return json(route, { error: 'Unrelated global catalog unavailable' }, 503);
+        });
+        await page.route(`**/api/threads/${THREAD_ID}/artifacts`, async (route) => {
+          threadArtifactReads++;
+          if (holdThreadRead) {
+            signalThreadRead();
+            await threadReadReady;
+          }
+          return json(route, { threadId: THREAD_ID, artifacts: [{ ...artifact, createdAt: artifactRevision }] });
         });
         await page.route('**/uploads/f310-prepared-review.md', (route) =>
           route.fulfill({
@@ -1462,11 +1953,20 @@ test(
           await item.waitFor();
           const itemRef = await item.getAttribute('data-item-ref');
           const openId = projection === 'needs-me' ? 'needs-me-open-artifact' : 'product-schedule-open-artifact';
-          assert.equal(await page.getByTestId(openId).first().isDisabled(), true);
+          // Needs Me may read its preview first; opening waits only on the clicked source read.
+          await page.locator(`[data-testid="${openId}"]:not(:disabled)`).first().waitFor();
+          assert.equal(await page.getByTestId(openId).first().isDisabled(), false);
+          assert.equal(globalCatalogReads, 0);
+          const readsBeforeOpen = threadArtifactReads;
+          holdThreadRead = true;
+          await page.getByTestId(openId).first().click();
+          await threadReadStarted;
+          await page.locator(`[data-testid="${openId}"]:disabled`).first().waitFor();
+          assert.equal(threadArtifactReads > readsBeforeOpen, true, 'opening must read the original thread');
           assert.equal(await page.getByTestId(openId).first().getAttribute('aria-busy'), 'true');
           assert.equal(await page.getByRole('alert').filter({ hasText: '这份内容已更新或暂时不可用' }).count(), 0);
-          releaseCatalog();
-          await page.getByTestId(openId).first().click();
+          holdThreadRead = false;
+          releaseThreadRead();
           await page.waitForFunction(() =>
             document
               .querySelector('[data-testid="f307-experience-workbench"]')
@@ -1481,7 +1981,7 @@ test(
           assert.equal(await returned.getAttribute('data-selected'), 'true');
           const panel = page.getByTestId(`${projection}-panel`).first();
           assert.equal(await panel.evaluate((node) => node.scrollWidth <= node.clientWidth + 1), true);
-          // Refresh the global Artifact owner into a newer publication while this read stays pinned.
+          // Advance the source-thread publication while the work's prepared coordinate stays pinned.
           artifactRevision = 701;
           await page.reload({ waitUntil: 'domcontentloaded' });
           await ensureWorkspaceOpen(page);
@@ -1498,9 +1998,11 @@ test(
             await page.getByTestId('f307-experience-workbench').getAttribute('data-active-surface'),
             `workspace:mode:${projection}`,
           );
+          assert.equal(globalCatalogReads, 0, 'a known prepared publication must not read the global catalog');
           await page.screenshot({ path: path.join(EVIDENCE_DIR, `f310-${projection}-${width}.png`), fullPage: true });
           process.stdout.write(`F310 browser fixture PASS ${width}px ${projection} at ${baseUrl}\n`);
         } finally {
+          releaseThreadRead();
           await context.close();
         }
       }

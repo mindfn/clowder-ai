@@ -1,29 +1,38 @@
 'use client';
 
+import type { BuiltinCloudIdentityProtectedField, BuiltinCloudIdentityProtection } from '@cat-cafe/shared';
 import { useMemo, useRef } from 'react';
 import type { CatData } from '@/hooks/useCatData';
 import { AvatarImageWithFallback } from './AvatarImageWithFallback';
+import { MemberAccountFollowing } from './accounts/MemberAccountFollowing';
 import type { ProfileItem } from './hub-accounts.types';
+import { usesAgyNative } from './hub-cat-editor.agy';
 import {
-  ACP_TRANSPORT_OPTIONS,
   autoSlug,
   CLIENT_OPTIONS,
-  CODEX_CARRIER_OPTIONS,
+  carrierOptionsForClient,
   defaultAcpCommandForClient,
   defaultAcpStartupArgsForClient,
   getAcpWarning,
   type HubCatEditorFormState,
-  isAcpOnlyClient,
   joinTags,
   normalizeMentionPattern,
-  showTransportSelector,
   splitMentionPatterns,
   splitStrengthTags,
 } from './hub-cat-editor.model';
+import { AgyNativeFields } from './hub-cat-editor-agy';
 import { CatColorField } from './hub-cat-editor-color-field';
 import { SectionCard, SelectField, TextField } from './hub-cat-editor-fields';
 import { VoiceConfigSection } from './hub-cat-editor-voice';
 import { TagEditor } from './hub-tag-editor';
+
+import {
+  useEditorLabel,
+  useEditorText,
+  useMemberEditorPresentation,
+  useMemberFieldError,
+  useMembersCopy,
+} from './members/editor-presentation';
 
 type FormPatch = Partial<HubCatEditorFormState>;
 
@@ -78,6 +87,8 @@ export function IdentitySection({
   onAvatarUpload: (file: File) => Promise<void>;
   onRefAudioUpload: (file: File) => Promise<void>;
 }) {
+  const page = useMemberEditorPresentation();
+  const t = useEditorText();
   const strengthTags = splitStrengthTags(form.strengths);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const avatarSrc = safeAvatarSrc(form.avatar);
@@ -102,7 +113,9 @@ export function IdentitySection({
         <>
           {/* #968: Show catId (read-only) — above name so identity is first */}
           <label className="flex flex-col gap-1.5 text-cafe sm:flex-row sm:items-center sm:gap-[14px]">
-            <span className="text-xs font-bold text-cafe-secondary sm:w-[150px] sm:shrink-0">Cat ID</span>
+            <span className="text-xs font-bold text-cafe-secondary sm:w-[150px] sm:shrink-0">
+              {page ? t('成员 ID') : 'Cat ID'}
+            </span>
             <div className="min-w-0 flex-1">
               <code className="block w-full rounded-lg border border-transparent bg-[var(--console-field-bg)] px-3 py-1.5 font-mono text-xs text-cafe-secondary select-all">
                 {form.catId}
@@ -142,7 +155,9 @@ export function IdentitySection({
       />
 
       <div className="flex items-center gap-3">
-        <span className="text-xs font-bold text-cafe-secondary sm:w-[150px] sm:shrink-0">Avatar</span>
+        <span className="text-xs font-bold text-cafe-secondary sm:w-[150px] sm:shrink-0">
+          {page ? t('头像') : 'Avatar'}
+        </span>
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
@@ -157,7 +172,7 @@ export function IdentitySection({
               </svg>
             )}
           </div>
-          <span>{avatarUploading ? '上传中…' : '点击上传'}</span>
+          <span>{t(avatarUploading ? '上传中…' : '点击上传')}</span>
         </button>
         <input
           ref={fileInputRef}
@@ -219,14 +234,16 @@ export function IdentitySection({
       />
 
       <div className="flex items-start gap-3">
-        <span className="w-[140px] shrink-0 pt-1 text-sm font-medium text-cafe-secondary">Strengths</span>
+        <span className="w-[140px] shrink-0 pt-1 text-sm font-medium text-cafe-secondary">
+          {page ? t('技能标签') : 'Strengths'}
+        </span>
         <div className="min-w-0 flex-1">
           <TagEditor
             tags={strengthTags}
             onChange={(tags) => onChange({ strengths: joinTags(tags) })}
-            addLabel="+ 选择"
-            placeholder="输入标签，例如 security"
-            emptyLabel="(无)"
+            addLabel={t('+ 选择')}
+            placeholder={t('输入标签，例如 security')}
+            emptyLabel={t('(无)')}
           />
         </div>
         <input
@@ -237,7 +254,7 @@ export function IdentitySection({
         />
       </div>
 
-      <VoiceConfigSection form={form} onChange={onChange} onRefAudioUpload={onRefAudioUpload} />
+      {!page && <VoiceConfigSection form={form} onChange={onChange} onRefAudioUpload={onRefAudioUpload} />}
     </SectionCard>
   );
 }
@@ -283,20 +300,24 @@ function ComboField({
   placeholder?: string;
 }) {
   const listId = `combo-${label.replace(/\s+/g, '-').toLowerCase()}`;
+  const displayLabel = useEditorLabel(label);
+  const invalid = useMemberFieldError(ariaLabel ?? label);
+  const t = useEditorText();
   return (
     <label className="flex flex-col gap-1.5 text-cafe-secondary sm:flex-row sm:items-center sm:gap-3">
       <span className="text-xs font-bold text-cafe-secondary sm:w-[150px] sm:shrink-0">
-        {label}
+        {displayLabel}
         {required && <span className="ml-0.5 text-cafe-accent">*</span>}
       </span>
       <div className="min-w-0 flex-1">
         <input
           aria-label={ariaLabel ?? label}
+          aria-invalid={invalid || undefined}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           list={listId}
           className="w-full rounded-[10px] border border-transparent bg-[var(--console-field-bg,var(--console-card-bg))] px-3.5 py-2 text-compact leading-5 text-cafe placeholder:text-[var(--cafe-text-muted)] outline-none transition focus:border-cafe-accent focus:ring-2 focus:ring-cafe-accent/30"
-          placeholder={placeholder}
+          placeholder={placeholder && t(placeholder)}
         />
         <datalist id={listId}>
           {suggestions.map((s) => (
@@ -319,9 +340,97 @@ export function resolveOpenCodeEndpoint(providerName: string): string {
 }
 
 interface CallHint {
+  cli: string;
   label: string;
   url: string;
   warning: string;
+}
+
+const PROTECTED_IDENTITY_FIELD_LABELS: Record<BuiltinCloudIdentityProtectedField, string> = {
+  breedId: '所属家族',
+  clientId: 'Client',
+  defaultModel: '模型',
+  provider: '云端 Provider',
+  mcpSupport: 'Remote MCP',
+  accountRef: '认证账号',
+  cli: '本地 CLI',
+  commandArgs: '启动参数',
+  cliConfigArgs: 'CLI 配置',
+  acp: 'ACP 传输',
+  mentionPatterns: '主句柄 @gpt-pro',
+};
+
+export function ProtectedCloudIdentitySection({
+  protection,
+  restoring,
+  onRestore,
+}: {
+  protection: BuiltinCloudIdentityProtection;
+  restoring: boolean;
+  onRestore: () => Promise<void> | void;
+}) {
+  const page = useMemberEditorPresentation();
+  const t = useEditorText();
+  const copy = useMembersCopy();
+  const driftedLabels = protection.driftedFields.map((field) => t(PROTECTED_IDENTITY_FIELD_LABELS[field]));
+  const drifted = protection.state === 'drifted';
+
+  return (
+    <SectionCard title="认证与模型" tone={drifted ? 'error' : 'neutral'} data-guide-id="member-editor.auth-config">
+      <div className="space-y-3 rounded-xl bg-[var(--console-field-bg,var(--console-card-bg))] px-4 py-3">
+        <div>
+          <p className={`text-sm font-extrabold ${drifted ? 'text-conn-red-text' : 'text-cafe'}`}>
+            {t(drifted ? '检测到云端身份配置异常' : '云端身份已保护')}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-cafe-secondary">
+            {page ? (
+              copy.protectedCloudDescription
+            ) : (
+              <>
+                @gpt-pro 是 Clowder AI 的固定云端入口。它必须保持 ChatGPT Pro 与 Remote MCP 身份，云端回复才能回到正确的
+                Thread；因此这里不允许改所属家族、Client、模型、账号或本地运行方式。可以增加别名，主句柄 @gpt-pro
+                固定。需要本地 Codex，请新建另一位成员。
+              </>
+            )}
+          </p>
+        </div>
+
+        {drifted ? (
+          <div className="space-y-2">
+            <p className="text-xs leading-5 text-conn-red-text">
+              {page ? (
+                copy.protectedIdentityDrift(driftedLabels)
+              ) : (
+                <>
+                  已偏离：{driftedLabels.join('、')}
+                  。普通保存不会静默覆盖这些值；请明确恢复后再继续使用云端成员。
+                </>
+              )}
+            </p>
+            <button
+              type="button"
+              onClick={() => void onRestore()}
+              disabled={restoring}
+              className="h-8 rounded-[10px] bg-[var(--cafe-accent)] px-4 text-compact font-extrabold text-[var(--cafe-surface)] transition hover:bg-[var(--cafe-accent-hover)] disabled:opacity-50"
+            >
+              {t(restoring ? '恢复中…' : '恢复云端身份')}
+            </button>
+          </div>
+        ) : (
+          <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1 text-xs">
+            <dt className="text-cafe-secondary">{t('接入方式')}</dt>
+            <dd className="font-semibold text-cafe">{t('ChatGPT Pro 云端')}</dd>
+            <dt className="text-cafe-secondary">{t('模型身份')}</dt>
+            <dd className="font-semibold text-cafe">gpt-pro</dd>
+            <dt className="text-cafe-secondary">{t('回程工具')}</dt>
+            <dd className="font-semibold text-cafe">{t('Remote MCP 已开启')}</dd>
+            <dt className="text-cafe-secondary">{t('本地运行时')}</dt>
+            <dd className="font-semibold text-cafe">{t('未启用')}</dd>
+          </dl>
+        )}
+      </div>
+    </SectionCard>
+  );
 }
 
 // Generate a hint showing what API endpoint the CLI will actually call.
@@ -369,7 +478,7 @@ export function buildCallHint(
   if (client === 'google') {
     warning = '\n注意: Google 官方 endpoint 仍要求 builtin OAuth；第三方 gateway 会走这里展示的 baseUrl。';
   }
-  return { label: `${info.cli} CLI 实际调用: `, url: fullUrl, warning };
+  return { cli: info.cli, label: `${info.cli} CLI 实际调用: `, url: fullUrl, warning };
 }
 
 export function AccountSection({
@@ -378,8 +487,6 @@ export function AccountSection({
   modelOptions,
   availableProfiles,
   loadingProfiles,
-  effectiveCodexCarrier,
-  codexLocalCapable = true,
   onChange,
 }: {
   form: HubCatEditorFormState;
@@ -387,15 +494,15 @@ export function AccountSection({
   modelOptions: string[];
   availableProfiles: ProfileItem[];
   loadingProfiles: boolean;
-  /** F254 D2: server-resolved effective carrier for the edited cat (null for new cats). */
-  effectiveCodexCarrier?: { effective: 'exec_json' | 'app_server'; source: 'per-cat' | 'env' | 'default' } | null;
-  /** F254 D2: false for cloud-only cats (cli removed) — the Codex carrier never applies. */
-  codexLocalCapable?: boolean;
   onChange: (patch: FormPatch) => void;
 }) {
+  const page = useMemberEditorPresentation();
+  const t = useEditorText();
   const accountOptions = availableProfiles;
+  const copy = useMembersCopy();
   const selectedProfile = availableProfiles.find((p) => p.id === form.accountRef);
-  const callHint = buildCallHint(form.clientId, selectedProfile, form.defaultModel, form.provider);
+  const native = usesAgyNative(form);
+  const callHint = native ? null : buildCallHint(form.clientId, selectedProfile, form.defaultModel, form.provider);
   const selectedModel = form.defaultModel.trim();
   const modelNotListed = selectedModel.length > 0 && modelOptions.length > 0 && !modelOptions.includes(selectedModel);
   const modelSuggestions = useMemo(
@@ -413,37 +520,55 @@ export function AccountSection({
         <SelectField
           label="Client"
           value={form.clientId}
-          options={CLIENT_OPTIONS}
+          options={
+            form.clientId === 'antigravity'
+              ? [...CLIENT_OPTIONS, { value: 'antigravity', label: 'Antigravity IDE（已退役）' }]
+              : CLIENT_OPTIONS
+          }
           onChange={(value) => {
             const nextClient = value as HubCatEditorFormState['clientId'];
-            const forceAcp = isAcpOnlyClient(nextClient);
-            const nextAcpEnabled = forceAcp || (showTransportSelector(nextClient) && form.acpEnabled);
+            const nextCarrier = carrierOptionsForClient(nextClient)[0]?.value ?? 'cli';
             onChange({
               clientId: nextClient,
               provider: '',
               cliEffort: '',
-              codexCarrier: '',
-              acpEnabled: nextAcpEnabled,
-              ...(nextAcpEnabled ? acpDefaultsForClientSwitch(form, nextClient) : {}),
+              carrier: nextCarrier,
+              agyNativeEnabled: nextClient === 'google',
+              ...(nextClient === 'google'
+                ? { agyProfileEnabled: true, agyProfileId: form.agyProfileId || form.catId }
+                : {}),
+              ...acpDefaultsForClientSwitch(form, nextClient),
             });
           }}
           required
         />
 
-        {showTransportSelector(form.clientId) ? (
+        {carrierOptionsForClient(form.clientId).length > 1 || form.clientId === 'acp' || form.clientId === 'google' ? (
           <SelectField
-            label="Transport"
-            ariaLabel="Transport"
-            value={form.acpEnabled ? 'acp' : 'cli'}
-            options={ACP_TRANSPORT_OPTIONS}
+            label="接入方式"
+            ariaLabel={page ? 'Transport' : '接入方式'}
+            value={form.clientId === 'google' ? (native ? 'agy-native' : 'retired') : form.carrier}
+            options={[
+              ...(form.clientId === 'google'
+                ? !native
+                  ? [{ value: 'retired', label: '旧入口已退役，请配置 Native' }]
+                  : []
+                : carrierOptionsForClient(form.clientId)),
+              ...(form.clientId === 'google' ? [{ value: 'agy-native', label: 'AGY Native' }] : []),
+            ]}
             onChange={(value) => {
-              const acpEnabled = value === 'acp';
+              if (value === 'agy-native') {
+                onChange({ carrier: 'cli', agyNativeEnabled: true });
+                return;
+              }
+              const carrier = value as HubCatEditorFormState['carrier'];
               onChange({
-                acpEnabled,
-                ...(acpEnabled && !form.acpCommand.trim()
+                carrier,
+                agyNativeEnabled: false,
+                ...(carrier === 'acp' && !form.acpCommand.trim()
                   ? { acpCommand: defaultAcpCommandForClient(form.clientId) }
                   : {}),
-                ...(acpEnabled && !form.acpStartupArgs.trim()
+                ...(carrier === 'acp' && !form.acpStartupArgs.trim()
                   ? { acpStartupArgs: defaultAcpStartupArgsForClient(form.clientId) }
                   : {}),
               });
@@ -453,65 +578,25 @@ export function AccountSection({
         ) : null}
 
         {(() => {
-          const acpWarn = getAcpWarning(form.clientId, form.acpEnabled);
+          const acpWarn = getAcpWarning(form.clientId, form.carrier);
           return acpWarn ? <p className="text-xs text-amber-600 dark:text-amber-400">⚠️ {acpWarn}</p> : null;
         })()}
 
-        {form.clientId === 'openai' && !form.acpEnabled && codexLocalCapable ? (
-          <>
-            <SelectField
-              label="接入方式（Carrier）"
-              ariaLabel="Codex Carrier"
-              value={form.codexCarrier}
-              options={CODEX_CARRIER_OPTIONS}
-              onChange={(value) => onChange({ codexCarrier: value as HubCatEditorFormState['codexCarrier'] })}
-            />
-            <p className="-mt-1 text-micro leading-4 text-cafe-muted">
-              App Server 走池化常驻宿主（F254，持久会话、可复用宿主）；CLI 走一次性 <code>codex exec</code>
-              。「默认」跟随服务端环境变量 <code>CAT_CAFE_CODEX_CARRIER</code>。
-            </p>
-            {effectiveCodexCarrier ? (
-              <p className="-mt-1 text-micro leading-4 text-cafe-secondary" data-testid="codex-carrier-effective">
-                当前生效：
-                {effectiveCodexCarrier.effective === 'app_server' ? 'App Server' : 'CLI（codex exec）'}
-                （来源：
-                {effectiveCodexCarrier.source === 'per-cat'
-                  ? '本成员覆盖'
-                  : effectiveCodexCarrier.source === 'env'
-                    ? '全局环境变量'
-                    : '默认值'}
-                ）
-              </p>
-            ) : null}
-          </>
-        ) : null}
-
         {form.clientId === 'antigravity' ? (
-          <>
-            <TextField
-              label="CLI Command"
-              value={form.commandArgs}
-              onChange={(value) => onChange({ commandArgs: value })}
-              required
-              placeholder="启动命令参数"
-            />
-            <TextField
-              label="Model"
-              value={form.defaultModel}
-              onChange={(value) => onChange({ defaultModel: value })}
-              required
-              placeholder="模型标识符"
-            />
-          </>
+          <p className="text-sm text-cafe-secondary">
+            IDE 执行入口已退役。选择 Google / AGY Native 并保存隔离 Profile 后可继续使用；成员身份与历史消息保留。
+          </p>
         ) : (
           <>
             <SelectField
-              label="认证信息"
+              label="用哪个号"
+              ariaLabel={page ? 'Account' : undefined}
               value={form.accountRef}
               options={[
                 { value: '', label: loadingProfiles ? '加载中…' : '请选择认证方式' },
                 ...accountOptions
                   .filter((profile) => {
+                    if (native && profile.authType !== 'oauth') return false;
                     // Gemini CLI doesn't support custom API endpoints — only show builtin
                     // but allow api_key profiles with a third-party baseUrl (#470)
                     if (form.clientId === 'google' && profile.authType !== 'oauth' && !profile.baseUrl) return false;
@@ -519,34 +604,61 @@ export function AccountSection({
                   })
                   .map((profile) => ({
                     value: profile.id,
-                    label: profile.builtin
-                      ? `${profile.displayName}（内置）`
-                      : profile.authType === 'oauth'
-                        ? `${profile.displayName}（OAuth）`
-                        : `${profile.displayName}（API Key）`,
+                    disabled:
+                      profile.clientId === 'openai' &&
+                      profile.authType === 'oauth' &&
+                      (profile.codex ? profile.codex.status !== 'ready' : profile.codexLoginStatus !== 'ready'),
+                    label: page
+                      ? copy.accountLabel(profile.displayName, profile.builtin ? 'builtin' : profile.authType)
+                      : profile.builtin
+                        ? `${profile.displayName}（内置）`
+                        : profile.authType === 'oauth'
+                          ? `${profile.displayName}（OAuth）`
+                          : `${profile.displayName}（API Key）`,
                   })),
               ]}
-              onChange={(value) => onChange({ accountRef: value, defaultModel: '', provider: '' })}
+              onChange={(value) =>
+                onChange({
+                  accountRef: value,
+                  accountBindingMode: form.clientId === 'openai' ? 'override' : undefined,
+                  defaultModel: '',
+                  provider: '',
+                })
+              }
               disabled={loadingProfiles}
               required
             />
+            {page && form.clientId === 'openai' && form.provider !== 'openai-chatgpt-pro' && (
+              <MemberAccountFollowing
+                accountRef={form.accountRef}
+                accounts={availableProfiles}
+                onFollow={(ref) => onChange({ accountRef: ref, accountBindingMode: 'follow' })}
+              />
+            )}
             <ComboField
               label="Model"
               ariaLabel="Model"
               value={form.defaultModel}
               onChange={(value) => onChange({ defaultModel: value })}
               suggestions={modelSuggestions}
-              required
+              required={!page || selectedProfile?.authType === 'api_key'}
               placeholder={
-                form.clientId === 'opencode'
-                  ? '例如 openai/gpt-5.4 或 openrouter/google/gemini-3-flash-preview'
-                  : '模型标识符，如 claude-sonnet-4-5'
+                page
+                  ? form.clientId === 'opencode'
+                    ? 'openai/gpt-5.4 / openrouter/google/gemini-3-flash-preview'
+                    : t('模型标识符')
+                  : form.clientId === 'opencode'
+                    ? '例如 openai/gpt-5.4 或 openrouter/google/gemini-3-flash-preview'
+                    : '模型标识符，如 claude-sonnet-4-5'
               }
             />
+            {native ? <AgyNativeFields form={form} onChange={onChange} /> : null}
             {modelNotListed ? (
               <div className="rounded-[10px] bg-[var(--console-field-bg,var(--console-card-bg))] px-3 py-2">
                 <p className="text-xs leading-4 text-conn-amber-text">
-                  当前模型不在此认证信息的模型列表中；未修改 Model 时保存会保留原值，修改后会保存你输入的自定义值。
+                  {page
+                    ? t('模型未列在这个账号中。保存时会保留你填写的模型。')
+                    : '当前模型不在此认证信息的模型列表中；未修改 Model 时保存会保留原值，修改后会保存你输入的自定义值。'}
                 </p>
               </div>
             ) : null}
@@ -580,13 +692,27 @@ export function AccountSection({
             {callHint ? (
               <div className="rounded-[10px] bg-[var(--console-field-bg,var(--console-card-bg))] px-3 py-2">
                 <p className="whitespace-pre-wrap text-xs leading-4 text-cafe-secondary">
-                  {callHint.label}
-                  <span className="font-semibold text-cafe">{callHint.url}</span>
-                  {callHint.warning}
+                  {page ? (
+                    <>
+                      {copy.cliActualCall(callHint.cli, callHint.url)}
+                      {form.clientId === 'google' && (
+                        <>
+                          {'\n'}
+                          {copy.cliGoogleWarning}
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {callHint.label}
+                      <span className="font-semibold text-cafe">{callHint.url}</span>
+                      {callHint.warning}
+                    </>
+                  )}
                 </p>
               </div>
             ) : null}
-            {form.acpEnabled ? (
+            {form.carrier === 'acp' ? (
               <>
                 <TextField
                   label="ACP Command"
@@ -634,8 +760,9 @@ export function AccountSection({
           onChange={(value) => onChange({ mcpSupport: value === 'true' })}
         />
         <p className="-mt-1 text-micro leading-4 text-cafe-muted">
-          控制该成员是否接收 Clowder AI MCP 工具（post_message、search_evidence
-          等）。关闭后该成员无法使用协作和记忆工具。
+          {page
+            ? t('发送消息、查记忆等协作工具。关闭后这个成员只能回复，不能使用这些工具协作。')
+            : '控制该成员是否接收 Clowder AI MCP 工具（post_message、search_evidence 等）。关闭后该成员无法使用协作和记忆工具。'}
         </p>
       </div>
     </SectionCard>
@@ -646,6 +773,7 @@ export function RoutingSection({
   form,
   hasError,
   reservedPatterns,
+  fixedPatterns = [],
   onChange,
 }: {
   cat?: CatData | null;
@@ -653,33 +781,46 @@ export function RoutingSection({
   hasError?: boolean;
   /** Lowercase alias set already taken by other cats. */
   reservedPatterns?: ReadonlySet<string>;
+  /** Product-owned handles that stay visible but cannot be removed. */
+  fixedPatterns?: readonly string[];
   onChange: (patch: FormPatch) => void;
 }) {
+  const t = useEditorText();
+  const invalid = useMemberFieldError('Aliases');
+  const page = useMemberEditorPresentation();
+  const copy = useMembersCopy();
   const aliases = currentAliasTags(form);
+  const fixedPatternKeys = new Set(fixedPatterns.map((pattern) => pattern.toLowerCase()));
+  const presentFixedPatterns = aliases.filter((pattern) => fixedPatternKeys.has(pattern.toLowerCase()));
+  const updateAliases = (tags: string[]) => {
+    const next = Array.from(new Set([...presentFixedPatterns, ...tags]));
+    onChange({ mentionPatterns: joinTags(next) });
+  };
   const validateAlias = useMemo(() => {
     if (!reservedPatterns?.size) return undefined;
     return (tag: string) => {
       if (reservedPatterns.has(tag.toLowerCase())) {
-        return `别名 "${tag}" 已被其他成员使用`;
+        return page ? copy.aliasTaken(tag) : `别名 "${tag}" 已被其他成员使用`;
       }
       return null;
     };
-  }, [reservedPatterns]);
+  }, [reservedPatterns, page, copy]);
   return (
-    <SectionCard title="别名与 @ 路由" tone={hasError ? 'error' : 'neutral'}>
+    <SectionCard title="别名与 @ 路由" tone={hasError ? 'error' : 'neutral'} aria-invalid={invalid || undefined}>
       <TagEditor
         tags={aliases}
-        onChange={(tags) => onChange({ mentionPatterns: joinTags(tags) })}
-        addLabel="+ 添加"
-        placeholder="砚砚"
-        emptyLabel="(至少添加 1 个别名，否则无法 @)"
+        onChange={updateAliases}
+        addLabel={t('+ 添加')}
+        placeholder={page ? copy.砚砚(form.nickname || form.name || t('成员')) : '砚砚'}
+        emptyLabel={t('(至少添加 1 个别名，否则无法 @)')}
         validate={validateAlias}
-        minCount={1}
+        lockedTags={presentFixedPatterns}
+        minCount={presentFixedPatterns.length > 0 ? 0 : 1}
       />
       <textarea
         aria-label="Aliases"
         value={form.mentionPatterns}
-        onChange={(event) => onChange({ mentionPatterns: event.target.value })}
+        onChange={(event) => updateAliases(currentAliasTags({ ...form, mentionPatterns: event.target.value }))}
         placeholder="@codex, @缅因猫"
         className="sr-only"
       />

@@ -4,6 +4,8 @@
 >
 > 作者：Ragdoll/claude-opus-4-6  
 > 日期：2026-06-24
+>
+> 2026-10-11 校准：消息投递、Queue ownership 与无 `@` fallback 以 F117 + ADR-043 的当前终态为准；本文对应章节已同步到该模型。
 
 ---
 
@@ -30,22 +32,22 @@ Clowder AI 是一个多智能体系统，多个由 LLM 驱动的"Clowder AI"在�
              ▼
  ┌──────────────────────────┐
  │  2. 目标解析              │  @handle → catId（注册表查找）
- │     (机械层)              │  检查可用性、推荐替代
+ │     (机械层)              │  普通公开消息复用可用 fallback；协议目标保留 exact 身份
  └───────────┬──────────────┘
              ▼
  ┌──────────────────────────┐
- │  3. 回退梯级              │  无显式 @：上次回复者 → 偏好猫 → 默认猫
- │     (机械层)              │  扫描用户最近消息中的提及
+ │  3. 入队目标绑定          │  普通公开消息无可用目标：最近 completed 回复者 → 默认猫
+ │     (机械层)              │  入队前持久化 targets[]，不伪造 authored mention
  └───────────┬──────────────┘
              ▼
  ┌──────────────────────────┐
- │  4. 分发调度              │  唤醒目标猫，串行或并行
- │     (机械层)              │  护栏：深度限制、去重、乒乓检测
+ │  4. Queue 分发调度        │  一 source 一 entry；整组准入后并发 fan-out
+ │     (机械层)              │  护栏：按目标保序、生命周期 fence、乒乓检测
  └───────────┬──────────────┘
              ▼
  ┌──────────────────────────┐
  │  5. 上下文组装            │  构建对话历史 + 身份 + 队友表
- │     (机械层)              │  预算：约 20 条消息、约 2000 token
+ │     (机械层)              │  预算：由 context assembler 的窗口与配置决定
  └───────────┬──────────────┘
              ▼
  ┌──────────────────────────┐
@@ -63,37 +65,18 @@ Clowder AI 是一个多智能体系统，多个由 LLM 驱动的"Clowder AI"在�
 
 ## 第 1 层：提及解析
 
-### 什么算可路由的提及？
+### 普通正文与 A2A 的解析边界
 
-**只有行首的 `@handle` 才触发路由。** 提及必须出现在一行的开头（可以有可选的空格或 markdown 前缀，如 `>`、`-`、`1.`）才会触发路由。句中的提及（如"请让 @opus 来 review"）**不会被路由**——它们被视为普通文本。
+普通消息由共同 `send` 调用 `AgentRouter` 解析：匹配现有成员的显式 `@` 可以出现在正文中，未匹配的 `@` 原样保留并忽略；混合有效和无效提及时保留有效目标。解析器检查 token 边界和最长匹配，不用语义分类器猜测普通文本是否意在路由。
 
+A2A/callback handoff 复用 `a2a-mentions.ts` 的行首规则：允许前导空白与 markdown/list 前缀，剥离围栏代码块，过滤自调用，最多解析两个不同目标。句中讨论另一位成员不会自动成为 A2A handoff。显式指定 recipient ID 的协议投递保留精确身份校验。
+
+```text
+@opus 请 review 一下           → 普通消息与 A2A 都能识别
+请让 @opus 来 review           → 普通消息能识别；A2A 不作行首交接
+user@example.com              → 普通文本，不是成员 mention
+这段 @后面不是成员             → 原样保留，按无有效目标处理
 ```
-@opus 请 review 一下              ← 路由（行首）
-> @opus 你怎么看？                ← 路由（引用前缀 OK）
-- @opus 检查一下测试              ← 路由（列表前缀 OK）
-
-请让 @opus 来 review              ← 不路由（句中）
-邮箱是 user@example.com          ← 不路由（邮箱，token 边界）
-```
-
-### 为什么只认行首？
-
-早期版本尝试过检测句中的"动作提及"（如"让 @opus 去..."），但这带来了误报和歧义。当前设计故意做得严格：你想路由到一只猫，就把 `@handle` 放在行首。简单、可预测、零歧义。
-
-### 预处理
-
-解析前，系统会：
-1. **去除围栏代码块**（` ``` ... ``` `）——代码里的提及永远不路由
-2. **去除行内代码**（`` `...` ``）——同理
-3. **去除 URL**——URL 中的 `@` 不是提及
-4. **去除引号内字符串**——引号内的提及通常是在讨论，不是在调用
-5. **Unicode 规范化**——移除零宽空格和 handle 周围的 markdown 格式
-
-### 限制
-
-- **每条消息最多 2 只不同的猫**（`MAX_A2A_MENTION_TARGETS`）
-- **自我提及被过滤**——猫提到自己会被忽略
-- **最长匹配优先**——`@opus-48` 会在 `@opus` 之前被匹配，防止前缀冲突
 
 ### 源代码文件
 
@@ -120,51 +103,36 @@ Clowder AI 是一个多智能体系统，多个由 LLM 驱动的"Clowder AI"在�
 }
 ```
 
-解析步骤：
-1. 去掉开头的 `@`，转小写
-2. 检查输入是否直接匹配 `catId`（少见——用户用 handle，不用 ID）
-3. 搜索所有猫的配置，查找匹配的 `mentionPatterns`
-4. 如果找到但 `available: false` → 返回错误，附带同族替代建议
-5. 如果找不到 → 返回错误，附带排序后的建议
-
-### 错误处理
-
-解析失败时，系统返回结构化错误：
-- **`cat_not_found`**：未知的 handle。推荐最接近的匹配（按猫族、主力猫排序）。
-- **`cat_disabled`**：猫存在但标记为不可用。推荐同族替代。
-
-这些错误以路由警告的形式浮现给调用方猫或用户，不会被静默吞掉。
+共同准入将可识别的成员目标与当前可路由性分开处理。普通公开消息的目标不可用或没有匹配成员时，复用既有 fallback；不为未匹配正文新增 warning、错误卡或等待分支。A2A 明确 ID 与私密收件人不会被普通 fallback 改派，投递失败沿原失败回报闭合。协议身份、权限及收件人可见性校验仍由原入口和执行围栏保留。
 
 ### 源代码文件
 
-`packages/api/src/domains/cats/services/agents/routing/cat-target-resolver.ts`
+- `packages/api/src/domains/cats/services/agents/routing/AgentRouter.ts`：共同目标解析、普通 fallback 与 exact recipient。
+- `packages/api/src/domains/cats/services/agents/routing/cat-target-resolver.ts`：A2A/显式协议目标的解析诊断；其错误语义不套用到普通正文未匹配文本。
 
 ---
 
-## 第 3 层：路由回退（没有显式 @ 时）
+## 第 3 层：共同 send 与入队快照
 
-不是每条消息都包含 `@提及`。当用户只是发了"看起来不错，合掉吧"而没有 `@任何猫`，路由器需要自己判断该给谁处理。
+用户、成员、IM、邮件、插件和通知入口完成各自协议解析及鉴权后调用共同 send。共同准入负责目标解析、显式或 thread/global/product 默认策略、Message＋Queue 原子持久化，再通知唯一 drain；入口不自行追加、等待或调度。
 
-### 回退优先级（从高到低）
+### 当前优先级
 
 | 优先级 | 策略 | 说明 |
 |--------|------|------|
-| 1 | **显式 @提及** | 从当前消息解析——永远最高优先 |
-| 2 | **群组提及** | `@all`、`@thread`、`@all-Ragdoll` → 展开为花名册 |
-| 3 | **最近用户提及** | 扫描最近 5 条用户消息（1 小时内）中的 @提及 |
-| 4 | **最后回复者** | 该线程中最近活跃的猫（如果健康） |
-| 5 | **线程偏好猫** | 该线程配置的默认猫 |
-| 6 | **系统默认猫** | 全局兜底猫（通常是主力 Opus） |
+| 1 | **当前消息的有效显式 @** | 解析、校验并持久化为 authored targets |
+| 2 | **最近 completed 回复者** | 只接受当前仍可路由的 response target；processing / failed / canceled 不是候选 |
+| 3 | **配置的默认成员** | completed 回复者不可用时的服务端兜底 |
 
-### 为什么需要"最近用户提及"？
+fallback 不改写原始正文或冒充 authored mention。相同幂等 ID 重放复用首次赢得 admission 的目标与发送策略，不随稍后的路由和偏好变化改派；不同 ID 同正文分别处理。
 
-这处理了一个常见场景：用户 @ 了一只猫，猫回复了，用户回复时没再 @。路由器会往回看用户最近几条消息，找到之前在跟谁说话。没有这个机制，每次回复都得显式 @。
-
-这个扫描故意只检查**用户消息**（不是猫的消息），因为系统自动生成的猫消息（愿景守护报告、跨线程通知等）可能会劫持路由。
+历史／恢复 targetless row 由既有恢复路径处理。新普通消息未匹配的正文 `@` 不制造 targetless 等待；确无可用 fallback 时保留可追溯消息并明确反馈。A2A 和私密输入保持 exact 目标与原失败回报。
 
 ### 源代码文件
 
-`packages/api/src/domains/cats/services/agents/routing/AgentRouter.ts` — `parseAllMentions()`
+- `packages/api/src/domains/cats/services/agents/invocation/InvocationQueue.ts` — 共同 send/admission 与目标、策略快照
+- `packages/api/src/domains/cats/services/agents/routing/AgentRouter.ts` — `resolveConversationTargetsAtAdmission()`
+- `packages/api/src/domains/cats/services/agents/invocation/QueueProcessor.ts` — 出队时的实时能力、权限、exact parent 复核与历史 targetless 恢复
 
 ---
 
@@ -172,19 +140,20 @@ Clowder AI 是一个多智能体系统，多个由 LLM 驱动的"Clowder AI"在�
 
 目标猫确定后，系统分发调用。
 
-### 串行 vs. 并行
+### source 顺序与 target fan-out
 
-- **串行**（默认）：一次一只猫。猫 A 完成后，猫 B 才开始。用于交接链（`@opus → @codex → @opus`）。
-- **并行**（`cat_cafe_multi_mention`）：多只猫同时唤醒。用于"问所有人"的场景。状态机追踪完成情况：`pending → running → partial → done`。
+- **不同 source 按目标保序**：drain 按 comparator 扫描；旧等待／重试项阻挡同目标的新回合和自动追加，无关成员可以继续。
+- **同一 source 的 targets 并发**：普通 drain 只有在完整 pending target set 都可 admission 时才领取；领取后为每个 target 并发建立独立 response / Turn Execution。不会把正文拆成多条 Queue row，也不会等第一只猫完成后再 drain sibling。
+- **显式 singleton cutover**：Queue Steer 或 exact unread adoption 可以只领取一个 target；这是显式操作，不会把普通 drain 改成“先投空闲子集”。
 
 ### 安全护栏
 
 | 护栏 | 用途 | 限制 |
 |------|------|------|
-| **深度限制** | 防止 A2A 链失控 | 每线程最多 10 个 agent 条目 |
-| **去重（合并）** | 同一轮交接给同一只猫会合并 | 内容合并，不重新分发 |
+| **按目标 FIFO** | 同目标不越序、无关目标继续 | 新回合与自动追加共享候选顺序、held target 与短 claim 约束 |
+| **幂等 source×target** | 防止恢复/重放重复唤醒 | 已有 durable dispatch 时只清理残留 pending target |
 | **乒乓检测** | 同一对猫来回踢皮球 | N 轮后注入警告到上下文 |
-| **超时** | 并行提及的响应截止时间 | 每请求 3-20 分钟 |
+| **生命周期 fence** | 防止过期 owner、wait 或 action 续跑 | 准入前验证 exact generation / owner / source |
 
 ### 乒乓问题
 
@@ -194,9 +163,9 @@ Clowder AI 是一个多智能体系统，多个由 LLM 驱动的"Clowder AI"在�
 
 | 文件 | 用途 |
 |------|------|
-| `packages/api/src/routes/callback-a2a-trigger.ts` | 发消息后的 A2A 分发 |
-| `packages/api/src/domains/cats/services/agents/routing/MultiMentionOrchestrator.ts` | 多猫状态机 |
-| `packages/api/src/domains/cats/services/agents/routing/multi-mention-state-machine.ts` | 状态转换校验 |
+| `packages/api/src/domains/cats/services/agents/invocation/InvocationQueue.ts` | 所有来源的 Queue admission 适配 |
+| `packages/api/src/domains/cats/services/agents/invocation/QueueProcessor.ts` | 按目标保序、整组新回合准入、追加／ready 与并发 fan-out |
+| `packages/api/src/routes/callbacks.ts` | callback/A2A source 解析与 Queue 入站 |
 
 ---
 
@@ -206,11 +175,11 @@ Clowder AI 是一个多智能体系统，多个由 LLM 驱动的"Clowder AI"在�
 
 ### 对话历史
 
-- 最近约 20 条消息，格式为 `[HH:MM 发送者] 内容`
+- 依据当前 context assembler 的配置选择历史窗口与正文预算
 - 跨线程消息标注来源线程 ID
 - 内联回复预览（60 字符截断）
 - 大消息截断：40% 头部 + 60% 尾部（保留结论）
-- 总预算：约 2000 token
+- 普通未读、visibility 与 exact 输入边界保持独立；预算不能改变持久投递身份
 
 ### 身份注入
 
@@ -531,20 +500,19 @@ Clowder AI 是一个多智能体系统，多个由 LLM 驱动的"Clowder AI"在�
 
 > Added 2026-07-01 | 详见 ADR-040
 
-当用户发消息给正在执行的猫时，消息进入排队状态（`queued`）。排队消息的读取（read）、处理（handled）、投递（delivered）、目标消费（target consumed）是四个独立状态层：
+当用户发消息给正在执行的猫时，消息进入排队状态（`queued`）。Queue 只保存一条 source entry 及尚待投递的 `targets[]`；读取、实际投递与回复终局由各自的 History / execution owner 表达。ADR-043 D8 规定 exact full-read journey 通过一条 active-child adoption 路径提交相关转换：
 
 | 层 | 含义 | Scope | 影响其他猫？ |
 |----|------|-------|------------|
-| `delivery` | 消息是否进入 thread history | message-level | 否 |
-| `queued_seen` | 猫获取了排队正文 | per-cat + queue entry | 否 |
-| `queued_handled` | 猫处理完毕或显式 disposition | per-cat + queue entry | 否 |
-| `target_consumed` | 路由 work item 对该 target 猫已解决 | per-target + queue entry | 否（仅编排器聚合） |
+| `dispatchRef` | exact child 接管后，source→target 的实际投递时间、invocation 与 response identity 写入 History | source×target History lifecycle | 不消费其他 target |
+| body exposure | exact child 获得该 target 的完整正文 | exact response / Active Run evidence | 否 |
+| pending target removal | actual delivery 后从同一 Queue Entry 的 `targets[]` 删除该 target | one source Queue Entry | 否；siblings 仍 pending |
+| terminal response | completed / failed / canceled 原位终局同一 response bubble | exact target response lifecycle | 否 |
 
-**设计规则**：read is per-cat, handled is per-cat, target consumption is per-target. Nothing is global by default.
+**设计规则**：full queued read is an exact per-target adoption, not a passive peek. A+B 中 A 接管只从 source entry 删除 A 并写入 A 的 `dispatchRef`；B 后续从同一可见 History source 接管自己，最后没有剩余 target 才删除 Queue Entry。Sparse/cross-thread/无法证明 active child 的读取不接管。Queue 不保存 `queued_seen` / `queued_handled` / terminal tombstone。
 
 **关联 Feature**：
-- F254 产出/消费 `queued_seen`，用于抑制 freshness 重复提醒
-- F086 拥有 canonical per-target `TargetStatus` 状态机
+- F254 消费 exact History dispatch / body-exposure evidence 来抑制 freshness 重复提醒，但不在 Queue 复制这些事实
+- F086/F264 从 `dispatchRefs` 与 response lifecycle 投影逐目标 UI 状态
 - F108 拥有独立 fan-out context cutoff 策略
 - F117/F039 定义 queued delivery lifecycle 底层语义
-

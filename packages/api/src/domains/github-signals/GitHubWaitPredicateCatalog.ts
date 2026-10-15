@@ -3,12 +3,14 @@ import type {
   GitHubCommentAudienceV1,
   GitHubIssueWaitPredicate,
   GitHubReviewThreadBaseline,
+  GitHubReviewVerdicts,
   GitHubWaitBaseline,
   GitHubWaitMatchedDelta,
   GitHubWaitPredicate,
 } from '@cat-cafe/shared';
 import { GITHUB_ISSUE_WAIT_PREDICATE_LIMIT, GITHUB_PR_WAIT_PREDICATE_LIMIT, sameGitHubLogin } from '@cat-cafe/shared';
 import { z } from 'zod';
+import { dismissedVerdicts } from './GitHubReviewVerdicts.js';
 
 /**
  * #1392 AC-3: a positive audience, frozen at registration. It must name someone — an empty
@@ -166,6 +168,8 @@ export interface GitHubWaitFacts {
     readonly threads?: readonly GitHubReviewThreadBaseline[];
     /** #1392 AC-6: new review comments this observation collected, on either surface. */
     readonly comments?: readonly GitHubObservedComment[];
+    /** #1392: the current state of every review that holds or held a verdict, old ids included. */
+    readonly verdicts?: GitHubReviewVerdicts;
   };
   readonly ci?: {
     readonly bucket: GitHubCiBaselineBucket;
@@ -344,6 +348,21 @@ function matchNewComments(
   return matches;
 }
 
+/**
+ * #1392: a dismissal keeps the review id, so no frontier moves for it — it is a verdict whose state
+ * changed. It revokes a decision whichever HEAD it was given on.
+ */
+function matchDismissedVerdicts(
+  seen: GitHubReviewVerdicts | undefined,
+  observed: GitHubReviewVerdicts | undefined,
+): GitHubWaitMatchedDelta[] {
+  return dismissedVerdicts(seen, observed).map((dismissal) => ({
+    kind: 'pr_review_decision_changed',
+    delta: `review ${dismissal.previous} → DISMISSED${dismissal.author ? ` (${dismissal.author})` : ''}`,
+    sourceRef: `github:pr-review:${dismissal.reviewId}`,
+  }));
+}
+
 export function matchGitHubWaitPredicates(
   when: readonly GitHubWaitPredicate[],
   baseline: GitHubWaitBaseline,
@@ -403,6 +422,7 @@ export function matchGitHubWaitPredicates(
             ...(after.resultSourceRef ? { sourceRef: after.resultSourceRef } : {}),
           });
         }
+        matches.push(...matchDismissedVerdicts(before?.verdicts, after?.verdicts));
         break;
       }
       case 'pr_review_thread_changed': {

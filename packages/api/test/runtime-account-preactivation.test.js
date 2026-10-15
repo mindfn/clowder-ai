@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -128,7 +128,10 @@ test('daemon launch rejects before any daemon state or process is created', () =
     }
     mkdirSync(join(root, 'bin'));
     writeFileSync(join(root, 'bin/git'), '#!/bin/sh\nprintf fixture-head\n', { mode: 0o755 });
-    const result = spawnSync('bash', [join(root, 'scripts/start-dev.sh'), '--daemon', '--memory'], {
+    writeFileSync(join(root, 'bin/nohup'), '#!/bin/sh\ntouch "$F323_FIXTURE_SPAWN_MARKER"\nexit 42\n', {
+      mode: 0o755,
+    });
+    const result = spawnSync('bash', [join(root, 'scripts/start-dev.sh'), '--daemon', '--memory', '--prod-web'], {
       cwd: root,
       encoding: 'utf8',
       env: {
@@ -137,11 +140,15 @@ test('daemon launch rejects before any daemon state or process is created', () =
         TERM: 'dumb',
         CAT_CAFE_SKIP_NODE_RUNTIME_GUARD: '1',
         CAT_CAFE_DEPLOYMENT_ID: 'runtime',
+        CAT_CAFE_RUNTIME_ROOT: root,
+        F323_FIXTURE_SPAWN_MARKER: join(root, 'unexpected-spawn'),
       },
     });
-    assert.equal(result.status, 2, result.stderr);
+    assert.equal(result.status, 2, result.stdout + result.stderr);
     assert.match(result.stderr, /Account preflight inspected/);
     assert.doesNotMatch(result.stdout, /后台模式启动|Daemon PID:|正在关闭服务|再见/);
+    assert.equal(existsSync(join(root, '.cat-cafe/daemons')), false, 'account veto must precede daemon state');
+    assert.equal(existsSync(join(root, 'unexpected-spawn')), false, 'account veto must precede child spawn');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

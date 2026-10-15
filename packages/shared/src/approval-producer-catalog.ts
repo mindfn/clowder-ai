@@ -213,6 +213,22 @@ export const APPROVAL_PRODUCER_CATALOG = {
     history: false,
     humanDispositionReasonCodes: null,
   },
+  F321: {
+    lifecycleVersion: 1,
+    label: '记忆更正',
+    badgeLabel: 'Memory correction',
+    colorToken: 'var(--accent-event, #f97316)',
+    decisionEndpointBase: '/api/event-memory-corrections',
+    decisionSurface: 'approval_hub',
+    sourcePolicy: 'message-or-event',
+    // DIRECT binding: callback-propose-event-memory-correction derives owner,
+    // cat, thread, invocation and approval origin from the authenticated
+    // InvocationRecord. The request body can only name an owner-scoped Event
+    // id plus its exact revision; original source coordinates come from Event.
+    systemOriginExemption: 'server_attested',
+    history: true,
+    humanDispositionReasonCodes: null,
+  },
   F266: {
     lifecycleVersion: 1,
     label: '修复',
@@ -239,6 +255,7 @@ export const APPROVAL_PRODUCER_IDS = Object.freeze([
   'F260',
   'F266',
   'F221',
+  'F321',
   'F276',
   'F292',
   'F306',

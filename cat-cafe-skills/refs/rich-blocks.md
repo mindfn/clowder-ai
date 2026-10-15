@@ -64,8 +64,8 @@
 > | `cat-cafe/packages/api/uploads/` | 开发仓 packages 目录，非 runtime 检出 |
 > | `cat-cafe-runtime/uploads/` | runtime 根目录，API 不 serve 这一层 |
 >
-> **正确做法**：用 `publishGeneratedImage()` 或通过 API multipart 上传——它们自动解析正确的 `uploadDir`。
-> 手动 `cp` 文件时必须确认目标是 runtime PID 对应的 `packages/api/uploads/`。
+> **成员入口**：原生生成图由 provider 自动发布；普通成员的本地 PNG 用 `cat_cafe_publish_image` 取得持久 URL / messageId / revision。调用方式见 [Rich Messaging](../rich-messaging/SKILL.md#发送方式)。
+> `publishGeneratedImage()` 是内部函数；用户上传的 multipart 路由不是成员上传接口。不要 import 内部模块或手动 `cp` 到 runtime uploads。
 
 ### 关于本地生成图的额外说明（F172 共享发布合约）
 
@@ -74,7 +74,9 @@ Codex `image_gen` 和 Antigravity 生成的图片现已**自动发布**：
 - Antigravity：`AntigravityAgentService` 自动从工具结果中检测图片路径并发布
 - 两者都通过 `publishGeneratedImage()` 合约，自动解析当前 runtime 的 `uploadDir`、生成幂等文件名、返回 `/uploads/...` URL + `media_gallery` 富块
 
-**手动发布**（仅当自动路径不适用时）：调用 `publishGeneratedImage({ sourcePath, mimeType, publicationKey, provider, toolName })`。
+**图片绝对路径只用于展示**：`create_rich_block` 会将已登记 Workspace 中现存、可读的图片（≤10MiB）安全转换为 `/api/workspace/file/raw?worktreeId=...&path=...`；未知工作区、受保护路径或不可展示文件明确报错。这不是复制到 uploads，也不是持久的图片发布。
+
+**其他本地 PNG**：调用 `cat_cafe_publish_image({path, publicationKey, title?, alt?})`，图片与当前 thread 的消息已持久化，不要重复贴同一 URL。相同请求可重试，改图换 key；后续沿原 Task/content lineage 审阅。Workspace raw URL 只是文件展示，不能用于 Task 媒体导入。具体步骤与限制见 [Rich Messaging](../rich-messaging/SKILL.md#发送方式)。
 
 不要把”源码仓里存在这个文件”和”当前 API 正在服务这个文件”混为一谈。runtime 可能跑在另一套 worktree / 另一份 `packages/api/uploads/`。
 
@@ -84,7 +86,7 @@ Codex `image_gen` 和 Antigravity 生成的图片现已**自动发布**：
 
 - 文档、压缩包等普通文件：显示下载卡片
 - `mimeType` 以 `video/` 开头，或文件名扩展是 `mp4/mov/webm/avi/mkv/m4v/ogv`：Web UI 直接渲染内联 `<video>` 播放器
-- 当前共享自动发布合约只覆盖图片；**本地视频/通用文件还没有自动 publish helper**，需要先显式放到 `/uploads/...`
+- 自动发布仅覆盖原生 image_gen/Antigravity 图片结果，不覆盖任意富块 URL；**本地视频/通用文件还没有自动 publish helper**，使用已有可访问 URL（视频也可用 Workspace raw 媒体地址），不要手写 runtime uploads
 
 ## 创建方式
 

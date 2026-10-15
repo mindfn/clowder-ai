@@ -7,6 +7,8 @@
  */
 
 /** 产物类型 — 决定前端图标 / 筛选分组 */
+import type { MessageMediaItemSelector } from './media-publication-source.js';
+
 export type ThreadArtifactType = 'image' | 'file' | 'code' | 'pr' | 'audio' | 'video' | 'widget';
 
 export interface ThreadArtifactDTO {
@@ -22,8 +24,14 @@ export interface ThreadArtifactDTO {
   sourceMessageId: string | null;
   /** 资源 URL（图 / 文件 / 语音的 /uploads/ 或外链；diff / 无 url 产物省略） */
   url?: string;
+  /** Exact item within the durable source message; URL/name never disambiguate a publication. */
+  publicationItem?: MessageMediaItemSelector;
   /** 去重键（PR ref `org/repo#123` / 文件路径）；同 ref 取最新 */
   ref?: string;
+  /** File-ledger owner key, independent of display name/update time. Not execution-root proof. */
+  fileLedgerRef?: string;
+  /** Exact, currently authorized F309 publication landing. Absent means its version is unknown. */
+  work?: GlobalArtifactWork;
 }
 
 /** GET /api/threads/:threadId/artifacts 响应 */
@@ -31,6 +39,13 @@ export interface ThreadArtifactsResponse {
   threadId: string;
   /** 时间倒序 */
   artifacts: ThreadArtifactDTO[];
+  /** Owner reads can be unavailable while the original artifacts remain readable. */
+  workLineage?: 'resolved' | 'unavailable';
+  /** Explicit delivery view; the default remains the original full file/PR/publication catalogue. */
+  view?: 'works';
+  /** Count of distinct proven sources; exact historical DTOs remain in artifacts for existing return coordinates. */
+  total?: number;
+  complete?: boolean;
 }
 
 /**
@@ -44,9 +59,20 @@ export interface GlobalArtifactDTO extends ThreadArtifactDTO {
   threadTitle: string;
 }
 
+export interface GlobalArtifactWork {
+  contentRef: string;
+  ownerRevision: number;
+  currentOwnerRevision: number;
+}
+
 /** GET /api/artifacts 响应 */
 export interface GlobalArtifactsResponse {
+  view?: 'works' | 'recent-works';
   /** 时间倒序 */
   artifacts: GlobalArtifactDTO[];
   total: number;
+  /** `unavailable` means the owner catalogue could not be read completely; no partial work fields are exposed. */
+  workLineage: 'resolved' | 'unavailable';
+  /** Present on bounded views. False means older owner history was intentionally not scanned. */
+  complete?: boolean;
 }

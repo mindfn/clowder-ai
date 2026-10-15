@@ -145,7 +145,10 @@ async function archiveLocalDirectory(sourcePath: string, packagesRoot: string, t
   try {
     await copyLocalDirectory(resolve(sourcePath), resolve(stagingRoot, 'package'));
     const archivePath = resolve(stagingRoot, 'candidate.tgz');
-    await execFileAsync(tarBin, ['-czf', archivePath, '-C', stagingRoot, 'package'], {
+    // Keep the archive operand free of drive colons for GNU tar. Only this
+    // Host-owned root, never copied package members, is searched as tar's cwd.
+    await execFileAsync(tarBin, ['-czf', 'candidate.tgz', '-C', '.', 'package'], {
+      cwd: stagingRoot,
       env: { PATH: process.env.PATH ?? '/usr/bin:/bin', LC_ALL: 'C' },
       maxBuffer: 8 * 1024 * 1024,
     });

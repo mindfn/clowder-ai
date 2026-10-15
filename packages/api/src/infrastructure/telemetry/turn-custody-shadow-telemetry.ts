@@ -155,6 +155,7 @@ const TURN_CUSTODY_PROJECTION_REASONS = new Set([
   'structured_projection_missing',
   'structured_holder_mismatch',
   'dispatch_handoff_missing',
+  'event_wait_outcome_unrecognized',
 ]);
 
 const TURN_CUSTODY_SOURCE_CATEGORIES = new Set([
@@ -167,6 +168,7 @@ const TURN_CUSTODY_SOURCE_CATEGORIES = new Set([
   'continuation',
   'issue',
   'freshness',
+  'repo_inbox',
   'action_successor',
   'unknown',
 ]);

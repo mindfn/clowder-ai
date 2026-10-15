@@ -95,7 +95,9 @@ function extractFirstParagraphAfterHeading(markdown: string, heading: string): s
   if (start < 0) {
     throw new Error(`compileGovernanceL0: missing required shared-rules heading "${heading}"`);
   }
-  const bodyStart = start + heading.length;
+  // Display labels can be branded on export; consume the entire heading line.
+  const headingEnd = markdown.indexOf('\n', start);
+  const bodyStart = headingEnd < 0 ? markdown.length : headingEnd + 1;
   const nextHeading = markdown.slice(bodyStart).search(/\n##\s+/);
   const body = nextHeading >= 0 ? markdown.slice(bodyStart, bodyStart + nextHeading) : markdown.slice(bodyStart);
   const paragraph = body
@@ -135,13 +137,28 @@ function extractNumberedHeadings(markdown: string, prefix: 'P' | 'W', expected: 
 }
 
 function extractMagicWords(markdown: string): string[] {
-  const rows = [...markdown.matchAll(/^\|\s*「([^」]+)」\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$/gm)]
-    .filter((m) => !m[1]?.includes('拉闸词'))
-    .map((m) => `-「${normalizeInline(m[1] ?? '')}」= ${normalizeInline(m[2] ?? '')} → ${normalizeInline(m[3] ?? '')}`);
-  if (rows.length < 9) {
-    throw new Error(`compileGovernanceL0: expected ≥9 Magic Words rows, found ${rows.length}`);
+  const table = markdown.split(/^### 速查表（L0 生成源）\r?\n/m)[1]?.split(/^#{2,3} /m)[0] ?? '';
+  const rows = [...table.matchAll(/^\|\s*「([^」]+)」\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$/gm)].map(
+    (m) => `-「${normalizeInline(m[1] ?? '')}」= ${normalizeInline(m[2] ?? '')} → ${normalizeInline(m[3] ?? '')}`,
+  );
+  if (rows.length === 0) {
+    throw new Error('compileGovernanceL0: Magic Words summary table is empty');
   }
-  return rows;
+  return [extractFirstParagraphAfterHeading(markdown, '### 触发约定'), '', ...rows];
+}
+
+function extractMetaMethod(markdown: string): string {
+  const headings = [...markdown.matchAll(/^## 元方法（Meta Method）[ \t]*\r?$/gm)];
+  const heading = headings[0];
+  if (!heading || headings.length !== 1) {
+    throw new Error(`compileGovernanceL0: ${headings.length === 0 ? 'missing' : 'duplicate'} 元方法 heading`);
+  }
+  const body = markdown
+    .slice(heading.index + heading[0].length)
+    .split(/^#{1,2}\s/m)[0]
+    ?.trim();
+  if (!body) throw new Error('compileGovernanceL0: empty 元方法 section');
+  return body;
 }
 
 /**
@@ -177,7 +194,10 @@ export function compileGovernanceL0FromMarkdown(markdown: string): string {
 
   return [
     '## 3. 家规（shared-rules.md）',
-    'Rule 0: 规则是边界不是全部。边界之内保留判断力；认为不适用时用证据说话。Push Back 协议：证据 + 适用性论证 + 替代方案。判断力三问：我现在在做什么 / 我的信息源可靠吗 / 方案感觉笨重？',
+    'Rule 0: 边界内保留判断力。Push Back 协议：证据 + 适用性论证 + 替代方案。',
+    '',
+    '### 元方法（Meta Method）',
+    extractMetaMethod(markdown),
     '',
     '### 第一性原理 P1-P5',
     ...principles,
@@ -188,29 +208,26 @@ export function compileGovernanceL0FromMarkdown(markdown: string): string {
     '### 纪律',
     `- 身份契约：${identityContract}`,
     '- 用自己的身份签名 `[昵称/模型🐾]`，签名必须含模型型号；commit body 写 Why。',
-    '- 实事求是：结论必须基于多源证据（代码 / commit / PR / 文档）；没查完就说还没查完。',
+    '- 实事求是：结论必须基于多源证据；没查完就说还没查完。',
     '- @ 是路由指令；收到 @ 后三选一：接 / 退 / 升。状态描述不是球权声明。',
     '- 球权只有第一人称；唯一凭据是 @ 或 hold_ball 动作本身。',
+    `- ${extractFirstParagraphAfterHeading(markdown, '### 收尾找')}`,
     '- 等外部条件走 `cat_cafe_hold_ball(...)` 或结构化回调，不把云端 / GitHub bot 投射成本地猫。',
     '- 共享状态文件只在 main 改，改完立刻 `git commit + git push`。',
     '- 跨 thread 阻塞依赖双写到可追溯状态；消息不是真相源。',
     '',
-    '### 质量覆盖',
-    '- Bug 先定位根因再修；不确定方向：停 → 搜 → 问 → 确认 → 再动手。',
-    '- “完成”附证据；Bug 先红后绿；scope 失控要记录并沉淀。',
-    '- 被co-creator纠正理解偏差时，先完成实际任务，再按 self-evolution 归档偏差根因。',
+    '- Bug 先定位根因、先红后绿；先完成被纠正的任务，再按 self-evolution 沉淀。',
     '',
-    '### Magic Words（co-creator专用拉闸词 — 仅co-creator当前指令触发）',
+    '### Magic Words（co-creator专用纠偏词）',
     ...magicWords,
     '',
     '### 治理协议（per-family）',
-    '- 46 hotfix 止血：fix/hotfix/quick fix/minimal fix/band-aid/temp/workaround → hotfix；跨猫 review 铁律：hotfix PR 必须跨族或同族不同个体 review，不允许 self-merge；2 周升级 review 三选一。',
+    '- 46 hotfix 止血：fix/hotfix/quick fix/minimal fix/band-aid/temp/workaround → hotfix；跨猫 review 铁律：hotfix PR 必须由非作者 review；按风险默认只找一只，同族也行，不允许 self-merge；2 周升级 review 三选一。',
     `- ${fallbackProtocolLabel}：同一文件新增 ≥3 层 fallback → 坐标系自检、替代方案评估、说明每层为何不能去掉。`,
     `- ${creativeProtocolLabel}：发现问题 ≠ 动手实现；记录 + handoff；白名单外代码改动需要 Dry Run Gate。`,
     '',
-    '### 决策漏斗（越宏观越关注，越细节越放手）',
-    '- SOP 流程推进不是决策，是执行。SOP 写了下一步就照做，不问。能翻代码解决的不要问人。',
-    '- 三层：宏观 operator 拍板 / 中间猫猫讨论 / 细节+流程猫猫自治（详见 `decision-matrix.md`）',
+    '### 决策漏斗',
+    '- SOP 流程推进不是决策；能翻代码解决的不要问人。详见 `decision-matrix.md`。',
     '- 可逆性：≤1 commit 回滚 + 不影响外部用户/数据/契约 + 不碰硬排除（愿景/权限/生产数据/production data boundary/新外部依赖/契约/显著成本）→ 自决 + 事后通报',
     '- operator 升级必带 Decision Packet：给价值取舍题不给技术 A/B 题；缺 Packet = 打回',
   ].join('\n');

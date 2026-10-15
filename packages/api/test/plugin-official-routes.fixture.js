@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 
 import {
@@ -8,7 +9,8 @@ import {
 } from '../dist/domains/plugin/index.js';
 import { registerOfficialPluginRoutes } from '../dist/routes/plugin-official-routes.js';
 
-export const entry = OFFICIAL_PLUGIN_CATALOG[0];
+export const entry = OFFICIAL_PLUGIN_CATALOG.find((candidate) => candidate.catalogId === 'feishu-meeting-intake');
+assert.ok(entry);
 
 function manifest(overrides = {}) {
   return {
@@ -56,6 +58,7 @@ export async function harness(options = {}) {
   const app = Fastify();
   const installCalls = [];
   const updateCalls = [];
+  const preflightCalls = [];
   app.addHook('preHandler', async (request) => {
     const raw = request.headers['x-test-session-user'];
     if (typeof raw === 'string' && raw.trim()) request.sessionUserId = raw.trim();
@@ -67,6 +70,10 @@ export async function harness(options = {}) {
     inventory: store,
     lifecycle,
     installer: {
+      preflightUpdate: async (catalogId, expectedRelease) => {
+        preflightCalls.push({ catalogId, expectedRelease });
+        return options.preflightUpdate?.({ catalogId, expectedRelease });
+      },
       install: async (catalogId, expectedRelease) => {
         installCalls.push({ catalogId, expectedRelease });
         return installed;
@@ -93,7 +100,7 @@ export async function harness(options = {}) {
     ...(options.meetingIntake === undefined ? {} : { meetingIntake: options.meetingIntake }),
   });
   await app.ready();
-  return { app, store, processCalls, installCalls, updateCalls };
+  return { app, store, processCalls, installCalls, updateCalls, preflightCalls };
 }
 
 const ownerUserId = process.env.DEFAULT_OWNER_USER_ID ?? 'owner-user';

@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
+import * as sqliteVec from 'sqlite-vec';
 
 import { IndexBuilder } from '../dist/domains/memory/IndexBuilder.js';
+import { PassageVectorStore } from '../dist/domains/memory/PassageVectorStore.js';
 import { SqliteEvidenceStore } from '../dist/domains/memory/SqliteEvidenceStore.js';
+import { ensurePassageVectorTable, ensureVectorTable } from '../dist/domains/memory/schema.js';
+import { VectorStore } from '../dist/domains/memory/VectorStore.js';
 
 describe('F264 Gap F recalled-body evidence purge', () => {
   const threadId = 'thread-f264-recall-index';
@@ -12,9 +16,7 @@ describe('F264 Gap F recalled-body evidence purge', () => {
   let store;
   let builder;
   const vectorOps = {
-    docDeletes: [],
     docUpserts: [],
-    passageDeletes: [],
     passageUpserts: [],
     embeddedTexts: [],
   };
@@ -34,9 +36,21 @@ describe('F264 Gap F recalled-body evidence purge', () => {
     ];
     store = new SqliteEvidenceStore(':memory:');
     await store.initialize();
-    // The unit harness spies on vector boundaries without loading sqlite-vec.
-    // IndexBuilder still uses this table to decide whether a passage needs embedding.
-    store.getDb().exec('CREATE TABLE IF NOT EXISTS passage_vectors (passage_key TEXT PRIMARY KEY, embedding BLOB)');
+    sqliteVec.load(store.getDb());
+    ensurePassageVectorTable(store.getDb(), 1);
+    ensureVectorTable(store.getDb(), 1);
+    const vectorStore = new VectorStore(store.getDb(), 1);
+    const passageVectorStore = new PassageVectorStore(store.getDb(), 1);
+    const upsertDoc = vectorStore.upsert.bind(vectorStore);
+    vectorStore.upsert = (anchor, vector) => {
+      vectorOps.docUpserts.push(anchor);
+      upsertDoc(anchor, vector);
+    };
+    const upsertPassage = passageVectorStore.upsert.bind(passageVectorStore);
+    passageVectorStore.upsert = (key, vector) => {
+      vectorOps.passageUpserts.push(key);
+      upsertPassage(key, vector);
+    };
     builder = new IndexBuilder(
       store,
       process.cwd(),
@@ -45,7 +59,7 @@ describe('F264 Gap F recalled-body evidence purge', () => {
           async load() {},
           async embed(texts) {
             vectorOps.embeddedTexts.push(...texts);
-            return texts.map(() => new Float32Array([1]));
+            return texts.map((text) => new Float32Array([text.includes(recalledBody) ? 1 : 0]));
           },
           isReady() {
             return true;
@@ -56,22 +70,8 @@ describe('F264 Gap F recalled-body evidence purge', () => {
           },
           dispose() {},
         },
-        vectorStore: {
-          delete(anchor) {
-            vectorOps.docDeletes.push(anchor);
-          },
-          upsert(anchor) {
-            vectorOps.docUpserts.push(anchor);
-          },
-        },
-        passageVectorStore: {
-          delete(key) {
-            vectorOps.passageDeletes.push(key);
-          },
-          upsert(key) {
-            vectorOps.passageUpserts.push(key);
-          },
-        },
+        vectorStore,
+        passageVectorStore,
       },
       undefined,
       () => [
@@ -113,8 +113,13 @@ describe('F264 Gap F recalled-body evidence purge', () => {
     assert.equal((await store.search(recalledBody)).length, 0);
     const docAnchor = `thread-${threadId}`;
     const passageKey = JSON.stringify([docAnchor, `msg-${messageId}`]);
-    assert.ok(vectorOps.docDeletes.includes(docAnchor), 'document vector is invalidated before canonical CAS');
-    assert.ok(vectorOps.passageDeletes.includes(passageKey), 'message passage vector is invalidated before CAS');
+    const currentDocument = db.prepare('SELECT embedding FROM evidence_vectors WHERE anchor=?').get(docAnchor);
+    assert.equal(currentDocument.embedding.readFloatLE(0), 0, 'only sanitized document input survives preparation');
+    assert.equal(
+      db.prepare('SELECT 1 FROM passage_vectors WHERE passage_key=?').get(passageKey),
+      undefined,
+      'the recalled source has no persisted passage vector before CAS',
+    );
     assert.equal(vectorOps.passageUpserts.length, 0, 'suppressed body is not re-embedded');
     assert.ok(
       vectorOps.embeddedTexts.every((text) => !text.includes(recalledBody)),
@@ -133,9 +138,7 @@ describe('F264 Gap F recalled-body evidence purge', () => {
       .prepare('SELECT content FROM evidence_passages WHERE doc_anchor = ? AND passage_id = ?')
       .get(`thread-${threadId}`, `msg-${messageId}`);
     assert.equal(restored.content, recalledBody, 'pre-CAS crash reconciliation restores an uncommitted source');
-    assert.ok(vectorOps.docDeletes.includes(docAnchor));
     assert.ok(vectorOps.docUpserts.includes(docAnchor), 'rollback re-embeds the exact restored document');
-    assert.ok(vectorOps.passageDeletes.includes(passageKey));
     assert.ok(vectorOps.passageUpserts.includes(passageKey), 'rollback re-embeds the exact restored passage');
 
     await builder.suppressMessagePassage(threadId, messageId);
@@ -150,8 +153,12 @@ describe('F264 Gap F recalled-body evidence purge', () => {
     );
     assert.doesNotMatch((await store.getByAnchor(`thread-${threadId}`)).summary, /saffron aurora/);
     assert.equal((await store.search(recalledBody)).length, 0);
-    assert.ok(vectorOps.docDeletes.includes(docAnchor));
-    assert.ok(vectorOps.passageDeletes.includes(passageKey));
+    assert.equal(db.prepare('SELECT 1 FROM passage_vectors WHERE passage_key=?').get(passageKey), undefined);
+    const finalizedDocument = db.prepare('SELECT embedding FROM evidence_vectors WHERE anchor=?').get(docAnchor);
+    assert.ok(
+      !finalizedDocument || finalizedDocument.embedding.readFloatLE(0) === 0,
+      'finalized recall cannot retain a vector for the withdrawn document input',
+    );
     assert.equal(vectorOps.passageUpserts.length, 0, 'committed recall never restores the passage vector');
   });
 

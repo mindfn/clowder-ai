@@ -1,3 +1,5 @@
+import { copyFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 await build({
@@ -11,4 +13,10 @@ await build({
   sourcemap: false,
   minify: false,
   legalComments: 'none',
+  external: ['/collective-client/collective-landing-A.png'],
 });
+
+await copyFile(
+  fileURLToPath(new URL('../assets/collective-landing-A.png', import.meta.url)),
+  'dist/assets/collective-landing-A.png',
+);

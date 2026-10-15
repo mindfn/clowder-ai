@@ -3,65 +3,32 @@
  *
  * Reads/writes via global ~/.cat-cafe/accounts.json + credentials.json.
  */
+
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { relative, resolve, win32 } from 'node:path';
-import { type AccountConfig, builtinAccountFamilyForRef } from '@cat-cafe/shared';
+import { resolve } from 'node:path';
+import type { AccountConfig } from '@cat-cafe/shared';
 import type { FastifyPluginAsync } from 'fastify';
-import { z } from 'zod';
 import { inspectAccountCatalog, readAccountStoreSnapshot } from '../config/account-store-snapshot.js';
 import { resolveCatCatalogPath } from '../config/cat-catalog-store.js';
 import { loadCatConfig, toAllCatConfigs } from '../config/cat-config-loader.js';
 import { deleteCatalogAccount, writeCatalogAccount } from '../config/catalog-accounts.js';
+import type { CodexLoginDriver } from '../config/codex-login-driver.js';
+
+import { CodexLoginManager } from '../config/codex-login-manager.js';
+import { describeCodexManagedLayout, prepareCodexManagedLayout } from '../config/codex-managed-layout.js';
 import { configEventBus, createChangeSetId } from '../config/config-event-bus.js';
 import { deleteCredential, hasCredential, writeCredential } from '../config/credentials.js';
-
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
-import { findMonorepoRoot } from '../utils/monorepo-root.js';
-import { redirectRuntimeProjectPath, resolvePersistentProjectPathDetailed } from '../utils/persistent-project-path.js';
 import { resolveUserId } from '../utils/request-identity.js';
-
-// clowder-ai#340: Derive client identity from well-known account IDs, not stored protocol.
-/** Synthesize a ProviderProfileView-compatible object from AccountConfig. */
-function accountToView(id: string, account: AccountConfig, apiKeyPresent: boolean) {
-  const isBuiltin = account.authType === 'oauth';
-  const builtinClient = builtinAccountFamilyForRef(id);
-  const clientId = account.clientId ?? (isBuiltin ? builtinClient : undefined);
-  return {
-    id,
-    name: account.displayName ?? id,
-    displayName: account.displayName ?? id,
-    authType: account.authType,
-    builtin: isBuiltin,
-    ...(clientId ? { clientId } : {}),
-    ...(account.baseUrl ? { baseUrl: account.baseUrl } : {}),
-    models: account.models ? [...account.models] : [],
-    ...(account.modelAliases && Object.keys(account.modelAliases).length > 0
-      ? { modelAliases: { ...account.modelAliases } }
-      : {}),
-    hasApiKey: apiKeyPresent,
-    mode: account.authType === 'api_key' ? ('api_key' as const) : ('subscription' as const),
-    ...(account.envVars && Object.keys(account.envVars).length > 0 ? { envVars: { ...account.envVars } } : {}),
-    createdAt: '',
-    updatedAt: '',
-  };
-}
-
-/** Derive a slug-like ID from display name, avoiding collisions with existing accounts. */
-function deriveAccountId(displayName: string, existingIds: Set<string>, customApiKey: boolean): string {
-  let seed =
-    displayName
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 40) || `account-${Date.now()}`;
-  if (customApiKey && builtinAccountFamilyForRef(seed)) seed = `custom-${seed}`;
-  if (!existingIds.has(seed)) return seed;
-  let counter = 2;
-  while (existingIds.has(`${seed}-${counter}`)) counter += 1;
-  return `${seed}-${counter}`;
-}
+import { registerCodexBindingRoutes } from './accounts-codex-binding.js';
+import { registerCodexLoginRoutes } from './accounts-codex-login.js';
+import { registerCodexQuotaRoutes } from './accounts-codex-quota.js';
+import { inspectNativeAccountDefaults } from './accounts-native-view.js';
+import { resolveAccountProjectRoot } from './accounts-project-root.js';
+import { createBodySchema, deleteBodySchema, projectQuerySchema, updateBodySchema } from './accounts-schemas.js';
+import { accountToView, deriveAccountId } from './accounts-view.js';
 
 function resolveGlobalConfigRoot(projectRoot?: string): string {
   const envRoot = process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT?.trim();
@@ -93,150 +60,17 @@ function findBoundCatIds(projectRoot: string, accountRef: string): string[] | Er
   return [...bound];
 }
 
-const MONOREPO_ROOT = findMonorepoRoot();
-
-/** F171: POSIX env key — must start with uppercase or _, rest alphanumeric + _. CAT_CAFE_ reserved. */
-const envKeySchema = z.string().regex(/^[A-Z_][A-Za-z0-9_]*$/, 'env key must match [A-Z_][A-Za-z0-9_]*');
-const envVarsSchema = z
-  .record(envKeySchema, z.string())
-  .optional()
-  .transform((vars) => {
-    if (!vars) return vars;
-    // Strip CAT_CAFE_ reserved keys server-side
-    const filtered: Record<string, string> = {};
-    for (const [k, v] of Object.entries(vars)) {
-      if (!k.startsWith('CAT_CAFE_')) filtered[k] = v;
-    }
-    return Object.keys(filtered).length > 0 ? filtered : undefined;
+export const accountsRoutes: FastifyPluginAsync<{
+  loginDriver?: CodexLoginDriver;
+  quotaFetcher?: typeof fetch;
+}> = async (app, options) => {
+  const loginManager = new CodexLoginManager(options.loginDriver);
+  registerCodexLoginRoutes(app, loginManager);
+  registerCodexBindingRoutes(app);
+  registerCodexQuotaRoutes(app, options.quotaFetcher);
+  app.addHook('onClose', async () => {
+    await loginManager.close();
   });
-const modelAliasKeySchema = z.string().refine((key) => key.trim().length > 0, 'model alias key cannot be blank');
-const modelAliasesSchema = z
-  .record(modelAliasKeySchema, z.string().trim().min(1))
-  .superRefine((aliases, ctx) => {
-    const normalizedKeys = new Set<string>();
-    for (const key of Object.keys(aliases)) {
-      const normalizedKey = key.trim();
-      if (normalizedKeys.has(normalizedKey)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [key],
-          message: 'model alias keys must be unique after trimming',
-        });
-      }
-      normalizedKeys.add(normalizedKey);
-    }
-  })
-  .transform((aliases) =>
-    Object.fromEntries(Object.entries(aliases).map(([key, upstreamId]) => [key.trim(), upstreamId])),
-  )
-  .optional();
-
-const authTypeEnum = z.enum(['oauth', 'api_key']);
-const modeEnum = z.enum(['subscription', 'api_key']);
-/** F171: restrict clientId to known clients — prevents silent data rot when frontend truststhis as enum. */
-const accountClientEnum = z.enum(['anthropic', 'openai', 'google', 'kimi', 'opencode', 'acp']);
-
-const projectQuerySchema = z.object({
-  projectPath: z.string().optional(),
-});
-
-const createBodySchema = z
-  .object({
-    projectPath: z.string().optional(),
-    provider: z.string().trim().min(1).optional(),
-    /** F171: Explicit client identity for API key accounts. */
-    clientId: accountClientEnum.optional(),
-    name: z.string().trim().min(1).optional(),
-    displayName: z.string().trim().min(1).optional(),
-    mode: modeEnum.optional(),
-    authType: authTypeEnum.optional(),
-    baseUrl: z.string().optional(),
-    apiKey: z.string().optional(),
-    modelOverride: z.string().optional(),
-    models: z
-      .array(
-        z
-          .string()
-          .trim()
-          .min(1)
-          .transform((v) => v.replace(/\/+$/, ''))
-          .pipe(z.string().min(1)),
-      )
-      .optional(),
-    modelAliases: modelAliasesSchema,
-    /** F171: User-defined env vars injected into agent subprocess. */
-    envVars: envVarsSchema,
-  })
-  .superRefine((value, ctx) => {
-    if ((value.authType ?? 'api_key') === 'api_key' && !value.clientId) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['clientId'], message: 'API key accounts require clientId' });
-    }
-    if (!value.name && !value.displayName) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['displayName'],
-        message: 'displayName or name is required',
-      });
-    }
-  });
-
-const updateBodySchema = z.object({
-  projectPath: z.string().optional(),
-  provider: z.string().trim().min(1).optional(),
-  clientId: accountClientEnum.optional(),
-  name: z.string().trim().min(1).optional(),
-  displayName: z.string().trim().min(1).optional(),
-  mode: modeEnum.optional(),
-  authType: authTypeEnum.optional(),
-  baseUrl: z.string().optional(),
-  apiKey: z.string().optional(),
-  modelOverride: z.string().nullable().optional(),
-  models: z
-    .array(
-      z
-        .string()
-        .trim()
-        .min(1)
-        .transform((v) => v.replace(/\/+$/, ''))
-        .pipe(z.string().min(1)),
-    )
-    .optional(),
-  modelAliases: modelAliasesSchema,
-  /** F171: User-defined env vars injected into agent subprocess. */
-  envVars: envVarsSchema,
-});
-
-const deleteBodySchema = z.object({
-  projectPath: z.string().optional(),
-  force: z.boolean().optional(),
-});
-
-async function resolveProjectRoot(projectPath?: string): Promise<string | null> {
-  if (!projectPath) return redirectRuntimeProjectPath(resolveActiveProjectRoot());
-  const persistent = await resolvePersistentProjectPathDetailed(projectPath);
-  if (persistent.ok) return persistent.path;
-  if (['runtime_root_invalid', 'runtime_workspace_missing', 'runtime_target_unmappable'].includes(persistent.reason)) {
-    return null;
-  }
-
-  // Workspace project switcher can provide sibling repo paths (outside homedir/tmp allowlist).
-  // Allow paths under current workspace root while keeping realpath boundary checks.
-  const workspaceRoot = resolve(MONOREPO_ROOT, '..');
-  try {
-    const [resolvedTarget, resolvedWorkspaceRoot] = await Promise.all([
-      realpath(resolve(projectPath)),
-      realpath(workspaceRoot),
-    ]);
-    const rel = relative(resolvedWorkspaceRoot, resolvedTarget);
-    if (win32.isAbsolute(rel) || rel.startsWith('..') || rel.startsWith('/') || rel.startsWith('\\')) return null;
-    const info = await stat(resolvedTarget);
-    return info.isDirectory() ? resolvedTarget : null;
-  } catch {
-    return null;
-  }
-}
-
-export const accountsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/api/accounts', async (request, reply) => {
     const userId = resolveUserId(request);
     if (!userId) {
@@ -249,7 +83,7 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
       reply.status(400);
       return { error: 'Invalid query', details: parsed.error.issues };
     }
-    const projectRoot = await resolveProjectRoot(parsed.data.projectPath);
+    const projectRoot = await resolveAccountProjectRoot(parsed.data.projectPath);
     if (!projectRoot) {
       reply.status(400);
       return { error: 'Invalid project path: must be an existing directory under allowed roots' };
@@ -258,9 +92,24 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
     try {
       const snapshot = inspectAccountCatalog(projectRoot);
       const providers = Object.entries(snapshot.entries).map(([id, entry]) =>
-        accountToView(id, entry.account, entry.credential !== undefined),
+        accountToView(
+          id,
+          entry.account.codex ? loginManager.read(projectRoot, id) : entry.account,
+          entry.credential !== undefined,
+          projectRoot,
+        ),
       );
-      return { projectPath: projectRoot, providers, unavailableAccounts: snapshot.unavailableAccounts };
+      const nativeDefaults = inspectNativeAccountDefaults(projectRoot);
+      for (const [id, account] of nativeDefaults.defaults) {
+        if (!snapshot.entries[id] && !snapshot.unavailableAccounts.some((row) => row.accountRef === id))
+          providers.push(accountToView(id, account, false, projectRoot));
+      }
+      return {
+        projectPath: projectRoot,
+        providers,
+        unavailableAccounts: snapshot.unavailableAccounts,
+        ...(nativeDefaults.error ? { nativeDefaultsError: nativeDefaults.error } : {}),
+      };
     } catch (error) {
       reply.status(400);
       return { error: error instanceof Error ? error.message : String(error) };
@@ -279,7 +128,7 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
       reply.status(400);
       return { error: 'Invalid body', details: parsed.error.issues };
     }
-    const projectRoot = await resolveProjectRoot(parsed.data.projectPath);
+    const projectRoot = await resolveAccountProjectRoot(parsed.data.projectPath);
     if (!projectRoot) {
       reply.status(400);
       return { error: 'Invalid project path: must be an existing directory under allowed roots' };
@@ -289,7 +138,7 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
     try {
       // clowder-ai#340: protocol not persisted on new accounts. Custom accounts use explicit
       // accountRef binding; system callers use well-known builtin IDs.
-      const account: AccountConfig = {
+      let account: AccountConfig = {
         authType: (body.authType as 'oauth' | 'api_key') ?? 'api_key',
         ...(body.clientId ? { clientId: body.clientId } : {}),
         ...(body.baseUrl ? { baseUrl: body.baseUrl } : {}),
@@ -298,12 +147,30 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
         ...((body.displayName ?? body.name) ? { displayName: body.displayName ?? body.name } : {}),
         ...(body.envVars && Object.keys(body.envVars).length > 0 ? { envVars: body.envVars } : {}),
       };
-      const profileId = deriveAccountId(
-        body.displayName ?? body.name ?? body.provider ?? 'custom',
-        new Set(readAccountStoreSnapshot(projectRoot).refs),
-        account.authType === 'api_key',
-      );
+      const managedClaude = body.claudeToken !== undefined;
+      if (managedClaude) account = { ...account, claude: { kind: 'long_lived_token' } };
+      const managed = account.authType === 'oauth' && account.clientId === 'openai';
+      const profileId = managedClaude
+        ? `claude-${randomUUID()}`
+        : managed
+          ? `codex-${randomUUID()}`
+          : deriveAccountId(
+              body.displayName ?? body.name ?? body.provider ?? 'custom',
+              new Set(readAccountStoreSnapshot(projectRoot).refs),
+              account.authType === 'api_key',
+            );
+      if (managed)
+        account = {
+          ...account,
+          displayName: account.displayName || 'Codex 账号',
+          codex: describeCodexManagedLayout(projectRoot, profileId),
+        };
       writeCatalogAccount(projectRoot, profileId, account);
+      if (account.codex) {
+        account = { ...account, codex: prepareCodexManagedLayout(account.codex, projectRoot) };
+        writeCatalogAccount(projectRoot, profileId, account);
+      }
+      if (body.claudeToken) writeCredential(profileId, { accessToken: body.claudeToken }, projectRoot);
       if (body.apiKey) writeCredential(profileId, { apiKey: body.apiKey }, projectRoot);
       configEventBus.emitChange({
         source: 'accounts',
@@ -314,7 +181,7 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
       });
       return {
         projectPath: projectRoot,
-        profile: accountToView(profileId, account, !!body.apiKey),
+        profile: accountToView(profileId, account, !!body.apiKey, projectRoot),
       };
     } catch (err) {
       reply.status(400);
@@ -334,7 +201,7 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
       reply.status(400);
       return { error: 'Invalid body', details: parsed.error.issues };
     }
-    const projectRoot = await resolveProjectRoot(parsed.data.projectPath);
+    const projectRoot = await resolveAccountProjectRoot(parsed.data.projectPath);
     if (!projectRoot) {
       reply.status(400);
       return { error: 'Invalid project path: must be an existing directory under allowed roots' };
@@ -347,8 +214,30 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
         reply.status(404);
         return { error: `Account "${params.profileId}" not found` };
       }
+      if (
+        existing.codex &&
+        ((parsed.data.authType && parsed.data.authType !== 'oauth') ||
+          (parsed.data.clientId && parsed.data.clientId !== 'openai') ||
+          'baseUrl' in parsed.data ||
+          'apiKey' in parsed.data ||
+          'envVars' in parsed.data)
+      )
+        throw new Error('codex_managed_account_fields_owned');
+      if (
+        existing.claude &&
+        ((parsed.data.authType && parsed.data.authType !== 'oauth') ||
+          (parsed.data.clientId && parsed.data.clientId !== 'anthropic') ||
+          'apiKey' in parsed.data ||
+          'baseUrl' in parsed.data ||
+          'envVars' in parsed.data)
+      )
+        throw new Error('claude_token_account_fields_owned');
+      if (parsed.data.claudeToken && !existing.claude) throw new Error('claude_token_account_required');
       // clowder-ai#340: protocol not persisted — derived at runtime from well-known account IDs.
       const account: AccountConfig = {
+        ...(existing.claude ? { claude: existing.claude } : {}),
+        ...(existing.codex ? { codex: existing.codex } : {}),
+        ...(existing.quota ? { quota: existing.quota } : {}),
         authType: (parsed.data.authType as 'oauth' | 'api_key') ?? existing.authType,
         ...(parsed.data.clientId
           ? { clientId: parsed.data.clientId }
@@ -379,9 +268,14 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
           : existing.envVars && Object.keys(existing.envVars).length > 0
             ? { envVars: { ...existing.envVars } }
             : {}),
-        displayName: parsed.data.displayName ?? parsed.data.name ?? existing.displayName ?? params.profileId,
+        displayName:
+          'displayName' in parsed.data || 'name' in parsed.data
+            ? parsed.data.displayName || parsed.data.name || (existing.codex ? 'Codex 账号' : params.profileId)
+            : (existing.displayName ?? params.profileId),
       };
       writeCatalogAccount(projectRoot, params.profileId, account);
+      if (parsed.data.claudeToken)
+        writeCredential(params.profileId, { accessToken: parsed.data.claudeToken }, projectRoot);
       if (parsed.data.apiKey != null) {
         if (parsed.data.apiKey) {
           writeCredential(params.profileId, { apiKey: parsed.data.apiKey }, projectRoot);
@@ -399,7 +293,7 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
       });
       return {
         projectPath: projectRoot,
-        profile: accountToView(params.profileId, account, hasCredential(params.profileId, projectRoot)),
+        profile: accountToView(params.profileId, account, hasCredential(params.profileId, projectRoot), projectRoot),
       };
     } catch (err) {
       reply.status(400);
@@ -419,7 +313,7 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
       reply.status(400);
       return { error: 'Invalid body', details: parsed.error.issues };
     }
-    const projectRoot = await resolveProjectRoot(parsed.data.projectPath);
+    const projectRoot = await resolveAccountProjectRoot(parsed.data.projectPath);
     if (!projectRoot) {
       reply.status(400);
       return { error: 'Invalid project path: must be an existing directory under allowed roots' };
@@ -432,7 +326,7 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
       // Check the runtime catalog for dangling references. Template is bootstrap-only
       // and is not part of runtime binding truth after catalog creation.
       if (!parsed.data.force && accountExists) {
-        const boundCatIds = findBoundCatIds(projectRoot, params.profileId);
+        const boundCatIds = findBoundCatIds(resolveActiveProjectRoot(), params.profileId);
         if (boundCatIds instanceof Error) {
           reply.status(500);
           return {
@@ -446,6 +340,12 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
             boundCatIds,
           };
         }
+        const catalogPath = resolveCatCatalogPath(resolveActiveProjectRoot());
+        if (
+          existsSync(catalogPath) &&
+          Object.values(loadCatConfig(catalogPath).selectedAccountRefs ?? {}).includes(params.profileId)
+        )
+          return reply.code(409).send({ error: '这个号是工具正在用的账号，请先换成另一个号再删除登记' });
         if (!isProjectScopedGlobalStore(projectRoot)) {
           reply.status(409);
           return {
@@ -456,6 +356,12 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
         }
       }
 
+      const existing = readAccountStoreSnapshot(projectRoot).resolve(params.profileId).account;
+      if (
+        existing?.codex?.attempt &&
+        ['preparing', 'waiting', 'queued', 'review'].includes(existing.codex.attempt.state)
+      )
+        loginManager.cancel(projectRoot, params.profileId, existing.codex.attempt.id);
       deleteCatalogAccount(projectRoot, params.profileId);
       deleteCredential(params.profileId, projectRoot);
       configEventBus.emitChange({

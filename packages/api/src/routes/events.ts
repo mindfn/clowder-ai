@@ -6,19 +6,32 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { StoredEventMemory } from '@cat-cafe/shared';
-import { COGNITIVE_TRANSITIONS, EVENT_CONFIDENCES, EVENT_TRIGGERS } from '@cat-cafe/shared';
+import {
+  COGNITIVE_TRANSITIONS,
+  EVENT_CONFIDENCES,
+  EVENT_TRIGGERS,
+  type EventMemoryOwnerAction,
+  eventMemoryOwnerActionSchema,
+} from '@cat-cafe/shared';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { loadCompiledGovernanceL0Sync } from '../domains/cats/services/context/governance-l0.js';
 import { loadStagingBody } from '../domains/cats/services/context/StagingContent.js';
 import type { EventMemoryFilter, IEventMemoryStore } from '../domains/memory/EventMemoryStore.js';
+import { eventMemoryRevision, type StoredEventMemoryLifecycle } from '../domains/memory/EventMemoryStore.js';
+import type { EventMemoryCorrectionProposalStore } from '../domains/memory/event/EventMemoryCorrectionProposalStore.js';
+import { EventMemoryLifecycleService } from '../domains/memory/event/EventMemoryLifecycleService.js';
+import { toEventMemoryCorrectionProposalView } from '../domains/memory/event/event-memory-correction-proposal-view.js';
 import type { BackfillMessageSource, BackfillThreadSource } from '../domains/memory/event-backfill.js';
 import { runCorpusBackfill } from '../domains/memory/event-backfill.js';
 import type { MagicWordMeaning } from '../domains/memory/magic-word-meanings.js';
 import { parseMagicWordMeanings } from '../domains/memory/magic-word-meanings.js';
+import type { OwnerMemoryActionCoordinator } from '../domains/memory/owner/OwnerMemoryActionCoordinator.js';
+import { resolveSessionUserId } from '../utils/request-identity.js';
 import type { AgentKeyAuthRegistry, CallbackAuthRegistry } from './callback-auth-prehandler.js';
 import { registerCallbackAuthHook } from './callback-auth-prehandler.js';
+import { type EventMemorySourceReaders, readEventMemorySource } from './event-memory-source.js';
+import { authorizeOwnerBrowserAction, ownerMemoryActionHttpStatus } from './owner-memory-browser-auth.js';
 
 /**
  * F227 (砚砚 P1): Event Memory routes expose stored events + broadcast teleport
@@ -73,6 +86,9 @@ const listSchema = z.object({
 
 export interface EventsRoutesOptions {
   eventMemoryStore: IEventMemoryStore;
+  lifecycleService?: EventMemoryLifecycleService;
+  ownerActionCoordinator?: OwnerMemoryActionCoordinator;
+  correctionProposalStore?: EventMemoryCorrectionProposalStore;
   /** F227: socket emitter for thread:teleport navigation events. */
   socketEmit?: (event: string, data: unknown, room: string) => void;
   /** F227 (砚砚 R2 P1): callback auth for the MCP path (cat_cafe_teleport via
@@ -83,13 +99,77 @@ export interface EventsRoutesOptions {
   /** F227 Task 7: corpus sources for the historical backfill route (optional —
    * GET/teleport work without them). Structurally satisfied by IThreadStore /
    * IMessageStore. */
-  threadStore?: BackfillThreadSource;
-  messageStore?: BackfillMessageSource;
+  threadStore?: BackfillThreadSource & EventMemorySourceReaders['threadStore'];
+  messageStore?: BackfillMessageSource & EventMemorySourceReaders['messageStore'];
 }
 
 export interface EventsListResponse {
-  events: StoredEventMemory[];
-  meta: { count: number; limit: number | null; offset: number };
+  events: Array<
+    ReturnType<typeof projectOwnerEvent> & {
+      summaryTruncated?: boolean;
+      originalSummaryChars?: number;
+      drillDown?: EventDrillDown;
+    }
+  >;
+  meta: { count: number; limit: number; offset: number; hasMore: boolean; nextOffset?: number };
+}
+
+const EVENT_RESPONSE_MAX_CHARS = 24_000;
+
+interface EventDrillDown {
+  path: string;
+  charOffset: number;
+  revision: string;
+  tool: 'cat_cafe_list_events';
+  args: { eventId: string; charOffset: number; revision: string };
+}
+
+function eventDrillDown(eventId: string, charOffset: number, revision: string): EventDrillDown {
+  return {
+    path: `/api/memory/events/${encodeURIComponent(eventId)}?revision=${encodeURIComponent(revision)}`,
+    charOffset,
+    revision,
+    tool: 'cat_cafe_list_events',
+    args: { eventId, charOffset, revision },
+  };
+}
+
+function fitEventListPage(
+  window: StoredEventMemoryLifecycle[],
+  limit: number,
+  offset: number,
+  pendingCorrectionCounts: ReadonlyMap<string, number>,
+): EventsListResponse {
+  const events: EventsListResponse['events'] = [];
+  const responseFor = (items: EventsListResponse['events']): EventsListResponse => {
+    const hasMore = items.length < window.length;
+    return {
+      events: items,
+      meta: { count: items.length, limit, offset, hasMore, ...(hasMore ? { nextOffset: offset + items.length } : {}) },
+    };
+  };
+  for (const event of window.slice(0, limit)) {
+    const projected = projectOwnerEvent(event, pendingCorrectionCounts.get(event.eventId) ?? 0);
+    if (JSON.stringify(responseFor([...events, projected])).length <= EVENT_RESPONSE_MAX_CHARS) {
+      events.push(projected);
+      continue;
+    }
+    if (events.length > 0) break;
+    const placeholder = {
+      ...projected,
+      summary: event.summary.slice(0, 120),
+      relatedHarness: event.relatedHarness?.slice(0, 4) ?? null,
+      summaryTruncated: true,
+      originalSummaryChars: event.summary.length,
+      drillDown: eventDrillDown(event.eventId, 0, projected.revision),
+    };
+    if (JSON.stringify(responseFor([placeholder])).length > EVENT_RESPONSE_MAX_CHARS) {
+      throw new Error('Event source reference exceeds the bounded response budget');
+    }
+    events.push(placeholder);
+    break;
+  }
+  return responseFor(events);
 }
 
 export const eventsRoutes: FastifyPluginAsync<EventsRoutesOptions> = async (app, opts) => {
@@ -100,6 +180,18 @@ export const eventsRoutes: FastifyPluginAsync<EventsRoutesOptions> = async (app,
   if (opts.callbackRegistry) {
     registerCallbackAuthHook(app, opts.callbackRegistry, { agentKeyRegistry: opts.agentKeyRegistry });
   }
+  const sourceReaders =
+    opts.threadStore && opts.messageStore ? { threadStore: opts.threadStore, messageStore: opts.messageStore } : null;
+  const lifecycleService =
+    opts.lifecycleService ??
+    (opts.ownerActionCoordinator && sourceReaders
+      ? new EventMemoryLifecycleService({
+          store: opts.eventMemoryStore,
+          coordinator: opts.ownerActionCoordinator,
+          sourceAvailable: async (event) =>
+            (await readEventMemorySource(event, event.ownerUserId, sourceReaders)).status === 'ready',
+        })
+      : null);
 
   app.get('/api/memory/events', async (request, reply) => {
     if (!isAuthenticated(request)) {
@@ -119,14 +211,90 @@ export const eventsRoutes: FastifyPluginAsync<EventsRoutesOptions> = async (app,
 
     // Owner scope is server-enforced (cloud-review P1): callers only ever see their own
     // events; `ownerUserId` is appended LAST so a client-supplied value can't widen it.
-    const filter: EventMemoryFilter = { ...parsed.data, ownerUserId: owner };
-    const events = opts.eventMemoryStore.listEvents(filter);
-    const response: EventsListResponse = {
-      events,
-      meta: { count: events.length, limit: filter.limit ?? null, offset: filter.offset ?? 0 },
-    };
-    return response;
+    const limit = parsed.data.limit ?? 50;
+    const offset = parsed.data.offset ?? 0;
+    const filter: EventMemoryFilter = { ...parsed.data, limit: limit + 1, offset, ownerUserId: owner };
+    const window = opts.eventMemoryStore.listEvents(filter);
+    const counts = opts.correctionProposalStore
+      ? await opts.correctionProposalStore.countActionableForEvents(
+          owner,
+          window.slice(0, limit).map((event) => event.eventId),
+        )
+      : new Map<string, number>();
+    return fitEventListPage(window, limit, offset, counts);
   });
+
+  app.get<{ Params: { eventId: string }; Querystring: { charOffset?: string; revision?: string } }>(
+    '/api/memory/events/:eventId',
+    async (request, reply) => {
+      if (!isAuthenticated(request)) return reply.status(401).send({ error: 'auth required' });
+      const owner = ownerUserIdOf(request);
+      if (!owner) return reply.status(403).send({ error: 'owner scope required' });
+      const event = opts.eventMemoryStore.getEvent(request.params.eventId);
+      if (!event || event.ownerUserId !== owner) return reply.status(404).send({ error: 'Event not found' });
+      const correctionProposals = await listEventCorrections(opts.correctionProposalStore, owner, event.eventId);
+      const snapshot = projectEventSnapshot(event);
+      const detailProjection = {
+        ...snapshot,
+        pendingCorrectionCount: correctionProposals.length,
+        correctionProposals: correctionProposals.map(toEventMemoryCorrectionProposalView),
+      };
+      if (request.query.revision !== undefined && request.query.revision !== snapshot.revision) {
+        return reply.status(409).send({ error: 'Revision changed' });
+      }
+      const serialized = JSON.stringify(snapshot);
+      const slice = buildEventSlice(serialized, snapshot.revision, request.query);
+      if (slice) return reply.status(slice.statusCode).send(slice.body);
+      if (serialized.length <= EVENT_RESPONSE_MAX_CHARS) return reply.send(detailProjection);
+      return reply.send({
+        eventId: event.eventId,
+        revision: snapshot.revision,
+        status: snapshot.status,
+        pendingCorrectionCount: detailProjection.pendingCorrectionCount,
+        correctionProposals: detailProjection.correctionProposals,
+        oversized: true,
+        eventChars: serialized.length,
+        drillDown: eventDrillDown(event.eventId, 0, snapshot.revision),
+      });
+    },
+  );
+
+  app.get<{ Params: { eventId: string }; Querystring: { revision?: string } }>(
+    '/api/memory/events/:eventId/source',
+    async (request, reply) => {
+      const owner = resolveSessionUserId(request);
+      if (!owner) return reply.status(401).send({ error: 'Session required' });
+      if (!request.query.revision) return reply.status(400).send({ error: 'Revision required' });
+      if (!sourceReaders) return reply.status(503).send({ error: 'Source reader unavailable' });
+      const event = opts.eventMemoryStore.getEvent(request.params.eventId);
+      if (!event || event.ownerUserId !== owner) return reply.status(404).send({ error: 'Event not found' });
+      if (eventMemoryRevision(event) !== request.query.revision) {
+        return reply.status(409).send({ error: 'Revision changed' });
+      }
+      return readEventMemorySource(event, owner, sourceReaders);
+    },
+  );
+
+  app.post<{ Params: { eventId: string }; Body: EventMemoryOwnerAction }>(
+    '/api/memory/events/:eventId/actions',
+    async (request, reply) => {
+      const browserAuth = authorizeOwnerBrowserAction(request);
+      if (!browserAuth) return reply.status(403).send({ error: 'invalid_action' });
+      const owner = resolveSessionUserId(request);
+      if (!owner) return reply.status(403).send({ error: 'invalid_action' });
+      if (!lifecycleService) return reply.status(503).send({ error: 'mutation_unavailable' });
+      const body = eventMemoryOwnerActionSchema.safeParse(request.body);
+      if (!body.success) return reply.status(400).send({ error: 'invalid_request', details: body.error.issues });
+      try {
+        const result = await lifecycleService.executeOwnerAction(owner, request.params.eventId, body.data);
+        if (!('error' in result)) return result;
+        return reply.status(ownerMemoryActionHttpStatus(result.error)).send(result);
+      } catch (error) {
+        request.log.warn({ err: error }, '[F227] Owner Event mutation unavailable');
+        return reply.status(503).send({ error: 'mutation_unavailable' });
+      }
+    },
+  );
 
   // F227 Task 8 (AC-A5): magic-word meanings (word → meaning/action) read from injected governance.
   // The timeline's meaning popover consumes this; no hardcoded word table.
@@ -194,3 +362,47 @@ export const eventsRoutes: FastifyPluginAsync<EventsRoutesOptions> = async (app,
     return { ok: true, ...result };
   });
 };
+
+function projectOwnerEvent(event: StoredEventMemoryLifecycle, pendingCorrectionCount: number) {
+  return { ...projectEventSnapshot(event), pendingCorrectionCount };
+}
+
+function projectEventSnapshot(event: StoredEventMemoryLifecycle) {
+  return { ...event, revision: eventMemoryRevision(event) };
+}
+
+async function listEventCorrections(
+  store: EventMemoryCorrectionProposalStore | undefined,
+  ownerUserId: string,
+  eventId: string,
+) {
+  return store ? store.listActionableForEvent(ownerUserId, eventId, 100) : [];
+}
+
+function buildEventSlice(
+  serialized: string,
+  revision: string,
+  query: { charOffset?: string; revision?: string },
+): { statusCode: 200 | 400; body: Record<string, unknown> } | null {
+  if (query.charOffset === undefined) return null;
+  if (!query.revision) return { statusCode: 400, body: { error: 'Revision required' } };
+  if (!/^\d+$/.test(query.charOffset)) {
+    return { statusCode: 400, body: { error: 'Invalid charOffset' } };
+  }
+  const charOffset = Number(query.charOffset);
+  if (!Number.isSafeInteger(charOffset) || charOffset >= serialized.length) {
+    return { statusCode: 400, body: { error: 'Invalid charOffset' } };
+  }
+  const eventSlice = serialized.slice(charOffset, charOffset + 8_000);
+  const nextCharOffset = charOffset + eventSlice.length;
+  return {
+    statusCode: 200,
+    body: {
+      revision,
+      eventSlice,
+      charOffset,
+      totalChars: serialized.length,
+      ...(nextCharOffset < serialized.length ? { nextCharOffset } : {}),
+    },
+  };
+}

@@ -5,14 +5,14 @@ import {
   type ContextPresentation,
   type ContextPresentationEnvelope,
   mapToPresentation,
-} from '../../session/context-presentation.js';
-import type { DeliveryReceipt } from '../../session/delivery-receipt.js';
+} from '../../session/context/context-presentation.js';
+import type { DeliveryReceipt } from '../../session/context/delivery-receipt.js';
 import type {
   CommitOutcome,
   PresentationLedger,
   PresentationReservation,
   PresentationScope,
-} from '../../session/PresentationLedger.js';
+} from '../../session/context/PresentationLedger.js';
 
 export type ProviderPromptPresentationEnvelope<TReceipt> = ContextPresentationEnvelope<TReceipt>;
 
@@ -101,6 +101,21 @@ function isCurrentAdmission<TReceipt>(
     admission.epistemicCeiling !== envelope.candidate.epistemicCeiling
   ) {
     return false;
+  }
+  if (envelope.candidate.epistemicCeiling === 'historical_clue') {
+    const clue = envelope.candidate.historicalClueAdmission;
+    if (
+      !clue ||
+      admission.opportunityKind !== 'recall' ||
+      admission.producerOwner !== 'owner_message' ||
+      admission.entryVersion !== clue.entryVersion ||
+      admission.presentationPolicyRef !== clue.policyRef ||
+      !admission.sourceRefs.includes(clue.sourceAnchor) ||
+      !admission.invalidators.some(
+        (ref) => ref.owner === 'thread_overview' && ref.ref === `${clue.sourceAnchor}@${clue.sourceRevision}`,
+      )
+    )
+      return false;
   }
   return true;
 }

@@ -12,11 +12,11 @@
 
 import type { CliDiagnostics, FrustrationSignalType, RichBlock } from '@cat-cafe/shared';
 import type { SocketManager } from '../../../../infrastructure/websocket/index.js';
+import { messageFrom } from '../stores/message-from.js';
 import type { IFrustrationIssueStore } from '../stores/ports/FrustrationIssueStore.js';
 import type { IMessageStore } from '../stores/ports/MessageStore.js';
 
 import { buildFrustrationIssueCard } from './frustration-card-builder.js';
-import { TEXT_FRUSTRATION_THRESHOLD } from './text-frustration-keywords.js';
 
 // ── Constants ──────────────────────────────────────────────────
 
@@ -93,11 +93,7 @@ export interface A2ATimeoutSignal {
   elapsedMs: number;
 }
 
-/** Minimum retry matches to trigger. */
-export const RETRY_BURST_THRESHOLD = 3;
-/** Prefix length for similarity matching (first N chars). */
-export const RETRY_PREFIX_LENGTH = 30;
-
+/** Historical signal payload retained for persisted issue compatibility. */
 export interface RetryBurstSignal {
   type: 'retry_burst';
   /** Number of recent messages matching the current message */
@@ -144,18 +140,13 @@ export function shouldTrigger(signal: FrustrationSignal): boolean {
     return recentCount >= CANCEL_BURST_THRESHOLD;
   }
 
-  if (signal.type === 'text_frustration') {
-    return signal.matchCount >= TEXT_FRUSTRATION_THRESHOLD;
-  }
+  // Historical issue types remain readable; chat-content inference no longer creates issues.
+  if (signal.type === 'text_frustration' || signal.type === 'retry_burst') return false;
 
   if (signal.type === 'a2a_timeout') {
     // P1 fix: only trigger when elapsed >= threshold (spec: 60s).
     // Instant crashes/parse errors have low elapsedMs and should not be labeled "timeout".
     return signal.elapsedMs >= A2A_TIMEOUT_THRESHOLD_MS;
-  }
-
-  if (signal.type === 'retry_burst') {
-    return signal.matchCount >= RETRY_BURST_THRESHOLD;
   }
 
   // UX-3: user_report always triggers — user explicitly clicked "取消并反馈"
@@ -269,13 +260,14 @@ export async function evaluate(
   let recentMessages: Array<{ role: 'user' | 'cat' | 'system'; content: string; timestamp: number }> = [];
   try {
     const messages = await deps.messageStore.getByThread(threadId, CONTEXT_MESSAGE_COUNT);
-    recentMessages = (messages as Array<{ catId?: string; userId?: string; content?: string; timestamp: number }>).map(
-      (m) => ({
-        role: (m.catId ? 'cat' : m.userId === 'system' ? 'system' : 'user') as 'user' | 'cat' | 'system',
-        content: typeof m.content === 'string' ? m.content.slice(0, 500) : '',
+    recentMessages = messages.map((m) => {
+      const from = messageFrom(m);
+      return {
+        role: (from.kind === 'agent' ? 'cat' : from.kind === 'system' ? 'system' : 'user') as 'user' | 'cat' | 'system',
+        content: m.content.slice(0, 500),
         timestamp: m.timestamp,
-      }),
-    );
+      };
+    });
   } catch {
     // Non-blocking: proceed without context if messageStore fails
   }
@@ -304,8 +296,8 @@ export async function evaluate(
   // 7. Post as system message with rich blocks
   try {
     const stored = await deps.messageStore.append({
+      from: { kind: 'system', service: 'frustration-detector' },
       userId: 'system',
-      catId: null,
       threadId,
       content: `[${signalType === 'user_report' ? '用户反馈' : '自动检测'}] ${signalType === 'user_report' ? '你发起了问题反馈' : `检测到可能的问题（${signalType === 'cli_error' ? 'CLI 错误' : '操作中断'}）`}，已自动整理上下文。`,
       mentions: [],
@@ -330,6 +322,7 @@ export async function evaluate(
         threadId,
         message: {
           id: stored.id,
+          from: stored.from,
           type: 'connector',
           content: stored.content,
           source: stored.source,

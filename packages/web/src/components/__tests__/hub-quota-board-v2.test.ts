@@ -293,6 +293,339 @@ describe('HubQuotaBoardTab — account pool grouping', () => {
     vi.clearAllMocks();
   });
 
+  it('keeps a managed account quota separate from the local default and refreshes that exact account', async () => {
+    const paths: string[] = [];
+    const successfulQuota = {
+      owner: { accountRef: 'codex-managed-fixture', userId: 'company-user', workspaceId: 'company-workspace' },
+      status: 'ok',
+      source: 'codex_official_readonly',
+      observedAt: 1772470000000,
+      items: [{ label: '公司号额度', usedPercent: 32, percentKind: 'remaining' }],
+    };
+    let suppliedQuota: typeof successfulQuota & { error?: string } = successfulQuota;
+    const managedRef = 'codex-managed-fixture';
+    const accountResponse = await (await defaultQuotaApiFetch('/api/accounts')).json();
+    const managed = {
+      ...accountResponse.providers.find((profile: { clientId?: string }) => profile.clientId === 'openai'),
+      id: managedRef,
+      displayName: '公司号',
+      builtin: false,
+      codex: {
+        status: 'ready',
+        identity: { userId: 'company-user', workspaceId: 'company-workspace', email: 'company@example.test' },
+      },
+    };
+    accountResponse.providers.push(managed);
+    mockApiFetch.mockImplementation((path: string) => {
+      paths.push(path);
+      if (path === '/api/accounts') return Promise.resolve(jsonResponse(accountResponse));
+      if (path === `/api/accounts/${managedRef}/codex/quota`) {
+        return Promise.resolve(
+          jsonResponse({
+            accountRef: managedRef,
+            quota: suppliedQuota,
+          }),
+        );
+      }
+      if (path.startsWith('/api/quota/refresh/')) return Promise.resolve(jsonResponse({ ok: true }));
+      return defaultQuotaApiFetch(path);
+    });
+    await act(async () => {
+      root.render(React.createElement(HubQuotaBoardTab));
+    });
+    await flushEffects();
+    const card = () =>
+      Array.from(container.querySelectorAll('span')).find((node) => node.textContent?.trim() === '公司号')
+        ?.parentElement?.parentElement;
+    expect(card()?.textContent).not.toContain('100% 剩余');
+    expect(card()?.textContent).toContain('尚未查询');
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (node) => node.textContent?.trim() === '刷新全部',
+    );
+    await act(async () => {
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+    expect(paths).toContain(`/api/accounts/${managedRef}/codex/quota`);
+    expect(card()?.textContent).toContain('公司号额度');
+    expect(card()?.textContent).toContain('32% 剩余');
+    expect(card()?.textContent).not.toContain('100% 剩余');
+    suppliedQuota = { ...successfulQuota, status: 'unavailable', items: [], error: '公司号查询暂不可用' };
+    await act(async () => {
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+    expect(card()?.textContent).toContain('公司号查询暂不可用');
+    expect(card()?.textContent).not.toContain('32% 剩余');
+    expect(card()?.textContent).not.toContain('100% 剩余');
+    suppliedQuota = successfulQuota;
+    await act(async () => {
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+    expect(card()?.textContent).toContain('32% 剩余');
+    expect(container.textContent).not.toContain('公司号查询暂不可用');
+  });
+
+  it.each([
+    'identity_changed',
+    'not_logged_in',
+  ])('stops displaying a successful quota when login becomes %s', async (status) => {
+    const accounts = await (await defaultQuotaApiFetch('/api/accounts')).json();
+    const profile = {
+      ...accounts.providers.find((entry: { clientId?: string }) => entry.clientId === 'openai'),
+      id: 'managed-transition',
+      displayName: '失效公司号',
+      builtin: false,
+      codex: { status: 'ready', identity: { userId: 'user-a', workspaceId: 'workspace-a' } },
+      quota: {
+        status: 'ok',
+        source: 'codex_official_readonly',
+        observedAt: 1772470000000,
+        owner: { accountRef: 'managed-transition', userId: 'user-a', workspaceId: 'workspace-a' },
+        items: [{ label: '旧身份额度', usedPercent: 99, percentKind: 'used' }],
+      },
+    };
+    accounts.providers = [profile];
+    mockApiFetch.mockImplementation((path) =>
+      path === '/api/accounts' ? Promise.resolve(jsonResponse(accounts)) : defaultQuotaApiFetch(path),
+    );
+    await act(async () => root.render(React.createElement(HubQuotaBoardTab)));
+    await flushEffects();
+    expect(container.textContent).toContain('旧身份额度');
+    profile.codex.status = status;
+    await act(async () => window.dispatchEvent(new Event('accounts-changed')));
+    await flushEffects();
+    expect(container.textContent).not.toContain('旧身份额度');
+    expect(container.textContent).toContain(status === 'identity_changed' ? '登录身份已变化' : '尚未登录');
+  });
+
+  it('does not project a late workspace-a quota into the same account ref now owned by workspace-b', async () => {
+    const accounts = await (await defaultQuotaApiFetch('/api/accounts')).json();
+    const profile = {
+      ...accounts.providers.find((entry: { clientId?: string }) => entry.clientId === 'openai'),
+      id: 'managed-transition',
+      displayName: '换身份公司号',
+      builtin: false,
+      codex: { status: 'ready', identity: { userId: 'user-a', workspaceId: 'workspace-a' } },
+    };
+    accounts.providers = [profile];
+    const oldAccounts = structuredClone(accounts);
+    let finishOldList: (response: Response) => void = () => {};
+    const oldList = new Promise<Response>((resolve) => {
+      finishOldList = resolve;
+    });
+    let listReads = 0;
+    let finish: (response: Response) => void = () => {};
+    const pending = new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+    mockApiFetch.mockImplementation((path) =>
+      path === '/api/accounts'
+        ? ++listReads === 2
+          ? oldList
+          : Promise.resolve(jsonResponse(accounts))
+        : path === '/api/accounts/managed-transition/codex/quota'
+          ? pending
+          : defaultQuotaApiFetch(path),
+    );
+    await act(async () => root.render(React.createElement(HubQuotaBoardTab)));
+    await flushEffects();
+    const button = Array.from(container.querySelectorAll('button')).find((node) => node.textContent === '刷新全部');
+    await act(async () => {
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => window.dispatchEvent(new Event('accounts-changed')));
+    profile.codex.identity = { userId: 'user-b', workspaceId: 'workspace-b' };
+    await act(async () => window.dispatchEvent(new Event('accounts-changed')));
+    await flushEffects();
+    await act(async () => finishOldList(jsonResponse(oldAccounts)));
+    await act(async () =>
+      finish(
+        jsonResponse({
+          accountRef: profile.id,
+          quota: {
+            status: 'ok',
+            source: 'codex_official_readonly',
+            observedAt: 1772470000000,
+            owner: { accountRef: profile.id, userId: 'user-a', workspaceId: 'workspace-a' },
+            items: [{ label: '旧身份额度', usedPercent: 99, percentKind: 'used' }],
+          },
+        }),
+      ),
+    );
+    await flushEffects();
+    expect(container.textContent).not.toContain('旧身份额度');
+  });
+
+  it('shows the managed account failure rather than another account quota and does not query an unready login', async () => {
+    const paths: string[] = [];
+    const accountResponse = await (await defaultQuotaApiFetch('/api/accounts')).json();
+    accountResponse.providers = [
+      {
+        ...accountResponse.providers.find((profile: { clientId?: string }) => profile.clientId === 'openai'),
+        id: 'codex-not-ready',
+        displayName: '未完成登录号',
+        builtin: false,
+        codex: { status: 'not_logged_in' },
+        quota: { status: 'unavailable', error: '此账号查询失败', items: [], observedAt: 1772470000000 },
+      },
+    ];
+    mockApiFetch.mockImplementation((path: string) => {
+      paths.push(path);
+      if (path === '/api/accounts') return Promise.resolve(jsonResponse(accountResponse));
+      return defaultQuotaApiFetch(path);
+    });
+    await act(async () => {
+      root.render(React.createElement(HubQuotaBoardTab));
+    });
+    await flushEffects();
+    expect(container.textContent).toContain('尚未登录');
+    expect(container.textContent).not.toContain('100% 剩余');
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (node) => node.textContent?.trim() === '刷新全部',
+    );
+    await act(async () => {
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+    expect(paths).not.toContain('/api/accounts/codex-not-ready/codex/quota');
+    expect(paths).not.toContain('/api/quota/refresh/official');
+  });
+
+  it.each([
+    'identity_changed',
+    'not_logged_in',
+    'new_identity',
+    'ready',
+  ])('reconciles an in-flight successful list after quota projection when login becomes %s', async (status) => {
+    const accounts = await (await defaultQuotaApiFetch('/api/accounts')).json();
+    const profile = {
+      ...accounts.providers.find((entry: { clientId?: string }) => entry.clientId === 'openai'),
+      id: 'managed-in-flight',
+      displayName: '在途公司号',
+      builtin: false,
+      codex: { status: 'ready', identity: { userId: 'user-a', workspaceId: 'workspace-a' } },
+    };
+    accounts.providers = [profile];
+    const observation = {
+      status: 'ok',
+      source: 'codex_official_readonly',
+      observedAt: 1772470000000,
+      owner: { accountRef: profile.id, userId: 'user-a', workspaceId: 'workspace-a' },
+      items: [{ label: '旧身份额度', usedPercent: 99, percentKind: 'used' }],
+    };
+    let releaseList: (response: Response) => void = () => {};
+    const inFlightList = new Promise<Response>((resolve) => {
+      releaseList = resolve;
+    });
+    let listReads = 0;
+    mockApiFetch.mockImplementation((path) => {
+      if (path === '/api/accounts') return ++listReads === 1 ? Promise.resolve(jsonResponse(accounts)) : inFlightList;
+      if (path === `/api/accounts/${profile.id}/codex/quota`)
+        return Promise.resolve(jsonResponse({ accountRef: profile.id, quota: observation }));
+      return defaultQuotaApiFetch(path);
+    });
+    await act(async () => root.render(React.createElement(HubQuotaBoardTab)));
+    await flushEffects();
+    await act(async () => window.dispatchEvent(new Event('accounts-changed')));
+    expect(listReads).toBe(2);
+    const button = Array.from(container.querySelectorAll('button')).find((node) => node.textContent === '刷新全部');
+    await act(async () => button?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await flushEffects();
+    expect(container.textContent).toContain('旧身份额度');
+    expect(container.textContent).toContain('1% 剩余');
+    profile.codex.status = status === 'new_identity' ? 'ready' : status;
+    if (status === 'new_identity') profile.codex.identity = { userId: 'user-b', workspaceId: 'workspace-b' };
+    await act(async () => releaseList(jsonResponse(accounts)));
+    await flushEffects();
+    if (status === 'ready') {
+      expect(container.textContent).toContain('旧身份额度');
+      expect(container.textContent).toContain('1% 剩余');
+    } else {
+      expect(container.textContent).not.toContain('旧身份额度');
+      expect(container.textContent).not.toContain('1% 剩余');
+      expect(container.textContent).toContain(
+        status === 'identity_changed' ? '登录身份已变化' : status === 'not_logged_in' ? '尚未登录' : '尚未查询',
+      );
+    }
+  });
+
+  it.each([
+    'non-ok',
+    'throw',
+  ])('ignores a late list %s after quota projection while retaining subsequent list errors', async (failure) => {
+    const accountResponse = await (await defaultQuotaApiFetch('/api/accounts')).json();
+    accountResponse.providers = [
+      {
+        ...accountResponse.providers.find((profile: { clientId?: string }) => profile.clientId === 'openai'),
+        id: 'codex-managed-fixture',
+        displayName: '公司号',
+        builtin: false,
+        codex: { status: 'ready', identity: { userId: 'company-user', workspaceId: 'company-workspace' } },
+      },
+    ];
+    let readCount = 0;
+    let releaseList: (response: Response) => void = () => {};
+    let rejectList: (error: Error) => void = () => {};
+    const staleList = new Promise<Response>((resolve, reject) => {
+      releaseList = resolve;
+      rejectList = reject;
+    });
+    mockApiFetch.mockImplementation((path: string) => {
+      if (path === '/api/accounts') {
+        readCount++;
+        if (readCount === 2) return staleList;
+        if (readCount === 3) return Promise.resolve(new Response('{}', { status: 503 }));
+        return Promise.resolve(jsonResponse(accountResponse));
+      }
+      if (path === '/api/accounts/codex-managed-fixture/codex/quota')
+        return Promise.resolve(
+          jsonResponse({
+            accountRef: 'codex-managed-fixture',
+            quota: {
+              owner: { accountRef: 'codex-managed-fixture', userId: 'company-user', workspaceId: 'company-workspace' },
+              status: 'ok',
+              source: 'codex_official_readonly',
+              observedAt: 1772470000000,
+              items: [{ label: '公司号额度', usedPercent: 32, percentKind: 'remaining' }],
+            },
+          }),
+        );
+      return defaultQuotaApiFetch(path);
+    });
+    await act(async () => {
+      root.render(React.createElement(HubQuotaBoardTab));
+    });
+    await flushEffects();
+    await act(async () => {
+      window.dispatchEvent(new Event('accounts-changed'));
+    });
+    await flushEffects();
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (node) => node.textContent?.trim() === '刷新全部',
+    );
+    await act(async () => {
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+    expect(container.textContent).toContain('32% 剩余');
+    await act(async () => {
+      if (failure === 'throw') rejectList(new Error('stale list failed'));
+      else releaseList(new Response('{}', { status: 503 }));
+    });
+    await flushEffects();
+    expect(container.textContent).toContain('32% 剩余');
+    expect(container.textContent).not.toContain('账号配置加载失败');
+    await act(async () => window.dispatchEvent(new Event('accounts-changed')));
+    await flushEffects();
+    expect(container.textContent).toContain('账号配置加载失败 (503)');
+    await act(async () => window.dispatchEvent(new Event('accounts-changed')));
+    await flushEffects();
+    expect(container.textContent).not.toContain('账号配置加载失败');
+    expect(container.textContent).toContain('32% 剩余');
+  });
+
   it('groups quota by account pool and shows reverse-linked member chips after data loads', async () => {
     await act(async () => {
       root.render(React.createElement(HubQuotaBoardTab));

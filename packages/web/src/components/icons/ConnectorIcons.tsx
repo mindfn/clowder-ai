@@ -93,6 +93,43 @@ export function HoldBallIcon({ className = 'w-5 h-5', color = '#374151' }: IconP
   );
 }
 
+/** Development result returning to its original owner, monoline SVG. */
+export function ReturnArrowIcon({ className = 'w-5 h-5', color = '#374151' }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      fill="none"
+      stroke={color}
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="m9 5-5 5 5 5" />
+      <path d="M4 10h11a5 5 0 0 1 0 10h-3" />
+    </svg>
+  );
+}
+
+/** Deployment ready — clockwise refresh arrows, monoline SVG. */
+export function RefreshCwIcon({ className = 'w-5 h-5', color = '#374151' }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      fill="none"
+      stroke={color}
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M3 21v-5h5" />
+    </svg>
+  );
+}
+
 /** Auth key — key silhouette, monoline SVG, 24x24 */
 export function AuthKeyIcon({ className = 'w-5 h-5', color = '#374151' }: IconProps) {
   return (

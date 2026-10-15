@@ -6,10 +6,10 @@ import { violation } from './sop-predicate-types.js';
 import type { SopTrace, SopTraceCommand } from './sop-trace-adapter.js';
 
 interface CoCreationDocsDecision {
-  readonly lane: 'co_creation_docs' | 'regular_development';
+  readonly lane: 'co_creation_docs' | 'static_asset_archive' | 'regular_development';
   readonly delivery: 'direct_push' | 'pull_request';
-  readonly cloudReview: 'required' | 'skip';
-  readonly fullGate: 'required' | 'skip';
+  readonly cloudReview: 'required' | 'skip' | 'risk_based';
+  readonly fullGate: 'required' | 'skip' | 'risk_based';
   readonly changedFiles: readonly string[];
 }
 
@@ -210,10 +210,13 @@ function isDecision(value: unknown): value is CoCreationDocsDecision {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
   return (
-    (record.lane === 'co_creation_docs' || record.lane === 'regular_development') &&
+    typeof record.lane === 'string' &&
+    ['co_creation_docs', 'static_asset_archive', 'regular_development'].includes(record.lane) &&
     (record.delivery === 'direct_push' || record.delivery === 'pull_request') &&
-    (record.cloudReview === 'required' || record.cloudReview === 'skip') &&
-    (record.fullGate === 'required' || record.fullGate === 'skip') &&
+    typeof record.cloudReview === 'string' &&
+    ['required', 'skip', 'risk_based'].includes(record.cloudReview) &&
+    typeof record.fullGate === 'string' &&
+    ['required', 'skip', 'risk_based'].includes(record.fullGate) &&
     Array.isArray(record.changedFiles) &&
     record.changedFiles.every((path) => typeof path === 'string')
   );

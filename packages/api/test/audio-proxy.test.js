@@ -158,6 +158,8 @@ describe('audio proxy routes', () => {
           { status: 200 },
         );
       }
+      if (url.endsWith('/status'))
+        return Response.json({ running: false, lifecycle_state: 'stopped', controller_lease: null });
       throw new Error('audio sidecar unavailable');
     });
     const app = await buildApp();

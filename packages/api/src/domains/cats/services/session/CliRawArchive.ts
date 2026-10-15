@@ -19,8 +19,9 @@ export class CliRawArchive {
   }
 
   /** F118: Get the archive file path for a given invocationId (today's date) */
-  getPath(invocationId: string): string {
-    const day = this.formatDate(new Date());
+  getPath(invocationId: string, date = new Date()): string {
+    if (!INVOCATION_ID_PATTERN.test(invocationId)) throw new Error(`Invalid invocationId for archive: ${invocationId}`);
+    const day = this.formatDate(date);
     return join(this.archiveDir, day, `${invocationId}.ndjson`);
   }
 

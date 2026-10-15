@@ -1,7 +1,7 @@
 import type {
   AwaitStateV1,
   GitHubWaitMatchedDelta,
-  WaitOutcomeV1,
+  GitHubWaitOutcomeV1,
   WaitTerminationActor,
   WaitTerminationReason,
 } from '@cat-cafe/shared';
@@ -9,7 +9,7 @@ import { parseWaitOwnerFence } from '@cat-cafe/shared';
 
 export interface WaitRuntimeState {
   readonly await?: AwaitStateV1;
-  readonly waitOutcome?: WaitOutcomeV1;
+  readonly waitOutcome?: GitHubWaitOutcomeV1;
 }
 
 export type WaitTransitionEvent =
@@ -70,6 +70,43 @@ function outcomeId(subjectRef: string, generation: number, reason: WaitTerminati
   return `wait:${subjectRef}:g${generation}:${reason}`;
 }
 
+/** What a woken holder still owes the harness for a wait outcome. */
+export type WaitOutcomeObligation = 'self_settling' | 'continuation_owed' | 'unrecognized';
+
+/**
+ * Exhaustive on purpose: a new `WaitTerminationReason` fails to compile here until someone decides
+ * whether its wake leaves anything to continue.
+ *
+ * `self_settling` = the wake only REPORTS that the wait ended (the subject closed, the deadline
+ * passed). Nothing is left to re-hold or hand off, so demanding a fresh structured transition can
+ * never be satisfied legitimately. `matched` is different: the holder was woken to act on it.
+ * `user_cancel` / `owner_changed` / `superseded` are `delivery=not_applicable` in every outcome
+ * producer, so no wake carries them today; they keep the prior obligation until one proves otherwise.
+ */
+const WAIT_OUTCOME_OBLIGATION: Record<WaitTerminationReason, Exclude<WaitOutcomeObligation, 'unrecognized'>> = {
+  matched: 'continuation_owed',
+  subject_terminal: 'self_settling',
+  expired: 'self_settling',
+  user_cancel: 'continuation_owed',
+  owner_changed: 'continuation_owed',
+  superseded: 'continuation_owed',
+};
+
+/**
+ * Inverse of {@link outcomeId} — every producer writes `wait:<subjectRef>:g<generation>:<reason>`
+ * (GitHub, deployment). subjectRefs contain colons (`pr:o/r#1`, `subject:task:<id>`), so this reads
+ * the TAIL, never a prefix split: a subjectRef that imitates `…:g1:subject_terminal` cannot change
+ * the reason, because the real reason is always the final segment.
+ *
+ * Anything that does not parse is `unrecognized`, never a default: the caller must fail closed.
+ */
+export function waitOutcomeObligation(waitOutcomeId: string): WaitOutcomeObligation {
+  const reason = /^wait:.+:g[1-9]\d*:([a-z_]+)$/.exec(waitOutcomeId)?.[1];
+  return reason !== undefined && Object.hasOwn(WAIT_OUTCOME_OBLIGATION, reason)
+    ? WAIT_OUTCOME_OBLIGATION[reason as WaitTerminationReason]
+    : 'unrecognized';
+}
+
 function terminalize(
   current: WaitRuntimeState,
   active: AwaitStateV1,
@@ -86,7 +123,7 @@ function terminalize(
     input.reason === 'matched' || input.reason === 'subject_terminal' || input.reason === 'expired'
       ? 'pending'
       : 'not_applicable';
-  const waitOutcome: WaitOutcomeV1 = {
+  const waitOutcome: GitHubWaitOutcomeV1 = {
     v: 1,
     outcomeId: outcomeId(active.subjectRef, active.generation, input.reason),
     generation: active.generation,
@@ -217,17 +254,62 @@ export function transitionWaitState(current: WaitRuntimeState, event: WaitTransi
   }
 }
 
+/**
+ * Claim the exclusive right to publish this outcome.
+ *
+ * This is the linearization point the publish/suppress race is decided at, and it has to happen
+ * before the send rather than after it. The claim is stamped on `publishClaimedAt` while `delivery`
+ * stays `pending`, so an older binary still recognises the outcome as deliverable and a downgrade
+ * cannot strand it.
+ *
+ * Re-claiming an already-claimed outcome is allowed on purpose: a process that dies between the
+ * claim and the send would otherwise leave it unsendable. Re-publishing is safe because admission
+ * is keyed on `outcomeId`, so a resumed claim converges on the same Queue row, never a second wake.
+ */
+export function claimWaitOutcomeForPublish(current: WaitRuntimeState, outcomeId: string): WaitRuntimeState | null {
+  const outcome = current.waitOutcome;
+  if (outcome?.outcomeId !== outcomeId || outcome.delivery !== 'pending') return null;
+  if (outcome.publishClaimedAt !== undefined) return current;
+  return { ...current, waitOutcome: { ...outcome, publishClaimedAt: Date.now() } };
+}
+
+/** Close an outcome without a wake, because the caller that deferred it resolved the condition. */
+export function markWaitOutcomeSuppressed(current: WaitRuntimeState, outcomeId: string): WaitRuntimeState | null {
+  const outcome = current.waitOutcome;
+  // Only an unclaimed pending outcome may be suppressed. A claimed publisher may already be
+  // sending, and this write must not be able to describe that send as something that never happened.
+  if (outcome?.outcomeId !== outcomeId || outcome.delivery !== 'pending' || outcome.publishClaimedAt !== undefined) {
+    return null;
+  }
+  const { publishClaimedAt: _unclaimed, ...settled } = outcome;
+  return { ...current, waitOutcome: { ...settled, delivery: 'suppressed' } };
+}
+
 export function markWaitOutcomeDelivered(current: WaitRuntimeState, outcomeId: string): WaitRuntimeState {
   if (current.waitOutcome?.outcomeId !== outcomeId || current.waitOutcome.delivery !== 'pending') {
     return current;
   }
+  const { publishClaimedAt: _settled, ...delivered } = current.waitOutcome;
   return {
     ...current,
     waitOutcome: {
-      ...current.waitOutcome,
+      ...delivered,
       delivery: 'delivered',
     },
   };
+}
+
+/**
+ * F117 L2: settle an outcome the Queue refused for good. The Queue already holds a different envelope
+ * under this outcome's key (the same outcome rendered differently across an upgrade), so the owner has
+ * already been told once; retrying can never admit it.
+ */
+export function markWaitOutcomeQueueConflict(current: WaitRuntimeState, outcomeId: string): WaitRuntimeState {
+  if (current.waitOutcome?.outcomeId !== outcomeId || current.waitOutcome.delivery !== 'pending') {
+    return current;
+  }
+  const { publishClaimedAt: _settled, ...conflicted } = current.waitOutcome;
+  return { ...current, waitOutcome: { ...conflicted, delivery: 'queue_conflict' } };
 }
 
 export function markWaitOutcomeLegacyUnfenced(current: WaitRuntimeState, outcomeId: string): WaitRuntimeState {

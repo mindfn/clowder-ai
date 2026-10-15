@@ -23,7 +23,13 @@ import { unified } from 'unified';
 import 'katex/dist/katex.min.css';
 import { UNKNOWN_CAT_COLOR } from '@/lib/color-defaults';
 import { createListenSentenceRemarkPlugin, type ListenSentence } from '@/lib/listen-mode/markdown-sentences';
-import { getMentionColor, getMentionRe, getMentionToCat } from '@/lib/mention-highlight';
+import {
+  getDisplayMentionRe,
+  getDisplayMentionToCat,
+  getMentionColor,
+  getMentionLabel,
+  isCanonicalOnlyMentionAlias,
+} from '@/lib/mention-highlight';
 import { useChatStore } from '@/stores/chatStore';
 import { ChatWorkspaceLink } from './ChatWorkspaceLink';
 import { ListenSentenceSpan } from './listen-mode/ListenSentenceSpan';
@@ -31,13 +37,20 @@ import { MermaidDiagram } from './MermaidDiagram';
 import { createWorkspaceImageComponent, createWorkspaceLinkComponent } from './workspace-md-components';
 
 const BARE_MARKDOWN_LINE_HREF_RE = /^[^/:\\?#]+\.mdx?:\d+$/i;
-const WINDOWS_MARKDOWN_HREF_RE = /^[a-z]:[\\/].*\.mdx?(?::\d+)?$/i;
+const WINDOWS_ABSOLUTE_PATH_HREF_RE = /^[a-z]:[\\/].*$/i;
+const WINDOWS_UNC_PATH_HREF_RE = /^\\\\[^\\]+\\[^\\]+/;
 
 /** Preserve safe file-like forms that react-markdown mistakes for custom URI schemes. */
 export function transformChatMarkdownUrl(url: string): string {
   const transformed = defaultUrlTransform(url);
   if (transformed) return transformed;
-  if (BARE_MARKDOWN_LINE_HREF_RE.test(url) || WINDOWS_MARKDOWN_HREF_RE.test(url)) return url;
+  if (
+    BARE_MARKDOWN_LINE_HREF_RE.test(url) ||
+    WINDOWS_ABSOLUTE_PATH_HREF_RE.test(url) ||
+    WINDOWS_UNC_PATH_HREF_RE.test(url)
+  ) {
+    return url;
+  }
   return transformed;
 }
 
@@ -131,14 +144,16 @@ function highlightMentions(text: string): ReactNode[] {
   let lastIdx = 0;
   let m: RegExpExecArray | null;
 
-  const re = getMentionRe();
-  const toCat = getMentionToCat();
+  const re = getDisplayMentionRe();
+  const toCat = getDisplayMentionToCat();
   const colorMap = getMentionColor();
+  const labelMap = getMentionLabel();
 
   re.lastIndex = 0;
   while ((m = re.exec(text)) !== null) {
     if (m.index > lastIdx) parts.push(text.slice(lastIdx, m.index));
-    const catId = toCat[m[1].toLowerCase()] ?? 'opus';
+    const alias = m[1].toLowerCase();
+    const catId = toCat[alias] ?? 'opus';
     const catColor = colorMap[catId] ?? UNKNOWN_CAT_COLOR.primary;
     const r = Number.parseInt(catColor.slice(1, 3), 16);
     const g = Number.parseInt(catColor.slice(3, 5), 16);
@@ -149,7 +164,8 @@ function highlightMentions(text: string): ReactNode[] {
       borderRadius: 4,
       padding: '1px 5px',
     };
-    parts.push(<Mention key={`m${m.index}`} catId={catId} text={m[0]} style={style} />);
+    const displayText = isCanonicalOnlyMentionAlias(alias) ? `@${labelMap[catId] ?? catId}` : m[0];
+    parts.push(<Mention key={`m${m.index}`} catId={catId} text={displayText} style={style} />);
     lastIdx = re.lastIndex;
   }
   if (lastIdx < text.length) parts.push(text.slice(lastIdx));
@@ -195,8 +211,19 @@ function CodeBlock({ children }: { children: ReactNode }) {
 
 /* ── File path → VSCode link ──────────────────────────────── */
 const PROJECT_ROOT = process.env.NEXT_PUBLIC_PROJECT_ROOT ?? '';
-const FILE_PATH_RE = /(?:^|\s)`?((?:\/[\w.@-]+)+(?:\.[\w]+)(?::(\d+))?)(?:`?)/g;
-const REL_PATH_RE = /(?:^|\s)`?((?:packages|src|docs|tests?)\/[\w./@-]+(?:\.[\w]+)(?::(\d+))?)(?:`?)/g;
+// A path may start a line, follow whitespace, or follow Chinese full-width punctuation
+// ("文件：/a/b.md", "（/a/b.md）") — CJK prose rarely puts a space there. ASCII ':' stays
+// excluded so "https://host/a.png" is never read as a local path.
+const PATH_BOUNDARY_CHARS = '\\s：（「『【《，。；、“‘';
+const PATH_LEADING_RE = new RegExp(`^[${PATH_BOUNDARY_CHARS}]`);
+const FILE_PATH_RE = new RegExp(
+  `(?:^|[${PATH_BOUNDARY_CHARS}])\`?((?:\\/[\\w.@-]+)+(?:\\.[\\w]+)(?::(\\d+))?)(?:\`?)`,
+  'g',
+);
+const REL_PATH_RE = new RegExp(
+  `(?:^|[${PATH_BOUNDARY_CHARS}])\`?((?:packages|src|docs|tests?)\\/[\\w./@-]+(?:\\.[\\w]+)(?::(\\d+))?)(?:\`?)`,
+  'g',
+);
 const WT_TAG_RE = /^\s*\[wt:([a-zA-Z0-9_/-]+)\]/;
 
 function linkifyFilePaths(text: string): ReactNode[] {
@@ -208,7 +235,7 @@ function linkifyFilePaths(text: string): ReactNode[] {
   combined.lastIndex = 0;
   while ((m = combined.exec(text)) !== null) {
     const fullMatch = m[0];
-    const leading = fullMatch.match(/^\s/)?.[0] ?? '';
+    const leading = fullMatch.match(PATH_LEADING_RE)?.[0] ?? '';
     const path = m[1] ?? m[3];
     const line = m[2] ?? m[4];
     if (!path) continue;
@@ -271,6 +298,8 @@ function FilePathLink({
   worktreeId?: string;
 }) {
   const setOpenFile = useChatStore((s) => s.setWorkspaceOpenFile);
+  const currentThreadId = useChatStore((s) => s.currentThreadId);
+  const linkRef = useRef<HTMLAnchorElement>(null);
 
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
@@ -278,13 +307,22 @@ function FilePathLink({
       if (e.metaKey || e.ctrlKey) return;
       e.preventDefault();
       // Regular click → open in workspace panel (with optional worktree switch)
-      setOpenFile(filePath, line ?? null, worktreeId ?? null);
+      const messageId = linkRef.current?.closest<HTMLElement>('[data-message-id]')?.dataset.messageId;
+      setOpenFile(
+        filePath,
+        line ?? null,
+        worktreeId ?? null,
+        currentThreadId,
+        currentThreadId && messageId ? { kind: 'chat-file-link', threadId: currentThreadId, messageId } : undefined,
+        'permanent',
+      );
     },
-    [setOpenFile, filePath, line, worktreeId],
+    [currentThreadId, setOpenFile, filePath, line, worktreeId],
   );
 
   return (
     <a
+      ref={linkRef}
       href={href}
       onClick={handleClick}
       className="text-[var(--semantic-info)] hover:text-[var(--semantic-info)] hover:underline font-mono text-[0.85em] cursor-pointer"
@@ -359,24 +397,59 @@ function buildMdComponents(tp?: (children: ReactNode) => ReactNode, listen?: Lis
   const ml = tp ? (c: ReactNode) => withMentionsAndLinks(tp(c)) : withMentionsAndLinks;
 
   const components: Components = {
-    p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{ml(children)}</p>,
+    p: ({ children, node }) => (
+      <p data-source-line={node?.position?.start.line} className="mb-2 last:mb-0 leading-relaxed">
+        {ml(children)}
+      </p>
+    ),
     strong: ({ children }) => <strong className="font-semibold">{m(children)}</strong>,
     em: ({ children }) => <em>{m(children)}</em>,
     del: ({ children }) => <del className="opacity-60">{m(children)}</del>,
 
-    h1: ({ children }) => <h1 className="text-lg font-bold mb-2 mt-3 first:mt-0">{m(children)}</h1>,
-    h2: ({ children }) => <h2 className="text-base font-bold mb-2 mt-3 first:mt-0">{m(children)}</h2>,
-    h3: ({ children }) => <h3 className="text-sm font-bold mb-1 mt-2 first:mt-0">{m(children)}</h3>,
-    h4: ({ children }) => <h4 className="text-sm font-semibold mb-1 mt-2 first:mt-0">{m(children)}</h4>,
-    h5: ({ children }) => (
-      <h5 className="text-xs font-semibold mb-1 mt-1.5 first:mt-0 uppercase tracking-wide">{m(children)}</h5>
+    h1: ({ children, node }) => (
+      <h1 data-source-line={node?.position?.start.line} className="text-lg font-bold mb-2 mt-3 first:mt-0">
+        {m(children)}
+      </h1>
     ),
-    h6: ({ children }) => <h6 className="text-xs font-medium mb-1 mt-1.5 first:mt-0 text-cafe-muted">{m(children)}</h6>,
+    h2: ({ children, node }) => (
+      <h2 data-source-line={node?.position?.start.line} className="text-base font-bold mb-2 mt-3 first:mt-0">
+        {m(children)}
+      </h2>
+    ),
+    h3: ({ children, node }) => (
+      <h3 data-source-line={node?.position?.start.line} className="text-sm font-bold mb-1 mt-2 first:mt-0">
+        {m(children)}
+      </h3>
+    ),
+    h4: ({ children, node }) => (
+      <h4 data-source-line={node?.position?.start.line} className="text-sm font-semibold mb-1 mt-2 first:mt-0">
+        {m(children)}
+      </h4>
+    ),
+    h5: ({ children, node }) => (
+      <h5
+        data-source-line={node?.position?.start.line}
+        className="text-xs font-semibold mb-1 mt-1.5 first:mt-0 uppercase tracking-wide"
+      >
+        {m(children)}
+      </h5>
+    ),
+    h6: ({ children, node }) => (
+      <h6
+        data-source-line={node?.position?.start.line}
+        className="text-xs font-medium mb-1 mt-1.5 first:mt-0 text-cafe-muted"
+      >
+        {m(children)}
+      </h6>
+    ),
 
     ul: ({ children }) => <ul className="list-disc pl-5 mb-2 space-y-0.5">{children}</ul>,
     ol: ({ children }) => <ol className="list-decimal pl-5 mb-2 space-y-0.5">{children}</ol>,
-    li: ({ children, className }) => (
-      <li className={className === 'task-list-item' ? 'list-none -ml-5 flex items-start gap-1.5' : undefined}>
+    li: ({ children, className, node }) => (
+      <li
+        data-source-line={node?.position?.start.line}
+        className={className === 'task-list-item' ? 'list-none -ml-5 flex items-start gap-1.5' : undefined}
+      >
         {m(children)}
       </li>
     ),
@@ -392,8 +465,13 @@ function buildMdComponents(tp?: (children: ReactNode) => ReactNode, listen?: Lis
         <input type={type} />
       ),
 
-    blockquote: ({ children }) => (
-      <blockquote className="border-l-[3px] border-cafe pl-3 my-2 italic opacity-80">{children}</blockquote>
+    blockquote: ({ children, node }) => (
+      <blockquote
+        data-source-line={node?.position?.start.line}
+        className="border-l-[3px] border-cafe pl-3 my-2 italic opacity-80"
+      >
+        {children}
+      </blockquote>
     ),
     a: ({ href, children }) => (
       <InsideMarkdownLinkContext.Provider value={true}>
@@ -403,7 +481,11 @@ function buildMdComponents(tp?: (children: ReactNode) => ReactNode, listen?: Lis
     hr: () => <hr className="my-3 border-cafe" />,
 
     /* Code blocks with copy button — textProcessor intentionally excluded */
-    pre: ({ children }) => (isMermaidPre(children) ? children : <CodeBlock>{children}</CodeBlock>),
+    pre: ({ children, node }) => (
+      <div data-source-line={node?.position?.start.line}>
+        {isMermaidPre(children) ? children : <CodeBlock>{children}</CodeBlock>}
+      </div>
+    ),
     code: ({ className = '', children }) =>
       hasMermaidLanguage(className) ? (
         <MermaidDiagram source={codeChildrenToString(children)} />
@@ -412,8 +494,8 @@ function buildMdComponents(tp?: (children: ReactNode) => ReactNode, listen?: Lis
       ),
 
     /* Tables (GFM) */
-    table: ({ children }) => (
-      <div className="overflow-x-auto my-2">
+    table: ({ children, node }) => (
+      <div data-source-line={node?.position?.start.line} className="overflow-x-auto my-2">
         <table className="min-w-full text-sm border-collapse">{children}</table>
       </div>
     ),
@@ -459,6 +541,8 @@ interface Props {
   disableCommandPrefix?: boolean;
   /** Base directory path for resolving relative links (e.g. "docs/features") */
   basePath?: string;
+  /** Actual owner file, used only to return from a relative document link. */
+  sourcePath?: string;
   /** Worktree ID for resolving workspace-relative image paths */
   worktreeId?: string;
   /** Pre-process text children in all text-containing components (p, strong, em,
@@ -504,6 +588,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   className,
   disableCommandPrefix,
   basePath,
+  sourcePath,
   worktreeId,
   textProcessor,
   listenSentences,
@@ -530,14 +615,17 @@ export const MarkdownContent = memo(function MarkdownContent({
           {textProcessor ? withMentions(textProcessor(children)) : withMentions(children)}
         </InsideMarkdownLinkContext.Provider>
       );
-      nextComponents = { ...nextComponents, a: createWorkspaceLinkComponent(basePath, mentionsFn, worktreeId) };
+      nextComponents = {
+        ...nextComponents,
+        a: createWorkspaceLinkComponent(basePath, mentionsFn, worktreeId, sourcePath),
+      };
       if (worktreeId) {
         nextComponents = { ...nextComponents, img: createWorkspaceImageComponent(basePath, worktreeId) };
       }
     }
 
     return nextComponents;
-  }, [basePath, listen, textProcessor, worktreeId]);
+  }, [basePath, sourcePath, listen, textProcessor, worktreeId]);
 
   return (
     <div className={`markdown-content text-sm break-words ${className ?? ''}`}>

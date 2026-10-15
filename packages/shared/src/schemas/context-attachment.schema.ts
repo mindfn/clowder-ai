@@ -1,4 +1,10 @@
 import { z } from 'zod';
+import { MediaContextAttachmentSchema } from '../types/media-context-attachment.js';
+import { messageMediaItemSelectorSchema } from '../types/media-publication-source.js';
+import { projectScreeningContextAttachmentSchema } from '../types/video-project-message.js';
+
+export { MediaContextAttachmentSchema } from '../types/media-context-attachment.js';
+
 import {
   CONTEXT_ATTACHMENT_COMMENT_MAX_LENGTH,
   CONTEXT_ATTACHMENT_MAX_COUNT,
@@ -11,6 +17,7 @@ import {
 const boundedId = z.string().trim().min(1).max(128);
 const boundedPath = z.string().trim().min(1).max(4096);
 const boundedMetadata = z.string().trim().min(1).max(512);
+const ownerRevision = z.string().regex(/^sha256:[a-f0-9]{64}$/) as z.ZodType<`sha256:${string}`>;
 const lineNumber = z.number().int().positive().max(10_000_000);
 const characterOffset = z.number().int().nonnegative().max(10_000_000);
 
@@ -44,6 +51,7 @@ export const WorkspaceFileContextAttachmentSchema = withValidLineRange({
   path: boundedPath,
   worktreeId: boundedMetadata.optional(),
   branch: boundedMetadata.optional(),
+  revision: ownerRevision.optional(),
   lineStart: lineNumber.optional(),
   lineEnd: lineNumber.optional(),
 });
@@ -54,6 +62,16 @@ export const MessageQuoteSourceSchema = z
     threadId: boundedId,
     messageId: boundedId,
     senderCatId: boundedId.optional(),
+    artifactFile: z
+      .object({
+        item: messageMediaItemSelectorSchema,
+        url: z.string().min(1).max(2048),
+        fileName: boundedMetadata,
+        messageRevision: z.string().max(64).regex(/^\d+$/),
+        displayDigest: ownerRevision,
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -71,6 +89,7 @@ export const WorkspaceFileQuoteSourceSchema = withValidLineRange({
   path: boundedPath,
   worktreeId: boundedMetadata.optional(),
   branch: boundedMetadata.optional(),
+  revision: ownerRevision.optional(),
   language: z.string().trim().min(1).max(100).optional(),
   lineStart: lineNumber.optional(),
   lineEnd: lineNumber.optional(),
@@ -138,6 +157,8 @@ export const ContextAttachmentSchema = z.union([
   ThreadContextAttachmentSchema,
   WorkspaceFileContextAttachmentSchema,
   QuoteContextAttachmentSchema,
+  MediaContextAttachmentSchema,
+  projectScreeningContextAttachmentSchema,
 ]);
 
 export const ContextAttachmentsSchema = z
@@ -152,6 +173,25 @@ export const ContextAttachmentsSchema = z
       });
     }
   });
+
+/** New Cat-authored file references must name the F063 owner revision; the base schema remains legacy-readable. */
+export const VersionBoundContextAttachmentsSchema = ContextAttachmentsSchema.superRefine((attachments, ctx) => {
+  for (const [index, attachment] of attachments.entries()) {
+    const revision =
+      attachment.kind === 'workspace_file'
+        ? attachment.revision
+        : attachment.kind === 'quote' && attachment.source.kind === 'workspace_file'
+          ? attachment.source.revision
+          : 'not-a-workspace-reference';
+    if (revision === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'New workspace-file references require the exact F063 owner revision',
+        path: attachment.kind === 'quote' ? [index, 'source', 'revision'] : [index, 'revision'],
+      });
+    }
+  }
+});
 
 export const ContextAttachmentContentSchema = z
   .object({

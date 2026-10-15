@@ -23,6 +23,7 @@ import {
   TastePublicationIndeterminateError,
 } from './GitTastePublisher.js';
 import { FileTasteRepository, type PublishableTasteRepository } from './TasteRepository.js';
+import { projectTasteIndex } from './taste-index-projection.js';
 
 export interface WriteVignetteResult {
   slug: string;
@@ -72,6 +73,7 @@ export function formatVignette(proposal: TasteProposal): string {
     `when: ${when}`,
     'quotes:',
     quotesYaml,
+    ...(proposal.takeaway ? [`takeaway: "${escapeYamlDoubleQuoted(proposal.takeaway)}"`] : []),
     `scene: ${sceneYaml}`,
     `tags: ${tagsYaml}`,
     `dimension: ${proposal.dimension}`,
@@ -85,74 +87,32 @@ export function formatVignette(proposal: TasteProposal): string {
 }
 
 /**
- * Map taste dimension IDs to index section headers.
- * These must match the `### Section` headers in docs/taste/index.md.
- */
-const DIMENSION_TO_SECTION: Record<string, string> = {
-  'relationship-stance': '### 关系姿态',
-  'cognitive-honesty': '### 认知诚实',
-  'architecture-aesthetics': '### 架构审美',
-  'visual-quality': '### 视觉品质',
-  'authentic-expression': '### 表达真实',
-  'system-philosophy': '### 系统哲学',
-  'creative-craft': '### 创作手法',
-};
-
-function insertEntryIntoSection(originalContent: string, sectionHeader: string, entry: string): string | null {
-  const lines = originalContent.split('\n');
-  const sectionIdx = lines.findIndex((line) => line.trim() === sectionHeader);
-  if (sectionIdx === -1) return null;
-
-  let insertIdx = sectionIdx + 1;
-  while (insertIdx < lines.length && lines[insertIdx].trim() === '') insertIdx++;
-  while (insertIdx < lines.length && (lines[insertIdx].startsWith('- ') || lines[insertIdx].startsWith('  ')))
-    insertIdx++;
-
-  lines.splice(insertIdx, 0, '', ...entry.trimEnd().split('\n'));
-  return lines.join('\n');
-}
-
-/**
  * Insert a vignette entry under the matching dimension section in the index.
  * Returns the original content for rollback. If no matching section is found,
  * appends before the "如何新增" section as fallback.
  */
 export function insertIntoIndex(indexPath: string, slug: string, proposal: TasteProposal): string | null {
-  const entry = `- [**${proposal.tags[0] ?? slug}**](vignettes/${slug}.md)\n  - 搜索词：${proposal.tags.join('、')}\n  - 场景：${proposal.scene.slice(0, 80)}\n`;
-
-  if (!existsSync(indexPath)) {
-    // No index to insert into — create a minimal one
-    const header = `# Taste Index\n\nApproved taste vignettes, organized by dimension.\n\n`;
-    writeFileSync(indexPath, header + entry, 'utf8');
-    return null; // null = newly created, delete on rollback
-  }
-
-  const originalContent = readFileSync(indexPath, 'utf8');
+  const originalContent = existsSync(indexPath) ? readFileSync(indexPath, 'utf8') : null;
 
   // Idempotency: skip if this slug already exists in the index (retry after
   // finalize failure where the vignette + index were already committed).
-  if (originalContent.includes(`vignettes/${slug}.md`)) {
+  if (originalContent?.includes(`vignettes/${slug}.md`)) {
     return originalContent;
   }
-
-  const sectionHeader = DIMENSION_TO_SECTION[proposal.dimension];
-
-  if (sectionHeader) {
-    const updatedContent = insertEntryIntoSection(originalContent, sectionHeader, entry);
-    if (updatedContent !== null) {
-      writeFileSync(indexPath, updatedContent, 'utf8');
-      return originalContent;
-    }
-  }
-
-  // Fallback: insert before "## 如何新增 vignette" or append to end
-  const howToIdx = originalContent.indexOf('## 如何新增');
-  if (howToIdx !== -1) {
-    const updated = `${originalContent.slice(0, howToIdx) + entry}\n${originalContent.slice(howToIdx)}`;
-    writeFileSync(indexPath, updated, 'utf8');
-  } else {
-    writeFileSync(indexPath, `${originalContent}\n${entry}`, 'utf8');
-  }
+  writeFileSync(
+    indexPath,
+    projectTasteIndex(originalContent, `docs/taste/vignettes/${slug}.md`, {
+      when: new Date(proposal.createdAt).toISOString().slice(0, 10),
+      quotes: [proposal.quote],
+      ...(proposal.takeaway ? { takeaway: proposal.takeaway } : {}),
+      scene: proposal.scene,
+      tags: proposal.tags,
+      dimension: proposal.dimension,
+      catId: proposal.catId,
+      proposalId: proposal.id,
+    }),
+    'utf8',
+  );
   return originalContent;
 }
 

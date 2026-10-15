@@ -1,8 +1,10 @@
-import { createHash } from 'node:crypto';
-import type { StoredEventMemory } from '@cat-cafe/shared';
 import type { IMessageStore } from '../../../cats/services/stores/ports/MessageStore.js';
 import { isDelivered } from '../../../cats/services/stores/ports/MessageStore.js';
-import type { IEventMemoryStore } from '../../EventMemoryStore.js';
+import {
+  eventMemoryRevision,
+  type IEventMemoryStore,
+  type StoredEventMemoryLifecycle,
+} from '../../EventMemoryStore.js';
 import type { MemoryCueEpisodeStore } from '../MemoryCueEpisodeStore.js';
 import type { MemoryCueOpportunitySeed } from '../MemoryCueInvocationPromptService.js';
 import type { MemoryCueSourceProjection } from '../MemoryCueResolverRegistry.js';
@@ -11,27 +13,9 @@ import type { EventCueSource } from '../resolvers/EventCueResolver.js';
 const EVENT_MEMORY_ANCHOR_PREFIX = 'event-memory:';
 export const EVENT_CUE_WINDOW_MS = 15 * 60_000;
 
-function revisionOf(event: StoredEventMemory): string {
-  const revisionTuple = [
-    event.eventId,
-    event.ownerUserId,
-    event.type,
-    event.trigger,
-    event.cat,
-    event.threadId,
-    event.messageId,
-    event.timestamp,
-    event.summary,
-    event.cognitiveTransition,
-    event.relatedHarness,
-    event.confidence,
-  ];
-  return `sha256:${createHash('sha256').update(JSON.stringify(revisionTuple)).digest('hex')}`;
-}
-
 function sourceVisibilityFailure(
   message: Awaited<ReturnType<IMessageStore['getById']>>,
-  event: StoredEventMemory,
+  event: StoredEventMemoryLifecycle,
 ): 'source_forgotten' | 'scope_revoked' | null {
   if (!message || message.deletedAt !== undefined || message._tombstone || message.recall) return 'source_forgotten';
   if (
@@ -79,8 +63,8 @@ export class EventMemoryCueSource implements EventCueSource {
       until: input.occurredAt,
       limit: 1,
     })[0];
-    if (!candidate || (await this.visibilityFailure(candidate))) return null;
-    const revision = revisionOf(candidate);
+    if (!candidate || candidate.status !== 'active' || (await this.visibilityFailure(candidate))) return null;
+    const revision = eventMemoryRevision(candidate);
     const anchor = `${EVENT_MEMORY_ANCHOR_PREFIX}${candidate.eventId}`;
     if (
       this.deps.episodeStore.hasTerminalConsumptionForSource({
@@ -113,7 +97,7 @@ export class EventMemoryCueSource implements EventCueSource {
   }): Promise<MemoryCueSourceProjection | null> {
     if (input.ownerUserId !== this.deps.ownerUserId || input.subjectThreadId !== input.threadId) return null;
     const snapshot = await this.currentEvent(input.eventId, input.ownerUserId, input.threadId);
-    if (!snapshot || revisionOf(snapshot) !== input.sourceRevision || this.isExpired(snapshot)) return null;
+    if (!snapshot || eventMemoryRevision(snapshot) !== input.sourceRevision || this.isExpired(snapshot)) return null;
     return {
       title: 'A recent event can establish continuity',
       summary: 'Drill the bounded Event record before using it to establish chronology or continuity in this thread.',
@@ -143,7 +127,7 @@ export class EventMemoryCueSource implements EventCueSource {
     if (event.ownerUserId !== input.ownerUserId || event.threadId !== input.threadId) {
       return { status: 'not_available', invalidationReason: 'scope_revoked' };
     }
-    if (revisionOf(event) !== input.expectedRevision) {
+    if (event.status !== 'active' || eventMemoryRevision(event) !== input.expectedRevision) {
       return { status: 'not_available', invalidationReason: 'source_corrected' };
     }
     const visibilityFailure = await this.visibilityFailure(event);
@@ -171,18 +155,20 @@ export class EventMemoryCueSource implements EventCueSource {
     eventId: string,
     ownerUserId: string,
     threadId: string,
-  ): Promise<StoredEventMemory | null> {
+  ): Promise<StoredEventMemoryLifecycle | null> {
     const event = this.deps.eventStore.getEvent(eventId);
-    if (!event || event.ownerUserId !== ownerUserId || event.threadId !== threadId) return null;
+    if (!event || event.status !== 'active' || event.ownerUserId !== ownerUserId || event.threadId !== threadId) {
+      return null;
+    }
     return (await this.visibilityFailure(event)) ? null : event;
   }
 
-  private async visibilityFailure(event: StoredEventMemory) {
+  private async visibilityFailure(event: StoredEventMemoryLifecycle) {
     const message = await Promise.resolve(this.deps.messageStore.getById(event.messageId));
     return sourceVisibilityFailure(message, event);
   }
 
-  private isExpired(event: StoredEventMemory): boolean {
+  private isExpired(event: StoredEventMemoryLifecycle): boolean {
     return (this.deps.now?.() ?? Date.now()) > event.timestamp + EVENT_CUE_WINDOW_MS;
   }
 }

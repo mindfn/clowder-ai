@@ -4,7 +4,8 @@ related_features: [F102, F152, F186, F188, F192, F200, F209, F227, F231, F255, F
 topics: [memory, people, relationship, privacy, provenance, lifecycle]
 doc_kind: spec
 created: 2026-07-25
-updated: 2026-09-04
+updated: 2026-10-05
+tips_exempt: "Owner read APIs are a backend contract; user discovery belongs to the separate F321 memory-page integration."
 description: "为每位用户私域维护第三方人物、第一等关系与互动事件，并以有界关系卡按需解引用。"
 description_source: model
 description_author: codex-sol
@@ -45,7 +46,8 @@ mcp_admission_claims:
 > proposal and adds a content-free `capture/defer` receipt followed by one bounded,
 > batched Memory Operations clerk in a shared system thread. On 2026-08-11 the first real `InteractionEvent`
 > approve→materialize→relationship-card recall vertical slice passed against live
-> owner-private truth. Phase C remains open for the rest of AC-C1 and AC-C2/C3; this
+> owner-private truth. AC-A28's authenticated owner correction/retire/amend/forget
+> boundary is landed on main; its F321 owner UI remains a separate slice. Phase C remains open for the rest of AC-C1 and AC-C2/C3; this
 > single slice is not an overall utility or standing-reflex verdict. |
 > **Owner**: 小太阳·Maine Coon
 > (@codex-sol, GPT-5.6 Sol) | **Priority**: P1
@@ -305,6 +307,58 @@ operator 已经明确介绍过一个低频但高价值的具名人物、稳定�
 
 详细 schema、privacy resolver、lifecycle matrix 与 eval birth certificate 见
 
+### Owner read contract（F321 Phase A）
+
+Architecture cell: `memory`
+
+Subcell: `private-person-relationship`
+
+Map delta: **none** — 只在 F276 canonical Redis truth 上增加 owner read service 与
+session HTTP adapter；人物身份、proposal、materialize、correction、retire、redact、forget
+的 owner 和状态机都不移动。
+
+Why: F321“全部记忆 → 人物”和未来 M3 adapter 必须复用同一个 F276 service，不能各自在
+transport 层重写 private visibility、source revalidation 或生命周期投影。
+
+Canonical source: `packages/api/src/domains/memory/people/PersonMemoryStore.ts#PersonMemoryStore`、
+`packages/api/src/domains/memory/people/PersonMemorySourceBundleResolver.ts#PersonMemorySourceBundleResolver`
+
+Consumer evidence: `rg -n "personMemoryOwnerReadRoutes|PersonMemoryOwnerReadService|/api/memory/people" packages/api/src packages/api/test packages/web/src`。
+Convention Graph 的 `fastapi-route` extractor 在本仓只识别 Python FastAPI；本次 fresh index
+对 Fastify 报 `nodes=0, gaps=13`，不能表达这条注册链，因此以显式 import/registration 与
+route contract test 为准，不把 0 命中解释成零消费者。
+
+Claim guard: “只给登录 owner、私有人物 fail closed、source 当前仍合格、零原始 prompt” →
+`node --test packages/api/test/person-memory-owner-read.test.js` → 无 session、foreign owner、
+跨 owner record、已编辑/删除/失配 source、raw provenance/prompt 任一可见时变红。
+“undo 只撤最后一次批准但仍保留较早 canonical fact/person” → 隔离 Redis 下的
+`person-memory-redis-store.test.js` approval→approval→undo 生命周期用例 → partial 与 terminal
+candidate 都必须继续列出人物；hard forget 后必须消失。
+
+三个只读接口的稳定合同：
+
+| 接口 | 合同 |
+|------|------|
+| `GET /api/memory/people?limit=&offset=` | session-only、exact owner；返回 bounded 人物摘要、当前 claim/interaction 计数、当前关系与最近互动。人物存在性只由 owner-scoped canonical `PersonIdentity` 记录决定，不能从 proposal 的 pending/settled/materialized 字段反推；这样 approval undo 保留较早事实时人物仍可发现，hard forget 删除 canonical person 后自然不可见。Redis 不可用时 `503 + readStatus=unavailable`，不能把 unavailable 伪装成空列表。 |
+| `GET /api/memory/people/:personId` | 返回 canonical person 的 owner-safe lifecycle projection：claims、relationship transitions、interactions 与 source count；不返回 `ownerUserId`、candidate/draft/materialization authority、typed provenance、excerpt、transcript 或 prompt。不存在、跨 owner、索引/记录归属不一致统一 `404 not_available`。 |
+| `GET /api/memory/people/:personId/source?kind=person\|claim\|relationship\|event&itemId=` | `itemId` 对非 person 必填。服务端只从 canonical item 取 source，不接受 caller 提交 source 坐标；typed provenance 逐条重跑 F276 owner/authorship/connector/delivery/deletion/visibility/digest/excerpt 校验，legacy source 至少重跑同一 owner-message eligibility。全部来源及 thread visibility 仍有效才返回 `threadId/messageId/title/canOpen`；任一漂移返回 `status=unavailable`，不降级泄露旧坐标或原文。 |
+
+HTTP adapter 只接受 Hub session；`X-Cat-Cafe-User`、callback principal、body/query owner 都不能
+扩大 owner scope。列表/详情/source 都不返回原始消息正文，F321 页面只消费上述投影，内部 ID
+只用于后续 detail/source 请求，不显示为界面文案。
+
+### Owner browser mutation lower bound（AC-A28 前置边界）
+
+网页直接操作不能把 session 本身冒充事实来源，也不能让浏览器任意填写
+`threadId/messageId/sourceRef`。所有 transport 都只能调用 F276 canonical owner-mutation service，
+并提交由服务端 trusted issuer/resolver 产生、可重校验且绑定 exact target revision 的
+authenticated owner evidence；domain service 不接受 caller-shaped provenance。
+
+AC-A27 曾把“先写一条 authenticated message”作为可行实现草案。AC-A28 的待签字设计在下方
+把同一安全不变量提炼为 transport-neutral 的 evidence contract，并建议让网页确认成为第一类
+`owner_memory_action` evidence，而不是制造一条隐藏聊天消息。设计获准前不开放写路由，也不授权
+实现；M3 将来只能复用同一 domain service，不能自行签发 evidence 或另建 writer。
+
 ## 机制选择
 
 | Claim | Selected mechanism |
@@ -446,7 +500,13 @@ You 与所有 owner-authorized cats。Activation = 已 materialize person 在新
   authenticated invocation，决定卡片留在哪个 thread；typed source bundle 中每条
   `sourceRef` 独立保留真实历史 thread/message，决定证据 drill 去哪里。server 不接受 caller
   伪造 thread，且对跨 owner、cat-authored、connector、undelivered、deleted/tombstoned、
-  excerpt/digest drift 与不合法 assertion role fail closed。真实 Alden route E2E 必须证明
+  excerpt/digest drift 与不合法 assertion role fail closed。owner-authored outer message 的 quote
+  `comment` 属于 owner direct text；被引用的 `text` 仍属于原 source author，禁止借外层 owner
+  身份把引用原文洗成 owner assertion。comment evidence 的 digest 必须同时绑定 outer body、
+  comment 与 quote attachment 的完整坐标（原文、source、selection、id、block position）；任一漂移
+  在 immediate/deferred revalidation 中 fail closed，同时纯 body 历史消息维持既有 digest。若同一
+  excerpt 同时命中 body 与一个或多个 comment，server 不猜 speaker segment，整条 source 拒绝。
+  真实 Alden route E2E 必须证明
   “当前 thread 发起 + 其他 thread 的 who/what/assessment 原话”产生有信息量的当前卡，
   不能用 proposal-success ToolEvent 或零信息卡冒充验收。
 - [x] AC-A19: proactive outcome 是互斥的 `propose | capture/defer | abstain`；defer 是
@@ -495,6 +555,163 @@ You 与所有 owner-authorized cats。Activation = 已 materialize person 在新
   materialized 历史只从 canonical person 与 content-free decision receipt 投影，rejected 历史不得恢复
   已按 AC-A10 清除的 name/draft/excerpt。partial/not-now/withdrawn 不进入历史；undo、person hard-forget
   与 exact proposal forget 原子移除 settled 索引，部署前历史由 additive/idempotent backfill 补齐。
+- [x] AC-A27: Hub owner 有 session-only 的人物列表、详情与出处三条读取接口；列表/详情只投影
+  canonical lifecycle truth，不返回 candidate、typed provenance、source text 或 prompt；出处只从
+  canonical item 取坐标并重跑 F276 source + thread visibility 校验。跨 owner、source drift 与
+  Redis unavailable 均 fail closed，F321 HTTP 与未来 M3 复用同一 domain read service。
+- [x] AC-A28: owner browser correction/retire/amend/forget adapter 以 server-issued
+  authenticated-message action receipt 绑定 exact source、optimistic anchor 与 idempotency；不得让
+  session 或 caller-supplied coordinates 绕过 F276 来源不变量。该写面单独 PR 实现与审查。
+
+#### AC-A28 signed design — implementation authorized
+
+**Status and ownership.** Opus55 已在
+`[thread-id]#private-source-id` 签字通过本设计，并要求补齐
+browser-session-only authority、retire 语义与 hard-forget 边界文案三处修订；修订后授权直接进入
+独立实现 PR，无需二次 Design Gate。实现由 PR #5151 合入，在真实 Fastify/session owner journey、
+受影响门禁与 Sonnet exact-HEAD 非作者复审通过后勾选 AC-A28。Architecture cell 仍是
+`memory / private-person-relationship`，map delta 为 none：F276 拥有 mutation command、版本、
+provenance、invalidation 与 hard-forget closure；F321 只提供 session HTTP adapter 和界面，未来
+M3 只调用同一 domain port。
+
+##### 1. Command and revision contract
+
+Owner detail projection 为每个可操作 claim/event 返回 opaque `revision`，并返回一个聚合
+`personRevision`。二者只用于提交，不显示在界面；`personRevision` 在任一 claim、relationship、
+event 或 identity canonical 变化时递增，因此 hard forget 不能基于一份局部陈旧的人物快照提交；
+person-bound operational lineage 的并发由同一 hard-forget fence/CAS 阻断，不拿它制造页面 revision
+抖动。
+
+浏览器只提交一个 discriminated command：
+
+| Action | Exact target | Required payload |
+|--------|--------------|------------------|
+| `correct_claim` | `personId + claimId + expectedRevision` | active 或 retired claim 上 owner 刚确认的完整新 statement；不能只交 patch 或 source coordinates。retired claim 由这次新 evidence 重新声明为 current |
+| `retire_claim` | `personId + claimId + expectedRevision` | 显式 retire confirmation；不携带新的事实值 |
+| `amend_event` | `personId + eventId + expectedRevision` | 完整 amendment statement；新 event 以 `amendsEventId` 指回旧 event |
+| `hard_forget_person` | `personId + expectedPersonRevision` | 二次确认标记；不回传姓名、alias 或旧 payload |
+
+每条 command 还必须有高熵 `requestId`；HTTP 层只从 Hub session 取 owner，并要求 same-origin
+`Origin`/`Referer` 与绑定该 session 的 `X-CSRF-Token`。body/header 中的 owner、sourceRef、
+thread/message coordinates 一律拒绝。相同 owner + `requestId` + canonical request digest 重试时
+返回同一个 terminal result；同一 key 换 target、revision 或 payload 返回
+`409 idempotency_conflict`。
+
+这里的 Hub browser session 是唯一 issuer identity。猫的 MCP callback/callback token、invocation
+token、agent-key、`X-Cat-Cafe-User`，以及任何内部 service credential，即使声称或最终映射到同一
+owner，也不能签发 `OwnerMemoryActionEvidence`；HTTP adapter 必须在 target lookup 前以 401/403
+拒绝，并保持零 canonical、receipt、index 或 invalidation side effect。
+
+##### 2. Authenticated owner evidence and source display
+
+建议新增服务端私有的 `OwnerMemoryActionEvidenceIssuer`。它只能在以下检查全部通过后签发不可变
+`OwnerMemoryActionEvidence`：strict owner session、same-origin + CSRF、exact owner-scoped target、
+当前 revision、当前 source-state verdict，以及 normalized statement/request digest。对
+`correct_claim` / `amend_event`，source-state 必须是 resolver 重新确认的 exact live revision；对
+`retire_claim` / `hard_forget_person`，issuer 可把 `source_unavailable` 只封进单调 erasure guard，
+不能据此产生新事实。浏览器既不能提交这个 evidence，也不能选择其 source kind。
+
+Evidence envelope 绑定 `actionId`、owner scope、session issuance generation、CSRF verification
+epoch/nonce digest、action kind、exact target + expected revision、`requestId` + request digest、
+statement digest 与 `issuedAt`。raw session cookie、raw CSRF token 和旧 payload 不持久化、不回传。
+非删除 action 的 evidence 与 canonical mutation 在同一 fenced commit 落盘；source endpoint 将其
+投影成：
+
+```text
+主人在记忆页操作 · 修改/退役/修订 · <time>
+```
+
+该 source kind 没有 `threadId/messageId`，`canOpen=false`，也不显示 actionId、session、CSRF、
+内部 target ID 或 digest。旧版本仍保留自己的旧 provenance，当前版本只以新的 owner action
+evidence 为来源。
+
+这不是绕过 authenticated-message 不变量，而是把不变量从“必须伪装成一条聊天消息”提升为
+“必须有服务端签发、owner-authenticated、内容与 target revision 精确绑定、可重校验的 owner
+evidence”。允许的 evidence 只有两类：既有 owner-authored delivered message，或本设计的
+`owner_memory_action`。session 只证明是谁，CSRF 只证明同源操作；只有 issuer 把二者与 owner
+明确确认的 statement、target 和 revision 封成 evidence 后，才具有事实来源资格。domain service
+继续只收 resolver/issuer 产出的 capability，不收 session 或 caller coordinates；M3 也不能伪造
+或复用浏览器 evidence。
+
+##### 3. Revisioned mutation and stale-projection invalidation
+
+`correct_claim` append 新 `PersonClaimVersion` 并把旧 active current 标成 superseded；它也允许作用
+在 retired claim 上，以新的 owner evidence 重新声明一个 current version。`retire_claim` 表示
+“这条不再成立，留在历史里”：append retirement version 并移出 current card，不是隐藏，也没有
+独立 restore command。`amend_event` append 新 event，原 event 只留在历史。
+三者都必须在一个 F276 fenced transaction 中：
+
+1. 再次核 owner、target/status、expected item/person revision、action 对应的 source-state verdict 与
+   idempotency digest；
+2. 写 action evidence 和新 canonical version，切换 current pointers/必要的 alias 与 private indexes；
+3. 递增 `personRevision` 与 derived-generation，写旧 generation 的 durable invalidation fence，并让
+   owner list/detail/source projection、RelationshipCard/recall cache、private alias/name index、F287
+   cue/delivery，以及所有 person-bound F296 write-opportunity / named-delivery lineage 失效并清除
+   active delivery。
+
+correctness 不能依赖“先成功写入，再 best-effort 清 cache”。同 Redis 的 canonical keys、indexes、
+generation fence 与 delivery/lineage keys 必须在同一 commit 更新；无法预解析 invalidation closure
+或任一必要 authority unavailable 时，以 `503 mutation_unavailable` 零写入。进程内 memo 允许
+commit 后物理清理，但所有 read/recall/delivery 都必须比较 current generation，所以旧值即使尚未
+回收也不可再被消费。F287 append-only episode 可以另记 content-free `source_corrected`/
+`source_forgotten`，但正确性依赖其 resolver 每次重验 F276 generation/revision，不依赖跨 Redis/SQLite
+假原子事务。commit 返回后，下一次 list/detail/source 或猫的 recall 只能看到新版；已经在 commit
+前注入给在途 invocation 的文本无法“收回”，但它携带的旧 revision 在任何后续 action/delivery
+disposition 时都必须被 stale fence 拒绝。
+
+##### 4. Hard-forget closure and undo policy
+
+Hard forget 是 immediate、irreversible 的 fenced purge，没有提交后的 undo window。界面在提交前
+做二次确认，并逐字明确“人物记忆会永久删除；原始聊天消息不会因此删除；工作区里共享的同名
+实体不受影响”。claim 不再成立时使用 retire 并留在历史；要恢复该 claim，就对 retired claim
+执行 `correct_claim`，用新的 authenticated owner evidence 重新声明。hard-forgotten person 则只能
+从一条新的 authenticated owner evidence 重新记住，不能复活已 purge 的版本。
+
+exact owner + `expectedPersonRevision` 成功后，closure 至少清除：`PersonIdentity`、private aliases
+及 alias/name indexes、private↔workspace Entity reverse link（**不删除或改写 F260 shared
+Entity**）、全部 claim versions/current pointers、relationship transitions、interaction events/
+amendments、person-bound candidates、suppression/approval/decision receipts 与 settled history
+indexes、source bundles、所有 target-bound owner-action evidence/grants、owner read projections、
+RelationshipCard/recall/cache、F287 active cue locator/drill/delivery，以及 F296 person-bound locator、
+opportunity binding 与 delivery。append-only operational episode/terminal receipt 只可在删除 F276
+binding 后以不可反查人物/source 的 content-free 形态存活；若仍含可逆 person/source locator，就在
+closure 内 purge 或先迁移，不能拿“审计日志”作例外。closure 内任何必要 key family 无法枚举或
+purge 时整次提交失败，不能留下半个人物。
+
+原始 owner messages、attachments、transcripts 与其 chat/thread 历史属于各自 canonical owner，
+F276 hard forget 不删除、不改写它们；它只删除所有从 F276 指回这些来源的坐标和 derived truth。
+提交后 list/detail/source 对该 `personId` 一律返回常形 `404 not_available`，alias、搜索、recall、
+点名和旧 cache 也不能重新发现。target-bound action grant/evidence 随 closure 一起删除；唯一允许
+保留的是现有 content-free deletion receipt（requestId、时间、计数、verdict），不得含 personId、
+name、alias、payload、target/source digest 或可反查 locator。同一 requestId 重试只返回这张
+content-free receipt；新 requestId 再访问已删除人物仍是 `404 not_available`。
+
+##### 5. Fail-closed matrix
+
+| Condition | Result and non-effect |
+|-----------|-----------------------|
+| missing/invalid session | `401 unauthenticated`；不查 target、不签 evidence |
+| callback/invocation/agent-key/header/internal-service credential | `401/403 invalid_action`；即使映射同一 owner 也不查 target、不签 evidence、零副作用 |
+| Origin/CSRF mismatch | `403 invalid_action`；不查 target、不签 evidence |
+| unknown, deleted or foreign-owner target | 统一 `404 not_available`；不泄露存在性、owner 或 revision |
+| target/person revision changed in another tab/path | `409 stale_revision`；不返回当前 payload，不写 evidence/canonical/index/cache |
+| current source deleted, tombstoned, visibility/digest drifted | `correct_claim` / `amend_event` 返回 `409 source_unavailable`，绝不把 stale coordinates 或 session 当新来源 |
+| source unavailable on retire/hard forget | 只允许 exact revision 的单调 erasure lane 继续；不得新增/替换事实，也不返回 source。删除权不能被已消失的旧来源阻塞 |
+| same idempotency key with different request digest | `409 idempotency_conflict`；零副作用 |
+| canonical/invalidation authority unavailable | `503 mutation_unavailable`；零 canonical mutation，重试仍由同一 requestId 收敛 |
+
+这里的 erasure exception 仍是 fail closed：source loss 永远不能扩大或改写 truth；它只不能剥夺
+owner 删除/退役自己私有记忆的权利。若 owner 想把 source 已失效的 claim 改成新事实，先 retire/
+forget，再用新的 authenticated evidence 重建，不能走无来源 fallback。
+
+##### 6. Implementation gate after signoff
+
+签字后另开实现 PR，先以 contract/Redis tests 锁住：CSRF 与 forged owner/source 拒绝、双 tab
+stale revision、source-delete 分流、同 request replay/different-payload conflict、mutation 后旧 summary/
+index/cue/delivery 不可消费、hard-forget 全 closure absence scan、原始 message 仍存在且 F276 不可达。
+必须有一组安全回归用猫的 callback/invocation/agent-key/`X-Cat-Cafe-User` 凭据逐一调用四个 action，
+断言全部 401/403 且 canonical truth、action receipt、index 和 invalidation state 都不变。
+实现必须由非作者审查；上述检查、实际 owner journey 与 final HEAD review 都通过后才勾 AC-A28。
 
 ### Phase B（card + lifecycle）
 

@@ -47,6 +47,98 @@ async function trackedTaskFor(store, prNumber) {
 }
 
 describe('CI scheduler F280 adapter', () => {
+  test('routes healthy facts before failed detail enrichment and records the failed PR for retry', async () => {
+    const { executeTaskPipeline } = await import('../../dist/infrastructure/scheduler/execute-pipeline.js');
+    const taskStore = new TaskStore();
+    await Promise.all([7, 8].map((number) => trackedTaskFor(taskStore, number)));
+    const observations = [];
+    const rows = [];
+    const spec = createCiCdCheckTaskSpec({
+      taskStore,
+      cicdRouter: {
+        route: async (poll) => {
+          observations.push(`route-${poll.prNumber}`);
+          return { kind: 'skipped', reason: 'state-only' };
+        },
+      },
+      fetchPrStatuses: async () =>
+        new Map(
+          [7, 8].map((prNumber) => [
+            `owner/repo#${prNumber}`,
+            {
+              repoFullName: 'owner/repo',
+              prNumber,
+              headSha: `head-${prNumber}`,
+              prState: 'open',
+              aggregateBucket: prNumber === 7 ? 'fail' : 'pass',
+              checks: [],
+              failureDetailsPending: prNumber === 7,
+            },
+          ]),
+        ),
+      enrichFailureDetails: async () => {
+        observations.push('detail-7');
+        throw new Error('detail collection timeout');
+      },
+      log: { info() {}, warn() {}, error() {} },
+    });
+    await executeTaskPipeline({
+      task: spec,
+      ledger: { record: (row) => rows.push(row) },
+      logger: { info() {}, error() {} },
+      running: new Map(),
+      tickCounts: new Map(),
+      lastRunAt: new Map(),
+    });
+    assert.deepEqual(observations, ['route-8', 'detail-7']);
+    assert.equal(rows.find((row) => row.subject_key === 'pr:owner/repo#7').outcome, 'RUN_FAILED');
+    assert.equal(rows.find((row) => row.subject_key === 'pr:owner/repo#8').outcome, 'RUN_DELIVERED');
+  });
+
+  test('records missing CI facts as failed while healthy siblings still route', async () => {
+    const { executeTaskPipeline } = await import('../../dist/infrastructure/scheduler/execute-pipeline.js');
+    const taskStore = new TaskStore();
+    await Promise.all([7, 8].map((number) => trackedTaskFor(taskStore, number)));
+    const routed = [];
+    const ledger = [];
+    const spec = createCiCdCheckTaskSpec({
+      taskStore,
+      cicdRouter: {
+        route: async (poll) => {
+          routed.push(poll.prNumber);
+          return { kind: 'skipped', reason: 'state-only' };
+        },
+      },
+      fetchPrStatuses: async () =>
+        new Map([
+          ['owner/repo#7', null],
+          [
+            'owner/repo#8',
+            {
+              repoFullName: 'owner/repo',
+              prNumber: 8,
+              headSha: 'head-8',
+              prState: 'open',
+              aggregateBucket: 'pass',
+              checks: [],
+            },
+          ],
+        ]),
+      log: { info() {}, warn() {}, error() {} },
+    });
+    await executeTaskPipeline({
+      task: spec,
+      ledger: { record: (row) => ledger.push(row) },
+      logger: { info() {}, error() {} },
+      running: new Map(),
+      tickCounts: new Map(),
+      lastRunAt: new Map(),
+    });
+    assert.equal(ledger.find((row) => row.subject_key === 'pr:owner/repo#7')?.outcome, 'RUN_FAILED');
+    assert.equal(ledger.find((row) => row.subject_key === 'pr:owner/repo#8')?.outcome, 'RUN_DELIVERED');
+    assert.deepEqual(routed, [8]);
+  });
+
   test('tick-level bulk reads are not owned by the first work item cancellation signal', async () => {
     const taskStore = new TaskStore();
     await Promise.all([7, 8, 9].map((number) => trackedTaskFor(taskStore, number)));
@@ -213,14 +305,17 @@ describe('CI scheduler F280 adapter', () => {
     const spec = createCiCdCheckTaskSpec({
       taskStore,
       cicdRouter: {
-        route: async () => ({
-          kind: 'notified',
-          threadId: 'thread_1',
-          catId: 'codex-sol',
-          messageId: 'msg_1',
-          bucket: 'pass',
-          content: 'compact wait',
-        }),
+        route: async (...args) => {
+          calls.push(args);
+          return {
+            kind: 'notified',
+            threadId: 'thread_1',
+            catId: 'codex-sol',
+            messageId: 'msg_1',
+            bucket: 'pass',
+            content: 'compact wait',
+          };
+        },
       },
       fetchPrStatus: async () => ({
         repoFullName: 'owner/repo',
@@ -230,11 +325,11 @@ describe('CI scheduler F280 adapter', () => {
         aggregateBucket: 'pass',
         checks: [],
       }),
-      invokeTrigger: { trigger: async (...args) => calls.push(args) },
       log: { info() {}, warn() {}, error() {} },
     });
     await spec.run.execute({ task, repoFullName: 'owner/repo', prNumber: 7 }, task.subjectKey, {});
+    // Routing IS admission: one confirmed route is one owner wake. The old trigger `reason`
+    // policy was never read by production, so the observable fact is the route itself.
     assert.equal(calls.length, 1);
-    assert.equal(calls[0][6].reason, 'github_wait_satisfied');
   });
 });

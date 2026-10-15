@@ -19,9 +19,14 @@
  *   See RedisRuntimeSessionStore for the established pattern.
  */
 
-import type { CommunityEvent } from '@cat-cafe/shared';
+import type { CommunityEvent, TaskItem } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { CommunityKeys } from './community-keys.js';
+import {
+  type ReviewerTransferAuthority,
+  reviewerTransferFences,
+  type TransferCommitResult,
+} from './external-review/external-review-transfer-fence.js';
 
 // ---------------------------------------------------------------------------
 // Interface
@@ -34,6 +39,13 @@ export interface ICommunityEventLog {
    * Otherwise appends to the per-subject list and returns the new length as `sequence`.
    */
   append(event: CommunityEvent): Promise<{ appended: boolean; sequence: number }>;
+  /** Authority reads and log length are checked in the SAME atomic commit. */
+  appendIfUnchanged?(
+    event: CommunityEvent,
+    expectedEventCount: number,
+    expectedTask?: TaskItem,
+    authority?: ReviewerTransferAuthority,
+  ): Promise<TransferCommitResult>;
 
   /**
    * Read events for a subject in insertion order.
@@ -71,12 +83,61 @@ redis.call('SADD', KEYS[3], ARGV[3])
 return redis.call('RPUSH', KEYS[1], ARGV[2])
 `;
 
+const APPEND_IF_UNCHANGED_LUA = `
+if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 1 then return 'duplicate' end
+if redis.call('LLEN', KEYS[1]) ~= tonumber(ARGV[4]) then return 'conflict' end
+for index, fence in ipairs(cjson.decode(ARGV[5])) do
+  local key = KEYS[index + 3]
+  if fence.absent and redis.call('EXISTS', key) ~= 0 then return fence.reason end
+  if fence.value and redis.call('GET', key) ~= fence.value then return fence.reason end
+  for field, value in pairs(fence.fields or {}) do
+    local actual = redis.call('HGET', key, field)
+    if not actual then actual = (fence.missingFields or {})[field] or '' end
+    if actual ~= value then return fence.reason end
+  end
+  for _, field in ipairs(fence.zeroFields or {}) do
+    if tonumber(redis.call('HGET', key, field) or '0') ~= 0 then return fence.reason end
+  end
+end
+redis.call('SADD', KEYS[2], ARGV[1])
+redis.call('SADD', KEYS[3], ARGV[3])
+redis.call('RPUSH', KEYS[1], ARGV[2])
+return 'appended'
+`;
+
 // ---------------------------------------------------------------------------
 // Redis implementation
 // ---------------------------------------------------------------------------
 
 export class RedisCommunityEventLog implements ICommunityEventLog {
   constructor(private readonly redis: RedisClient) {}
+
+  async appendIfUnchanged(
+    event: CommunityEvent,
+    expectedEventCount: number,
+    expectedTask?: TaskItem,
+    authority?: ReviewerTransferAuthority,
+  ): Promise<TransferCommitResult> {
+    if (!Number.isSafeInteger(expectedEventCount) || expectedEventCount < 0)
+      throw new Error('Invalid expected event count');
+    if (expectedTask && (expectedTask.kind !== 'pr_tracking' || expectedTask.subjectKey !== event.subjectKey))
+      throw new Error('Task fence must bind this PR subject');
+    // Every authority dependency participates in one Redis linearization point.
+    const fences = reviewerTransferFences(expectedTask, authority);
+    const keys = [CommunityKeys.eventLog(event.subjectKey), CommunityKeys.eventsSeen, CommunityKeys.eventsSubjects];
+    keys.push(...fences.map((fence) => fence.key));
+    const result = await this.redis.eval(
+      APPEND_IF_UNCHANGED_LUA,
+      keys.length,
+      ...keys,
+      event.sourceEventId,
+      JSON.stringify(event),
+      event.subjectKey,
+      expectedEventCount,
+      JSON.stringify(fences),
+    );
+    return result as TransferCommitResult;
+  }
 
   async append(event: CommunityEvent): Promise<{ appended: boolean; sequence: number }> {
     const logKey = CommunityKeys.eventLog(event.subjectKey);

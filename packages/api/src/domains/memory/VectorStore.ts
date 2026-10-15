@@ -11,9 +11,14 @@ export class VectorStore {
   ) {}
 
   upsert(anchor: string, embedding: Float32Array): void {
-    // vec0 doesn't support ON CONFLICT — use DELETE + INSERT
-    this.db.prepare('DELETE FROM evidence_vectors WHERE anchor = ?').run(anchor);
-    this.db.prepare('INSERT INTO evidence_vectors (anchor, embedding) VALUES (?, ?)').run(anchor, embedding);
+    // vec0 supports native UPDATE, but not ON CONFLICT. Keep existing slots.
+    this.db.transaction(() => {
+      const updated = this.db
+        .prepare('UPDATE evidence_vectors SET embedding = ? WHERE anchor = ?')
+        .run(embedding, anchor);
+      if (!updated.changes)
+        this.db.prepare('INSERT INTO evidence_vectors (anchor, embedding) VALUES (?, ?)').run(anchor, embedding);
+    })();
   }
 
   delete(anchor: string): void {

@@ -18,6 +18,23 @@ const assigned = (overrides = {}) => ({
 const event = (kind, payload, at = 1_000) => ({ kind, payload, at });
 
 describe('F168 external review aggregate', () => {
+  it('keeps terminal PRs terminal after late HEAD, CI, and cloud observations', () => {
+    for (const terminalKind of ['pr.closed', 'pr.merged', 'case.declined']) {
+      let state = createExternalReviewAggregate(assigned());
+      state = applyExternalReviewEvent(state, event('case.head_observed', { headSha: 'head-1' })).value;
+      state = applyExternalReviewEvent(state, event(terminalKind, {})).value;
+      for (const observation of [
+        event('case.ci_observed', { headSha: 'head-1', status: 'pending' }),
+        event('case.cloud_review_observed', { headSha: 'head-1', status: 'running' }),
+        event('case.head_observed', { headSha: 'head-2', headGeneration: 2 }),
+      ]) {
+        const result = applyExternalReviewEvent(state, observation);
+        assert.equal(result.ok, true);
+        assert.deepEqual(result.value, state, `${terminalKind}: late ${observation.kind} cannot reopen the PR`);
+      }
+    }
+  });
+
   it('holds one verdict submission on the current generation until canonical readiness arrives', () => {
     let state = createExternalReviewAggregate(assigned({ cloudPolicy: 'optional' }));
     state = applyExternalReviewEvent(
@@ -376,21 +393,22 @@ describe('F168 external review aggregate', () => {
     assert.equal(state.delivery.kind, 'delivered');
   });
 
-  it('repos with no checks: CI pass unblocks readiness so verdict is recordable', () => {
-    // Bug reproduction: clowder-ai has no GitHub checks. After CiCdRouter proves
-    // an empty rollup is stable for one poll interval, it promotes that observation
-    // to pass so readiness can advance without treating the first empty poll as green.
+  it('positive CI evidence unblocks readiness so verdict is recordable', () => {
     let state = createExternalReviewAggregate(assigned({ cloudPolicy: 'optional' }));
-    state = applyExternalReviewEvent(state, event('case.head_observed', { headSha: 'head-no-ci' })).value;
+    state = applyExternalReviewEvent(state, event('case.head_observed', { headSha: 'head-with-ci' })).value;
 
-    // Simulate the settled pass emitted by the poller's empty-rollup stability guard.
-    state = applyExternalReviewEvent(state, event('case.ci_observed', { headSha: 'head-no-ci', status: 'pass' })).value;
+    // CiCdRouter emits pass only after at least one current-HEAD check/status supplies
+    // positive evidence. Empty rollups remain pending and cannot reach this transition.
+    state = applyExternalReviewEvent(
+      state,
+      event('case.ci_observed', { headSha: 'head-with-ci', status: 'pass' }),
+    ).value;
 
     // Readiness decision must be 'ready', not 'wait/ci_pending'
-    assert.deepEqual(decideExternalReviewReadiness(state), { kind: 'ready', headSha: 'head-no-ci' });
+    assert.deepEqual(decideExternalReviewReadiness(state), { kind: 'ready', headSha: 'head-with-ci' });
 
     // review_ready must succeed
-    const ready = applyExternalReviewEvent(state, event('case.review_ready', { headSha: 'head-no-ci' }));
+    const ready = applyExternalReviewEvent(state, event('case.review_ready', { headSha: 'head-with-ci' }));
     assert.equal(ready.ok, true);
     assert.equal(ready.value.lifecycle, 'rereview_required');
 
@@ -398,10 +416,10 @@ describe('F168 external review aggregate', () => {
     const verdict = applyExternalReviewEvent(
       ready.value,
       event('case.review_verdict_recorded', {
-        headSha: 'head-no-ci',
+        headSha: 'head-with-ci',
         delivery: {
           kind: 'delivered',
-          headSha: 'head-no-ci',
+          headSha: 'head-with-ci',
           githubUrl: 'https://github.com/zts212653/clowder-ai/pull/1342#pullrequestreview-4920606010',
           deliveredAt: 2_000,
         },

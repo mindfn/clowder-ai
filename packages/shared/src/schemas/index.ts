@@ -15,10 +15,12 @@ export {
   ContextAttachmentContentSchema,
   ContextAttachmentSchema,
   ContextAttachmentsSchema,
+  MediaContextAttachmentSchema,
   MessageQuoteSourceSchema,
   QuoteContextAttachmentSchema,
   QuoteContextSourceSchema,
   ThreadContextAttachmentSchema,
+  VersionBoundContextAttachmentsSchema,
   WorkspaceFileContextAttachmentSchema,
   WorkspaceFileQuoteSourceSchema,
 } from './context-attachment.schema.js';
@@ -40,8 +42,10 @@ export {
 export {
   MESSAGE_BUNDLE_CLI_QUOTE_DIGEST_DOMAIN,
   MESSAGE_BUNDLE_CLI_QUOTE_DIGEST_DOMAIN_V2,
+  MESSAGE_BUNDLE_CLI_QUOTE_DIGEST_DOMAIN_V3,
   MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION,
   MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2,
+  MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V3,
   MESSAGE_BUNDLE_MAX_ITEMS,
   MESSAGE_BUNDLE_QUOTE_DIGEST_DOMAIN,
   MESSAGE_BUNDLE_QUOTE_DIGEST_DOMAIN_V2,
@@ -76,6 +80,11 @@ export {
   MessageBundleSelectionSchema,
   messageBundleItemIdentity,
 } from './message-bundle.schema.js';
+export {
+  type CliToolProjectionEvent,
+  type CliToolProjectionRow,
+  projectCliToolEventRows,
+} from './message-bundle-cli-tool-projection.js';
 // F129 Pack System schemas (fail-closed .strict())
 export type {
   PackDefaultsInput,

@@ -2,6 +2,8 @@ import type { PawFeelDutyConfig, PawFeelInboxPage } from '@cat-cafe/shared';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { writeShellLanguage } from '@/components/shell/shell-language';
+import { writeShellPresentation } from '@/components/shell/shell-presentation';
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/settings',
@@ -140,15 +142,85 @@ describe('HubEvalTab paw-feel settings surface', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     vi.mocked(apiFetch).mockReset();
+    act(() => {
+      writeShellPresentation('classic');
+      writeShellLanguage('zh');
+    });
   });
 
   afterEach(() => {
-    act(() => root.unmount());
+    act(() => {
+      root.unmount();
+      writeShellPresentation('classic');
+      writeShellLanguage('zh');
+    });
     container.remove();
   });
 
   afterAll(() => {
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  });
+
+  it('rewords a local duty read failure in place without rereading', async () => {
+    act(() => writeShellPresentation('v2'));
+    vi.mocked(apiFetch).mockImplementation(async (url) =>
+      url === '/api/eval-hub/summary'
+        ? jsonResponse(emptyEvalSummary)
+        : url === '/api/paw-feel/duty'
+          ? jsonResponse({}, 503)
+          : jsonResponse(historyPage),
+    );
+    await act(async () => root.render(<HubEvalTab />));
+    const open = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === '查看值班与审计',
+    );
+    await act(async () => open?.click());
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('值班配置请求失败 (503)');
+    const requests = vi.mocked(apiFetch).mock.calls.length;
+    await act(async () => writeShellLanguage('en'));
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Duty configuration request failed (503)');
+    expect(vi.mocked(apiFetch).mock.calls.length).toBe(requests);
+  });
+
+  it('keeps an unsaved duty selection while changing the v2 language', async () => {
+    act(() => writeShellPresentation('v2'));
+    vi.mocked(apiFetch).mockImplementation(async (url) => {
+      if (url === '/api/eval-hub/summary') return jsonResponse(emptyEvalSummary);
+      if (url === '/api/paw-feel/duty') return jsonResponse({ config: null });
+      if (url === '/api/eval-hub/available-cats')
+        return jsonResponse({
+          cats: [
+            { catId: 'sol', handle: '@sol', family: 'maine-coon' },
+            { catId: 'kimi', handle: '@kimi', family: 'k3' },
+          ],
+        });
+      return jsonResponse(historyPage);
+    });
+    await act(async () => root.render(<HubEvalTab />));
+    const open = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === '查看值班与审计',
+    );
+    await act(async () => open?.click());
+    const primary = container.querySelector('select');
+    await act(async () => {
+      if (primary) {
+        primary.value = 'sol';
+        primary.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    expect(primary?.value).toBe('sol');
+    const save = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === '保存值班');
+    await act(async () => save?.click());
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('必须同时选择');
+    const requests = vi.mocked(apiFetch).mock.calls.length;
+    await act(async () => writeShellLanguage('en'));
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Select both primary and backup cats to enable duty',
+    );
+    expect(container.textContent).toContain('Save duty');
+    expect(container.querySelector('select')?.value).toBe('sol');
+    expect(vi.mocked(apiFetch).mock.calls.length).toBe(requests);
+    expect(vi.mocked(apiFetch).mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
   });
 
   it('keeps the responsibility ledger entry point visible when periodic eval fails', async () => {

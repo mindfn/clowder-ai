@@ -2,12 +2,15 @@
 
 import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useState } from 'react';
+import { sessionChainCopy } from '@/components/session-chain.shell-copy';
+import { useTrajectoryCopy } from '@/components/workspace/trajectory/use-trajectory-copy';
 import { useCatData } from '@/hooks/useCatData';
 import { resolveCatDisplayName } from '@/lib/cat-display-name';
 import { apiFetch } from '@/utils/api-client';
 import type { ExternalRuntimeSessionListItem } from '../runtime-sessions/external-runtime-session-types';
 import { HandoffEventRows, type HandoffSummary, type RawEvent, RawEventRows } from './SessionEventRows';
 import { type DigestNoiseSummary, RuntimeMetadataHeader } from './SessionRuntimeMetadataHeader';
+import { sessionViewerCopy } from './session-viewer.shell-copy';
 
 type ViewMode = 'chat' | 'handoff' | 'raw';
 
@@ -103,6 +106,8 @@ function assistantRoleStyle(catId?: string): string {
 
 export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEventsViewerProps) {
   const { getCatById } = useCatData();
+  const t = useTrajectoryCopy(sessionChainCopy);
+  const viewerCopy = useTrajectoryCopy(sessionViewerCopy);
   const [view, setView] = useState<ViewMode>('chat');
   const [dataView, setDataView] = useState<ViewMode>('chat');
   const [data, setData] = useState<ChatMessage[] | HandoffSummary[] | RawEvent[]>([]);
@@ -190,7 +195,7 @@ export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEvents
     <div className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--console-border-soft)]">
-        <span className="text-xs font-semibold text-cafe-secondary">Session 事件</span>
+        <span className="text-xs font-semibold text-cafe-secondary">{t.viewer}</span>
         <button
           type="button"
           data-testid="session-viewer-close"
@@ -223,8 +228,8 @@ export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEvents
         {loading && data.length > 0 && (
           <div className="text-micro text-cafe-muted text-center py-1 animate-pulse">Refreshing...</div>
         )}
-        {loading && data.length === 0 && <div className="text-xs text-cafe-muted py-2">加载中...</div>}
-        {error && <div className="text-xs text-conn-red-text py-2">加载失败</div>}
+        {loading && data.length === 0 && <div className="text-xs text-cafe-muted py-2">{t.viewerLoading}</div>}
+        {error && <div className="text-xs text-conn-red-text py-2">{t.viewerFailed}</div>}
 
         {!error && dataView === 'chat' && (
           <div className="space-y-1.5">
@@ -252,16 +257,16 @@ export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEvents
 
       {/* Pagination */}
       <div className="flex items-center justify-between px-3 py-1.5 border-t border-[var(--console-border-soft)] text-micro text-cafe-muted">
-        <span>{total} 条事件</span>
+        <span>{t.events(total)}</span>
         <div className="flex gap-2">
           {cursorHistory.length > 0 && (
             <button type="button" onClick={goPrev} className="text-[var(--color-cafe-accent)] hover:opacity-80">
-              上一页
+              {viewerCopy.previous}
             </button>
           )}
           {nextCursor != null && (
             <button type="button" onClick={goNext} className="text-[var(--color-cafe-accent)] hover:opacity-80">
-              下一页
+              {viewerCopy.next}
             </button>
           )}
         </div>

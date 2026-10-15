@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-const { ContextEpochOwner } = await import('../dist/domains/cats/services/session/ContextEpochOwner.js');
+const { ContextEpochOwner } = await import('../dist/domains/cats/services/session/context/ContextEpochOwner.js');
 const { InMemoryContextEpochStore } = await import('../dist/domains/cats/services/stores/ports/ContextEpochStore.js');
 const { resolveAuthoritativeCompactionSupport } = await import(
-  '../dist/domains/cats/services/session/authoritative-compaction.js'
+  '../dist/domains/cats/services/session/context/authoritative-compaction.js'
 );
 
 const SCOPE = { userId: 'user-1', catId: 'opus', threadId: 'thread-1' };
@@ -161,6 +161,37 @@ describe('F296 B3b-3: declaration and routable event are separate capabilities',
         hookInvocationAttested: false,
       }),
       { status: 'unsupported', reason: 'hook_invocation_attestation_unavailable' },
+    );
+  });
+
+  test('Claude Agent SDK accepts its typed boundary once its in-process hook attested this invocation (F117 K2)', () => {
+    const sdk = capability('anthropic', 'agent_sdk', true);
+    for (const eventSource of ['claude_compact_boundary', 'claude_precompact_hook']) {
+      assert.equal(
+        resolveAuthoritativeCompactionSupport({
+          capability: sdk,
+          eventSource,
+          hookAuthenticationReady: true,
+          hookCarrierReady: true,
+          hookInvocationAttested: true,
+        }).status,
+        'supported',
+      );
+    }
+    assert.deepEqual(
+      resolveAuthoritativeCompactionSupport({
+        capability: sdk,
+        eventSource: 'claude_compact_boundary',
+        hookAuthenticationReady: true,
+        hookCarrierReady: true,
+        hookInvocationAttested: false,
+      }),
+      { status: 'unsupported', reason: 'hook_invocation_attestation_unavailable' },
+    );
+    assert.deepEqual(
+      resolveAuthoritativeCompactionSupport({ capability: sdk, eventSource: 'claude_compact_boundary' }),
+      { status: 'unsupported', reason: 'hook_authentication_unavailable' },
+      'without its in-process hooks the SDK carrier proves nothing',
     );
   });
 

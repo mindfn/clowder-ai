@@ -184,7 +184,7 @@ function parsePathPolicies(lines) {
   return pathPolicies;
 }
 
-function parseDictionary(raw) {
+export function parseDictionary(raw) {
   const lines = raw.split(/\r?\n/);
   return {
     terms: parseTerms(sectionLines(lines, 'terms')),
@@ -203,15 +203,14 @@ function globToRegex(pattern) {
     .replace(/\*\*/g, '<<<GLOBSTAR>>>')
     .replace(/\*/g, '[^/]*')
     .replace(/<<<GLOBSTAR>>>/g, '.*');
-  return new RegExp(`^${re}$`);
+  return new RegExp(`^${re}$(?!.)`, 's');
 }
 
 /**
  * Classify a file path according to dictionary path_policies.
  * Returns { classification, risk, reason }.
  */
-export function classifyPath(filePath) {
-  const dict = loadDictionary();
+export function classifyPath(filePath, dict = loadDictionary()) {
   const policies = dict.path_policies || [];
 
   for (const policy of policies) {
@@ -233,8 +232,7 @@ export function classifyPath(filePath) {
  * Get all home-only terms for brand validation.
  * Returns [{ id, severity, homePatterns: string[] }].
  */
-export function getHomeTerms() {
-  const dict = loadDictionary();
+export function getHomeTerms(dict = loadDictionary()) {
   const terms = dict.terms || [];
 
   return terms.map((t) => ({
@@ -251,8 +249,7 @@ export function getHomeTerms() {
  * Get public-side terms for inbound contamination detection.
  * Returns [{ id, severity, publicPatterns: string[] }].
  */
-export function getPublicTerms() {
-  const dict = loadDictionary();
+export function getPublicTerms(dict = loadDictionary()) {
   const terms = dict.terms || [];
 
   return terms

@@ -1,6 +1,7 @@
 'use client';
 
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import type { WorkspaceFileNavigationOrigin } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
@@ -15,10 +16,21 @@ export interface WorkspaceDocumentTarget {
   line: number | null;
 }
 
+export interface WorkspacePathLinkTarget extends WorkspaceDocumentTarget {
+  worktreeId: string;
+  kind: 'file' | 'directory';
+}
+
 const MARKDOWN_FILE_HREF_RE = /^(.*\.mdx?)(?::(\d+))?$/i;
 const URI_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 const WINDOWS_ABSOLUTE_PATH_RE = /^[a-z]:\//i;
 const THREAD_HREF_RE = /^\/thread\/([^/?#]+)$/;
+
+type WorkspaceLinkResolveState = 'idle' | 'resolving' | 'error';
+type WorkspacePathOpenActions = Pick<
+  ReturnType<typeof useChatStore.getState>,
+  'setWorkspaceOpenFile' | 'setWorkspaceMode' | 'openWorkspacePath'
+>;
 
 export function resolveChatThreadHref(href: string | undefined): string | null {
   const encodedId = href?.match(THREAD_HREF_RE)?.[1];
@@ -61,30 +73,108 @@ function isLocalMarkdownDocumentHref(href: string | undefined): href is string {
   return (!URI_SCHEME_RE.test(candidate) && !candidate.startsWith('//')) || isWindowsAbsolute || isWindowsUnc;
 }
 
-function isAbsoluteLocalMarkdownDocumentHref(href: string): boolean {
-  const { pathname: withoutFragment, isWindowsUnc } = parseMarkdownHrefPathname(href);
-  const candidate = withoutFragment.match(MARKDOWN_FILE_HREF_RE)?.[1] ?? '';
-  return isWindowsUnc || candidate.startsWith('/') || WINDOWS_ABSOLUTE_PATH_RE.test(candidate);
+function isAbsoluteLocalWorkspacePathHref(href: string | undefined): href is string {
+  if (!href) return false;
+  const { pathname, isWindowsUnc } = parseMarkdownHrefPathname(href);
+  if (isWindowsUnc) return true;
+  if (pathname.startsWith('//')) return false;
+  return pathname.startsWith('/') || WINDOWS_ABSOLUTE_PATH_RE.test(pathname);
 }
 
-async function resolveAbsoluteDocumentTarget(href: string): Promise<WorkspaceDocumentTarget & { worktreeId: string }> {
+async function resolveAbsoluteWorkspaceTarget(href: string): Promise<WorkspacePathLinkTarget> {
   const response = await apiFetch('/api/workspace/resolve-document-link', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ href }),
   });
-  if (!response.ok) throw new Error('document resolution failed');
-  const target = (await response.json()) as Partial<WorkspaceDocumentTarget> & {
-    worktreeId?: unknown;
-  };
-  if (
-    typeof target.worktreeId !== 'string' ||
-    typeof target.path !== 'string' ||
-    !(typeof target.line === 'number' || target.line === null)
-  ) {
-    throw new Error('invalid document target');
+  if (!response.ok) {
+    throw await workspacePathResolutionError(response);
   }
-  return { worktreeId: target.worktreeId, path: target.path, line: target.line };
+  const target: unknown = await response.json();
+  if (!isWorkspacePathLinkTarget(target)) throw new Error('invalid Workspace path target');
+  return target;
+}
+
+async function workspacePathResolutionError(response: Response): Promise<Error> {
+  const errorBody = (await response.json().catch(() => null)) as { code?: unknown } | null;
+  if (errorBody?.code === 'PATH_NOT_IN_REGISTERED_WORKSPACE') {
+    return new Error('该路径不在已登记的工作区中，无法在 Workspace 中打开。');
+  }
+  if (errorBody?.code === 'PATH_NOT_FOUND') return new Error('该路径在已登记的工作区中不存在。');
+  if (errorBody?.code === 'PATH_ACCESS_DENIED') return new Error('该路径无法安全地在 Workspace 中打开。');
+  return new Error('无法在 Workspace 中打开此路径。');
+}
+
+function isWorkspacePathLinkTarget(value: unknown): value is WorkspacePathLinkTarget {
+  if (typeof value !== 'object' || value === null) return false;
+  const target = value as Record<string, unknown>;
+  return (
+    typeof target.worktreeId === 'string' &&
+    typeof target.path === 'string' &&
+    (typeof target.line === 'number' || target.line === null) &&
+    (target.kind === 'file' || target.kind === 'directory')
+  );
+}
+
+function resolveChatFileNavigationOrigin(
+  threadId: string,
+  link: HTMLButtonElement | null,
+): WorkspaceFileNavigationOrigin | undefined {
+  const messageId = link?.closest<HTMLElement>('[data-message-id]')?.dataset.messageId;
+  return messageId ? { kind: 'chat-file-link', threadId, messageId } : undefined;
+}
+
+function openResolvedWorkspaceTarget(
+  target: WorkspacePathLinkTarget,
+  threadId: string,
+  navigationOrigin: WorkspaceFileNavigationOrigin | undefined,
+  actions: WorkspacePathOpenActions,
+): void {
+  if (target.kind === 'directory') {
+    const opened = actions.openWorkspacePath(threadId, {
+      kind: 'reveal',
+      worktreeId: target.worktreeId,
+      path: target.path,
+      ...(navigationOrigin ? { navigationOrigin } : {}),
+    });
+    if (!opened) throw new Error('无法在当前会话的 Workspace 中打开此目录。');
+    return;
+  }
+  actions.setWorkspaceMode('dev');
+  actions.setWorkspaceOpenFile(target.path, target.line, target.worktreeId, threadId, navigationOrigin, 'permanent');
+}
+
+function finishWorkspacePathResolution(
+  claim: WorkspaceDocumentResolutionClaim,
+  claimRef: { current: WorkspaceDocumentResolutionClaim | null },
+  mountedRef: { current: boolean },
+  setResolveState: (state: WorkspaceLinkResolveState) => void,
+): void {
+  if (claim.cancelled && mountedRef.current && claimRef.current === claim) setResolveState('idle');
+  claim.finish();
+  if (claimRef.current === claim) claimRef.current = null;
+}
+
+async function resolveAndOpenWorkspacePath(
+  href: string,
+  claim: WorkspaceDocumentResolutionClaim,
+  openTarget: (target: WorkspacePathLinkTarget) => void,
+  setResolveState: (state: WorkspaceLinkResolveState) => void,
+  setResolveError: (message: string) => void,
+  finish: () => void,
+): Promise<void> {
+  try {
+    const target = await resolveAbsoluteWorkspaceTarget(parseMarkdownHrefPathname(href).pathname);
+    if (claim.cancelled) return;
+    openTarget(target);
+    setResolveState('idle');
+  } catch (error) {
+    if (claim.cancelled) return;
+    setResolveError(error instanceof Error ? error.message : '无法在 Workspace 中打开此路径。');
+    setResolveState('error');
+  } finally {
+    finish();
+  }
 }
 
 /** Resolve only Markdown files that are safely inside the active project. */
@@ -123,14 +213,18 @@ export function resolveChatWorkspaceDocumentHref(
 
 export function ChatWorkspaceLink({ href, children }: { href?: string; children: ReactNode }) {
   const projectRoot = useChatStore((s) => s.currentProjectPath);
+  const currentThreadId = useChatStore((s) => s.currentThreadId);
   const setOpenFile = useChatStore((s) => s.setWorkspaceOpenFile);
   const setWorkspaceMode = useChatStore((s) => s.setWorkspaceMode);
+  const openWorkspacePath = useChatStore((s) => s.openWorkspacePath);
   const workspaceTarget = resolveChatWorkspaceDocumentHref(href, projectRoot);
   const isLocalDocument = isLocalMarkdownDocumentHref(href);
-  const requiresServerResolution = isLocalDocument && isAbsoluteLocalMarkdownDocumentHref(href);
+  const requiresServerResolution = isAbsoluteLocalWorkspacePathHref(href);
   const threadTarget = resolveChatThreadHref(href);
-  const [resolveState, setResolveState] = useState<'idle' | 'resolving' | 'error'>('idle');
+  const [resolveState, setResolveState] = useState<WorkspaceLinkResolveState>('idle');
+  const [resolveError, setResolveError] = useState<string | null>(null);
   const resolutionClaimRef = useRef<WorkspaceDocumentResolutionClaim | null>(null);
+  const linkRef = useRef<HTMLButtonElement>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -144,33 +238,33 @@ export function ChatWorkspaceLink({ href, children }: { href?: string; children:
   const handleWorkspaceClick = async () => {
     cancelActiveWorkspaceDocumentResolution();
     setResolveState('idle');
+    setResolveError(null);
+    const originThreadId = currentThreadId;
+    const navigationOrigin = resolveChatFileNavigationOrigin(originThreadId, linkRef.current);
     if (workspaceTarget && !requiresServerResolution) {
       setWorkspaceMode('dev');
-      setOpenFile(workspaceTarget.path, workspaceTarget.line);
+      setOpenFile(workspaceTarget.path, workspaceTarget.line, undefined, originThreadId, navigationOrigin, 'permanent');
       return;
     }
     if (!href) return;
-    const claim = claimWorkspaceDocumentResolution(useChatStore.getState().currentThreadId, () => {
+    const claim = claimWorkspaceDocumentResolution(originThreadId, () => {
       if (mountedRef.current) setResolveState('idle');
     });
     resolutionClaimRef.current = claim;
     setResolveState('resolving');
-    try {
-      const target = await resolveAbsoluteDocumentTarget(parseMarkdownHrefPathname(href).pathname);
-      if (claim.cancelled) return;
-      setWorkspaceMode('dev');
-      setOpenFile(target.path, target.line, target.worktreeId);
-      setResolveState('idle');
-    } catch {
-      if (claim.cancelled) return;
-      setResolveState('error');
-    } finally {
-      if (claim.cancelled && mountedRef.current && resolutionClaimRef.current === claim) {
-        setResolveState('idle');
-      }
-      claim.finish();
-      if (resolutionClaimRef.current === claim) resolutionClaimRef.current = null;
-    }
+    await resolveAndOpenWorkspacePath(
+      href,
+      claim,
+      (target) =>
+        openResolvedWorkspaceTarget(target, originThreadId, navigationOrigin, {
+          openWorkspacePath,
+          setWorkspaceMode,
+          setWorkspaceOpenFile: setOpenFile,
+        }),
+      setResolveState,
+      setResolveError,
+      () => finishWorkspacePathResolution(claim, resolutionClaimRef, mountedRef, setResolveState),
+    );
   };
 
   if (threadTarget) {
@@ -189,11 +283,12 @@ export function ChatWorkspaceLink({ href, children }: { href?: string; children:
     );
   }
 
-  if (workspaceTarget || isLocalDocument) {
+  if (isLocalDocument || requiresServerResolution) {
     const targetLabel = workspaceTarget?.path ?? href ?? '';
     return (
       <span>
         <button
+          ref={linkRef}
           type="button"
           disabled={resolveState === 'resolving'}
           onClick={async (event) => {
@@ -207,7 +302,7 @@ export function ChatWorkspaceLink({ href, children }: { href?: string; children:
         </button>
         {resolveState === 'error' && (
           <span role="alert" className="ml-1 text-xs text-conn-red-text">
-            无法在工作区中打开
+            {resolveError ?? '无法在 Workspace 中打开此路径。'}
           </span>
         )}
       </span>

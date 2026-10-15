@@ -18,7 +18,11 @@ export function rememberCodexAppServerControlOptions(
   }
   const { invocationId: _invocationId, signal: _signal, sessionId: _sessionId, ...reusable } = options;
   bySession.delete(sessionId);
-  bySession.set(sessionId, reusable);
+  bySession.set(sessionId, {
+    ...reusable,
+    args: [...reusable.args],
+    ...(reusable.env ? { env: { ...reusable.env } } : {}),
+  });
   while (bySession.size > MAX_CONTROL_SESSIONS_PER_POOL) {
     const oldest = bySession.keys().next().value;
     if (oldest === undefined) break;
@@ -37,7 +41,15 @@ export function resolveCodexAppServerControlOptions(
     bySession.delete(sessionId);
     bySession.set(sessionId, reusable);
   }
-  return reusable ? { ...reusable, sessionId, invocationId } : null;
+  return reusable
+    ? {
+        ...reusable,
+        args: [...reusable.args],
+        ...(reusable.env ? { env: { ...reusable.env } } : {}),
+        sessionId,
+        invocationId,
+      }
+    : null;
 }
 
 export function bindCodexAppServerControlOptions(

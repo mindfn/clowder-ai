@@ -165,6 +165,8 @@ export interface ContinueActionSuccessorFreshRevisionInput {
   dispatchId: string;
   issuerStandingEvidenceRef: string;
   evidenceRef: string;
+  /** F167 × F322: proposal authority evidence from delegate standing. */
+  delegateEvidenceRef?: string;
   now: number;
 }
 
@@ -256,8 +258,11 @@ export function continueActionSuccessorFreshRevision(
       terminalPredicateState: { kind: 'predicate_backed' },
       terminalPredicate: input.terminalPredicate,
       completionCandidates: {},
-      evidenceRefs: [...new Set([issuerStandingEvidenceRef, evidenceRef])],
+      evidenceRefs: [
+        ...new Set([issuerStandingEvidenceRef, evidenceRef, input.delegateEvidenceRef].filter((r): r is string => !!r)),
+      ],
       returnTransitions: [],
+      replacementTransitions: [],
       revision: 1,
       createdAt: input.now,
       updatedAt: input.now,

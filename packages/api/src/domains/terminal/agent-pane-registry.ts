@@ -11,6 +11,8 @@ export interface AgentPaneInfo {
   worktreeId: string;
   paneId: string;
   userId: string;
+  /** F322: owning cat recorded at spawn time, so done/crashed panes keep a real identity. */
+  catId?: string;
   status: AgentPaneStatus;
   exitCode?: number | null;
   signal?: string | null;
@@ -36,12 +38,13 @@ export class AgentPaneRegistry {
   /** F198 Phase C AC-C1: bg carrier sessions keyed by invocationId. */
   private bgCarrierSessions = new Map<string, BgCarrierSessionInfo>();
 
-  register(invocationId: string, worktreeId: string, paneId: string, userId: string): void {
+  register(invocationId: string, worktreeId: string, paneId: string, userId: string, catId?: string): void {
     this.panes.set(invocationId, {
       invocationId,
       worktreeId,
       paneId,
       userId,
+      ...(catId !== undefined ? { catId } : {}),
       status: 'running',
       startedAt: Date.now(),
     });

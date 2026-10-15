@@ -4,7 +4,7 @@ import {
   type ReturnedActionSuccessorProof,
   reattachReturnedActionSuccessor,
 } from './action-successor-return-state-machine.js';
-import type { ActionSuccessorLease } from './action-successor-state-machine.js';
+import type { ActionSuccessorLease, ActionSuccessorReplacementTransition } from './action-successor-state-machine.js';
 
 export type ReplaceActionSuccessorResult = {
   outcome:
@@ -28,6 +28,8 @@ type ReplaceActionSuccessorInputBase = {
   terminalPredicate: CanonicalActionTerminalPredicate;
   evidenceRef: string;
   freshnessEvidenceRef?: string;
+  /** F167 × F322: proposal authority evidence from delegate standing. */
+  delegateEvidenceRef?: string;
   returnedHolderCatId?: string;
   returnedHolderThreadId?: string;
   returnProof?: ReturnedActionSuccessorProof;
@@ -92,11 +94,50 @@ function replaceReturnedActionSuccessor(
     terminalPredicate: input.terminalPredicate,
     evidenceRef: input.evidenceRef,
     freshnessEvidenceRef: input.freshnessEvidenceRef,
+    delegateEvidenceRef: input.delegateEvidenceRef,
     returnedHolderCatId: input.returnedHolderCatId ?? '',
     returnedHolderThreadId: input.returnedHolderThreadId ?? '',
     returnProof: input.returnProof,
     now: input.now,
   });
+}
+
+function createReplacementTransition(
+  current: ActionSuccessorLease,
+  input: ReplaceActionSuccessorInput,
+  holderCatIds: string[],
+  holderThreadId: string,
+): ActionSuccessorReplacementTransition {
+  const claimOrigin = input.claimOrigin ?? 'structured_transfer';
+  const outcomeEvidence = Object.values(current.holderOutcomes).map((entry) => entry.evidenceRef);
+  const issuerEvidence = input.issuerStandingEvidenceRef ?? input.evidenceRef;
+  return {
+    fromGeneration: current.generation,
+    toGeneration: current.generation + 1,
+    reason: 'holder_terminal',
+    fromHolderCatIds: [...current.holderCatIds],
+    fromHolderThreadId: current.holderThreadId,
+    toHolderCatIds: [...holderCatIds],
+    toHolderThreadId: holderThreadId,
+    ...(claimOrigin === 'structured_transfer'
+      ? { issuerCatId: input.predecessorCatId, issuerThreadId: input.predecessorThreadId }
+      : {}),
+    holderOutcomes: Object.fromEntries(
+      Object.entries(current.holderOutcomes).map(([catId, outcome]) => [catId, { ...outcome }]),
+    ),
+    evidenceRefs: [
+      ...new Set(
+        [
+          ...outcomeEvidence,
+          input.evidenceRef,
+          issuerEvidence,
+          input.freshnessEvidenceRef,
+          input.delegateEvidenceRef,
+        ].filter(Boolean),
+      ),
+    ] as string[],
+    at: input.now,
+  };
 }
 
 export function replaceActionSuccessor(
@@ -136,6 +177,7 @@ export function replaceActionSuccessor(
             'issuerStandingEvidenceRef',
           ),
         };
+  const replacementTransition = createReplacementTransition(current, input, holderCatIds, holderThreadId);
   return {
     outcome: 'replaced',
     lease: {
@@ -154,15 +196,20 @@ export function replaceActionSuccessor(
       holderOutcomes: {},
       completionCandidates: {},
       evidenceRefs: [
-        ...new Set([
-          ...current.evidenceRefs,
-          current.issuerStandingEvidenceRef,
-          evidenceRef,
-          provenance.issuerStandingEvidenceRef,
-        ]),
+        ...new Set(
+          [
+            ...current.evidenceRefs,
+            current.issuerStandingEvidenceRef,
+            evidenceRef,
+            provenance.issuerStandingEvidenceRef,
+            input.freshnessEvidenceRef,
+            input.delegateEvidenceRef,
+          ].filter((r): r is string => !!r),
+        ),
       ],
       returnDeliveryState: undefined,
       returnDeliveryEvidenceRef: undefined,
+      replacementTransitions: [...(current.replacementTransitions ?? []), replacementTransition],
       revision: current.revision + 1,
       updatedAt: input.now,
     },

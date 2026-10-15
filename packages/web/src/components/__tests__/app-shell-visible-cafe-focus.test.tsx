@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 const navState = vi.hoisted(() => ({ pathname: '/starry' }));
 
 vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn() }),
   usePathname: () => navState.pathname,
   useSearchParams: () => new URLSearchParams(),
 }));

@@ -92,6 +92,42 @@ describe('PersonMemoryRecallService', () => {
     assert.deepEqual(await service.recallByAlias('other-owner', '黄挺'), { status: 'not_available' });
   });
 
+  it('projects owner-action provenance without a fake message source and makes drill explicitly unavailable', async () => {
+    const ownerActionClaim = {
+      ...claim,
+      claimId: 'person_claim_owner_action_recall',
+      recordedAt: 200,
+      sourceRefs: [],
+      materializedBy: { kind: 'owner_memory_action' },
+    };
+    const service = new PersonMemoryRecallService(
+      fakeStore({ listClaims: async () => [ownerActionClaim] }),
+      workspaceResolver(),
+    );
+
+    const recalled = await service.recallByPersonId('owner-1', person.personId);
+    assert.equal(recalled.status, 'resolved');
+    assert.deepEqual(recalled.card.facts, [
+      {
+        claimId: ownerActionClaim.claimId,
+        text: 'organization_unit: 终端用户计算开发部',
+        kind: 'reported_fact',
+        provenanceKind: 'owner_memory_action',
+        provenanceRefs: [],
+      },
+    ]);
+    assert.deepEqual(
+      await service.drill({
+        ownerUserId: 'owner-1',
+        turnId: 'invocation-owner-action',
+        personId: person.personId,
+        item: { kind: 'claim', id: ownerActionClaim.claimId },
+        timeWindow: { from: 0, to: 1_000 },
+      }),
+      { status: 'not_available', reason: 'owner_action_has_no_message_source' },
+    );
+  });
+
   it('fails closed on same-name ambiguity without choosing a dossier', async () => {
     const second = { ...person, personId: 'person_recall_2' };
     const service = new PersonMemoryRecallService(

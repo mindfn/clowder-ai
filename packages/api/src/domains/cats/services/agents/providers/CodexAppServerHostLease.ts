@@ -1,9 +1,10 @@
-import type { CodexAppServerHostProcess } from './CodexUnixWebSocketSession.js';
+import type { CodexAppServerHostProcess, PreparedCodexHostLaunch } from './CodexUnixWebSocketSession.js';
 
 const DEFAULT_ABORT_GRACE_MS = 5_000;
 
 export interface HostEntry {
   signature: string;
+  authIdentity: string;
   host: CodexAppServerHostProcess;
   socketDirectory: string;
   state: 'ready' | 'closing';
@@ -25,7 +26,12 @@ export type HostCloseReason =
   | 'shutdown'
   | 'warm_cap';
 
-export type HostRetirementReason = 'launch_signature_mismatch' | 'legacy_multi_affinity' | 'owner_unavailable';
+export type HostRetirementReason =
+  | 'launch_signature_mismatch'
+  | 'login_identity_changed'
+  | 'legacy_multi_affinity'
+  | 'owner_unavailable'
+  | 'direct_session_migration';
 
 export interface HostResolution {
   entry: HostEntry | undefined;
@@ -39,20 +45,21 @@ export interface HostResolution {
 export function resolveHostEntry(
   entries: ReadonlySet<HostEntry>,
   sessionOwners: Map<string, HostEntry>,
-  signature: string,
+  prepared: PreparedCodexHostLaunch,
   sessionId?: string,
 ): HostResolution {
-  if (!sessionId) return findIdleHost(entries, sessionOwners, signature);
+  if (!sessionId) return findIdleHost(entries, sessionOwners, prepared);
   const owner = sessionOwners.get(sessionId);
-  if (!owner) return findIdleHost(entries, sessionOwners, signature);
+  if (!owner) return findIdleHost(entries, sessionOwners, prepared);
   if (owner.lease?.sessionId === sessionId) {
     throw new Error(`Codex session ${sessionId} already has an active host lease`);
   }
-  if (owner.signature !== signature) {
+  const mismatchReason = hostIdentityMismatch(owner, prepared);
+  if (mismatchReason) {
     if (owner.attachmentCount > 0) {
       throw new Error(`Codex session ${sessionId} active host attachment launch contract mismatch`);
     }
-    return retirement(owner, 'launch_signature_mismatch');
+    return retirement(owner, mismatchReason);
   }
   if (owner.state !== 'ready' || !owner.host.isAlive) {
     if (owner.attachmentCount > 0) {
@@ -73,19 +80,24 @@ export function resolveHostEntry(
 export function resolveHostAttachmentEntry(
   entries: ReadonlySet<HostEntry>,
   sessionOwners: Map<string, HostEntry>,
-  signature: string,
+  prepared: PreparedCodexHostLaunch,
   sessionId: string,
 ): HostResolution {
   const owner = sessionOwners.get(sessionId);
-  if (!owner) return findIdleHost(entries, sessionOwners, signature);
+  if (!owner) return findIdleHost(entries, sessionOwners, prepared);
   if (owner.attachmentCount > 0) {
     throw new Error(`Codex session ${sessionId} already has an active host attachment`);
   }
-  if (owner.signature !== signature) {
+  if (owner.signature !== prepared.signature) {
     if (owner.lease?.sessionId === sessionId) {
       throw new Error(`Codex session ${sessionId} active writer launch contract mismatch`);
     }
     return retirement(owner, 'launch_signature_mismatch');
+  }
+  // Controls must still attach to a running writer after an external login.
+  // Once it releases, idle attachments and the next turn use the new login.
+  if (!owner.lease && owner.authIdentity !== prepared.authIdentity) {
+    return retirement(owner, 'login_identity_changed');
   }
   if (owner.state !== 'ready' || !owner.host.isAlive) {
     if (owner.lease?.sessionId === sessionId) {
@@ -97,6 +109,12 @@ export function resolveHostAttachmentEntry(
     return retirement(owner, 'legacy_multi_affinity');
   }
   return { entry: owner, reusedSessionHost: true };
+}
+
+function hostIdentityMismatch(owner: HostEntry, prepared: PreparedCodexHostLaunch): HostRetirementReason | undefined {
+  if (owner.signature !== prepared.signature) return 'launch_signature_mismatch';
+  if (owner.authIdentity !== prepared.authIdentity) return 'login_identity_changed';
+  return undefined;
 }
 
 function hasOtherSessionOwner(
@@ -117,13 +135,14 @@ function retirement(entry: HostEntry, reason: HostRetirementReason): HostResolut
 function findIdleHost(
   entries: ReadonlySet<HostEntry>,
   sessionOwners: ReadonlyMap<string, HostEntry>,
-  signature: string,
+  prepared: PreparedCodexHostLaunch,
 ): HostResolution {
   const ownedEntries = new Set(sessionOwners.values());
   return {
     entry: [...entries].find(
       (entry) =>
-        entry.signature === signature &&
+        entry.signature === prepared.signature &&
+        entry.authIdentity === prepared.authIdentity &&
         entry.state === 'ready' &&
         !entry.lease &&
         entry.attachmentCount === 0 &&
@@ -226,4 +245,22 @@ function normalizeSessionId(sessionId: string | undefined): string | null {
 
 function abortReason(signal: AbortSignal): Error {
   return signal.reason instanceof Error ? signal.reason : new Error('Codex host retirement wait aborted');
+}
+
+/** Idle housekeeping never retires a host with an active lease or attachment. */
+export function armCodexHostIdleTimer(entry: HostEntry, ttlMs: number, close: () => Promise<void>): NodeJS.Timeout {
+  const timer = setTimeout(
+    () => {
+      if (!entry.lease && entry.attachmentCount === 0 && entry.state === 'ready') void close();
+    },
+    Math.max(0, ttlMs),
+  );
+  timer.unref?.();
+  return timer;
+}
+
+export function clearCodexHostIdleTimer(entry: HostEntry): void {
+  if (!entry.idleTimer) return;
+  clearTimeout(entry.idleTimer);
+  entry.idleTimer = null;
 }

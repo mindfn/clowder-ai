@@ -3,19 +3,24 @@
  *
  * 读取 `.cat-cafe/capabilities.json` 唯一真相源，
  * 结合 catRegistry 的 provider 映射，
- * 生成三猫 CLI 的 MCP 配置文件。
+ * 解析所有成员共用的 MCP 能力；载体在每次调用时生成配置。
  *
  * 首次运行时自动从现有 CLI 配置中发现外部 MCP 服务器，
  * 连同 Clowder AI 自有 MCP 一起写入 capabilities.json。
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { chmod, lstat, mkdir, readdir, readFile, rename, rm, stat as statPath, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, dirname, extname, join, relative, resolve, sep } from 'node:path';
-import type { CapabilitiesConfig, CapabilityEntry, McpServerDescriptor } from '@cat-cafe/shared';
+import type {
+  CapabilitiesConfig,
+  CapabilityConfigUnreadableCause,
+  CapabilityEntry,
+  McpServerDescriptor,
+} from '@cat-cafe/shared';
 import { catRegistry } from '@cat-cafe/shared';
 import { resolveCatCafeSkillsSource } from '../../utils/skill-source.js';
 import { migrateCapabilitiesV1ToV2 } from '../governance/capabilities-migration.js';
@@ -26,8 +31,6 @@ import {
   readCodexMcpConfig,
   readGeminiMcpConfig,
   readKimiMcpConfig,
-  writeAntigravityMcpConfig,
-  writeGeminiMcpConfig,
 } from './mcp-config-adapters.js';
 import { CAT_CAFE_SPLIT_ENTRYPOINTS } from './mcp-constants.js';
 import {
@@ -174,62 +177,6 @@ export function comparePencilDirs(a: string, b: string): number {
   }
   return 0;
 }
-
-/**
- * Provider → CLI config writer mapping.
- *
- * Only providers whose CLI reads persistent on-disk config files AND has no
- * invoke-time MCP override mechanism are listed here:
- *
- *   - Gemini: `gemini` CLI reads `.gemini/settings.json` natively; no --mcp-config flag.
- *   - Antigravity: `agy` CLI reads `~/.gemini/antigravity/mcp_config.json`; no override flag.
- *
- * NOT listed (all use invoke-time injection, persistent write is redundant):
- *   - Claude: `--mcp-config JSON --strict-mcp-config` at invoke time
- *   - Codex: `--config mcp_servers.X...` inline overrides at invoke time
- *   - Kimi: temp mcp.json via `writeMcpConfigFile` + `--mcp-config-file`
- *   - OpenCode: temp opencode.json via `writeOpenCodeRuntimeConfig` + `OPENCODE_CONFIG`
- */
-const PROVIDER_WRITERS = {
-  google: writeGeminiMcpConfig,
-  antigravity: writeAntigravityMcpConfig,
-} as const;
-
-type CliConfigSnapshot = { kind: 'missing' } | { kind: 'file'; data: Buffer; mode: number } | { kind: 'other' };
-
-async function snapshotCliConfigPath(path: string): Promise<CliConfigSnapshot> {
-  try {
-    const stat = await lstat(path);
-    if (stat.isFile()) return { kind: 'file', data: await readFile(path), mode: stat.mode & 0o7777 };
-    if (stat.isSymbolicLink()) {
-      const targetStat = await statPath(path).catch((err: NodeJS.ErrnoException) => {
-        if (err.code === 'ENOENT') return null;
-        throw err;
-      });
-      if (targetStat?.isFile()) return { kind: 'file', data: await readFile(path), mode: targetStat.mode & 0o7777 };
-    }
-    return { kind: 'other' };
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'missing' };
-    throw err;
-  }
-}
-
-async function restoreCliConfigPath(path: string, snapshot: CliConfigSnapshot): Promise<void> {
-  if (snapshot.kind === 'other') return;
-  if (snapshot.kind === 'missing') {
-    await rm(path, { recursive: true, force: true });
-    return;
-  }
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, snapshot.data, { mode: snapshot.mode });
-  await chmod(path, snapshot.mode);
-}
-
-export const __testing = {
-  snapshotCliConfigPath,
-  restoreCliConfigPath,
-};
 
 /** Check if a descriptor has a usable transport (stdio command, local resolver, or streamableHttp URL). */
 export function hasUsableTransport(desc: {
@@ -599,28 +546,86 @@ function safePath(projectRoot: string, ...segments: string[]): string {
  * Use `migrateAndPersistCapabilities()` for explicit owner-gated migration.
  */
 export async function readCapabilitiesConfig(projectRoot: string): Promise<CapabilitiesConfig | null> {
-  const filePath = safePath(projectRoot, CONFIG_SUBDIR, CAPABILITIES_FILENAME);
+  const state = await readCapabilitiesConfigState(projectRoot);
+  return state.kind === 'present' ? state.config : null;
+}
+
+/**
+ * What reading capabilities.json actually found.
+ *
+ * `readCapabilitiesConfig` answers `null` both when the file does not exist and
+ * when it exists but cannot be parsed. Its writers are fine with that -- they
+ * are about to bootstrap either way -- but a reader reporting what the home has
+ * must not: "this project has no capability config" is a fact, while "there is
+ * a config and I could not read it" is an unknown, and a cat told the first when
+ * the second is true would describe an empty home that is not empty.
+ */
+export type CapabilitiesConfigState =
+  | { readonly kind: 'present'; readonly path: string; readonly sha256: string; readonly config: CapabilitiesConfig }
+  | { readonly kind: 'absent'; readonly path: string }
+  | {
+      readonly kind: 'unreadable';
+      readonly path: string;
+      readonly cause: CapabilityConfigUnreadableCause;
+      /** errno code only (e.g. `EACCES`) — never an error message, which can quote file bytes. */
+      readonly errno?: string;
+    };
+
+export function capabilitiesConfigPath(projectRoot: string): string {
+  return safePath(projectRoot, CONFIG_SUBDIR, CAPABILITIES_FILENAME);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Read-only: never creates, migrates on disk, or rewrites the file. */
+export async function readCapabilitiesConfigState(projectRoot: string): Promise<CapabilitiesConfigState> {
+  const filePath = capabilitiesConfigPath(projectRoot);
+  let raw: string;
   try {
-    const raw = await readFile(filePath, 'utf-8');
-    const data = JSON.parse(raw) as CapabilitiesConfig;
-    if ((data.version !== 1 && data.version !== 2) || !Array.isArray(data.capabilities)) return null;
-    let config: CapabilitiesConfig;
-    if (data.version === 1) {
-      config = await migrateCapabilitiesV1ToV2(projectRoot, data, await resolveCatCafeSkillsSource());
-    } else {
-      config = data;
-    }
-    // F228/F249: Fill globalEnabled for entries that lack it (field migration).
-    // Client-side app — we migrate once at read time, no runtime compat needed.
-    for (const cap of config.capabilities) {
-      if (cap.globalEnabled === undefined && cap.enabled !== undefined) {
-        cap.globalEnabled = cap.enabled;
-      }
-    }
-    return config;
-  } catch {
-    return null;
+    raw = await readFile(filePath, 'utf-8');
+  } catch (error) {
+    const errno = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (errno === 'ENOENT') return { kind: 'absent', path: filePath };
+    return { kind: 'unreadable', path: filePath, cause: 'io_error', ...(errno ? { errno } : {}) };
   }
+  const sha256 = createHash('sha256').update(raw).digest('hex');
+  let data: CapabilitiesConfig;
+  try {
+    data = JSON.parse(raw) as CapabilitiesConfig;
+  } catch {
+    // The parser's message quotes the bytes around the error; only the cause leaves.
+    return { kind: 'unreadable', path: filePath, cause: 'parse_error' };
+  }
+  if (
+    !isPlainObject(data) ||
+    (data.version !== 1 && data.version !== 2) ||
+    !Array.isArray(data.capabilities) ||
+    // Every consumer below reads fields off each entry; a null or scalar entry
+    // is a shape we do not understand, not an exception (review R2 P1-3).
+    !data.capabilities.every(isPlainObject)
+  ) {
+    return { kind: 'unreadable', path: filePath, cause: 'unsupported_shape' };
+  }
+  let config: CapabilitiesConfig;
+  if (data.version === 1) {
+    try {
+      config = await migrateCapabilitiesV1ToV2(projectRoot, data, await resolveCatCafeSkillsSource());
+    } catch {
+      return { kind: 'unreadable', path: filePath, cause: 'unsupported_shape' };
+    }
+  } else {
+    config = data;
+  }
+  // F228/F249: Fill globalEnabled for entries that lack it (field migration).
+  // Client-side app — we migrate once at read time, no runtime compat needed.
+  for (const cap of config.capabilities) {
+    if (cap.globalEnabled === undefined && cap.enabled !== undefined) {
+      cap.globalEnabled = cap.enabled;
+    }
+  }
+  return { kind: 'present', path: filePath, sha256, config };
 }
 
 /**
@@ -1648,7 +1653,9 @@ export function resolveServersForCat(
 
     const transportSupported =
       mcpServer.transport === 'streamableHttp'
-        ? provider !== undefined && STREAMABLE_HTTP_PROVIDERS.has(provider) && !!mcpServer.url?.trim()
+        ? provider !== undefined &&
+          (STREAMABLE_HTTP_PROVIDERS.has(provider) || entry?.config.agyProfile?.carrier === 'native') &&
+          !!mcpServer.url?.trim()
         : hasUsableTransport(mcpServer);
     const enabled = enabledFromConfig && transportSupported;
 
@@ -1772,41 +1779,14 @@ export async function resolveMachineSpecificServers(
   }
 }
 
-/**
- * Generate persistent CLI config files from capabilities.json.
- *
- * Only writes configs for providers in PROVIDER_WRITERS (Gemini, Antigravity).
- * Claude, Codex, Kimi, OpenCode all use invoke-time injection and are skipped.
- */
-export async function generateCliConfigs(
+/** Reconcile machine-local resolver state; every active carrier renders MCP at invocation time. */
+export async function reconcileMcpRuntimeConfig(
   config: CapabilitiesConfig,
-  paths: CliConfigPaths,
+  _legacyPaths: CliConfigPaths,
   projectRoot: string,
 ): Promise<void> {
   const perProvider = collectServersPerProvider(config);
   await resolveMachineSpecificServers(perProvider, { projectRoot });
-  const configPaths = Object.values(paths).filter(
-    (path): path is string => typeof path === 'string' && path.length > 0,
-  );
-  const snapshots = await Promise.all(
-    configPaths.map(async (path) => ({ path, snapshot: await snapshotCliConfigPath(path) })),
-  );
-
-  const writes: Promise<void>[] = [];
-  for (const [provider, servers] of Object.entries(perProvider)) {
-    const writer = PROVIDER_WRITERS[provider as keyof typeof PROVIDER_WRITERS];
-    const path = paths[provider as keyof CliConfigPaths];
-    if (writer && path) {
-      writes.push(writer(path, servers));
-    }
-  }
-
-  const results = await Promise.allSettled(writes);
-  const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
-  if (failure) {
-    await Promise.all(snapshots.map(({ path, snapshot }) => restoreCliConfigPath(path, snapshot).catch(() => {})));
-    throw failure.reason;
-  }
 
   // Best-effort: clean resolver-managed per-project overrides from ~/.claude.json (F145 Phase D).
   // Per-project mcpServers shadow .mcp.json (higher priority), causing silent MCP failures
@@ -1828,7 +1808,7 @@ export async function generateCliConfigs(
 /**
  * Full orchestration flow:
  * 1. Read or bootstrap capabilities.json
- * 2. Generate CLI configs
+ * 2. Reconcile machine-local resolver state
  */
 export async function orchestrate(
   projectRoot: string,
@@ -1847,7 +1827,7 @@ export async function orchestrate(
       await writeCapabilitiesConfig(projectRoot, config);
     }
   }
-  await generateCliConfigs(config, cliConfigPaths, projectRoot);
+  await reconcileMcpRuntimeConfig(config, cliConfigPaths, projectRoot);
 
   return config;
 }

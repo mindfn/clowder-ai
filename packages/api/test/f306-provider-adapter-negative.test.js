@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-const [{ isProviderSemanticEvent }, { transformClaudeEvent }, { transformGeminiEvent }, acp] = await Promise.all([
+const [{ isProviderSemanticEvent }, { transformClaudeEvent }, { parseAgyStreamJsonLine }, acp] = await Promise.all([
   import('@cat-cafe/shared'),
   import('../dist/domains/cats/services/agents/providers/claude-ndjson-parser.js'),
-  import('../dist/domains/cats/services/agents/providers/gemini-event-parser.js'),
+  import('../dist/domains/cats/services/agents/providers/agy-stream-json-parser.js'),
   import('../dist/domains/cats/services/agents/providers/acp/acp-event-transformer.js'),
 ]);
 
@@ -20,7 +20,7 @@ test('three non-Codex adapters stop provider wire types before the semantic-even
     },
   };
   const geminiWire = {
-    type: 'review_start',
+    event: 'review_start',
     review_mode: 'base_branch',
     target: 'origin/main',
   };
@@ -35,11 +35,14 @@ test('three non-Codex adapters stop provider wire types before the semantic-even
       lastTurnInputTokens: undefined,
       thinkingBuffer: '',
     }),
-    transformGeminiEvent(geminiWire, catId),
+    parseAgyStreamJsonLine(JSON.stringify(geminiWire)),
     acp.transformAcpEvent(acpWire, catId, metadata, acp.createAcpSessionState()),
   ];
 
-  assert.deepEqual(adapted, [null, null, null]);
+  assert.equal(adapted[0], null);
+  assert.equal(adapted[1].kind, 'unknown');
+  assert.equal(isProviderSemanticEvent(adapted[1]), false);
+  assert.equal(adapted[2], null);
   for (const wire of [claudeWire, geminiWire, acpWire]) {
     assert.equal(isProviderSemanticEvent(wire), false);
   }

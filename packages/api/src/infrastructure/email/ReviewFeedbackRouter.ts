@@ -1,4 +1,4 @@
-import type { GitHubReviewThreadBaseline } from '@cat-cafe/shared';
+import type { GitHubReviewThreadBaseline, GitHubReviewVerdicts } from '@cat-cafe/shared';
 import type { FastifyBaseLogger } from 'fastify';
 import type {
   GitHubWaitLifecycleResult,
@@ -48,6 +48,8 @@ export interface ReviewFeedbackSignal {
   readonly inlineCommentCursor: number;
   readonly conversationCommentCursor: number;
   readonly decisionCursor: number;
+  /** #1392: every verdict on the PR as of this poll; how an in-place dismissal is seen. */
+  readonly reviewVerdicts?: GitHubReviewVerdicts;
   readonly reviewThreads?: readonly GitHubReviewThreadBaseline[];
   readonly resultTriggerCommentId?: number;
   readonly resultSourceRef?: string;
@@ -101,8 +103,12 @@ export class ReviewFeedbackRouter {
     const latestDecision = [...signal.newDecisions].sort((left, right) => left.id - right.id).at(-1);
     const resultDecision = signal.resultDecision ?? latestDecision?.state;
     const resultReviewer = signal.resultReviewer ?? latestDecision?.author;
+    // RFC §5.1: urgency is part of the envelope this observation produces, decided from the facts
+    // the router already holds — not re-derived by a second wake call further down the chain.
+    const changesRequested = signal.newDecisions.some((decision) => decision.state === 'CHANGES_REQUESTED');
     const result = await this.opts.waitLifecycle.observe({
       taskId: tracking.taskId,
+      deliveryPriority: changesRequested ? 'urgent' : 'normal',
       facts: {
         headSha: signal.headSha,
         review: {
@@ -111,6 +117,7 @@ export class ReviewFeedbackRouter {
           ...(latestDecision ? { headDecisionCursor: latestDecision.id } : {}),
           ...(resultDecision ? { decision: resultDecision } : {}),
           ...(resultReviewer ? { reviewer: resultReviewer } : {}),
+          ...(signal.reviewVerdicts ? { verdicts: signal.reviewVerdicts } : {}),
           ...(signal.reviewThreads ? { threads: signal.reviewThreads } : {}),
           ...(signal.resultTriggerCommentId ? { resultTriggerCommentId: signal.resultTriggerCommentId } : {}),
           ...(signal.resultSourceRef ? { resultSourceRef: signal.resultSourceRef } : {}),

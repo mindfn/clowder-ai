@@ -69,6 +69,8 @@ function computeSignature(cwd: string, scriptPath: string): string | null {
   ) {
     return null;
   }
+  if (!addStatFingerprint(resolve(repoRoot, 'docs/team/cat-dossier.md'), 'docs/team/cat-dossier.md', entries))
+    return null;
   for (const relPath of GOVERNANCE_RULES_RELPATHS) {
     if (!addStatFingerprint(resolve(repoRoot, relPath), relPath, entries)) return null;
   }

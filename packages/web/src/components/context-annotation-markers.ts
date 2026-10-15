@@ -7,6 +7,8 @@ export interface ContextAnnotationMarker {
 }
 
 function annotationSourceRoot(root: HTMLElement, attachment: QuoteContextAttachment): HTMLElement | null {
+  // Uploaded file offsets name its own leaf, not the enclosing message's text.
+  if (attachment.source.kind === 'message' && attachment.source.artifactFile) return null;
   if (attachment.source.kind === 'cli_output') {
     const { segmentId } = attachment.source;
     if (!segmentId) return null;

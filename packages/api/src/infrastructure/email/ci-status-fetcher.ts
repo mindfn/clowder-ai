@@ -2,9 +2,7 @@
  * #320: Standalone CI status fetcher (pure gh CLI calls — no store dependency).
  * Single source of truth for CI bucket/state interpretation, consumed by CiCdCheckTaskSpec.
  */
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { buildGhCliEnv, withHiddenGhCliWindow } from '../github/gh-cli-env.js';
+import { executeGitHubRequest, GitHubRateLimitError } from '../github/request-budget.js';
 import type { CiBucket, CiCheckDetail, CiPollResult } from './ci-cd-contract.js';
 import { enrichGitHubExecutionFailures } from './ci-execution-failure.js';
 
@@ -13,13 +11,13 @@ export {
   type GitHubExecutionFailureEvidence,
 } from './ci-execution-failure.js';
 
-const execFileAsync = promisify(execFile);
-const GH_TIMEOUT_MS = 15_000;
-
 export type GhExecFileAsync = (file: string, args: readonly string[], options: unknown) => Promise<{ stdout: string }>;
 
 export interface FetchPrCiStatusOptions {
   readonly ghToken?: string;
+  readonly timeoutMs?: number;
+  /** Keep tick admission bounded; enrich failures during per-PR execution. */
+  readonly deferFailureDetails?: boolean;
   /** Scheduler cancellation for every gh process in this poll generation. */
   readonly signal?: AbortSignal;
   /** Test seam at the real gh JSON boundary; production always uses node:child_process. */
@@ -32,17 +30,7 @@ type MinimalLog = {
 };
 
 export async function executeGh(args: readonly string[], options: FetchPrCiStatusOptions): Promise<{ stdout: string }> {
-  options.signal?.throwIfAborted();
-  const execute = options.execFileAsync ?? (execFileAsync as unknown as GhExecFileAsync);
-  return execute(
-    'gh',
-    args,
-    withHiddenGhCliWindow({
-      timeout: GH_TIMEOUT_MS,
-      env: buildGhCliEnv({ token: options.ghToken }),
-      signal: options.signal,
-    }),
-  );
+  return executeGitHubRequest([...args], options);
 }
 
 export async function fetchPrCiStatus(
@@ -51,6 +39,7 @@ export async function fetchPrCiStatus(
   log: MinimalLog,
   options: FetchPrCiStatusOptions = {},
 ): Promise<CiPollResult | null> {
+  const observedAt = Date.now();
   let prViewJson: string;
   try {
     const { stdout } = await executeGh(
@@ -68,6 +57,7 @@ export async function fetchPrCiStatus(
     prViewJson = stdout;
   } catch (err) {
     options.signal?.throwIfAborted();
+    if (err instanceof GitHubRateLimitError) throw err;
     log.warn(`[ci-status] gh pr view failed for ${repoFullName}#${prNumber}: ${String(err)}`);
     return null;
   }
@@ -85,6 +75,15 @@ export async function fetchPrCiStatus(
     log.warn(`[ci-status] Failed to parse gh pr view output for ${repoFullName}#${prNumber}`);
     return null;
   }
+  if (
+    !prView ||
+    typeof prView.headRefOid !== 'string' ||
+    !prView.headRefOid ||
+    !['OPEN', 'CLOSED', 'MERGED'].includes(prView.state)
+  ) {
+    log.warn(`[ci-status] Missing PR/HEAD facts for ${repoFullName}#${prNumber}`);
+    return null;
+  }
 
   const prState = normalizePrState(prView.state, prView.mergedAt);
   if (prState === 'merged' || prState === 'closed') {
@@ -95,6 +94,7 @@ export async function fetchPrCiStatus(
       prState,
       aggregateBucket: 'pending',
       checks: [],
+      observedAt,
       mergedByLogin: prView.mergedBy?.login,
     };
   }
@@ -103,7 +103,7 @@ export async function fetchPrCiStatus(
   const aggregateBucket = computeAggregateBucket(rollup);
 
   let checks: CiCheckDetail[] = [];
-  if (aggregateBucket !== 'pending') {
+  if (aggregateBucket !== 'pending' && !options.deferFailureDetails) {
     checks = await fetchCheckDetails(repoFullName, prNumber, prView.headRefOid, log, options);
   }
 
@@ -115,7 +115,26 @@ export async function fetchPrCiStatus(
     aggregateBucket,
     checkRollup: rollup.length === 0 ? 'empty' : 'present',
     checks,
+    observedAt,
+    ...(aggregateBucket === 'fail' && options.deferFailureDetails ? { failureDetailsPending: true } : {}),
   };
+}
+
+export async function enrichPrCiFailure(
+  poll: CiPollResult,
+  log: MinimalLog,
+  options: FetchPrCiStatusOptions,
+): Promise<CiPollResult> {
+  // Failure details were deferred: GitHub may have received another push or a
+  // same-HEAD rerun meanwhile. Re-read CI truth before consuming those details.
+  const complete = await fetchPrCiStatus(poll.repoFullName, poll.prNumber, log, {
+    ...options,
+    deferFailureDetails: false,
+  });
+  if (!complete) throw new Error(`CI rollup unavailable for ${poll.repoFullName}#${poll.prNumber}; retry next poll`);
+  if (!poll.fullRollupPending && complete.prState === 'open' && complete.headSha !== poll.headSha)
+    throw new Error(`Stale CI snapshot for ${poll.repoFullName}#${poll.prNumber}; retry current HEAD`);
+  return complete;
 }
 
 async function fetchCheckDetails(
@@ -131,12 +150,14 @@ async function fetchCheckDetails(
       checks = await fetchGhCheckDetails(repoFullName, prNumber, false, options);
     } catch (err) {
       options.signal?.throwIfAborted();
+      if (err instanceof GitHubRateLimitError) throw err;
       log.warn(`[ci-status] gh pr checks failed for ${repoFullName}#${prNumber}: ${String(err)}`);
       return [];
     }
   }
 
   return enrichGitHubExecutionFailures({
+    signal: options.signal,
     repoFullName,
     headSha,
     checks,
@@ -187,8 +208,9 @@ export async function fetchRequiredFailingChecks(
   try {
     const checks = await fetchGhCheckDetails(repoFullName, prNumber, true, options);
     return checks.some((check) => check.bucket === 'fail') ? checks : null;
-  } catch {
+  } catch (error) {
     options.signal?.throwIfAborted();
+    if (error instanceof GitHubRateLimitError) throw error;
     return null;
   }
 }
@@ -214,9 +236,9 @@ export function normalizeBucket(bucket: string): CiBucket {
 export function computeAggregateBucket(
   rollup: Array<{ status: string; conclusion: string; __typename: string }>,
 ): CiBucket {
-  // A single empty rollup is ambiguous: GitHub may not have created the check
-  // runs yet for a fresh HEAD. CiCdRouter owns the persisted same-HEAD stability
-  // guard that eventually promotes a genuinely empty rollup to pass.
+  // An empty rollup is ambiguous: GitHub may not have created the check runs yet
+  // for a fresh HEAD, or the repository may define no checks. Neither is positive
+  // CI evidence, so the router keeps this pending across later polls too.
   if (rollup.length === 0) return 'pending';
   let hasFailure = false;
   let hasPending = false;

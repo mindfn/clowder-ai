@@ -190,7 +190,6 @@ export function F290AssetCollaboration({
     <main
       className="min-h-screen bg-cafe-surface-canvas p-3 text-cafe sm:p-5 lg:p-7 lg:pr-56"
       data-testid="asset-stage"
-      data-concierge-safe-edge="right"
     >
       <section className="mx-auto flex min-h-[calc(100vh-3.5rem)] max-w-[1440px] flex-col overflow-hidden rounded-2xl border border-cafe bg-cafe-surface shadow-[var(--console-shadow-soft)]">
         {surface}

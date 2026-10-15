@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 const FULL_GIT_REVISION = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const FEATURE_SOURCE_REF = /^docs\/features\/F\d{3,}[-A-Za-z0-9._/]*\.md$/;
-const MESSAGE_SOURCE_REF = /^(thread_[A-Za-z0-9]+)#([A-Za-z0-9_-]+)$/;
+const MESSAGE_SOURCE_REF = /^(thread_[A-Za-z0-9_-]+)#([A-Za-z0-9_-]+)$/;
 const REVIEW_SUBJECT_REF = /^[a-z][a-z0-9_-]*:[^\s]{1,220}$/;
 
 export const localReviewVerdictSchema = z.enum(['approved', 'changes_requested', 'commented']);

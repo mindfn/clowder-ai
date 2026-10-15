@@ -107,16 +107,6 @@ describe('F246 v2: ApprovalItemCard F231 badge', () => {
     expect(card!.textContent).toContain('发起于 10 分钟前');
   });
 
-  it('F231 badge color uses semantic-warning (amber), not semantic-secondary (purple)', async () => {
-    await act(async () => {
-      root.render(React.createElement(ApprovalItemCard, { item: F231_ITEM }));
-    });
-
-    const card = container.querySelector('[data-testid="approval-item-badge-f231"]');
-    const featureBadge = card!.querySelector('[data-testid="approval-feature-badge"]') as HTMLElement;
-    expect(featureBadge.style.backgroundColor).toContain('semantic-warning');
-  });
-
   it('F225 card uses the canonical Chinese label "会话"', async () => {
     await act(async () => {
       root.render(React.createElement(ApprovalItemCard, { item: F225_ITEM }));

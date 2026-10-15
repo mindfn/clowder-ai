@@ -3,14 +3,17 @@ import {
   createCatId,
   type DispatchProposal,
   type EntityProposal,
+  type EventMemoryCorrectionProposal,
   type TasteProposal,
 } from '@cat-cafe/shared';
 import type { ApprovalIngress } from '../domains/approval-hub/ApprovalIngress.js';
 import type { IDispatchProposalStore } from '../domains/approval-hub/stores/ports/IDispatchProposalStore.js';
 import type { IEntityProposalStore } from '../domains/approval-hub/stores/ports/IEntityProposalStore.js';
+import type { EventMemoryCorrectionProposalStore } from '../domains/memory/event/EventMemoryCorrectionProposalStore.js';
 import type { ITasteProposalStore } from '../domains/taste/stores/ports/TasteProposalStore.js';
 import { buildDispatchProposalCardBlock } from './dispatch-proposal-card-block.js';
 import { buildEntityProposalCardBlock } from './entity-proposal-card-block.js';
+import { buildEventMemoryCorrectionCardBlock } from './event-memory-correction-card-block.js';
 import { buildTasteProposalCardBlock } from './taste-proposal-card-block.js';
 
 export function publishDispatchProposal(
@@ -71,8 +74,30 @@ export function publishTasteProposal(
       requesterCatId: createCatId(proposal.catId),
       originRef,
       cardThreadId: proposal.threadId,
-      cardContent: `提议捕捉品味信号：${proposal.scene.slice(0, 60)}${proposal.scene.length > 60 ? '…' : ''}`,
+      cardContent: `${proposal.correctionTarget ? '提议更正品味记忆' : '提议捕捉品味信号'}：${proposal.scene.slice(0, 60)}${proposal.scene.length > 60 ? '…' : ''}`,
       cardBlock: buildTasteProposalCardBlock(proposal),
+      createdAt: proposal.createdAt,
+    },
+    store,
+  );
+}
+
+export function publishEventMemoryCorrectionProposal(
+  ingress: ApprovalIngress,
+  store: EventMemoryCorrectionProposalStore,
+  proposal: EventMemoryCorrectionProposal,
+  originRef: ApprovalOriginRef,
+) {
+  return ingress.publish(
+    {
+      producerId: 'F321',
+      canonicalProposalId: proposal.proposalId,
+      ownerUserId: proposal.ownerUserId,
+      requesterCatId: createCatId(proposal.sourceCatId),
+      originRef,
+      cardThreadId: proposal.sourceThreadId,
+      cardContent: `提议更正事件记忆：${proposal.eventId}`,
+      cardBlock: buildEventMemoryCorrectionCardBlock(proposal),
       createdAt: proposal.createdAt,
     },
     store,

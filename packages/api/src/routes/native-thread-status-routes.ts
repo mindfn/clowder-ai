@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { CatId, SessionRecord } from '@cat-cafe/shared';
 import type { FastifyInstance, FastifyPluginOptions, FastifyReply, FastifyRequest } from 'fastify';
 import type { AgentRegistry } from '../domains/cats/services/agents/registry/AgentRegistry.js';
+import { isHomeSession } from '../domains/cats/services/session/session-scope.js';
 import type { ISessionChainStore } from '../domains/cats/services/stores/ports/SessionChainStore.js';
 import type { IThreadStore, Thread } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type { ProviderNativeStatus } from '../domains/cats/services/types.js';
@@ -47,6 +48,7 @@ export async function nativeThreadStatusRoutes(
     const sessions = await options.sessionChainStore.getChainByThread(access.thread.id);
     const candidates = sessions.filter(
       (session) =>
+        isHomeSession(session) &&
         session.status === 'active' &&
         session.userId === access.userId &&
         !!session.cliSessionId &&

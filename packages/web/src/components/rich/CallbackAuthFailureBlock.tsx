@@ -17,6 +17,7 @@ import { useCallback, useState } from 'react';
 import { useCatTechnicalLabelResolver } from '@/hooks/useCatNameResolver';
 import type { RichCardBlock } from '@/stores/chat-types';
 import { apiFetch } from '@/utils/api-client';
+import { useSettingsReadingEntry } from '../shell/useSettingsSourceReturn';
 
 const REASON_LABEL: Record<string, string> = {
   expired: 'expired · token 已过期',
@@ -55,10 +56,12 @@ export function CallbackAuthFailureBlock({ block }: { block: RichCardBlock }) {
   const [hidePending, setHidePending] = useState(false);
 
   const router = useRouter();
+  const captureSettingsOrigin = useSettingsReadingEntry();
 
   const handleOpenDetails = useCallback(() => {
+    captureSettingsOrigin();
     router.push('/settings?s=ops&ops=observability&obs=callback-auth');
-  }, [router]);
+  }, [router, captureSettingsOrigin]);
 
   const handleHide = useCallback(async () => {
     if (!meta) return;

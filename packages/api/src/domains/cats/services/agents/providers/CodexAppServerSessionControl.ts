@@ -6,6 +6,7 @@ import {
   mapCodexAppServerCompactionObservation,
   respondToCodexAppServerRequest,
 } from './CodexAppServerEventMapper.js';
+import { validateCodexAccountConfiguration } from './codex-app-server-account-configuration.js';
 import { CodexAppServerRpcError } from './codex-app-server-rpc-error.js';
 
 interface PendingRequest {
@@ -84,6 +85,7 @@ export async function requestCodexAppServerCompaction(input: {
       capabilities: {},
     });
     await write({ method: 'initialized' });
+    await validateCodexAccountConfiguration(input.wire, requestBeforeDeadline);
     const resumeResult = await requestBeforeDeadline('thread/resume', { threadId: input.threadId });
     assertRejoinedThread(resumeResult, input.threadId);
     await requestBeforeDeadline('thread/compact/start', { threadId: input.threadId });

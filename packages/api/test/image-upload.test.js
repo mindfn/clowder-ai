@@ -7,18 +7,19 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, it } from 'node:test';
+import './helpers/setup-cat-registry.js';
 import Fastify from 'fastify';
 import { ensureFakeCliOnPath } from './helpers/fake-cli-path.js';
 import { fakeL0Compiler } from './helpers/fake-l0-compiler.js';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 ensureFakeCliOnPath('claude');
 ensureFakeCliOnPath('codex');
-ensureFakeCliOnPath('gemini');
 
 describe('saveUploadedImages', () => {
   let uploadDir;
@@ -28,7 +29,7 @@ describe('saveUploadedImages', () => {
   });
 
   afterEach(async () => {
-    if (uploadDir) await rm(uploadDir, { recursive: true, force: true });
+    if (uploadDir) console.log('retained own upload fixture:', uploadDir);
   });
 
   it('saves a valid PNG file and returns metadata', async () => {
@@ -223,38 +224,6 @@ describe('Codex CLI image text fallback', () => {
   });
 });
 
-describe('Gemini CLI image fallback', () => {
-  it('does not use -i interactive flag, includes image dir, and appends local path hints', async () => {
-    const spawnArgs = [];
-    const mockSpawnFn = (cmd, args, opts) => {
-      spawnArgs.push({ cmd, args: [...args], opts });
-      return createMockProcess([]);
-    };
-
-    const { GeminiAgentService } = await import('../dist/domains/cats/services/agents/providers/GeminiAgentService.js');
-    const service = new GeminiAgentService({
-      adapter: 'gemini-cli',
-      spawnFn: mockSpawnFn,
-    });
-
-    for await (const _ of service.invoke('describe this', {
-      contentBlocks: [{ type: 'image', url: '/uploads/cat-photo.jpg' }],
-    })) {
-      // consume
-    }
-
-    assert.equal(spawnArgs.length, 1);
-    const args = spawnArgs[0].args;
-    const imgIdx = args.indexOf('-i');
-    assert.equal(imgIdx, -1, 'should not pass -i (interactive prompt) for images');
-    const includeDirIdx = args.indexOf('--include-directories');
-    assert.ok(includeDirIdx >= 0, 'should include image directory for tool access');
-    const prompt = args.find((a) => typeof a === 'string' && a.includes('[Local image path:'));
-    assert.ok(prompt, 'prompt should include local image path hint');
-    assert.ok(prompt.includes('cat-photo.jpg'));
-  });
-});
-
 describe('contentBlocks in GET /api/messages', () => {
   let app;
   let messageStore;
@@ -283,17 +252,19 @@ describe('contentBlocks in GET /api/messages', () => {
   });
 
   it('returns contentBlocks when present', async () => {
-    messageStore.append({
-      userId: 'default-user',
-      catId: null,
-      content: 'check this image',
-      contentBlocks: [
-        { type: 'text', text: 'check this image' },
-        { type: 'image', url: '/uploads/test.png' },
-      ],
-      mentions: ['opus'],
-      timestamp: 1000,
-    });
+    messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'default-user',
+        catId: null,
+        content: 'check this image',
+        contentBlocks: [
+          { type: 'text', text: 'check this image' },
+          { type: 'image', url: '/uploads/test.png' },
+        ],
+        mentions: ['opus'],
+        timestamp: 1000,
+      }),
+    );
 
     const res = await app.inject({ method: 'GET', url: '/api/messages' });
     const body = JSON.parse(res.body);
@@ -305,13 +276,15 @@ describe('contentBlocks in GET /api/messages', () => {
   });
 
   it('omits contentBlocks when not present', async () => {
-    messageStore.append({
-      userId: 'default-user',
-      catId: null,
-      content: 'text only',
-      mentions: [],
-      timestamp: 1000,
-    });
+    messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'default-user',
+        catId: null,
+        content: 'text only',
+        mentions: [],
+        timestamp: 1000,
+      }),
+    );
 
     const res = await app.inject({ method: 'GET', url: '/api/messages' });
     const body = JSON.parse(res.body);
@@ -323,14 +296,15 @@ describe('contentBlocks in GET /api/messages', () => {
 describe('multipart image target routing', () => {
   let app;
   let uploadDir;
-  const routeExecutionCalls = [];
+  let messageStore;
+  let invocationQueue;
   const broadcastedAgentMessages = [];
 
   beforeEach(async () => {
     uploadDir = await mkdtemp(join(tmpdir(), 'cat-cafe-image-target-'));
-    routeExecutionCalls.length = 0;
     broadcastedAgentMessages.length = 0;
 
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const { InvocationRegistry } = await import(
       '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js'
@@ -340,7 +314,8 @@ describe('multipart image target routing', () => {
     );
     const { messagesRoutes } = await import('../dist/routes/messages.js');
 
-    const messageStore = new MessageStore();
+    messageStore = new MessageStore();
+    invocationQueue = new InvocationQueue();
     const mockRouter = {
       async resolveTargetsAndIntent() {
         return {
@@ -348,15 +323,6 @@ describe('multipart image target routing', () => {
           intent: { intent: 'execute', explicit: false, promptTags: [] },
         };
       },
-      async *routeExecution(_userId, _content, _threadId, _userMessageId, targetCats, _intent, routeOptions) {
-        routeExecutionCalls.push({
-          targetCats: [...targetCats],
-          contentBlocks: routeOptions?.contentBlocks,
-          uploadDir: routeOptions?.uploadDir,
-        });
-        yield { type: 'done', catId: targetCats[0], timestamp: Date.now(), isFinal: true };
-      },
-      async ackCollectedCursors() {},
     };
 
     app = Fastify();
@@ -372,6 +338,8 @@ describe('multipart image target routing', () => {
       },
       router: mockRouter,
       invocationRecordStore: new InvocationRecordStore(),
+      invocationQueue,
+      queueProcessor: { async requestDrain() {} },
       uploadDir,
     });
     await app.ready();
@@ -379,10 +347,10 @@ describe('multipart image target routing', () => {
 
   afterEach(async () => {
     if (app) await app.close();
-    if (uploadDir) await rm(uploadDir, { recursive: true, force: true });
+    if (uploadDir) console.log('retained own upload fixture:', uploadDir);
   });
 
-  it('routes multipart image messages to the mentioned cat (not forced to codex)', async () => {
+  const sendImageMessage = () => {
     const boundary = '----cat-cafe-test-boundary';
     const payload = Buffer.concat([
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="content"\r\n\r\n请看图\r\n`),
@@ -391,8 +359,7 @@ describe('multipart image target routing', () => {
       ),
       Buffer.from(`--${boundary}--\r\n`),
     ]);
-
-    const res = await app.inject({
+    return app.inject({
       method: 'POST',
       url: '/api/messages',
       headers: {
@@ -401,21 +368,39 @@ describe('multipart image target routing', () => {
       },
       payload,
     });
+  };
 
-    assert.equal(res.statusCode, 200);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.equal(routeExecutionCalls.length, 1);
-    // P1 regression guard: targetCats must match router resolution, not be overridden to codex
-    assert.deepEqual(
-      routeExecutionCalls[0].targetCats,
-      ['opus'],
-      'image message should route to the resolved target cat, not forced to codex',
-    );
-    assert.equal(routeExecutionCalls[0].uploadDir, uploadDir);
-    assert.ok(Array.isArray(routeExecutionCalls[0].contentBlocks), 'routeExecution should receive contentBlocks');
+  it('returns the stored upload URLs and time so the sender can replace its local preview', async () => {
+    const res = await sendImageMessage();
+
+    assert.equal(res.statusCode, 202);
+    const body = res.json();
+    const stored = messageStore.getById(body.userMessageId);
+    assert.ok(stored, 'the user message is stored');
+    assert.deepEqual(body.userMessage, {
+      id: stored.id,
+      timestamp: stored.timestamp,
+      contentBlocks: stored.contentBlocks,
+    });
     assert.ok(
-      routeExecutionCalls[0].contentBlocks.some((b) => b.type === 'image'),
-      'routeExecution should receive image content block',
+      body.userMessage.contentBlocks.some(
+        (block) => block.type === 'image' && /^\/uploads\/[^/]+\.png$/.test(block.url),
+      ),
+      'the receipt carries the stored upload URL, not a client-local one',
+    );
+  });
+
+  it('routes multipart image messages to the mentioned cat (not forced to codex)', async () => {
+    const res = await sendImageMessage();
+
+    assert.equal(res.statusCode, 202);
+    const [entry] = invocationQueue.list('default', 'alice');
+    assert.deepEqual(entry.targets, ['opus'], 'image message should retain the resolved target at Queue ingress');
+    const stored = await messageStore.getById(JSON.parse(res.body).userMessageId);
+    assert.ok(Array.isArray(stored.contentBlocks), 'canonical source message should retain contentBlocks');
+    assert.ok(
+      stored.contentBlocks.some((block) => block.type === 'image'),
+      'canonical source message should retain the image content block for provider admission',
     );
     // No forced-to-codex notice should be broadcast
     const notice = broadcastedAgentMessages.find(

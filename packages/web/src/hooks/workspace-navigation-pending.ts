@@ -23,10 +23,12 @@ export interface WorkspaceNavigationReceipt {
 interface PendingWorkspaceNavigationState {
   version: 1;
   byThread: Record<string, NavigateEvent>;
+  /** Event-id fenced decisions; old v1 entries retain their automatic delivery behavior. */
+  requiresExplicitAction: Record<string, string>;
 }
 
 function emptyState(): PendingWorkspaceNavigationState {
-  return { version: 1, byThread: {} };
+  return { version: 1, byThread: {}, requiresExplicitAction: {} };
 }
 
 function isNavigateEvent(value: unknown): value is NavigateEvent {
@@ -52,7 +54,13 @@ function readState(storage: WorkspaceNavigationStorage): PendingWorkspaceNavigat
     const byThread = Object.fromEntries(
       Object.entries(parsed.byThread).filter((entry): entry is [string, NavigateEvent] => isNavigateEvent(entry[1])),
     );
-    return { version: 1, byThread };
+    const requiresExplicitAction = Object.fromEntries(
+      Object.entries(parsed.requiresExplicitAction ?? {}).filter(
+        ([threadId, eventId]) =>
+          typeof eventId === 'string' && byThread[threadId] && eventId === (byThread[threadId].eventId ?? ''),
+      ),
+    );
+    return { version: 1, byThread, requiresExplicitAction };
   } catch {
     return emptyState();
   }
@@ -71,10 +79,19 @@ function isBlockedByPresentationLock(data: NavigateEvent, presentationLocked: bo
   return presentationLocked && data.action !== 'knowledge-feed';
 }
 
-export function queuePendingWorkspaceNavigation(storage: WorkspaceNavigationStorage, data: NavigateEvent): boolean {
+export function queuePendingWorkspaceNavigation(
+  storage: WorkspaceNavigationStorage,
+  data: NavigateEvent,
+  options: { requiresExplicitAction?: boolean } = {},
+): boolean {
   if (!data.threadId) return false;
   const state = readState(storage);
   state.byThread[data.threadId] = data;
+  if (options.requiresExplicitAction && data.action !== 'knowledge-feed') {
+    state.requiresExplicitAction[data.threadId] = data.eventId ?? '';
+  } else {
+    delete state.requiresExplicitAction[data.threadId];
+  }
   return writeState(storage, state);
 }
 
@@ -89,12 +106,13 @@ export function clearPendingWorkspaceNavigation(
   storage: WorkspaceNavigationStorage,
   threadId: string,
   eventId: string | undefined,
-): void {
+): boolean {
   const state = readState(storage);
   const pending = state.byThread[threadId];
-  if (!pending || pending.eventId !== eventId) return;
+  if (!pending || pending.eventId !== eventId) return false;
   delete state.byThread[threadId];
-  writeState(storage, state);
+  delete state.requiresExplicitAction[threadId];
+  return writeState(storage, state);
 }
 
 export function deliverWorkspaceNavigateEvent(input: {
@@ -109,7 +127,11 @@ export function deliverWorkspaceNavigateEvent(input: {
   const { data } = input;
   const eventId = data.eventId ?? '';
   if (isBlockedByPresentationLock(data, input.presentationLocked)) {
-    return { status: 'blocked', eventId, reason: 'presentation_lock' };
+    return {
+      status: 'blocked',
+      eventId,
+      reason: input.persist(data) ? 'presentation_lock' : 'persistence_unavailable',
+    };
   }
 
   let queueReason: Extract<WorkspaceNavigationReceiptReason, 'thread_inactive' | 'non_chat_route' | 'narrow_viewport'>;
@@ -137,8 +159,11 @@ export function consumePendingWorkspaceNavigation(input: {
   apply: (data: NavigateEvent) => boolean;
 }): boolean {
   if (!input.canDisplay) return false;
-  const pending = getPendingWorkspaceNavigation(input.storage, input.threadId);
+  const state = readState(input.storage);
+  const pending = state.byThread[input.threadId];
+  // Unlock restores that conversation's own view. A previously blocked request still needs
+  // the user's explicit decision rather than becoming an automatic navigation on unlock/reload.
+  if (Object.hasOwn(state.requiresExplicitAction, input.threadId)) return false;
   if (!pending || isBlockedByPresentationLock(pending, input.presentationLocked) || !input.apply(pending)) return false;
-  clearPendingWorkspaceNavigation(input.storage, input.threadId, pending.eventId);
-  return true;
+  return clearPendingWorkspaceNavigation(input.storage, input.threadId, pending.eventId);
 }

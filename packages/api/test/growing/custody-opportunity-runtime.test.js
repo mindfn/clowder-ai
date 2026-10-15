@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import Database from 'better-sqlite3';
 import '../helpers/setup-cat-registry.js';
+import { adaptMessageStore } from '../helpers/message-from-fixtures.js';
 
 const { MessageStore, deriveGrowingSourceMessageRevision } = await import(
   '../../dist/domains/cats/services/stores/ports/MessageStore.js'
@@ -25,7 +26,7 @@ function fixture(t) {
   const db = new Database(':memory:');
   databases.push(db);
   const cohorts = new CustodyOpportunityCohortStore(db);
-  const messages = new MessageStore();
+  const messages = adaptMessageStore(new MessageStore());
   const tasks = new TaskStore();
   const deps = { cohorts, messages, tasks, policyVersion: 'frozen-policy-v1', now: () => now };
   const runtime = new CustodyOpportunityRuntime(deps);
@@ -83,7 +84,7 @@ function fixture(t) {
 }
 
 test('source-owned recognition time is recorded once and preserved by offer replay', async () => {
-  const messages = new MessageStore();
+  const messages = adaptMessageStore(new MessageStore());
   const source = messages.append({
     userId: 'owner',
     threadId: 'thread',
@@ -141,6 +142,33 @@ test('prospective registration excludes old sources and survives restart without
   assert.equal(read.measurement.episodes[0].policyDisposition, 'auto_admit');
   assert.equal(read.measurement.episodes[0].custody.taskRef.subjectRef, admitted.ownerRef);
   assert.equal(read.readiness, 'collecting');
+});
+
+test('recognition requests the bounded human-source reader and preserves the native episode result', async (t) => {
+  const f = fixture(t);
+  const human = f.addSource('Please prepare a presentation');
+  const admitted = await f.admit(human);
+  f.messages.append({
+    userId: 'owner',
+    threadId: 'thread',
+    catId: 'sonnet',
+    timestamp: f.now(),
+    content: 'Cat response',
+  });
+  const nativeRead = f.messages.listOwnerMessageWindowSlice.bind(f.messages);
+  const calls = [];
+  t.mock.method(f.messages, 'listOwnerMessageWindowSlice', (...args) => {
+    calls.push(args);
+    return nativeRead(...args);
+  });
+  const read = await f.runtime.read('owner');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][3], 5000);
+  assert.deepEqual(calls[0][4], { humanOnly: true });
+  assert.equal(read.measurement.episodes.length, 1);
+  assert.equal(read.measurement.episodes[0].source.subjectRef, `message:${human.id}`);
+  assert.equal(read.measurement.episodes[0].custody.taskRef.subjectRef, admitted.ownerRef);
+  assert.deepEqual(read.coverageGaps, []);
 });
 
 test('real owner offer, human decline and sampled silent windows share one denominator without invented TN', async (t) => {

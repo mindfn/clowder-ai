@@ -129,6 +129,32 @@ describe('useAgentMessages telemetry suppression', () => {
     expect(mockAddMessage).toHaveBeenCalledTimes(1);
   });
 
+  it('F319 Phase F: model_reroute warning adds no detached banner (the reply badge carries it)', () => {
+    act(() => {
+      root.render(React.createElement(Harness));
+    });
+
+    act(() => {
+      captured?.handleAgentMessage({
+        type: 'system_info',
+        catId: 'codex-sol',
+        threadId: 'thread-1',
+        semanticEvent: {
+          v: 1,
+          id: 'served-model:codex:codex-sol:resp_076e',
+          kind: 'warning',
+          occurredAt: 1700000000000,
+          category: 'model_reroute',
+          severity: 'warning',
+          message: '请求 gpt-5.6-sol，上游实际应答 gpt-6-sol（response resp_076e）。',
+          provenance: { provider: 'codex', nativeType: 'response.created' },
+        },
+      });
+    });
+
+    expect(mockAddMessage).not.toHaveBeenCalled();
+  });
+
   it.each([
     'stream',
     'callback',
@@ -186,6 +212,7 @@ describe('useAgentMessages telemetry suppression', () => {
     });
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 
   it('suppresses resume_failure_stats — no system bubble', () => {
@@ -202,6 +229,7 @@ describe('useAgentMessages telemetry suppression', () => {
     });
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 
   // F230 P2 turn_duration: PTY carrier emits turn_duration as system_info terminal event.
@@ -221,6 +249,7 @@ describe('useAgentMessages telemetry suppression', () => {
     });
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -259,6 +288,7 @@ describe('useAgentMessages telemetry suppression', () => {
     });
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 
   it('fails closed when a recognized internal projector throws', () => {
@@ -287,6 +317,7 @@ describe('useAgentMessages telemetry suppression', () => {
     }
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 
   it('keeps plain-text system notices visible', () => {

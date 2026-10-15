@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { fileURLToPath } from 'node:url';
 import { createEvalDomainWeeklySpec } from '../../dist/infrastructure/harness-eval/domain/eval-domain-daily.js';
 import { buildLifecycleRootArtifact } from '../../dist/infrastructure/harness-eval/publish-verdict/lifecycle-root-artifact.js';
 import { projectReevalCase } from '../../dist/infrastructure/harness-eval/reeval-case.js';
 import { planReevalClosureEvents } from '../../dist/infrastructure/harness-eval/reeval-closure-reconciler.js';
+import { createActiveEraHarnessFeedback } from './measurement-census-active-era.js';
 
-const harnessFeedbackRoot = fileURLToPath(new URL('../../../../docs/harness-feedback', import.meta.url));
 const indexSource = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf8');
 const availableVerdictRef = (value) => ({ kind: 'verdict', availability: 'available', value });
 
@@ -50,17 +49,20 @@ describe('eval:trajectory-inspector F192/F266 control-plane wiring', () => {
     );
     assert.match(indexSource, /wiredPublishDomains\.add\('eval:trajectory-inspector'\)/);
     assert.match(indexSource, /resolveCanonicalInvocationTrajectory/);
-    assert.match(indexSource, /session\.userId !== input\.userId/);
+    assert.match(providerWiring, /const owned = sessions\.filter\(\(session\) => session\.userId === input\.userId\)/);
     assert.match(providerWiring, /input\.invocationEventsBySession/);
-    assert.match(providerWiring, /transcriptReader\.readInvocationEvents/);
+    assert.match(providerWiring, /transcriptReader\.readInvocationEventsForSessions\(owned, invocationId, signal\)/);
     assert.match(providerWiring, /candidateLocator/);
     assert.match(providerWiring, /execution\.userId === ownerUserId/);
     assert.doesNotMatch(providerWiring, /readAllEvents/);
   });
 
-  it('fires weekly through the shared time dispatcher with window/dedupe grounding and publish instructions', async () => {
+  it('fires weekly through the shared time dispatcher with window/dedupe grounding and publish instructions', async (t) => {
+    // Wiring is exercised on the active-era registry; the real domain is dormant since 2026-10-01.
+    const activeEra = await createActiveEraHarnessFeedback();
+    t.after(() => rmSync(activeEra.repoRoot, { recursive: true, force: true }));
     const spec = createEvalDomainWeeklySpec({
-      harnessFeedbackRoot,
+      harnessFeedbackRoot: activeEra.harnessFeedbackRoot,
       defaultUserId: 'owner',
       wiredPublishDomains: new Set(['eval:trajectory-inspector']),
     });
@@ -88,8 +90,9 @@ describe('eval:trajectory-inspector F192/F266 control-plane wiring', () => {
     assert.match(delivered[0].content, /Window: weekly:/);
     assert.match(delivered[0].content, /Dedupe key: eval-domain-trigger:eval:trajectory-inspector:/);
     assert.match(delivered[0].content, /trajectory-inspector-window/);
-    assert.equal(triggered.length, 1);
-    assert.equal(triggered[0][1], 'codex-sol');
+    // Admission is the wake: the envelope names the eval cat and carries its exact input.
+    assert.equal(delivered[0].targetCatId, 'codex-sol');
+    assert.ok(delivered[0].privateContent, 'the eval cat receives its own payload, not thread text');
   });
 
   it('attaches a later trusted verdict to the same generic case and records the re-eval continuation', () => {

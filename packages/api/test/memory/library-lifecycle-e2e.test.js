@@ -19,6 +19,10 @@ describe('AC-I9: collection lifecycle E2E — register → catalog → archive �
     const catalog = new LibraryCatalog();
     const vaultBase = mkdtempSync(join(tmpdir(), 'e2e-vault-'));
     app = Fastify();
+    // Exercise lifecycle behavior as the configured owner; auth rejection has its own suite.
+    app.addHook('onRequest', async (request) => {
+      request.sessionUserId = 'owner-1';
+    });
     await app.register(libraryRoutes, {
       catalog,
       stores: new Map(),

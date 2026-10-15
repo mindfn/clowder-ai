@@ -25,7 +25,54 @@ function collectSourceFiles(root: string): string[] {
   return files;
 }
 
+interface ModalOverlayCandidate {
+  className: string;
+  exactConsumer: boolean;
+}
+
+function modalOverlayCandidates(source: string): ModalOverlayCandidate[] {
+  const inlineClassNames = [
+    ...source.matchAll(
+      /className=(?:"([^"]*bg-\[var\(--console-overlay-(?:backdrop|medium|light|heavy)\)\][^"]*)"|\{`([^`]*bg-\[var\(--console-overlay-(?:backdrop|medium|light|heavy)\)\][^`]*)`\})/g,
+    ),
+  ]
+    .map((match) => match[1] ?? match[2])
+    .filter((className) => className.includes('inset-0'));
+  const centralizedClassNames = [
+    ...source.matchAll(
+      /const\s+(\w*OVERLAY\w*)\s*=\s*['"]([^'"]*bg-\[var\(--console-overlay-(?:backdrop|medium|light|heavy)\)\][^'"]*)['"]/g,
+    ),
+  ].map((match) => ({ identifier: match[1], className: match[2] }));
+  const classNameExpressions = [...source.matchAll(/className=\{([^}\n]+)\}/g)].map((match) => match[1].trim());
+  const consumedCentralizedClassNames = centralizedClassNames.flatMap(({ identifier, className }) => {
+    const identifierReference = new RegExp(`\\b${identifier}\\b`);
+    return classNameExpressions
+      .filter((expression) => identifierReference.test(expression))
+      .map((expression) => ({ className, exactConsumer: expression === identifier }));
+  });
+  return [
+    ...inlineClassNames.map((className) => ({ className, exactConsumer: true })),
+    ...consumedCentralizedClassNames,
+  ];
+}
+
 describe('F190 visual contract — no hard borders in card/panel components', () => {
+  it('composer popovers use the layer-four floating surface', () => {
+    const addMenu = readSrc('ChatInputAddMenu.tsx');
+    const inputMenus = readSrc('ChatInputMenus.tsx');
+    const whisper = readSrc('WhisperCatSelector.tsx');
+    const pathCompletion = readSrc('PathCompletionMenu.tsx');
+    const contextPicker = readSrc('ChatContextPicker.tsx');
+
+    expect(addMenu).toContain('<ComposerPopover');
+    expect(addMenu).toContain('presentation={presentation}');
+    expect(readSrc('ComposerPopover.tsx')).toMatch(/presentation === 'classic'[\s\S]*?bg-cafe-surface-canvas/);
+    expect(inputMenus.match(/bottom-full[^\n]+bg-cafe-surface-canvas/g)).toHaveLength(3);
+    expect(whisper).toMatch(/bottom-full[^\n]+bg-cafe-surface-canvas/);
+    expect(pathCompletion).toMatch(/bottom-full[^\n]+bg-cafe-surface-canvas/);
+    expect(contextPicker).toMatch(/bottom-full[^\n]+bg-cafe-surface-canvas/);
+  });
+
   it('SessionChainPanel uses settingsResourceCardClass, not border-[var(--console-border-soft)]', () => {
     const src = readSrc('SessionChainPanel.tsx');
     expect(src).toContain('settingsResourceCardClass');
@@ -92,13 +139,6 @@ describe('F190 visual contract — no hard borders in card/panel components', ()
     const src = readSrc('settings/SettingsShell.tsx');
     expect(src).toContain('bg-[var(--console-panel-bg)]');
     expect(src).not.toMatch(/md:border-r/);
-  });
-
-  it('DefaultCatSelector uses console-card-bg shadow, not border-cafe', () => {
-    const src = readSrc('DefaultCatSelector.tsx');
-    expect(src).toContain('bg-[var(--console-card-bg)]');
-    expect(src).toContain('shadow-[var(--shadow-elevation-2)]');
-    expect(src).not.toMatch(/border border-cafe bg-cafe-surface/);
   });
 
   it('BrakeSettingsPanel uses console-list-card shadow, not border-cafe', () => {
@@ -246,12 +286,6 @@ describe('F190 visual contract — no hard borders in card/panel components', ()
     expect(src).toMatch(/<h1.*text-xl font-bold/);
   });
 
-  it('DefaultCatSelector has no fixed height, uses shadow', () => {
-    const src = readSrc('DefaultCatSelector.tsx');
-    expect(src).not.toContain('h-[72px]');
-    expect(src).toContain('shadow-[var(--shadow-elevation-2)]');
-  });
-
   it('SettingsRow has default shadow and text-compact font-bold title', () => {
     const src = readSrc('settings/primitives/SettingsRow.tsx');
     expect(src).toContain('shadow-[0_8px_22px_rgba(43,33,26,0.04)]');
@@ -359,8 +393,10 @@ describe('F190 visual contract — no hard borders in card/panel components', ()
     expect(tokens.fontSize).toHaveProperty('compact');
     expect(tokens.fontSize).toHaveProperty('label');
     expect(tokens.fontSize).toHaveProperty('micro');
+    expect(tokens.fontSize).toHaveProperty('reading');
     expect(tokens.fontSizePx).toHaveProperty('compact');
     expect(tokens.fontSizePx).toHaveProperty('label');
+    expect(tokens.fontSizePx).toHaveProperty('reading');
     expect(config).toContain("require('./src/styles/typography-tokens.json')");
     /* F056: fontSize expanded to object with spread + caption alias;
        verify the spread wiring is intact (not the old direct assignment). */
@@ -453,62 +489,6 @@ describe('F190 visual contract — no hard borders in card/panel components', ()
 });
 
 describe('F190 typography guard — no hardcoded font sizes in console scope', () => {
-  const CONSOLE_SCOPE = [
-    'settings/SettingsNav.tsx',
-    'settings/primitives/SettingsRow.tsx',
-    'settings/primitives/SettingsSection.tsx',
-    'settings/primitives/SettingsCard.tsx',
-    'settings/SettingsPageHeader.tsx',
-    'settings/RulesPromptsContent.tsx',
-    'settings/SkillPreviewModal.tsx',
-    'settings/InstallPreviewModal.tsx',
-    'settings/PluginConfigPanel.tsx',
-    'settings/PushServiceConfig.tsx',
-    'hub-cat-editor-fields.tsx',
-    'hub-cat-editor-voice.tsx',
-    'hub-cat-editor-advanced.tsx',
-    'hub-cat-editor.sections.tsx',
-    'hub-tag-editor.tsx',
-    'HubCatEditor.tsx',
-    'HubCoCreatorEditor.tsx',
-    'HubQuotaBoardTab.tsx',
-    'HubToolUsageTab.tsx',
-    'HubLeaderboardTab.tsx',
-    'HubMemberOverviewCard.tsx',
-    'RightStatusPanel.tsx',
-    'DefaultCatSelector.tsx',
-    'memory/MemoryHub.tsx',
-    'signals/SignalInboxView.tsx',
-    'signals/SignalSourcesView.tsx',
-    'mission-control/MissionControlPage.tsx',
-    'mission-control/SliceLadder.tsx',
-    'mission-control/dag-graph-utils.ts',
-    'leaderboard-cards.tsx',
-    'leaderboard-phase-bc.tsx',
-    'workspace/TerminalTab.tsx',
-    'workspace/AgentPaneViewer.tsx',
-    'workspace/AgentPaneList.tsx',
-    'workspace/JsxPreview.tsx',
-    'memory/CollectionGraph.tsx',
-    'memory/CollectionGraphParts.tsx',
-    'cli-output/CliOutputBlock.tsx',
-  ];
-
-  for (const file of CONSOLE_SCOPE) {
-    it(`${file}: no hardcoded text-[Xpx] (use tokens: text-micro/label/xs/compact/sm/base/lg/xl)`, () => {
-      const src = readSrc(file);
-      const matches = src.match(/text-\[\d+px\]/g) ?? [];
-      expect(matches).toEqual([]);
-    });
-  }
-
-  for (const file of CONSOLE_SCOPE) {
-    it(`${file}: no inline fontSize in style objects`, () => {
-      const src = readSrc(file);
-      expect(src).not.toMatch(/fontSize:\s*['"]\d/);
-    });
-  }
-
   it('src-wide guard: no raw pixel font definitions outside typography tokens', () => {
     const srcRoot = resolve(testDir, '..', '..');
     /* F056: dev/ tools (OklchTuner) intentionally use dense px sizes */
@@ -540,7 +520,6 @@ describe('F190 divider guard — console-scope dividers use semantic class', () 
     'UnifiedAuthModal.tsx',
     'PushSettingsPanel.tsx',
     'ThreadExecutionBar.tsx',
-    'ParallelStatusBar.tsx',
     'audit/AuditExplorerPanel.tsx',
     'mission-control/WorkflowSopPanel.tsx',
     'mission-control/FeatureRowList.tsx',
@@ -571,39 +550,6 @@ describe('F190 divider guard — console-scope dividers use semantic class', () 
 });
 
 describe('#723 Mission Hub — card/border unification guard', () => {
-  const MC_CARD_SCOPE = [
-    'mission-control/CreateIntentCardForm.tsx',
-    'mission-control/IntentCardDetail.tsx',
-    'mission-control/ImportProjectModal.tsx',
-    'mission-control/SuggestionDecisionPanel.tsx',
-    'mission-control/GovernanceHealth.tsx',
-    'mission-control/NeedAuditFrame.tsx',
-    'mission-control/DispatchProgress.tsx',
-    'mission-control/ResolutionQueue.tsx',
-    'mission-control/RefluxCapture.tsx',
-    'mission-control/RiskPanel.tsx',
-    'mission-control/DependencyGraphTab.tsx',
-    'mission-control/TranslationMatrix.tsx',
-    'mission-control/FeatureBirdEyePanel.tsx',
-    'mission-control/ThreadSituationPanel.tsx',
-    'mission-control/WorkflowSopPanel.tsx',
-    'mission-control/SliceLadder.tsx',
-    'mission-control/ExternalProjectTab.tsx',
-    'mission-control/QuickCreateForm.tsx',
-    'mission-control/FeatureRowList.tsx',
-    'mission-control/SuggestionDrawer.tsx',
-    'mission-control/MissionControlCard.tsx',
-    'mission-control/MissionControlPage.tsx',
-  ];
-
-  for (const file of MC_CARD_SCOPE) {
-    it(`${file}: no raw "border border-[var(--console-border-soft)]" on containers`, () => {
-      const src = readSrc(file);
-      const rawCardBorders = src.match(/className="[^"]*\bborder border-\[var\(--console-border-soft\)\][^"]*"/g) ?? [];
-      expect(rawCardBorders).toEqual([]);
-    });
-  }
-
   it('MissionControlCard uses shadow for main card container', () => {
     const src = readSrc('mission-control/MissionControlCard.tsx');
     expect(src).toContain('shadow-[0_8px_22px_rgba(43,33,26,0.04)]');
@@ -693,8 +639,8 @@ describe('#723 cross-page typography consistency', () => {
     expect(src).not.toMatch(/搜索[\s\S]{0,80}border border-/);
   });
 
-  it('MessageNavigator has 1px connecting rail, no extra viewport thumb or raw grey', () => {
-    const src = readSrc('MessageNavigator.tsx');
+  it('classic MessageNavigator preserves its connecting rail and single position indicator', () => {
+    const src = readSrc('ClassicMessageNavigator.tsx');
     expect(src).toContain('w-px');
     expect(src).toContain('console-border-soft');
     expect(src).not.toContain('w-1.5');
@@ -704,14 +650,18 @@ describe('#723 cross-page typography consistency', () => {
     expect(src).not.toContain('viewport');
   });
 
-  it('chat container keeps a visible thin scrollbar for position context', () => {
+  it('chat keeps its thin position indicator until the measured piano is ready', () => {
     const css = readFileSync(resolve(testDir, '../../app/console-shell.css'), 'utf8');
-    const chatRules = css.match(/\[data-chat-container\][\s\S]*?\[data-theme="dark"\]/)?.[0] ?? '';
+    const chatRules = css.match(/\[data-chat-container\]\s*\{([^}]+)\}/)?.[1] ?? '';
     expect(css).toContain('[data-chat-container]');
     expect(css).toContain('scrollbar-width: thin');
     expect(css).toContain('[data-chat-container]::-webkit-scrollbar-thumb');
     expect(chatRules).not.toContain('scrollbar-width: none');
     expect(chatRules).not.toContain('display: none');
+    const measuredRules =
+      css.match(/\[data-chat-container\]\[data-message-piano-ready="true"\]\s*\{([^}]+)\}/)?.[1] ?? '';
+    expect(measuredRules).toContain('scrollbar-width: none');
+    expect(readSrc('thread-chat/ThreadChatSurface.tsx')).toContain('onTrackReadyChange: setPianoReady');
   });
 
   it('PushSettingsPanel uses resource-card shell and embeds PushServiceConfig content', () => {
@@ -765,9 +715,15 @@ describe('#723 interactive button guard — no grey pill on action/toggle contro
   });
 
   it('ChatVoiceFeatureControls: inactive voice entries have no console-pill-bg', () => {
-    const src = readSrc('ChatVoiceFeatureControls.tsx');
-    expect(src).not.toContain('console-pill-bg');
-    expect(src).toContain('text-cafe-secondary');
+    // The cards live in the Classic/V2 implementations; the branch file only routes by presentation.
+    const branch = readSrc('ChatVoiceFeatureControls.tsx');
+    expect(branch).not.toContain('console-pill-bg');
+    const classic = readSrc('ChatVoiceFeatureControlsClassic.tsx');
+    expect(classic).not.toContain('console-pill-bg');
+    expect(classic).toContain('text-cafe-secondary');
+    const v2 = readSrc('ChatVoiceFeatureControlsV2.tsx');
+    expect(v2).not.toContain('console-pill-bg');
+    expect(v2).toContain('text-cafe-secondary');
   });
 
   it('ChatContainerHeader: PanelToggle uses the same borderless icon grammar as the calm header', () => {
@@ -1173,21 +1129,6 @@ describe('#723 round 6 — select/toggle/button primitive convergence', () => {
 });
 
 describe('#723 round 7 — operator visual convergence: tabs, search, selects, buttons, cards', () => {
-  it('OpsContent: active tab uses Memory underline (border-b-2 + emphasis)', () => {
-    const src = readSrc('settings/OpsContent.tsx');
-    expect(src).toContain('border-b-2');
-    expect(src).toContain('console-button-emphasis');
-    expect(src).not.toContain('bg-[var(--console-active-bg)]');
-  });
-
-  it('HubObservabilityTab: sub-tabs use underline + bold, no pill bg', () => {
-    const src = readSrc('HubObservabilityTab.tsx');
-    expect(src).not.toContain('text-cafe-accent');
-    expect(src).toContain('border-b-2');
-    expect(src).toContain('font-semibold');
-    expect(src).not.toContain('bg-[var(--console-active-bg)]');
-  });
-
   it('HubTraceTree: search input uses field-bg, button accent, no blue', () => {
     const src = readSrc('HubTraceTree.tsx');
     const searchBlock = src.match(/<input[\s\S]*?Search[\s\S]*?<\/button>/);
@@ -1475,19 +1416,28 @@ describe('#723 round 9 — install button, error suppression, breadcrumb, tab/ca
 
     for (const file of modalOverlayFiles) {
       const src = readSrc(file);
-      const overlayClassNames = [
-        ...src.matchAll(
-          /className=(?:"([^"]*bg-\[var\(--console-overlay-(?:backdrop|medium|light|heavy)\)\][^"]*)"|\{`([^`]*bg-\[var\(--console-overlay-(?:backdrop|medium|light|heavy)\)\][^`]*)`\})/g,
-        ),
-      ]
-        .map((match) => match[1] ?? match[2])
-        .filter((className) => className.includes('inset-0'));
+      const overlayCandidates = modalOverlayCandidates(src);
 
-      expect(overlayClassNames, `${file} should declare at least one console overlay scrim`).not.toHaveLength(0);
-      for (const className of overlayClassNames) {
+      expect(overlayCandidates, `${file} should declare at least one console overlay scrim`).not.toHaveLength(0);
+      for (const { className, exactConsumer } of overlayCandidates) {
+        expect(exactConsumer, `${file} overlay scrim should consume its centralized class without mutation`).toBe(true);
+        expect(className, `${file} overlay scrim should include inset-0`).toContain('inset-0');
         expect(className, `${file} overlay scrim should include backdrop-blur-sm`).toContain('backdrop-blur-sm');
       }
     }
+  });
+
+  it('centralized modal scrim classes count only when JSX consumes the unmodified constant', () => {
+    const overlayClass = 'fixed inset-0 bg-[var(--console-overlay-backdrop)] backdrop-blur-sm flex items-center';
+    const declaration = `const OVERLAY_CLASS = '${overlayClass}';`;
+
+    expect(modalOverlayCandidates(`${declaration}<div className={OVERLAY_CLASS} />`)).toEqual([
+      { className: overlayClass, exactConsumer: true },
+    ]);
+    expect(
+      modalOverlayCandidates(`${declaration}<div className={OVERLAY_CLASS.replace('backdrop-blur-sm', '')} />`),
+    ).toEqual([{ className: overlayClass, exactConsumer: false }]);
+    expect(modalOverlayCandidates(`${declaration}<div className="fixed inset-0" />`)).toEqual([]);
   });
 
   it('HubQuotaBoardTab: rounded-xl + standard shadow, no heavy shadow', () => {

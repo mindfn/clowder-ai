@@ -14,6 +14,7 @@ related_docs:
   - docs/architecture/memory/memory-architecture-diagrams.md
   - docs/architecture/memory/memory-architecture-diagrams-lofi.md
   - docs/architecture/memory-system-overview.md
+  - docs/architecture/memory/history/memory-history-map.md
   - docs/architecture/memory-philosophy.md
   - docs/architecture/retrieval-pipeline-deep-dive.md
   - docs/architecture/memory-write-lane-census.md
@@ -25,7 +26,7 @@ related_docs:
   - feature-discussions/2026-08-24-memory-belief-admission/README.md
 topics: [memory, architecture, atlas, evidence, recall, write-side, standing-reflex, derived-view, context-presentation, governance, outcome]
 created: 2026-08-18
-revised: 2026-09-05
+revised: 2026-10-09
 status: active
 author: "小太阳·Maine Coon/GPT-5.6 Sol"
 description: "Clowder AI 记忆系统的唯一导航入口：用九个观察面登记权威 claim，用六层叙事、端到端状态流和问题路由连接现有架构、合同、census、source map、feature 与历史材料。"
@@ -44,6 +45,11 @@ description_updated_at: 2026-08-29T10:03:49Z
 > 本文不复制各 feature 的运行状态，也不取代任何合同。它只负责把同一个系统压缩成可讲述、
 > 可查阅的模型，并登记“什么问题由哪份文档拥有”。当前文档保留原路径；第一阶段不批量搬迁，
 > 以免破坏历史 thread 中不可变的文件坐标。
+
+**想知道“为什么变成今天这样”**：读[记忆系统发展史与未解问题](./history/memory-history-map.md)。
+它保留吴浪家整理、吸收Sol6.1对较早稿核对意见后的29节点版本，并接续到2026-10-09的输入修复、UI返工、
+线程概况与新想法联想实测，以及还想邀请大家讨论的问题。历史状态按日期保留，当前进度仍回原 feature。
+本次只新增历史导航，不将 Atlas 原有架构快照整体重标为10月已核验。
 
 ## 一分钟讲清楚
 

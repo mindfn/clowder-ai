@@ -3,7 +3,7 @@ feature_ids: [F042, F083, F303]
 topics: [sop]
 doc_kind: note
 created: 2026-02-26
-updated: 2026-09-05
+updated: 2026-10-14
 ---
 
 # Clowder AI 开发 SOP
@@ -42,7 +42,7 @@ Clowder AI 的开发是**愿景驱动**的。和operator确认了 feature 的愿
 
 | 命令 | 作用 |
 |------|------|
-| `pnpm alpha:start` | 自动同步 origin/main + 拉起 3011/3012/4111/6398 |
+| `pnpm alpha:start` | 自动同步 origin/main + 拉起 3011/3012/4111 与专属 Redis 6397 |
 | `pnpm alpha:sync` | 只同步不启动 |
 | `pnpm alpha:status` | 查看环境状态 |
 
@@ -50,6 +50,10 @@ Clowder AI 的开发是**愿景驱动**的。和operator确认了 feature 的愿
 - 愿景守护：守护猫用 alpha 独立验证已合入 main 的改动，不依赖开发猫提供环境
 - operator测试：稳定的测试入口，和 runtime 互不干扰
 - PR merge 后验收：确认合入 main 的改动在完整环境中工作正常
+
+Alpha Redis 使用 checkout 内的 `.cat-cafe/redis`；开发测试 Redis 仍为 6398。旧共享
+6398 数据迁往 6397 时按 F290 Alpha Redis 隔离手册 (internal)
+先做只读快照与受管停机核验，不让一次 `alpha:start` 隐式切成空库。
 
 **注意**：alpha = origin/main 镜像，只能验证已合入 main 的改动。未合入改动的自测仍在 feature worktree 上做。已合入改动的验收用 alpha（3011/3012），不得用 runtime（3003/3004）冒充。
 
@@ -69,7 +73,15 @@ Clowder AI 的开发是**愿景驱动**的。和operator确认了 feature 的愿
 
 **元风险强制升档**：diff 触碰 `merge-gate`、风险 classifier、门禁脚本或 Harness Diet 公约自身时，直接进入 high-assurance，由非作者跨族 reviewer 覆盖最终实质内容（exact HEAD 或 continuityProof）。松绑机制不得静默松绑自己；在这条语义边界机器化前，如实标为 manual 守卫，不能由改门者自判 light。
 
-**审查强度与测试范围分开选择**：`assuranceLevel` 决定独立审查与授权要求，`route` 决定验证范围。高风险窄改可以是 high-assurance + targeted，须说明受影响边界、consumer 与对应测试；风险标签本身不要求全仓测试。纯文档走文档校验（治理文档保留独立治理 review）。共享契约、门禁执行链、相关或无法判定的代码合流 / 旧失败仍由 classifier 要求 full；targeted 无法覆盖跨包风险时必须补全量。每个 full gate 必须说明 targeted 缺少哪项覆盖，不能只写“安全 / 契约 / 高风险”。
+**审查强度与测试范围分开选择**：`assuranceLevel` 决定独立审查与授权要求，classifier 的 `route` 是默认覆盖建议。作者对足够的验证负责，可按 `merge-gate`「Gate 选择」带实际 targeted 证据与理由调整机器的 full 建议，无需 operator 逐次豁免；沿用已有 PR/evidence manifest，不新设审批或字段。按风险要求的独立审查及数据、权限、Redis、不可逆操作的既有验证与授权不因此放宽。相关失败必须解决，已证实无关的失败交对应 owner，不要求所有消费者等它修完。targeted 无法覆盖的实际风险才跑全量，说明缺少哪项覆盖；作者合入后继续验证并在既有权限内负责修复或回滚。
+
+### 产品快车道：一个作者交付真实入口
+
+方向已获确认、影响局部且可用一个 commit 回滚的产品改动，由作者从实现、实物核对做到合入后验证；**默认不选独立 review，不排 full**。适用性看行为与依赖，不看 F 号或目录名：消息投递、调度、门禁等共享底座，生产数据、持久化/迁移、Redis、鉴权/权限/secret、API/MCP/事件契约及不可逆操作仍按风险选择审查、验证和授权；hotfix 的跨猫审查与本节元风险规则保留。读取已有数据或使用已有接口不自动升档，改变这些边界的语义才升档。
+
+**第一小时的目标是可操作的实物**：把已确认范围做成一个完整的小结果，挂上真实入口，作者在 worktree 中亲自走关键交互，对照用户原话或已接受参考，并贴实际截图、入口与核对结果。超过一小时仍做不到，就带当前实物/具体阻塞调整切片，不能用“组件已写好”或“正在排门禁”冒充交付，也不为赶时限合入未验证内容。人工预览用 `browser-preview` 的受管入口，不把整套浏览器测试当作打开页面的前置；自动化测试仍遵守其资源隔离规则。
+
+合入前跑足够的低成本检查（类型、受影响测试及 diff 检查；行为变化仍需回归证据），在现有 PR 写清适用理由与自验结果即可。作者合入后主动在 Alpha 核对并展示；用户可直接体验，但不承担首轮 QA，也不是每次合入的审批人。发现不符就继续改，回归由作者在既有权限内修复或回滚。衡量交付看“用户提出到 Alpha 可见的时间”和“首次看到是否符合原约定”；不新增表单、审批或按时假完成。
 
 ### Architecture / contract delta admission（F303）
 
@@ -130,13 +142,26 @@ work、custody、completion 或 acceptance 的 canonical truth。
 
 ### Review 去叠加
 
+测试的价值、UT/集成/浏览器层级，以及合并、降层、退役的判断见
+`测试规范`。新增昂贵 journey 和删除覆盖在现有 PR 中说明失败故事与
+承接证据；不新增审批，不因采用规范自动跑全量。
+
+作者与已选 reviewer 同样审新增、改写和删除：真实失败是什么、最低足够层级、已有覆盖缺口及新增成本。
+清理先收齐候选、成批修改，再集中运行受影响验证；只因新失败或实质变化补跑相关项。
+完成自检时核对本次已确认的同根低价值测试是否已按规范处置，并记录承接覆盖及代表性检测力证据；
+这是一项作者与已选 reviewer 的语义判断，命令执行记录不能代替它，不新建逐例审批或全仓清理门禁。
+行数用于职责与耦合审查（200 行提醒，350 行默认拆分或说明结构理由），不单独构成产品 P1，
+也不为每个文件生成数行 UT。静态源码政策归统一 lint，产品测试观察生产行为；具体例外和证据见同一规范。
+
 默认选择**一个合适的独立验证源**，且必须是非作者：
 
 - local peer 看家里语境与 stateful diff；
 - cloud 看 context-blind 高风险代码面；
 - 愿景守护看最终产品结果，只在 feature close 触发。
 
-只有不同风险面确实需要不同视角时才叠加，并分别写明触发理由。P1/P2 修复后只回提出 finding 的 active source 覆盖真实修复 delta；不把另一个旧 reviewer 拉来续签，也不因 SHA-only / 可证明机械变化重开 reviewer。
+本次交付是否兑现原 issue / 已接受需求，由当前作者和已选 reviewer 在交付时判断，不等整个 feature close。先理解目标是否清楚且可承诺，再看实际结果，不能让局部修复批准或测试绿代替主线判断；已明确的目标不反复找 operator 确认。方法见 `cat-cafe-skills/refs/delivery-intent-judgment.md`，这是猫的判断职责，不新增自动语义门禁或固定第三棒。
+
+只有两个风险面确实需要不同的人时才加第二只，并分别写明触发理由。P1/P2 修复后只回提出 finding 的 active source 覆盖真实修复 delta；不把另一个旧 reviewer 拉来续签，也不因 SHA-only / 可证明机械变化重开 reviewer。
 
 ### Sol 测试
 
@@ -176,16 +201,16 @@ pnpm classify:co-creation-docs -- \
 |---|---|---|---|---|---|
 | `co_creation_docs + direct_push` | 必须 | 按新增判断：`required / reuse / skip` | 跳过 | 跳过 | 跳过 |
 | `co_creation_docs + pull_request` | 必须 | 新实质内容才新审；已审内容/机械合并复用 provenance | 必须 | 只按 classifier | 只按 classifier |
-| `regular_development` | 风险匹配的 targeted / full 校验 | 非作者独立源（local 或 cloud） | 必须 | 五轴风险触发 | 五轴风险触发 |
+| `regular_development` | 风险匹配的 targeted / full 校验 | 产品快车道默认作者自验；其余选非作者独立源 | 必须 | 五轴风险触发 | 五轴风险触发 |
 
 风险映射：
 
 - conflict detected/unknown 或 reversibility high/unknown → PR；不会自动升级 cloud/full gate。
-- `docs/SOP.md`、VISION/lessons、decisions/canon、architecture ownership 等治理文档 → PR + 本地跨族治理 review；按 operator 既有指令跳过 context-blind cloud，纯 docs 不跑 full gate。
+- `docs/SOP.md`、VISION/lessons、decisions/canon、architecture ownership 等治理文档 → PR + 按风险选一只非作者本地治理 reviewer，同族也行；SOP 的元风险强制升档仍适用。按 operator 既有指令跳过 context-blind cloud，纯 docs 不跑 full gate。
 - `docs/ROADMAP.md` 是 main-only 共享状态，不是治理 PR 触发器：与安全 feature docs 同改仍走 direct main；若同批其他文件确需 PR，先把 BACKLOG 的机械登记单独落 main，禁止把它塞进 worktree/PR。
 - 普通 `docs/features/*.md` 内容更新不因目录名自动升级；无重叠且单 commit 可逆时 direct push，真实冲突或高/未知可逆性仍按 classifier 升到 PR。
 - `cat-cafe-skills/**`、`sop-definitions/**`、scripts、CLI、tests、packages 或其他第一方执行面 → regular development，即使文件扩展名是 `.md`。
-- 普通代码 / test 不因文件类型自动 cloud；行为面用 targeted tests + 合适独立源。安全、数据、外部契约或不可逆风险加强对应独立审查 / 授权；full 另按实际影响范围选择。
+- 普通代码 / test 不因文件类型自动 cloud；行为面用 targeted tests，产品快车道以作者真实入口自验交付，其余选合适独立源。安全、数据、外部契约或不可逆风险加强对应独立审查 / 授权；full 另按实际影响范围选择。
 
 direct-push 只做：轻量增量校验 → 判断是否出现**需要第二只猫判断的新内容** → targeted commit（Why + 模型签名）→ push `origin main`。机械登记、拼写、operator 已逐字共创或有可回链旧 verdict 的内容可 `skip/reuse`，不为“有 diff”新叫 reviewer。普通文档校验不安装依赖、不构建共享包、不跑 docs-discovery 实现套件；feature 文档只追加 dependency-free feature truth。不建 worktree/PR，不生成 review 归档来证明自己 review 过。
 
@@ -277,12 +302,19 @@ PR-3 是 interim 方案 —— 仍开 per-run PR，只是 label + 猫自决 merg
 
 ## Reviewer 配对规则
 
-动态匹配自运行时猫配置（repo 根 `cat-template.json` + `.cat-cafe/cat-catalog.json` overlay）：
-1. 跨 family 优先 | 2. 必须有 peer-reviewer 角色 | 3. 必须 available
-4. 优先 lead | 5. 优先活跃猫
+先判断是否需要独立 review；需要时默认只找一只非作者 reviewer，按风险选：
 
-**降级**：无跨 family reviewer → 同 family 不同个体 → operator。
-**铁律**：同一个体不能 review 自己的代码。
+| 本轮要判断什么 | 选谁 |
+|---|---|
+| 测试能兜住的实现正确性 | 常规 reviewer（另一只Maine Coon或 Sonnet），同族不同个体也行 |
+| 方向和形状 | 创作位，一次给完；新界面/改版、架构模块或归属变化、做片子，动手前出稿 |
+| 安全、鉴权、生产数据、外部契约 | 优先 cloud；cloud 不可用时只换成一只本地 reviewer，不拆成两路 |
+
+只有两个风险面确实需要不同的人时才加第二只，并写明各自理由。迭代修复只请改动所在那一面的 reviewer 复审；稀缺席位不进迭代循环，按 dossier `engagementPolicy` 交付单次判断后退出。
+
+**反例**：F320 [PR #5195](https://github.com/zts212653/clowder-ai/pull/5195) 两路复审跑了 6 轮，安全面的两个 P1 都由语义 reviewer 抓到。来源 `thread:[thread-id]#private-source-id`。
+
+**铁律**：同一只猫不审自己；subagent 只出 findings，不算独立 reviewer。
 **共享 GitHub 账号澄清**：全家共用 `zts212653` 账号，"个体"判据 = catId（opus-47 / codex / gpt-5.4 等），不看 GitHub login。GitHub `dismiss_stale_reviews_on_push` 因共享账号视所有猫为同一 pusher → `mergeStateStatus=BLOCKED`；此时 `--admin --match-head-commit` 是合规 fast-path，**不是 self-review violation**，无需纠结或升级 operator。
 
 ## 代码质量工具
@@ -332,7 +364,7 @@ PR-3 是 interim 方案 —— 仍开 per-run PR，只是 label + 猫自决 merg
 
 社区报 bug 时，不必等全量 sync，直接走 hotfix lane：
 
-1. `git worktree add -b fix/xxx ../cat-cafe-hotfix-xxx sync/LATEST-TAG`
+1. `pnpm worktree:new ../cat-cafe-hotfix-xxx --branch fix/xxx --base sync/LATEST-TAG --policy ttl --ttl-days 14`
 2. 在 worktree 里修 bug
 3. `cd ../cat-cafe-hotfix-xxx && bash scripts/sync-hotfix.sh fix/xxx <changed-files>`
 4. 在 clowder-ai 上开 PR、review、merge
@@ -346,6 +378,13 @@ PR-3 是 interim 方案 —— 仍开 per-run PR，只是 label + 猫自决 merg
 
 ### Full Sync Gate（Source-Owned）
 
+**每日草稿同步（2026-10-12 operator 已授权）**先走
+固定分支入口：`node scripts/daily-public-sync.mjs`。
+该路径只追加 `clowder-ai sync/daily`，维护唯一开放草稿 PR；隐私、intake、F251、导出闭包和迁移说明仍须通过。
+本机 `source_full` 与临时公开仓完整长验证不再是这条路径的前置条件，实际候选的公开 CI 承担完整行为验证；
+`--status` 读取当前 PR head 的 CI / Windows Smoke 结论，不授权合 main 或发布版本。
+以下 source-owned 默认适用于其他同步路径，不能重新叠加到已授权的每日草稿路径。
+
 全量同步到 `clowder-ai` 时，**不能只看家里的 `pnpm gate` 绿不绿**。  
 `source gate green != target/public gate green`。
 
@@ -354,7 +393,7 @@ PR-3 是 interim 方案 —— 仍开 per-run PR，只是 label + 猫自决 merg
 1. 先处理 Community Diff Guard / intake ledger，确认社区已合入内容不会被覆盖。
 2. 冻结同一班车的 `source SHA + public target HEAD + reconciliation artifact`；后续新进 `origin/main` 的提交默认排到下一班，不追着移动的 main 重跑。
 3. 对冻结切面反复运行无安装、无真实目标写入的 `--preflight`。它先做导出、安全扫描、导出闭包、capability-tip 增量引用、F251、Public Behavior Change Reporter；红灯只修对应问题并重跑这条便宜车道。
-4. preflight 绿后，对同一 source SHA 跑**一次**完整 source gate。
+4. preflight 绿后，对同一 source SHA 跑**一次** `pnpm gate --source-full <40-hex-source-sha>`。要求 clean exact HEAD，以该 SHA 自带的 canonical wrapper 执行，不 fetch/rebase；固定 base=head，完整 required stages 加冻结 catalog 的全部 admitted browser units。`source_full` 回执绑定 required unit set、catalog/plan fingerprints 与 durable gate run；只证明该 source 的完整自动验证，不是 latest-main、public 或 native Host 证据。普通 merge 仍走 smoke + affected journeys。
 5. 按 write authorization 二选一：已有真实写授权 → 直接运行 canonical writer，由 writer 内部完成唯一一轮 temp-target public gate 后再写；尚无写授权 → 只跑 durable no-write `validate` / write handoff，等待授权。当前 writer 不消费 validate receipt 来跳过自己的 gate，**不要两条路径连跑**。
 6. temp-target 完整 public gate 遇到首个硬失败立即终止；不再继续烧 `test:public` / startup acceptance 来收集一串次生红灯。**只有 source gate 与当前执行路径的 public gate 都绿，才允许碰真实 `clowder-ai`**。
 7. 本机 README/macOS smoke 不属于 full sync 主路径；它必须是 sync 完成后的独立步骤，且必须显式隔离端口/Redis。
@@ -375,8 +414,7 @@ pnpm sync:train -- launch --no-write --stage preflight \
   --target-dir="$CLOWDER_AI_DIR"
 
 test "$(git rev-parse HEAD)" = "$SOURCE_SHA" || exit 75
-env -u NODE_ENV -u npm_config_production -u NPM_CONFIG_PRODUCTION \
-  pnpm gate --no-rebase
+REDIS_URL=redis://127.0.0.1:6398 pnpm gate --source-full "$SOURCE_SHA"
 test "$(git rev-parse HEAD)" = "$SOURCE_SHA" || exit 75
 
 # A. 已有真实写授权：让 writer 的内建 temp-target gate 成为唯一 public 长门禁
@@ -395,6 +433,8 @@ pnpm sync:train -- launch --no-write --stage validate \
   --migration-notes-file="$MIGRATION_NOTES_FILE" \
   --target-dir="$CLOWDER_AI_DIR"
 ```
+
+猫猫用 `cat_cafe_hold_ball({ wakeWhen: { command: "REDIS_URL=redis://127.0.0.1:6398 pnpm gate --source-full <exact-sha>", cwd: "<frozen-source-worktree>", executionSlaMs: 7200000 } })` 托管上面的 source gate；把占位符换成真实值，不外包 shell wrapper 或降级普通 runner。失败续办保留 `--source-full <sha>` 并使用回执给出的 `--resume <run-id>`，scope/head/tree/base/runner/toolchain 均须一致。旧 cut 不含此入口时必须等修复加载后重切 source、重绑 reconciliation、重跑 preflight；旧回执不可借用。
 
 脚本会在 preflight、validate 与真实写入前 fetch public main，并要求 target HEAD、`origin/main`、expected public head 三者完全一致。若 public main 在班车期间前进，旧 stage receipt 会给出 typed `start_next_train`；重新冻结 public/reconciliation 切面并先跑便宜 preflight。只要 source SHA、manifest/exporter/wrapper/F251 blobs 与实际导出字节未变，单独的 exact source full-gate 证据不因 target 前进自动作废。`--fast-validate` 只是诊断选项，不能替代 preflight，也不能充当 release evidence；`--skip-validate` 是 operator override，不是性能开关。
 

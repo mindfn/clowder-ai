@@ -27,7 +27,7 @@ describe('Session Hooks Routes', () => {
   };
   const DEFAULT_SCOPE = { userId: 'user-1', catId: 'opus', threadId: 'thread-1' };
 
-  function callbackRegistryFor(scope = DEFAULT_SCOPE, { startupRecoveryPending = false } = {}) {
+  function callbackRegistryFor(scope = DEFAULT_SCOPE, { startupRecoveryPending = false, expectedCarrier } = {}) {
     return {
       isStartupRecoveryComplete: () => !startupRecoveryPending,
       verify: async (invocationId, callbackToken) => {
@@ -42,6 +42,7 @@ describe('Session Hooks Routes', () => {
                 ownerAuthProvenance: 'strict',
                 clientMessageIds: new Set(),
                 toolExecutionPolicy: { mode: 'read_only' },
+                ...(expectedCarrier ? { expectedCompactionCarrier: expectedCarrier } : {}),
                 createdAt: 0,
                 expiresAt: null,
                 state: 'active',
@@ -55,6 +56,7 @@ describe('Session Hooks Routes', () => {
   async function setup({
     digestMap,
     callbackScope = DEFAULT_SCOPE,
+    expectedCarrier,
     startupRecoveryPending = false,
     followCreatedSession = true,
   } = {}) {
@@ -82,7 +84,7 @@ describe('Session Hooks Routes', () => {
       sessionChainStore,
       sessionSealer,
       transcriptReader,
-      callbackRegistry: callbackRegistryFor(() => activeScope, { startupRecoveryPending }),
+      callbackRegistry: callbackRegistryFor(() => activeScope, { startupRecoveryPending, expectedCarrier }),
     });
     await app.ready();
     return { app, sessionChainStore, sessionSealer };
@@ -1227,6 +1229,156 @@ describe('Session Hooks Routes', () => {
         headers: authHeaders(),
       });
       assert.equal(check3.statusCode, 200, 'new bookmark should survive TTL sweep');
+    });
+  });
+
+  describe('POST /api/sessions/seal carrier identity (#1542)', () => {
+    it('rejects a durable-bound invocation whose hook presents a missing or wrong carrier identity', async () => {
+      const { app, sessionChainStore } = await setup({ expectedCarrier: 'f296-node-v1' });
+      const record = sessionChainStore.create({
+        cliSessionId: 'cli-carrier',
+        threadId: 'thread-1',
+        catId: 'opus',
+        userId: 'user-1',
+      });
+      applyPolicy(sessionChainStore, record, handoffPolicy);
+
+      const missing = await app.inject({
+        method: 'POST',
+        url: '/api/sessions/seal',
+        headers: authHeaders(),
+        payload: { cliSessionId: 'cli-carrier', reason: 'claude-code-compact-auto' },
+      });
+      assert.equal(missing.statusCode, 403);
+      assert.equal(JSON.parse(missing.payload).error, 'compaction_carrier_identity_mismatch');
+
+      const wrong = await app.inject({
+        method: 'POST',
+        url: '/api/sessions/seal',
+        headers: { ...authHeaders(), 'x-clowder-compaction-carrier': 'legacy-shell-v0' },
+        payload: { cliSessionId: 'cli-carrier', reason: 'claude-code-compact-auto' },
+      });
+      assert.equal(wrong.statusCode, 403);
+
+      const after = sessionChainStore.get(record.id);
+      assert.equal(after.compressionCount, null, 'a mismatched carrier must not mint a sequence');
+    });
+
+    it('accepts the durable-bound invocation presenting the exact carrier identity', async () => {
+      const { app, sessionChainStore } = await setup({ expectedCarrier: 'f296-node-v1' });
+      const record = sessionChainStore.create({
+        cliSessionId: 'cli-carrier-ok',
+        threadId: 'thread-1',
+        catId: 'opus',
+        userId: 'user-1',
+      });
+      applyPolicy(sessionChainStore, record, handoffPolicy);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/sessions/seal',
+        headers: { ...authHeaders(), 'x-clowder-compaction-carrier': 'f296-node-v1' },
+        payload: { cliSessionId: 'cli-carrier-ok', reason: 'claude-code-compact-auto' },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.equal(JSON.parse(res.payload).status, 'sealing');
+    });
+
+    it('Node + legacy racing behind one barrier produce exactly one logical observation (#1542 P1-5)', async () => {
+      const { app, sessionChainStore } = await setup({ expectedCarrier: 'f296-node-v1' });
+      const record = sessionChainStore.create({
+        cliSessionId: 'cli-parallel',
+        threadId: 'thread-1',
+        catId: 'opus',
+        userId: 'user-1',
+        compressionCount: 0,
+      });
+      applyPolicy(sessionChainStore, record, handoffPolicy);
+      const sealRequest = (headers) =>
+        app.inject({
+          method: 'POST',
+          url: '/api/sessions/seal',
+          headers,
+          payload: { cliSessionId: 'cli-parallel', reason: 'claude-code-compact-auto' },
+        });
+
+      // True race: both callbacks are in flight simultaneously — no arrival
+      // order is imposed by the test.
+      const [nodeRes, legacyRes] = await Promise.all([
+        sealRequest({ ...authHeaders(), 'x-clowder-compaction-carrier': 'f296-node-v1' }),
+        sealRequest(authHeaders()),
+      ]);
+
+      assert.equal(nodeRes.statusCode, 200, 'the canonical Node carrier records its observation');
+      assert.equal(
+        legacyRes.statusCode,
+        403,
+        'legacy is rejected at the identity boundary — never by incidental session state',
+      );
+      assert.equal(JSON.parse(legacyRes.payload).error, 'compaction_carrier_identity_mismatch');
+      const after = sessionChainStore.get(record.id);
+      assert.ok(after.compressionObservation, 'the surviving observation is the authenticated one');
+      assert.equal(
+        after.compressionObservation.sequence,
+        1,
+        'exactly one logical observation — a second record would advance the sequence',
+      );
+      assert.equal(after.compressionObservation.invocationId, DEFAULT_CALLBACK_AUTH.invocationId);
+      assert.equal(after.compressionCount, 1, 'the lifetime counter advances exactly once');
+    });
+
+    it('legacy arriving BEFORE the Node carrier is still fenced at the identity boundary (#1542 P1-5)', async () => {
+      const { app, sessionChainStore } = await setup({ expectedCarrier: 'f296-node-v1' });
+      const record = sessionChainStore.create({
+        cliSessionId: 'cli-parallel-legacy-first',
+        threadId: 'thread-1',
+        catId: 'opus',
+        userId: 'user-1',
+        compressionCount: 0,
+      });
+      applyPolicy(sessionChainStore, record, handoffPolicy);
+
+      const legacyFirst = await app.inject({
+        method: 'POST',
+        url: '/api/sessions/seal',
+        headers: authHeaders(),
+        payload: { cliSessionId: 'cli-parallel-legacy-first', reason: 'claude-code-compact-auto' },
+      });
+      assert.equal(legacyFirst.statusCode, 403);
+      assert.equal(JSON.parse(legacyFirst.payload).error, 'compaction_carrier_identity_mismatch');
+
+      const nodeSecond = await app.inject({
+        method: 'POST',
+        url: '/api/sessions/seal',
+        headers: { ...authHeaders(), 'x-clowder-compaction-carrier': 'f296-node-v1' },
+        payload: { cliSessionId: 'cli-parallel-legacy-first', reason: 'claude-code-compact-auto' },
+      });
+      assert.equal(nodeSecond.statusCode, 200);
+
+      const after = sessionChainStore.get(record.id);
+      assert.equal(after.compressionObservation?.sequence, 1, 'arrival order cannot change the exactly-once outcome');
+      assert.equal(after.compressionCount, 1, 'the lifetime counter advances exactly once');
+    });
+
+    it('a legacy shell callback stays rejected after simulated state loss because the binding is durable on the principal', async () => {
+      // #1542 P1-1 regression: the expectation lives on the verified callback
+      // record, not process-local state — a "restart" cannot drop it.
+      const { app, sessionChainStore } = await setup({ expectedCarrier: 'f296-node-v1' });
+      const record = sessionChainStore.create({
+        cliSessionId: 'cli-carrier-restart',
+        threadId: 'thread-1',
+        catId: 'opus',
+        userId: 'user-1',
+      });
+      applyPolicy(sessionChainStore, record, handoffPolicy);
+
+      const legacyStyle = await app.inject({
+        method: 'POST',
+        url: '/api/sessions/seal',
+        headers: authHeaders(),
+        payload: { cliSessionId: 'cli-carrier-restart', reason: 'claude-code-compact-auto' },
+      });
+      assert.equal(legacyStyle.statusCode, 403, 'missing header must stay rejected — no fail-open window');
     });
   });
 });

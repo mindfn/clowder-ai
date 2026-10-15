@@ -110,6 +110,12 @@ describe('sidebarProjectionStore authority boundary', () => {
     expect(memoryOperations.isHubThread).toBe(false);
   });
 
+  it('preserves Collective Channel endpoints as system threads through sidebar hydration', () => {
+    const [collective] = parseSidebarSnapshotRows([{ ...row('thread-collective'), systemKind: 'collective_channel' }]);
+    expect(collective.systemKind).toBe('collective_channel');
+    expect(collective.isHubThread).toBe(false);
+  });
+
   it('rejects an older HTTP generation after a newer snapshot was applied', () => {
     const store = useSidebarProjectionStore.getState();
 

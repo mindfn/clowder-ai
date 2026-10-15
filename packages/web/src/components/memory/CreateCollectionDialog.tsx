@@ -1,206 +1,184 @@
-import React, { useState } from 'react';
+'use client';
+import { useEffect, useRef } from 'react';
+import { LIBRARY_KINDS, libraryVisibility } from './page/library-labels';
+import { useCollectionCreation } from './use-collection-creation';
 
-const COLLECTION_KINDS = ['project', 'world', 'domain', 'research', 'global'] as const;
-const SENSITIVITIES = ['public', 'internal', 'private', 'restricted'] as const;
+const KINDS = ['project', 'world', 'domain', 'research', 'global'];
+const VISIBILITIES = ['public', 'internal', 'private', 'restricted'];
+const fieldClass =
+  'mt-1 block w-full rounded-lg border border-cafe-subtle bg-[var(--console-field-bg)] px-3 py-2 text-sm text-cafe-secondary outline-none transition focus:ring-1 focus:ring-[var(--console-input-stroke)] disabled:opacity-60';
+const buttonClass = 'rounded-lg border border-cafe-subtle px-3 py-2 text-compact disabled:opacity-50';
 
-interface DryRunResult {
-  totalFiles: number;
-  markdownFiles: number;
-  secretFindings: number;
-  safe: boolean;
+function wrapDialogFocus(element: HTMLDivElement | null, event: KeyboardEvent) {
+  const elements = [
+    ...(element?.querySelectorAll<HTMLElement>('input:not(:disabled), select:not(:disabled), button:not(:disabled)') ??
+      []),
+  ];
+  if (!elements.length) {
+    event.preventDefault();
+    element?.focus();
+    return;
+  }
+  const boundary = event.shiftKey ? elements[0] : elements.at(-1);
+  if (document.activeElement !== boundary) return;
+  event.preventDefault();
+  const destination = event.shiftKey ? elements.at(-1) : elements[0];
+  destination?.focus();
 }
-
 export function CreateCollectionDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [kind, setKind] = useState<string>('domain');
-  const [name, setName] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [root, setRoot] = useState('');
-  const [sensitivity, setSensitivity] = useState<string>('private');
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [dryRun, setDryRun] = useState<DryRunResult | null>(null);
-  const [dryRunLoading, setDryRunLoading] = useState(false);
-
-  const canDryRun = root.trim().length > 0;
-  const confirmed = dryRun !== null || !canDryRun;
-
-  const handleDryRun = async () => {
-    setDryRunLoading(true);
-    setError(null);
-    try {
-      const res = await fetch('/api/library/bind-dry-run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ root: root.trim() }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        setError(data?.error ?? `预扫描失败 (${res.status})`);
-        return;
+  const state = useCollectionCreation(onCreated);
+  const { draft, update, dryRun, scanning, submitting, registered, error } = state;
+  const busy = scanning || submitting;
+  const dialog = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialog.current?.querySelector<HTMLInputElement>('input')?.focus();
+    return () => previous?.focus();
+  }, []);
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !busy) {
+        event.preventDefault();
+        onClose();
       }
-      setDryRun(await res.json());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '未知错误');
-    } finally {
-      setDryRunLoading(false);
+      if (event.key !== 'Tab') return;
+      wrapDialogFocus(dialog.current, event);
     }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (canDryRun && !dryRun) {
-      await handleDryRun();
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    try {
-      const body: Record<string, unknown> = {
-        id: `${kind}:${name}`,
-        kind,
-        name,
-        displayName,
-        sensitivity,
-      };
-      if (root.trim()) body.root = root.trim();
-      const res = await fetch('/api/library/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        setError(data?.error ?? `创建失败 (${res.status})`);
-        return;
-      }
-      const collectionId = `${kind}:${name}`;
-      try {
-        await fetch(`/api/library/${collectionId}/rebuild`, { method: 'POST' });
-      } catch {
-        /* rebuild best-effort — collection is registered, user can rebuild manually */
-      }
-      onCreated();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '未知错误');
-    } finally {
-      setSubmitting(false);
-    }
-  };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [busy, onClose]);
 
   return (
     <div
-      className="fixed inset-0 bg-[var(--console-overlay-light)] backdrop-blur-sm flex items-center justify-center z-50"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--console-overlay-light)] p-4 backdrop-blur-sm"
       data-testid="create-collection-dialog"
     >
-      <form
-        onSubmit={handleSubmit}
-        className="bg-[var(--console-card-bg)] rounded-xl shadow-lg p-6 w-full max-w-md space-y-4"
+      <div
+        ref={dialog}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-library-title"
+        className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-xl bg-[var(--console-card-bg)] shadow-lg"
       >
-        <h3 className="font-semibold text-sm text-cafe">新建集合</h3>
-        {error && <div className="text-xs text-conn-red-text bg-conn-red-bg rounded-lg p-2">{error}</div>}
-        <div className="grid grid-cols-2 gap-3">
-          <label className="text-xs text-cafe-secondary">
-            类型
-            <select
-              value={kind}
-              onChange={(e) => setKind(e.target.value)}
-              className="mt-1 block w-full rounded-lg bg-[var(--console-field-bg)] pl-2 pr-6 py-1.5 text-xs text-cafe-secondary outline-none transition focus:ring-1 focus:ring-[var(--console-input-stroke)]"
-            >
-              {COLLECTION_KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs text-cafe-secondary">
-            名称
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-              placeholder="finance"
-              className="mt-1 block w-full appearance-none rounded-lg bg-[var(--console-field-bg)] px-2 py-1.5 text-xs text-cafe-secondary outline-none transition focus:ring-1 focus:ring-[var(--console-input-stroke)]"
-              required
-            />
-          </label>
-        </div>
-        <label className="text-xs text-cafe-secondary block">
-          显示名称
-          <input
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="Personal Finance"
-            className="mt-1 block w-full appearance-none rounded-lg bg-[var(--console-field-bg)] px-2 py-1.5 text-xs text-cafe-secondary outline-none transition focus:ring-1 focus:ring-[var(--console-input-stroke)]"
-            required
-          />
-        </label>
-        <label className="text-xs text-cafe-secondary block">
-          根路径 <span className="text-cafe-tertiary">（留空则使用托管存储）</span>
-          <input
-            value={root}
-            onChange={(e) => {
-              setRoot(e.target.value);
-              setDryRun(null);
-            }}
-            placeholder="/home/user/docs/finance"
-            className="mt-1 block w-full appearance-none rounded-lg bg-[var(--console-field-bg)] px-2 py-1.5 text-xs text-cafe-secondary outline-none transition focus:ring-1 focus:ring-[var(--console-input-stroke)]"
-          />
-        </label>
-        <label className="text-xs text-cafe-secondary block">
-          敏感级别
-          <select
-            value={sensitivity}
-            onChange={(e) => setSensitivity(e.target.value)}
-            className="mt-1 block w-full rounded-lg bg-[var(--console-field-bg)] pl-2 pr-6 py-1.5 text-xs text-cafe-secondary outline-none transition focus:ring-1 focus:ring-[var(--console-input-stroke)]"
-          >
-            {SENSITIVITIES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </label>
-        {dryRun && (
-          <div className="text-xs rounded-lg bg-[var(--console-field-bg)] p-3 space-y-1" data-testid="dry-run-preview">
-            <div className="font-medium text-cafe">扫描预览</div>
-            <div className="text-cafe-secondary">
-              {dryRun.totalFiles} 个文件（{dryRun.markdownFiles} 个 Markdown）
-            </div>
-            {dryRun.secretFindings > 0 && (
-              <div className="text-conn-red-text font-medium">
-                检测到 {dryRun.secretFindings} 个敏感信息 — 创建前请核查。
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void state.submit();
+          }}
+        >
+          <div className="space-y-4 p-6">
+            <h3 id="create-library-title" className="text-base font-medium text-cafe">
+              新建资料库
+            </h3>
+            {error && (
+              <p role="alert" className="rounded-lg bg-[var(--console-field-bg)] p-3 text-compact text-cafe-secondary">
+                {error}
+              </p>
+            )}
+            <fieldset disabled={busy || registered} className="space-y-4 disabled:opacity-70">
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-compact text-cafe-secondary">
+                  类型
+                  <select value={draft.kind} onChange={(e) => update('kind', e.target.value)} className={fieldClass}>
+                    {KINDS.map((kind) => (
+                      <option key={kind} value={kind}>
+                        {LIBRARY_KINDS[kind]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-compact text-cafe-secondary">
+                  名称
+                  <input
+                    aria-label="名称"
+                    value={draft.name}
+                    onChange={(e) => update('name', e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+                    placeholder="notes"
+                    required
+                    className={fieldClass}
+                  />
+                  <span className="mt-1 block text-xs text-cafe-muted">用英文小写、数字或短横线</span>
+                </label>
+              </div>
+              <label className="block text-compact text-cafe-secondary">
+                显示名称
+                <input
+                  value={draft.displayName}
+                  onChange={(e) => update('displayName', e.target.value)}
+                  placeholder="学习笔记"
+                  required
+                  className={fieldClass}
+                />
+              </label>
+              <label className="block text-compact text-cafe-secondary">
+                根路径<span className="ml-1 text-xs text-cafe-muted">留空则使用托管存储</span>
+                <input
+                  aria-label="根路径"
+                  value={draft.root}
+                  onChange={(e) => update('root', e.target.value)}
+                  placeholder="填写要接入的本机目录"
+                  className={fieldClass}
+                />
+              </label>
+              <label className="block text-compact text-cafe-secondary">
+                谁能看见
+                <select
+                  value={draft.sensitivity}
+                  onChange={(e) => update('sensitivity', e.target.value)}
+                  className={fieldClass}
+                >
+                  {VISIBILITIES.map((value) => (
+                    <option key={value} value={value}>
+                      {libraryVisibility(value)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </fieldset>
+            <p className="text-compact text-cafe-secondary">
+              新建 {draft.displayName.trim() || '资料库'} · {libraryVisibility(draft.sensitivity)}可见
+            </p>
+            {dryRun && (
+              <div
+                className="space-y-1 rounded-lg bg-[var(--console-field-bg)] p-3 text-compact"
+                data-testid="dry-run-preview"
+              >
+                <p className="font-medium">扫描预览</p>
+                <p>
+                  {dryRun.totalFiles} 个文件（{dryRun.markdownFiles} 个 Markdown）
+                </p>
+                {dryRun.secretFindings > 0 && (
+                  <p className="text-conn-amber-text">检测到 {dryRun.secretFindings} 个敏感信息，创建前请核查。</p>
+                )}
               </div>
             )}
           </div>
-        )}
-        <div className="flex justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 py-1.5 text-xs text-cafe-secondary rounded-lg bg-[var(--console-card-bg)] shadow-[0_1px_3px_rgba(43,33,26,0.06)] hover:bg-[var(--console-hover-bg)]"
-          >
-            取消
-          </button>
-          {canDryRun && !dryRun && (
-            <button
-              type="button"
-              onClick={handleDryRun}
-              disabled={dryRunLoading || !name || !displayName}
-              className="px-3 py-1.5 text-xs text-cafe-secondary rounded-lg bg-[var(--console-card-bg)] shadow-[0_1px_3px_rgba(43,33,26,0.06)] hover:bg-[var(--console-hover-bg)] disabled:opacity-50"
-              data-testid="dry-run-btn"
-            >
-              {dryRunLoading ? '扫描中...' : '预览扫描'}
+          <footer className="sticky bottom-0 flex flex-wrap justify-end gap-2 border-t border-cafe-subtle bg-[var(--console-card-bg)] p-4">
+            <button type="button" onClick={onClose} disabled={busy} className={buttonClass}>
+              {registered ? '先关闭' : '取消'}
             </button>
-          )}
-          <button
-            type="submit"
-            disabled={submitting || !name || !displayName || (canDryRun && !confirmed)}
-            className="px-3 py-1.5 text-xs text-[var(--cafe-surface)] bg-cafe-accent rounded-lg hover:bg-cafe-interactive disabled:opacity-50"
-          >
-            {submitting ? '创建中...' : confirmed ? '创建' : '预览并创建'}
-          </button>
-        </div>
-      </form>
+            {draft.root.trim() && !dryRun && (
+              <button
+                type="button"
+                onClick={() => void state.scan()}
+                disabled={busy || !draft.name || !draft.displayName.trim()}
+                className={buttonClass}
+                data-testid="dry-run-btn"
+              >
+                {scanning ? '扫描中…' : '预览扫描'}
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={busy || !draft.name || !draft.displayName.trim() || (!!draft.root.trim() && !dryRun)}
+              className={`${buttonClass} bg-cafe-accent text-[var(--cafe-surface)]`}
+            >
+              {submitting ? '处理中…' : registered ? '重试索引' : '创建'}
+            </button>
+          </footer>
+        </form>
+      </div>
     </div>
   );
 }

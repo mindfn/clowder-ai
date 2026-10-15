@@ -62,13 +62,20 @@ function catalogWith(primary) {
     'f292.repair': ineligibleAdapter('f292.repair'),
     'f306.runtime_interaction': ineligibleAdapter('f306.runtime_interaction'),
     'f309.content_review': ineligibleAdapter('f309.content_review'),
+    'f290.collective_work_result': ineligibleAdapter('f290.collective_work_result'),
     [primary.producerId]: primary,
   };
   return new NeedsMeProducerCatalog(Object.values(byId));
 }
 
 function catalogWithMany(...adapters) {
-  const producerIds = ['f246.approval', 'f292.repair', 'f306.runtime_interaction', 'f309.content_review'];
+  const producerIds = [
+    'f246.approval',
+    'f292.repair',
+    'f306.runtime_interaction',
+    'f309.content_review',
+    'f290.collective_work_result',
+  ];
   const provided = new Set(adapters.map((adapter) => adapter.producerId));
   return new NeedsMeProducerCatalog([
     ...adapters,
@@ -172,7 +179,7 @@ describe('F310 entrusted-work owner-read backbone', () => {
     });
   });
 
-  test('global Schedule read lists only the owner current admitted work with business time', async () => {
+  test('global Schedule includes untimed admitted work and owner presentation facts without inventing dates', async () => {
     const taskStore = new TaskStore();
     const lifecycle = new EntrustedWorkLifecycleService(taskStore, { now: () => now });
     const quiet = await lifecycle.admitOrResume(admissionCommand());
@@ -211,7 +218,17 @@ describe('F310 entrusted-work owner-read backbone', () => {
     });
 
     assert.equal(response.statusCode, 200);
-    assert.equal(response.json().ownerReads.length, 1);
+    assert.equal(response.json().ownerReads.length, 2);
+    const untimed = response.json().ownerReads.find((read) => read.work?.title === 'No business time');
+    assert.ok(untimed, 'untimed work remains visible');
+    assert.deepEqual(untimed.timeRefs, []);
+    assert.deepEqual(untimed.work, {
+      title: 'No business time',
+      ownerCatId: 'codex-sol',
+      threadId: 'thread-f310',
+      admittedAt: now,
+      ownerNote: 'Explicitly entrusted in the source conversation',
+    });
     assert.equal(response.json().ownerReads[0].envelope.ownerRef, quiet.ownerRef);
     assert.deepEqual(
       response.json().ownerReads[0].timeRefs.map(({ role }) => role),
@@ -281,7 +298,13 @@ describe('F310 entrusted-work owner-read backbone', () => {
       payload: { taskId },
     });
     assert.equal(cat.statusCode, 200);
-    assert.deepEqual(cat.json(), web.json());
+    const catBody = cat.json();
+    const webBody = web.json();
+    assert.equal(typeof catBody.ownerRead.execution.observedAt, 'number');
+    assert.equal(typeof webBody.ownerRead.execution.observedAt, 'number');
+    catBody.ownerRead.execution.observedAt = 0;
+    webBody.ownerRead.execution.observedAt = 0;
+    assert.deepEqual(catBody, webBody);
     assert.deepEqual(
       web.json().ownerRead.timeRefs.map(({ role }) => role),
       ['business_deadline', 'review_by'],

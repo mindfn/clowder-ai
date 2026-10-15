@@ -6,74 +6,12 @@ import type {
   QueueHandledDisposition,
   QueueTargetOutcomeEvidenceRef,
 } from '@cat-cafe/shared';
-import type { FreshnessRelevanceReason } from './FreshnessRelevancePolicy.js';
 
 interface FreshnessEventBase {
   threadId: string;
   catId: CatId;
   invocationId: string;
   timestamp: number;
-}
-
-interface HeldDecisionEvent extends FreshnessEventBase {
-  kind: 'held_decision';
-  toolName: string;
-  unseenCount: number;
-  reason: string;
-  relevanceSuppressions?: Partial<Record<FreshnessRelevanceReason, number>>;
-}
-
-interface ForwardDecisionEvent extends FreshnessEventBase {
-  kind: 'forward_decision';
-  toolName: string;
-  reason: string;
-  relevanceSuppressions?: Partial<Record<FreshnessRelevanceReason, number>>;
-}
-
-export interface NoticeAttachedEvent extends FreshnessEventBase {
-  kind: 'notice_attached';
-  toolName: string;
-  unseenSenders: string[];
-  noticeId: string;
-  maxMessageId: string;
-  /** New events carry the v2 cursor; legacy events may omit it. */
-  maxCursor?: string;
-}
-
-interface NoticeImplicitAckedEvent extends FreshnessEventBase {
-  kind: 'notice_implicit_acked';
-  noticeIds: string[];
-  ackedVia: 'seenCursor_advance';
-}
-
-interface NoticeDeferredEvent extends FreshnessEventBase {
-  kind: 'notice_deferred';
-  noticeIds: string[];
-}
-
-interface ReinvokeTriggeredEvent extends FreshnessEventBase {
-  kind: 'reinvoke_triggered';
-  triggeredInvocationId: string;
-  sourceNoticeIds: string[];
-}
-
-interface ReinvokeSkippedEvent extends FreshnessEventBase {
-  kind: 'reinvoke_skipped';
-  reason: 'quota_exhausted' | 'already_handled' | 'low_priority' | 'cursor_caught_up' | 'newer_invocation';
-}
-
-interface StreamStaleDetectedEvent extends FreshnessEventBase {
-  kind: 'stream_stale_detected';
-  unseenCount: number;
-  unseenSenders: string[];
-  reason: string;
-  relevanceSuppressions?: Partial<Record<FreshnessRelevanceReason, number>>;
-}
-
-interface StreamFreshEvent extends FreshnessEventBase {
-  kind: 'stream_fresh';
-  reason: string;
-  relevanceSuppressions?: Partial<Record<FreshnessRelevanceReason, number>>;
 }
 
 interface QueuedHandledEvent extends FreshnessEventBase {
@@ -110,7 +48,7 @@ export type ProviderNativeFreshnessMissReason =
   | 'transport_failed'
   | 'not_read';
 
-export interface ProviderNoticeEventBase extends FreshnessEventBase {
+interface ProviderNoticeFields extends FreshnessEventBase {
   noticeId: string;
   frontier: string;
   /** Exact durable identities used for receipt correlation; legacy events fall back to frontier. */
@@ -119,38 +57,40 @@ export interface ProviderNoticeEventBase extends FreshnessEventBase {
   carrier: ProviderNativeFreshnessCarrier;
   deliverySemantics: ProviderNativeFreshnessDeliverySemantics;
   toolSurface: ProviderNativeFreshnessToolSurface;
-  expectedTurnId: string;
 }
 
-export interface ProviderNoticeOpportunityEvent extends ProviderNoticeEventBase {
+export type ProviderNoticeEventBase = ProviderNoticeFields &
+  ({ boundaryKind?: 'active_turn'; expectedTurnId: string } | { boundaryKind: 'idle_start'; expectedTurnId?: never });
+
+export type ProviderNoticeOpportunityEvent = ProviderNoticeEventBase & {
   kind: 'provider_notice_opportunity';
-}
+};
 
-export interface ProviderNoticePreparedEvent extends ProviderNoticeEventBase {
+export type ProviderNoticePreparedEvent = ProviderNoticeEventBase & {
   kind: 'provider_notice_prepared';
-}
+};
 
-export interface ProviderNoticeDeliveredEvent extends ProviderNoticeEventBase {
+export type ProviderNoticeDeliveredEvent = ProviderNoticeEventBase & {
   kind: 'provider_notice_delivered';
   acceptedTurnId: string;
-}
+};
 
-export interface ProviderNoticeMissedEvent extends ProviderNoticeEventBase {
+export type ProviderNoticeMissedEvent = ProviderNoticeEventBase & {
   kind: 'provider_notice_missed';
   missReason: ProviderNativeFreshnessMissReason;
-}
+};
 
-export interface ProviderNoticeSeenEvent extends ProviderNoticeEventBase {
+export type ProviderNoticeSeenEvent = ProviderNoticeEventBase & {
   kind: 'provider_notice_seen';
   seenMessageIds: string[];
   evidenceKind: 'full_contiguous_thread_context' | 'queue_exact_read';
-}
+};
 
-export interface ProviderNoticeHandledEvent extends ProviderNoticeEventBase {
+export type ProviderNoticeHandledEvent = ProviderNoticeEventBase & {
   kind: 'provider_notice_handled';
   queueEntryId: string;
   evidenceRef: QueueTargetOutcomeEvidenceRef;
-}
+};
 
 export interface ProviderCarrierCapabilityDeclaredEvent extends FreshnessEventBase {
   kind: 'provider_carrier_capability_declared';
@@ -172,15 +112,6 @@ export interface ProviderProtocolItemObservedEvent extends FreshnessEventBase {
 }
 
 export type FreshnessAttentionEvent =
-  | HeldDecisionEvent
-  | ForwardDecisionEvent
-  | NoticeAttachedEvent
-  | NoticeImplicitAckedEvent
-  | NoticeDeferredEvent
-  | ReinvokeTriggeredEvent
-  | ReinvokeSkippedEvent
-  | StreamStaleDetectedEvent
-  | StreamFreshEvent
   | QueuedHandledEvent
   | ProviderNoticeOpportunityEvent
   | ProviderNoticePreparedEvent

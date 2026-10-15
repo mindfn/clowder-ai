@@ -4,9 +4,9 @@ import type { CatCafeConfig, ClientId, RosterEntry } from '@cat-cafe/shared';
 import { resolveBuiltinClientForProvider } from './account-resolver.js';
 import {
   GEMINI35_CAT_ID,
-  GEMINI35_OLD_NAME,
-  GEMINI35_OLD_ROLE_DESCRIPTION,
-  GEMINI35_OLD_VARIANT_LABEL,
+  GEMINI35_LEGACY_NAMES,
+  GEMINI35_LEGACY_ROLE_DESCRIPTIONS,
+  GEMINI35_LEGACY_VARIANT_LABELS,
   LEGACY_GEMINI_CONSUMER_CAT_IDS,
   resolveAgyGeminiDefaultModel,
 } from './agy-gemini-models.js';
@@ -22,6 +22,7 @@ import {
   normalizeMentionAlias,
 } from './template-variant-backfill.js';
 import { isTemplateVariantTombstoned } from './template-variant-tombstones.js';
+import { readRepairedVoiceRefTexts } from './voice-ref-text-repair.js';
 
 const CONFIG_SUBDIR = '.cat-cafe';
 const CAT_CATALOG_FILENAME = 'cat-catalog.json';
@@ -81,6 +82,10 @@ function migrateLegacyGeminiConsumerCarrier(
 ): boolean {
   const clientId = typeof variant.clientId === 'string' ? variant.clientId : variant.provider;
   if (clientId !== 'google') return false;
+  // An explicit Native selection or editor clear tombstone supersedes the one-time legacy migration.
+  // Otherwise every read changes the Native model back to a display label or deletes a selected ACP transport.
+  if (variant.agyProfile === null || (isRecord(variant.agyProfile) && variant.agyProfile.carrier === 'native'))
+    return false;
 
   const resolvedCatId = typeof variant.catId === 'string' ? variant.catId : breedDefaultCatId;
   if (!resolvedCatId) return false;
@@ -318,6 +323,12 @@ function resolveVariantMentionPatterns(
 
 const GEMINI35_OLD_MENTION_ALIASES = new Set(
   ['@gemini35', '@gemini-35', '@gemini3.5', '@flash', '@暹罗flash', '@暹罗gemini35']
+    .map(normalizeMentionAlias)
+    .filter((alias): alias is string => !!alias),
+);
+
+const GEMINI35_ALIASES_MOVED_TO_GEMINI38 = new Set(
+  ['@gemini38', '@gemini-38', '@gemini3.8', '@flash', '@暹罗flash', '@暹罗gemini38']
     .map(normalizeMentionAlias)
     .filter((alias): alias is string => !!alias),
 );
@@ -598,19 +609,45 @@ function syncGemini35TemplateUpgrade(catalogPath: string, templatePath: string):
   const nextBreeds = next.breeds as unknown as Record<string, unknown>[];
   let dirty = false;
 
+  if (next.version === 2 && template.version === 2) {
+    const nextRoster = next.roster as unknown as Record<string, unknown>;
+    const templateRoster = template.roster as unknown as Record<string, unknown>;
+    const currentEntry = isRecord(nextRoster[GEMINI35_CAT_ID]) ? nextRoster[GEMINI35_CAT_ID] : {};
+    const templateEntry = isRecord(templateRoster[GEMINI35_CAT_ID]) ? templateRoster[GEMINI35_CAT_ID] : undefined;
+    if (templateEntry && currentEntry.available !== false) {
+      nextRoster[GEMINI35_CAT_ID] = { ...templateEntry, ...currentEntry, available: false };
+      dirty = true;
+    }
+  }
+
   for (const breed of nextBreeds) {
     if (!isGemini35Breed(breed)) continue;
 
-    if (breed.name === GEMINI35_OLD_NAME && typeof templateBreed.name === 'string') {
+    if (
+      typeof breed.name === 'string' &&
+      GEMINI35_LEGACY_NAMES.has(breed.name) &&
+      typeof templateBreed.name === 'string'
+    ) {
       breed.name = templateBreed.name;
       dirty = true;
     }
-    if (breed.roleDescription === GEMINI35_OLD_ROLE_DESCRIPTION && typeof templateBreed.roleDescription === 'string') {
+    if (
+      typeof breed.roleDescription === 'string' &&
+      GEMINI35_LEGACY_ROLE_DESCRIPTIONS.has(breed.roleDescription) &&
+      typeof templateBreed.roleDescription === 'string'
+    ) {
       breed.roleDescription = templateBreed.roleDescription;
       dirty = true;
     }
 
-    const breedPatterns = readStringArray(breed.mentionPatterns);
+    const currentBreedPatterns = readStringArray(breed.mentionPatterns);
+    const breedPatterns = currentBreedPatterns.filter(
+      (pattern) => !GEMINI35_ALIASES_MOVED_TO_GEMINI38.has(normalizeMentionAlias(pattern)),
+    );
+    if (breedPatterns.length !== currentBreedPatterns.length) {
+      breed.mentionPatterns = breedPatterns;
+      dirty = true;
+    }
     const existingAliases = collectMentionAliasesForBreed(breed);
     const occupiedAliases = collectMentionAliasesExcludingBreed(nextBreeds, breed);
     let patternsDirty = false;
@@ -638,7 +675,8 @@ function syncGemini35TemplateUpgrade(catalogPath: string, templatePath: string):
         templateVariants.find((candidate) => candidate.id === variant.id) ??
         templateVariants.find((candidate) => resolveVariantCatId(templateBreed, candidate) === GEMINI35_CAT_ID);
       if (
-        variant.variantLabel === GEMINI35_OLD_VARIANT_LABEL &&
+        typeof variant.variantLabel === 'string' &&
+        GEMINI35_LEGACY_VARIANT_LABELS.has(variant.variantLabel) &&
         templateVariant &&
         typeof templateVariant.variantLabel === 'string'
       ) {
@@ -732,17 +770,20 @@ export function bootstrapCatCatalog(projectRoot: string, templatePath: string): 
     readCatCatalogRaw(projectRoot);
     // Strip legacy source field from variants (obsolete after F171).
     stripLegacySourceField(catalogPath);
+    // Repair reference transcripts seeded wrong for known clips (exact clip + wrong text only).
+    const repairedVoiceRefTexts = readRepairedVoiceRefTexts(catalogPath);
+    if (repairedVoiceRefTexts !== null) writeFileAtomic(catalogPath, repairedVoiceRefTexts);
     // Ensure owner is always present in roster.
     ensureOwnerInRoster(catalogPath);
     // Persist allowlisted template-added breeds so promoted house cats become
     // runtime members without reopening the template-only breed leak fixed by #772.
     persistMissingTemplateBreeds(projectRoot, catalogPath, templatePath);
+    // Restore the disabled Gemini 3.6 identity and release aliases now owned by
+    // the separate Gemini 3.8 cat before variant occupancy is evaluated.
+    syncGemini35TemplateUpgrade(catalogPath, templatePath);
     // Persist template-added variants into already-enabled runtime breeds so
     // read and write paths agree after upgrades.
     persistMissingTemplateVariants(projectRoot, catalogPath, templatePath);
-    // Keep built-in Gemini Flash identity fields aligned for existing catalogs
-    // whose runtime copy would otherwise keep pre-upgrade 3.5 names and aliases.
-    syncGemini35TemplateUpgrade(catalogPath, templatePath);
     return catalogPath;
   }
 

@@ -1,12 +1,33 @@
 import assert from 'node:assert/strict';
-import { describe, it, mock } from 'node:test';
+import { rmSync } from 'node:fs';
+import { after, describe, it, mock } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   createEvalDomainDailySpec,
   createEvalDomainWeeklySpec,
 } from '../../dist/infrastructure/harness-eval/domain/eval-domain-daily.js';
 
-const repoHarnessFeedbackRoot = fileURLToPath(new URL('../../../../docs/harness-feedback', import.meta.url));
+import { createActiveEraHarnessFeedback } from './measurement-census-active-era.js';
+
+const realHarnessFeedbackRoot = fileURLToPath(new URL('../../../../docs/harness-feedback', import.meta.url));
+// Gate-logic tests run on the active-era registry (before the 2026-10-01 dormancy batch).
+const activeEra = await createActiveEraHarnessFeedback();
+after(() => rmSync(activeEra.repoRoot, { recursive: true, force: true }));
+const repoHarnessFeedbackRoot = activeEra.harnessFeedbackRoot;
+
+describe('eval domain gates on the real registry after the 2026-10-01 dormancy batch', () => {
+  it('schedules only the domains that stayed active', async () => {
+    const daily = await createEvalDomainDailySpec({ harnessFeedbackRoot: realHarnessFeedbackRoot }).admission.gate();
+    const weekly = await createEvalDomainWeeklySpec({ harnessFeedbackRoot: realHarnessFeedbackRoot }).admission.gate();
+    assert.deepEqual(daily.workItems.map((item) => item.subjectKey).sort(), ['eval:a2a']);
+    // eval:capability-evolution stays enabled: F311's Program trigger bridge requires it.
+    assert.deepEqual(weekly.workItems.map((item) => item.subjectKey).sort(), [
+      'eval:capability-evolution',
+      'eval:capability-wakeup',
+      'eval:freshness',
+    ]);
+  });
+});
 
 describe('eval-domain-daily task spec', () => {
   it('returns a valid TaskSpec_P1 with expected id, trigger, and display', () => {
@@ -125,7 +146,7 @@ describe('eval-domain-daily task spec', () => {
     assert.equal(deliverMock.mock.callCount(), 1);
     const deliverCall = deliverMock.mock.calls[0].arguments[0];
     assert.equal(deliverCall.threadId, 'thread_eval_a2a');
-    assert.equal(deliverCall.userId, 'scheduler');
+    assert.equal(deliverCall.userId, 'default-user');
     assert.ok(deliverCall.content.includes('eval:a2a'), 'content should mention domain');
     assert.match(deliverCall.content, /Trigger channel: time/);
     assert.match(deliverCall.content, /Invocation is only a wake attempt/);
@@ -136,19 +157,13 @@ describe('eval-domain-daily task spec', () => {
       'legacyCleanup.status should be "disabled" (no active legacy tasks), not "not_checked"',
     );
 
-    // invokeTrigger was called with eval cat
-    assert.equal(triggerMock.mock.callCount(), 1);
-    const triggerArgs = triggerMock.mock.calls[0].arguments;
-    assert.equal(triggerArgs[0], 'thread_eval_a2a'); // threadId
-    assert.ok(triggerArgs[1], 'should have catId'); // catId
-    assert.equal(triggerArgs[2], 'default-user'); // owner userId, so stream replies are visible after refresh
-    assert.ok(triggerArgs[3].includes('eval:a2a'), 'reason should mention domain');
-    assert.equal(triggerArgs[4], 'msg_123'); // messageId
-    assert.equal(triggerArgs[5], undefined); // no rich content blocks
-    assert.deepEqual(triggerArgs[6], {
-      sourceCategory: 'scheduled',
-      reason: 'Daily eval: eval:a2a',
-    });
+    // RFC §5.4: the eval cat's exact input travels as the envelope's private payload; admission is
+    // the wake, so the deliver seam carries everything the old positional trigger call did.
+    const evalEnvelope = deliverMock.mock.calls[0].arguments[0];
+    assert.equal(evalEnvelope.threadId, 'thread_eval_a2a');
+    assert.ok(evalEnvelope.targetCatId, 'should name the eval cat');
+    assert.equal(evalEnvelope.userId, 'default-user');
+    assert.ok(evalEnvelope.privateContent.includes('eval:a2a'), 'reason should mention domain');
   });
 
   it('execute reports "disabled" when legacy task exists but is disabled (P2 regression)', async () => {
@@ -334,17 +349,10 @@ describe('eval-domain-weekly task spec (AC-E19, AC-E20)', () => {
     assert.equal(deliverMock.mock.callCount(), 1);
     const deliverCall = deliverMock.mock.calls[0].arguments[0];
     assert.equal(deliverCall.threadId, 'thread_eval_capability_wakeup');
-    assert.equal(deliverCall.userId, 'scheduler');
+    assert.equal(deliverCall.userId, 'default-user');
     assert.ok(deliverCall.content.includes('eval:capability-wakeup'), 'content should mention domain');
 
-    assert.equal(triggerMock.mock.callCount(), 1);
-    const triggerArgs = triggerMock.mock.calls[0].arguments;
-    assert.equal(triggerArgs[0], 'thread_eval_capability_wakeup');
-    assert.ok(triggerArgs[3].includes('Weekly eval'), 'trigger reason should say Weekly');
-    assert.equal(triggerArgs[5], undefined);
-    assert.deepEqual(triggerArgs[6], {
-      sourceCategory: 'scheduled',
-      reason: 'Weekly eval: eval:capability-wakeup',
-    });
+    assert.equal(deliverCall.threadId, 'thread_eval_capability_wakeup');
+    assert.ok(deliverCall.privateContent.includes('Weekly eval'), 'the private payload should say Weekly');
   });
 });

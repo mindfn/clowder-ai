@@ -1,5 +1,6 @@
 import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
@@ -36,6 +37,12 @@ const baseDeps = {
       return { id: 'msg-1', ...input };
     },
   },
+  // RFC §5.1: connector inputs cross one seam — durable Message + Queue admission.
+  persistedQueueDelivery: {
+    async deliver(input) {
+      return { state: 'started', entryId: 'entry-1', message: { id: 'msg-1', ...input } };
+    },
+  },
   threadStore: {
     create(userId, title) {
       return { id: 'thread-1', createdBy: userId, title };
@@ -66,6 +73,115 @@ describe('ConnectorGateway Bootstrap', () => {
     assert.equal(result.weixinAdapter.hasBotToken(), false);
     assert.equal(result.webhookHandlers.size, 0);
     await result.stop();
+  });
+
+  it('routes GitHub Repo Inbox delivery and wake to the current community guard', async () => {
+    const envKeys = ['GITHUB_WEBHOOK_SECRET', 'GITHUB_REPO_ALLOWLIST', 'GITHUB_REPO_INBOX_CAT_ID'];
+    const previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+    const secret = 'repo-inbox-owner-test-secret';
+    process.env.GITHUB_WEBHOOK_SECRET = secret;
+    process.env.GITHUB_REPO_ALLOWLIST = 'zts212653/clowder-ai';
+    process.env.GITHUB_REPO_INBOX_CAT_ID = 'stale-env-owner';
+
+    const appended = [];
+    const triggered = [];
+    const admitted = [];
+    const redisValues = new Map();
+    const bindings = new Map();
+    const deps = {
+      ...baseDeps,
+      persistedQueueDelivery: {
+        async deliver(input) {
+          admitted.push(input);
+          return { state: 'started', entryId: 'entry-current-owner', message: { id: 'msg-current-owner', ...input } };
+        },
+      },
+      messageStore: {
+        async append(input) {
+          appended.push(input);
+          return { id: `msg-${appended.length}`, timestamp: input.timestamp };
+        },
+      },
+      invokeTrigger: {
+        trigger(...args) {
+          triggered.push(args);
+          return 'dispatched';
+        },
+      },
+      redis: {
+        async get(key) {
+          return redisValues.get(key) ?? null;
+        },
+        async set(key, value, ...args) {
+          if (args.includes('NX') && redisValues.has(key)) return null;
+          redisValues.set(key, value);
+          return 'OK';
+        },
+        async del(...keys) {
+          let deleted = 0;
+          for (const key of keys) deleted += redisValues.delete(key) ? 1 : 0;
+          return deleted;
+        },
+      },
+      bindingStore: {
+        async getByExternal(connectorId, externalChatId) {
+          return bindings.get(`${connectorId}:${externalChatId}`) ?? null;
+        },
+        async bind(connectorId, externalChatId, threadId, userId) {
+          const binding = { connectorId, externalChatId, threadId, userId, createdAt: Date.now() };
+          bindings.set(`${connectorId}:${externalChatId}`, binding);
+          return binding;
+        },
+      },
+      repoConfigStore: {
+        async getByRepo(repoFullName) {
+          assert.equal(repoFullName, 'zts212653/clowder-ai');
+          return { guardCatId: 'codex61-sol' };
+        },
+      },
+    };
+
+    let handle;
+    try {
+      handle = await startConnectorGateway({}, deps);
+      const handler = handle.webhookHandlers.get('github-repo-event');
+      assert.ok(handler, 'GitHub Repo Inbox webhook handler should be registered');
+
+      const body = {
+        action: 'opened',
+        repository: { full_name: 'zts212653/clowder-ai' },
+        sender: { id: 42, login: 'contributor' },
+        pull_request: {
+          number: 99,
+          title: 'Route to the current guard',
+          html_url: 'https://github.com/zts212653/clowder-ai/pull/99',
+          user: { login: 'contributor' },
+          author_association: 'CONTRIBUTOR',
+          draft: false,
+        },
+      };
+      const rawBody = Buffer.from(JSON.stringify(body));
+      const headers = {
+        'x-github-event': 'pull_request',
+        'x-github-delivery': 'delivery-current-community-guard',
+        'x-hub-signature-256': `sha256=${createHmac('sha256', secret).update(rawBody).digest('hex')}`,
+      };
+
+      const result = await handler.handleWebhook(body, headers, rawBody);
+
+      assert.equal(result.kind, 'processed');
+      assert.equal(admitted.length, 1);
+      assert.equal(admitted[0].targetCatId, 'codex61-sol');
+      assert.equal(admitted[0].ownerUserId, 'owner-1');
+      assert.deepEqual(appended, [], 'bootstrap must use atomic delivery rather than a separate append');
+      assert.deepEqual(triggered, [], 'admission owns the wake; no second trigger');
+    } finally {
+      await handle?.stop();
+      for (const key of envKeys) {
+        if (previousEnv[key] === undefined) delete process.env[key];
+        else process.env[key] = previousEnv[key];
+      }
+    }
   });
 
   it('creates gateway without feishu when verification token missing (fail-closed)', async () => {
@@ -118,9 +234,11 @@ describe('ConnectorGateway Bootstrap', () => {
     const triggerCalls = [];
     const deps = {
       ...baseDeps,
-      invokeTrigger: {
-        trigger(...args) {
-          triggerCalls.push(args);
+      // Admission to the Queue is the invocation; index 3 stays the message content.
+      persistedQueueDelivery: {
+        async deliver(input) {
+          triggerCalls.push([input.threadId, input.targetCatId, input.ownerUserId, input.content, 'msg-1']);
+          return { state: 'started', entryId: 'entry-1', message: { id: 'msg-1', ...input } };
         },
       },
     };
@@ -459,9 +577,11 @@ describe('ConnectorGateway Bootstrap', () => {
     const triggerCalls = [];
     const deps = {
       ...baseDeps,
-      invokeTrigger: {
-        trigger(...args) {
-          triggerCalls.push(args);
+      // Admission to the Queue is the invocation; index 3 stays the message content.
+      persistedQueueDelivery: {
+        async deliver(input) {
+          triggerCalls.push([input.threadId, input.targetCatId, input.ownerUserId, input.content, 'msg-1']);
+          return { state: 'started', entryId: 'entry-1', message: { id: 'msg-1', ...input } };
         },
       },
     };
@@ -500,9 +620,11 @@ describe('ConnectorGateway Bootstrap', () => {
     const triggerCalls = [];
     const deps = {
       ...baseDeps,
-      invokeTrigger: {
-        trigger(...args) {
-          triggerCalls.push(args);
+      // Admission to the Queue is the invocation; index 3 stays the message content.
+      persistedQueueDelivery: {
+        async deliver(input) {
+          triggerCalls.push([input.threadId, input.targetCatId, input.ownerUserId, input.content, 'msg-1']);
+          return { state: 'started', entryId: 'entry-1', message: { id: 'msg-1', ...input } };
         },
       },
     };
@@ -549,9 +671,11 @@ describe('ConnectorGateway Bootstrap', () => {
     const triggerCalls = [];
     const deps = {
       ...baseDeps,
-      invokeTrigger: {
-        trigger(...args) {
-          triggerCalls.push(args);
+      // Admission to the Queue is the invocation; index 3 stays the message content.
+      persistedQueueDelivery: {
+        async deliver(input) {
+          triggerCalls.push([input.threadId, input.targetCatId, input.ownerUserId, input.content, 'msg-1']);
+          return { state: 'started', entryId: 'entry-1', message: { id: 'msg-1', ...input } };
         },
       },
     };
@@ -597,9 +721,11 @@ describe('ConnectorGateway Bootstrap', () => {
     const triggerCalls = [];
     const deps = {
       ...baseDeps,
-      invokeTrigger: {
-        trigger(...args) {
-          triggerCalls.push(args);
+      // Admission to the Queue is the invocation; index 3 stays the message content.
+      persistedQueueDelivery: {
+        async deliver(input) {
+          triggerCalls.push([input.threadId, input.targetCatId, input.ownerUserId, input.content, 'msg-1']);
+          return { state: 'started', entryId: 'entry-1', message: { id: 'msg-1', ...input } };
         },
       },
     };

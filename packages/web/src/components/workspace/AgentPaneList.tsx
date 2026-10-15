@@ -1,67 +1,23 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { useWorkspaceSurfaceVisibility } from '@/components/workbench/WorkspaceSurfaceVisibility';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import typographyTokens from '@/styles/typography-tokens.json';
-import { apiFetch } from '@/utils/api-client';
+import { AgentPaneListV2 } from './AgentPaneListV2';
+import { type AgentPane, useAgentPanes } from './useAgentPanes';
 
-interface AgentPane {
+export interface AgentPaneSelectionMeta {
   invocationId: string;
-  paneId: string;
-  status: 'running' | 'done' | 'crashed';
-  startedAt: number;
+  catId: string | null;
 }
 
 interface AgentPaneListProps {
   worktreeId: string;
-  onSelectPane: (paneId: string) => void;
+  onSelectPane: (paneId: string, meta?: AgentPaneSelectionMeta) => void;
   selectedPaneId?: string;
 }
 
-export function AgentPaneList({ worktreeId, onSelectPane, selectedPaneId }: AgentPaneListProps) {
-  const [snapshot, setSnapshot] = useState<{ worktreeId: string; panes: AgentPane[] }>({ worktreeId, panes: [] });
-  const surfaceVisible = useWorkspaceSurfaceVisibility();
-  const requestEpoch = useRef(0);
-  const currentVisibility = useRef(surfaceVisible);
-  const currentWorktreeId = useRef(worktreeId);
-
-  useLayoutEffect(() => {
-    if (currentVisibility.current === surfaceVisible) return;
-    currentVisibility.current = surfaceVisible;
-    ++requestEpoch.current;
-  }, [surfaceVisible]);
-
-  useLayoutEffect(() => {
-    if (currentWorktreeId.current === worktreeId) return;
-    currentWorktreeId.current = worktreeId;
-    ++requestEpoch.current;
-  }, [worktreeId]);
-
-  const refresh = useCallback(async () => {
-    const request = ++requestEpoch.current;
-    try {
-      const res = await apiFetch(`/api/terminal/agent-panes?worktreeId=${encodeURIComponent(worktreeId)}`);
-      if (!res.ok) return;
-      const nextPanes = (await res.json()) as AgentPane[];
-      const ownsCurrentRead =
-        request === requestEpoch.current && currentVisibility.current && currentWorktreeId.current === worktreeId;
-      if (ownsCurrentRead) setSnapshot({ worktreeId, panes: nextPanes });
-    } catch {
-      /* ignore fetch errors */
-    }
-  }, [worktreeId]);
-
-  useEffect(() => {
-    if (!surfaceVisible) return;
-    void refresh();
-    const interval = setInterval(refresh, 5000);
-    return () => {
-      clearInterval(interval);
-      ++requestEpoch.current;
-    };
-  }, [refresh, surfaceVisible]);
-
-  const panes = snapshot.worktreeId === worktreeId ? snapshot.panes : [];
+function AgentPaneListClassic({ worktreeId, onSelectPane, selectedPaneId }: AgentPaneListProps) {
+  const panes = useAgentPanes(worktreeId);
 
   if (panes.length === 0) return null;
 
@@ -130,4 +86,9 @@ export function AgentPaneList({ worktreeId, onSelectPane, selectedPaneId }: Agen
       ))}
     </div>
   );
+}
+
+export function AgentPaneList(props: AgentPaneListProps) {
+  const presentation = useShellPresentation();
+  return presentation === 'v2' ? <AgentPaneListV2 {...props} /> : <AgentPaneListClassic {...props} />;
 }

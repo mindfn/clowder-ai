@@ -1,3 +1,4 @@
+import { admitDurableGateCancellationRequest } from '../domains/ball-custody/durable-managed-gate-cancellation.js';
 /**
  * ManagedRunner — F167 Phase P (H3)
  *
@@ -19,6 +20,8 @@ import { fileURLToPath } from 'node:url';
 import type { DurableManagedGateJob } from '../domains/ball-custody/durable-managed-gate-job.js';
 import { readUnixProcessSnapshotSync, type UnixProcessIdentity } from '../utils/cli-process-ownership.js';
 import { createModuleLogger } from './logger.js';
+import { readonlyFailure, runManagedReadonlyCommand } from './managed-readonly-command.js';
+import { READONLY_MAX_TIMEOUT_MS } from './managed-readonly-plan.js';
 import { buildManagedRunnerEnvironment } from './managed-runner-environment.js';
 import {
   armProcessTreeKillEscalation,
@@ -56,6 +59,7 @@ export interface WakeWhenResult {
 }
 
 export interface ManagedRunnerOptions {
+  executionPolicy?: 'read_only';
   cwd?: string;
   timeoutMs?: number;
   maximumTimeoutMs?: number;
@@ -72,6 +76,8 @@ export interface SpawnAdmission {
   processIdentity?: UnixProcessIdentity;
   /** Error message when spawned=false. */
   error?: string;
+  /** Explicit failure stage; pid absence is never execution evidence. */
+  failureKind?: 'admission_rejected' | 'spawn_failed';
 }
 
 /** Two-phase start result: admission resolves on spawn, completion on exit. */
@@ -83,7 +89,9 @@ export interface ManagedRunnerStartResult {
 }
 
 export class ManagedRunner {
+  private _readonlyAbort: AbortController | null = null;
   private _state: ManagedRunnerState = 'idle';
+  private _managedJob: DurableManagedGateJob | null = null;
   private _pid: number | null = null;
   private _logPath: string | null = null;
   private _child: ChildProcess | null = null;
@@ -150,9 +158,14 @@ export class ManagedRunner {
     opts?: ManagedRunnerOptions,
     onAdmission?: (result: SpawnAdmission) => void,
   ): Promise<WakeWhenResult> {
+    if (opts?.executionPolicy !== undefined) {
+      if (opts.executionPolicy !== 'read_only') throw new Error('unknown_execution_policy');
+      return this._runReadonly(command, opts, onAdmission);
+    }
     const timeoutMs = Math.min(opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS, opts?.maximumTimeoutMs ?? MAX_TIMEOUT_MS);
     const cwd = opts?.cwd;
 
+    this._managedJob = opts?.managedJob ?? null;
     this._preserveLog = opts?.managedJob != null;
     if (opts?.managedJob) {
       this._logPath = opts.managedJob.logPath;
@@ -210,7 +223,7 @@ export class ManagedRunner {
         this._state = 'completed';
         const errMsg = spawnErr instanceof Error ? spawnErr.message : String(spawnErr);
         log.error({ err: spawnErr, command, cwd }, 'ManagedRunner: synchronous spawn failure');
-        onAdmission?.({ spawned: false, pid: null, error: errMsg });
+        onAdmission?.({ spawned: false, pid: null, error: errMsg, failureKind: 'spawn_failed' });
         finishLog(() => {
           this._cleanupLog();
           resolve({ exitCode: null, timedOut: false, durationMs, tailOutput: `Error: ${errMsg}` });
@@ -292,13 +305,14 @@ export class ManagedRunner {
         }) as typeof logStream.write;
 
       // Timeout handler
-      this._timeoutTimer = setTimeout(() => {
-        if (this._state !== 'running') return;
-        log.info({ pid: this._pid, command, timeoutMs }, 'ManagedRunner: timeout reached, sending SIGTERM');
-        this._state = 'timed_out';
-        const gracefulTermination = this._killProcessGroup('SIGTERM');
-        this._armKillEscalation(gracefulTermination, 'ManagedRunner: SIGKILL after grace period');
-      }, timeoutMs);
+      if (opts?.managedJob?.recordStorage !== 'sqlite_v1')
+        this._timeoutTimer = setTimeout(() => {
+          if (this._state !== 'running') return;
+          log.info({ pid: this._pid, command, timeoutMs }, 'ManagedRunner: timeout reached, sending SIGTERM');
+          this._state = 'timed_out';
+          const gracefulTermination = this._killProcessGroup('SIGTERM');
+          this._armKillEscalation(gracefulTermination, 'ManagedRunner: SIGKILL after grace period');
+        }, timeoutMs);
 
       // `close` waits for stdout/stderr to drain before the tail is read.
       child.on('close', (code, signal) => {
@@ -356,7 +370,7 @@ export class ManagedRunner {
         if (!admissionSettled) {
           admissionSettled = true;
           this._state = 'completed';
-          onAdmission?.({ spawned: false, pid: null, error: err.message });
+          onAdmission?.({ spawned: false, pid: null, error: err.message, failureKind: 'spawn_failed' });
         }
 
         if (this._state === 'running') {
@@ -382,13 +396,61 @@ export class ManagedRunner {
 
   /** Cancel the running process. SIGTERM → 5s grace → SIGKILL. */
   cancel(): void {
+    if (this._readonlyAbort) {
+      this._state = 'cancelled';
+      this._readonlyAbort.abort();
+      return;
+    }
     if (this._state !== 'running' || !this._child) return;
 
     log.info({ pid: this._pid }, 'ManagedRunner: cancel requested, sending SIGTERM');
+    if (this._managedJob)
+      admitDurableGateCancellationRequest(this._managedJob, {
+        requestedAt: Date.now(),
+        cancelledBy: 'managed-runner',
+        reason: 'explicit runner cancellation',
+      });
     this._state = 'cancelled';
     this._clearTimers();
     const gracefulTermination = this._killProcessGroup('SIGTERM');
     this._armKillEscalation(gracefulTermination, 'ManagedRunner: SIGKILL after cancel grace period');
+  }
+
+  private async _runReadonly(
+    command: string,
+    opts: ManagedRunnerOptions,
+    onAdmission?: (result: SpawnAdmission) => void,
+  ): Promise<WakeWhenResult> {
+    const started = Date.now();
+    this._readonlyAbort = new AbortController();
+    const readonlySignal = this._readonlyAbort.signal;
+    this._state = 'running';
+    let admitted = false;
+    const admit = (admission: SpawnAdmission) => {
+      if (admitted) return;
+      admitted = true;
+      this._pid = admission.pid;
+      onAdmission?.(admission);
+    };
+    let result: WakeWhenResult | undefined;
+    try {
+      if (opts.managedJob || opts.maximumTimeoutMs !== undefined)
+        throw new Error('readonly_execution_policy_cannot_run_durable_gate');
+      result = await runManagedReadonlyCommand(
+        command,
+        opts.cwd ?? process.cwd(),
+        Math.min(opts.timeoutMs ?? READONLY_MAX_TIMEOUT_MS, READONLY_MAX_TIMEOUT_MS),
+        readonlySignal,
+        admit,
+      );
+    } catch (error) {
+      result = readonlyFailure(error, started);
+      admit({ spawned: false, pid: null, error: result.tailOutput, failureKind: 'admission_rejected' });
+    } finally {
+      this._readonlyAbort = null;
+      this._state = readonlySignal.aborted ? 'cancelled' : result?.timedOut ? 'timed_out' : 'completed';
+    }
+    return result;
   }
 
   /** Terminate the detached process group (Unix) or process tree (Windows). */
@@ -409,7 +471,13 @@ export class ManagedRunner {
     }
 
     try {
-      process.kill(-this._pid, signal);
+      // A recovery-aware owner publishes its attempt intent before signalling children.
+      process.kill(
+        signal === 'SIGTERM' && (this._managedJob?.recovery || this._managedJob?.recordStorage === 'sqlite_v1')
+          ? this._pid
+          : -this._pid,
+        signal,
+      );
     } catch (err) {
       // Process group may already be gone — that's fine
       log.debug({ pid: this._pid, signal, err }, 'ManagedRunner: kill process group failed (may already be gone)');

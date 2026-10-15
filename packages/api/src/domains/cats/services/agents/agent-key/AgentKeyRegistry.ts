@@ -20,7 +20,7 @@ export class AgentKeyRegistry {
   async issue(
     catId: CatId,
     userId: string,
-    options?: { rotatedFrom?: string },
+    options?: { rotatedFrom?: string; expiresAt?: null },
   ): Promise<{ agentKeyId: string; secret: string }> {
     const agentKeyId = `ak_${randomUUID().replace(/-/g, '')}`;
     const secret = randomBytes(32).toString('hex');
@@ -38,7 +38,7 @@ export class AgentKeyRegistry {
       salt,
       scope: 'user-bound',
       issuedAt: now,
-      expiresAt: now + this.ttlMs,
+      expiresAt: options?.expiresAt === null ? null : now + this.ttlMs,
       ...(options?.rotatedFrom ? { rotatedFrom: options.rotatedFrom } : {}),
     });
 
@@ -58,7 +58,7 @@ export class AgentKeyRegistry {
     if (!old) throw new Error(`Agent key not found: ${agentKeyId}`);
     if (old.revokedAt) throw new Error(`Cannot rotate revoked key: ${agentKeyId}`);
     const now = Date.now();
-    if (now > old.expiresAt) throw new Error(`Cannot rotate expired key: ${agentKeyId}`);
+    if (old.expiresAt !== null && now > old.expiresAt) throw new Error(`Cannot rotate expired key: ${agentKeyId}`);
     if (old.graceUntil) {
       if (now > old.graceUntil) throw new Error(`Cannot rotate expired key: ${agentKeyId}`);
       throw new Error(`Cannot rotate key already in grace: ${agentKeyId}`);
@@ -67,7 +67,10 @@ export class AgentKeyRegistry {
     const graceUntil = Date.now() + this.graceMs;
     await this.backend.updateGrace(agentKeyId, graceUntil);
 
-    return this.issue(old.catId, old.userId, { rotatedFrom: agentKeyId });
+    return this.issue(old.catId, old.userId, {
+      rotatedFrom: agentKeyId,
+      ...(old.expiresAt === null ? { expiresAt: null } : {}),
+    });
   }
 
   async list(filter: { catId?: string; userId?: string; includeRevoked?: boolean }): Promise<AgentKeyRecord[]> {

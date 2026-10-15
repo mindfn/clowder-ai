@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useChatStore } from '@/stores/chatStore';
+import { restoreMessageScrollAnchor } from '@/utils/scrollToMessage';
 import {
   decodeTrajectoryOriginRef,
   encodeTrajectoryOriginRef,
@@ -70,7 +71,7 @@ describe('F299 typed trajectory origin navigation', () => {
     chat.getBoundingClientRect = () => ({ top: 0, bottom: 500 }) as DOMRect;
     const boundary = document.createElement('div');
     boundary.dataset.messageViewportId = 'message-17';
-    boundary.getBoundingClientRect = () => ({ top: 200, bottom: 240 }) as DOMRect;
+    boundary.getBoundingClientRect = () => ({ top: 300 - chat.scrollTop, bottom: 340 - chat.scrollTop }) as DOMRect;
     const message = document.createElement('div');
     message.dataset.messageId = 'message-17';
     boundary.appendChild(message);
@@ -87,6 +88,39 @@ describe('F299 typed trajectory origin navigation', () => {
     expect(chat.scrollTop).toBe(260);
     expect(useChatStore.getState().rightPanelOpen).toBe(false);
     expect(new URL(window.location.href).searchParams.get('inv')).toBeNull();
+  });
+
+  it('stops after the bounded retry budget when layout cannot reach the requested message offset', () => {
+    const chat = document.createElement('div');
+    chat.dataset.chatContainer = '';
+    let scrollTop = 100;
+    Object.defineProperty(chat, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (next: number) => {
+        scrollTop = Math.min(next, 180);
+      },
+    });
+    chat.getBoundingClientRect = () => ({ top: 0, bottom: 500 }) as DOMRect;
+    const boundary = document.createElement('div');
+    boundary.dataset.messageViewportId = 'message-clamped';
+    boundary.getBoundingClientRect = () => ({ top: 300 - chat.scrollTop, bottom: 340 - chat.scrollTop }) as DOMRect;
+    const message = document.createElement('div');
+    message.dataset.messageId = 'message-clamped';
+    boundary.appendChild(message);
+    chat.appendChild(boundary);
+    document.body.appendChild(chat);
+    const anchor = { messageId: 'message-clamped', viewportOffsetPx: 40 };
+
+    expect(restoreMessageScrollAnchor(chat, anchor)).toBe(false);
+    scrollTop = 100;
+    vi.mocked(window.requestAnimationFrame).mockClear();
+
+    restoreTrajectoryOrigin({ kind: 'message', threadId: 'thread-a', ...anchor });
+
+    expect(chat.scrollTop).toBe(180);
+    expect(window.requestAnimationFrame).toHaveBeenCalledTimes(12);
+    expect(useChatStore.getState().rightPanelOpen).toBe(false);
   });
 
   it('restores an exact Eval card and viewport offset', () => {

@@ -8,12 +8,12 @@ description: "Contributor-centered skill sync limits daily link repair to the in
 description_source: model
 description_author: codex-terra
 description_updated_at: 2026-08-21T08:22:00Z
-tips_exempt: "CLI-only contributor mount maintenance; it adds no Hub-discoverable capability or guide surface."
+tips_exempt: "Renewed 2026-10-13 for the historical completion-date annotation only; CLI-only contributor mount maintenance still adds no Hub-discoverable capability or guide surface."
 ---
 
 # F301: Scoped Skill Sync — 当前 Worktree 快路径与显式 Fleet Repair
 
-> **Status**: done | **Owner**: 小团团·Maine Coon (@codex-terra, GPT-5.6 Terra) | **Priority**: P2
+> **Status**: done | **Completed**: 2026-08-21 | **Owner**: 小团团·Maine Coon (@codex-terra, GPT-5.6 Terra) | **Priority**: P2
 
 ## Why
 

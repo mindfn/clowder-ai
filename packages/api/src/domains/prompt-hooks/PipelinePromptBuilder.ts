@@ -18,7 +18,7 @@ import type { AssemblerInput, CatId } from '@cat-cafe/shared';
 import { findMonorepoRoot } from '../../utils/monorepo-root.js';
 import { renderSegment } from '../cats/services/context/prompt-template-loader.js';
 import type { InvocationContext, StaticIdentityOptions } from '../cats/services/context/SystemPromptBuilder.js';
-import { buildConciergePromptLines } from '../concierge/ConciergePromptSection.js';
+import { buildConversationDutyPromptLines } from '../concierge/conversation-duty.js';
 import { assembleForSession, assembleForTurn } from './assemble-bridge.js';
 import { HookPipeline, type PipelineResult } from './HookPipeline.js';
 import { HookRegistry } from './HookRegistry.js';
@@ -30,9 +30,9 @@ import { RESOLVER_MAP } from './resolvers/index.js';
 // The pipeline executes ALL hooks for a stage (producing full trace events),
 // but prompt output is filtered to match legacy scope for backward compat.
 //
-// Legacy architecture splits 46 hooks across multiple injection points:
+// Legacy architecture splits 45 active hooks across multiple injection points:
 //   buildStaticIdentity → S1-S13 only
-//   buildInvocationContext → D1-D21 only
+//   buildInvocationContext → D1-D19, D21 only (D20 retired)
 //   L0 compiler → L1-L7 (separate channel for native providers)
 //   route-serial/parallel → R1-R2
 //   route-helpers → N1
@@ -44,7 +44,7 @@ import { RESOLVER_MAP } from './resolvers/index.js';
 // ---------------------------------------------------------------------------
 
 const SCOPE_S = /^S\d/; // S1-S13: buildStaticIdentity
-const SCOPE_D = /^D\d/; // D1-D21: buildInvocationContext
+const SCOPE_D = /^D\d/; // D1-D19, D21: buildInvocationContext
 
 // ---------------------------------------------------------------------------
 // Singleton pipeline (lazy init on first call)
@@ -179,15 +179,15 @@ export function buildInvocationContextViaHookPipeline(context: InvocationContext
   // Legacy SystemPromptBuilder places concierge between D17 and D18 (before D21
   // trailing anchor). Splice into patches at the correct position to preserve
   // ordering for AC-P2-14 zero-behavior-change.
-  if (context.threadKind === 'concierge' && context.conciergeConfig) {
-    const conciergeLines = buildConciergePromptLines(context.conciergeConfig, context.threadId);
+  if (context.liveCompanion || (context.threadKind === 'concierge' && context.conciergeConfig)) {
+    const conciergeLines = buildConversationDutyPromptLines(context);
     if (conciergeLines.length > 0) {
       const scopedPatches = [...trace.patches.filter((p) => SCOPE_D.test(p.hookId))];
       // Insert before D18 (order 1800) — matches legacy position after D17 (order 1700)
       const d18Idx = scopedPatches.findIndex((p) => p.hookId === 'D18');
       const insertIdx = d18Idx >= 0 ? d18Idx : scopedPatches.length;
       scopedPatches.splice(insertIdx, 0, {
-        hookId: 'concierge-f229',
+        hookId: context.liveCompanion ? 'live-companion-f317' : 'concierge-f229',
         content: conciergeLines.join('\n'),
         order: 1750,
       });
@@ -217,7 +217,7 @@ export function buildInvocationContextViaHookPipelineWithTrace(context: Invocati
  * Equivalent to legacy `buildSystemPrompt()`.
  *
  * Unlike the scoped builders above, this produces the FULL unfiltered pipeline
- * output — all 46 hooks. Use when the pipeline IS the single source (future).
+ * output — all 45 active hooks. Use when the pipeline IS the single source (future).
  *
  * @returns Combined prompt string with trace results for observability.
  */

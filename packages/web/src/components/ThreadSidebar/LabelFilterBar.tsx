@@ -3,16 +3,25 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { type ThreadLabel } from '@/stores/label-store';
 
+import { LabelFilterBarV2 } from './LabelFilterBarV2';
+
 const MAX_INLINE = 5;
 
-interface LabelFilterBarProps {
+export interface LabelFilterBarProps {
+  variant?: 'classic' | 'v2';
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   labels: ThreadLabel[];
   selectedFilter: string | null;
   onSelect: (filter: string | null) => void;
   uncategorizedCount: number;
 }
 
-export function LabelFilterBar({ labels, selectedFilter, onSelect, uncategorizedCount }: LabelFilterBarProps) {
+export function LabelFilterBar(props: LabelFilterBarProps) {
+  return props.variant === 'v2' ? <LabelFilterBarV2 {...props} /> : <ClassicLabelFilterBar {...props} />;
+}
+
+function ClassicLabelFilterBar({ labels, selectedFilter, onSelect, uncategorizedCount }: LabelFilterBarProps) {
   const [showOverflow, setShowOverflow] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
   const visibleLabels = labels.slice(0, MAX_INLINE);

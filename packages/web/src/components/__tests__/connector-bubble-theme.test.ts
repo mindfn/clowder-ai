@@ -44,12 +44,144 @@ describe('ConnectorBubble theme', () => {
     container.remove();
   });
 
+  function feedbackMessage(signalType?: string): ChatMessage {
+    return {
+      id: 'm-feedback',
+      type: 'connector',
+      content: '[自动检测] 我注意到刚才可能出了问题',
+      timestamp: Date.now(),
+      source: { connector: 'frustration-auto-issue', label: '问题检测', icon: 'search' },
+      extra: {
+        rich: {
+          v: 1,
+          blocks: [
+            {
+              id: 'feedback-card',
+              kind: 'card',
+              v: 1,
+              title: '自动问题卡',
+              bodyMarkdown: '检测提问正文',
+              meta: {
+                kind: 'frustration_auto_issue',
+                issueId: 'issue-feedback',
+                ...(signalType ? { signalType } : {}),
+              },
+            },
+          ],
+        },
+      },
+    };
+  }
+
+  for (const type of ['text_frustration', 'retry_burst']) {
+    it(`withdraws the complete trusted ${type} presentation without deleting its message anchor`, async () => {
+      await act(async () => root.render(React.createElement(ConnectorBubble, { message: feedbackMessage(type) })));
+      expect(container.textContent).not.toContain('问题检测');
+      expect(container.textContent).not.toContain('[自动检测]');
+      expect(container.textContent).not.toContain('自动问题卡');
+      expect(container.textContent).not.toContain('确认记录');
+      expect(container.querySelector('[data-message-id="m-feedback"]')).not.toBeNull();
+      expect(mockApiFetch.mock.calls.every(([path]) => path === '/api/config')).toBe(true);
+    });
+  }
+
+  it('classifies a legacy card from its original issue read before exposing any detection question or action', async () => {
+    let resolveIssue!: (response: Response) => void;
+    mockApiFetch.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveIssue = resolve;
+        }),
+    );
+    await act(async () => root.render(React.createElement(ConnectorBubble, { message: feedbackMessage() })));
+    expect(container.textContent).not.toContain('自动问题卡');
+    expect(container.textContent).not.toContain('确认记录');
+    await act(async () =>
+      resolveIssue(new Response(JSON.stringify({ issue: { signalType: 'text_frustration' } }), { status: 200 })),
+    );
+    expect(container.textContent).not.toContain('问题检测');
+    expect(container.textContent).not.toContain('[自动检测]');
+    expect(container.querySelector('[data-message-id="m-feedback"]')).not.toBeNull();
+  });
+
+  for (const type of ['cli_error', 'a2a_timeout', 'user_report']) {
+    it(`retains a legacy ${type} card from the original issue type`, async () => {
+      mockApiFetch.mockImplementation(
+        async () =>
+          new Response(JSON.stringify({ issue: { issueId: 'issue-feedback', signalType: type, status: 'draft' } }), {
+            status: 200,
+          }),
+      );
+      await act(async () => root.render(React.createElement(ConnectorBubble, { message: feedbackMessage() })));
+      await vi.waitFor(() => expect(container.textContent).toContain('确认记录'));
+      expect(container.textContent).toContain('自动问题卡');
+      expect(mockApiFetch.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
+    });
+  }
+
+  it('keeps unavailable legacy type unknown without showing detection text or actions', async () => {
+    mockApiFetch.mockResolvedValue(new Response('{}', { status: 404 }));
+    await act(async () => root.render(React.createElement(ConnectorBubble, { message: feedbackMessage() })));
+    expect(container.textContent).toContain('暂时无法确认');
+    expect(container.textContent).not.toContain('问题检测');
+    expect(container.textContent).not.toContain('[自动检测]');
+    expect(container.textContent).not.toContain('确认记录');
+  });
+
+  it('fences a replaced issue ID before and after an older status read resolves', async () => {
+    let resolveOld!: (response: Response) => void;
+    mockApiFetch.mockImplementation(async (url) =>
+      String(url).includes('issue-feedback/')
+        ? new Promise<Response>((resolve) => {
+            resolveOld = resolve;
+          })
+        : new Response(
+            JSON.stringify({ issue: { issueId: 'issue-next', signalType: 'user_report', status: 'draft' } }),
+            { status: 200 },
+          ),
+    );
+    await act(async () => root.render(React.createElement(ConnectorBubble, { message: feedbackMessage() })));
+    const next = feedbackMessage();
+    const nextBlock = next.extra?.rich?.blocks[0];
+    if (!nextBlock || nextBlock.kind !== 'card') throw new Error('expected a feedback card');
+    nextBlock.meta = { kind: 'frustration_auto_issue', issueId: 'issue-next' };
+    await act(async () => root.render(React.createElement(ConnectorBubble, { message: next })));
+    await vi.waitFor(() => expect(container.textContent).toContain('确认记录'));
+    await act(async () =>
+      resolveOld(new Response(JSON.stringify({ issue: { signalType: 'text_frustration' } }), { status: 200 })),
+    );
+    expect(container.textContent).toContain('确认记录');
+  });
+
+  it('preserves ordinary cards and message content blocks beside a retired trusted card', async () => {
+    const message = feedbackMessage('retry_burst');
+    message.extra!.rich!.blocks.push({
+      id: 'ordinary',
+      v: 1,
+      kind: 'card',
+      title: '原执行状态',
+      bodyMarkdown: '可信状态原文',
+    });
+    await act(async () => root.render(React.createElement(ConnectorBubble, { message })));
+    expect(container.textContent).toContain('原执行状态');
+    expect(container.textContent).toContain('可信状态原文');
+    expect(container.textContent).not.toContain('问题检测');
+    expect(container.textContent).not.toContain('自动问题卡');
+    const untrusted = feedbackMessage('retry_burst');
+    untrusted.source = { connector: 'vote-result', label: '普通来源', icon: 'ballot' };
+    mockApiFetch.mockClear();
+    await act(async () => root.render(React.createElement(ConnectorBubble, { message: untrusted })));
+    expect(container.textContent).toContain('自动问题卡');
+    expect(mockApiFetch.mock.calls.every(([path]) => path === '/api/config')).toBe(true);
+  });
+
   it('uses OKLCH-derived surface for vote-result bubble', () => {
     const message: ChatMessage = {
       id: 'm-vote',
       type: 'connector',
       content: '投票结果: 谁最坏？',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'vote-result' },
       source: { connector: 'vote-result', label: '投票结果', icon: 'ballot' },
     };
     act(() => root.render(React.createElement(ConnectorBubble, { message })));
@@ -68,6 +200,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: '投票结果: 谁最坏？',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'vote-result' },
       source: { connector: 'vote-result', label: '投票结果', icon: 'ballot' },
       extra: {
         rich: {
@@ -102,6 +235,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: '[定时任务] 喝水提醒',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'scheduler' },
       source: { connector: 'scheduler', label: '定时任务', icon: 'scheduler' },
       extra: { scheduler: { hiddenTrigger: true } },
     };
@@ -232,6 +366,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: '**GitHub Review 通知**',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'github-review' },
       source: {
         connector: 'github-review',
         label: 'GitHub Review',
@@ -280,6 +415,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: `${label} notification`,
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: connector },
       source: { connector, label, icon },
     };
 
@@ -297,6 +433,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: '**Issue Comments — Issue #861**',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'github-issue-comment' },
       source: {
         connector: 'github-issue-comment',
         label: 'Issue Comment',
@@ -322,6 +459,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: '**GitHub Review 需要分派**',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'github-review' },
       source: { connector: 'github-review', label: 'GitHub Review', icon: '⚠️' },
     };
     act(() => root.render(React.createElement(ConnectorBubble, { message })));
@@ -337,6 +475,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: '来自飞书的消息',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'feishu' },
       source: { connector: 'feishu', label: '飞书 DM', icon: '/images/connectors/feishu.png' },
     };
     act(() => root.render(React.createElement(ConnectorBubble, { message })));
@@ -351,6 +490,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: 'iMessage incoming',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'imessage' },
       source: { connector: 'imessage', label: 'iMessage', icon: '💬' },
     };
     act(() => root.render(React.createElement(ConnectorBubble, { message })));
@@ -367,6 +507,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: '🏓 codex 持球中',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'hold-ball' },
       source: { connector: 'hold-ball', label: '持球通知', icon: '🏓' },
     };
     act(() => root.render(React.createElement(ConnectorBubble, { message })));

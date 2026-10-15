@@ -1,9 +1,9 @@
-// F102 Batch 3 — parseTextResults + anchorToHref + deduplicateRecallEvents
+// F102 Batch 3 — parseTextResults + deduplicateRecallEvents
 import { describe, expect, it } from 'vitest';
 import type { RecallEvent } from '../useRecallEvents';
 import {
-  anchorToHref,
   deduplicateRecallEvents,
+  filterRecallEvents,
   parseTextResults,
   recallEventDisplayTitle,
   recallEventResultLabel,
@@ -111,48 +111,14 @@ Found 2 result(s):
   });
 });
 
-describe('anchorToHref', () => {
-  it('maps thread anchor to /thread/{threadId}', () => {
-    expect(anchorToHref('thread-thread_abc123')).toBe('/thread/thread_abc123');
-  });
-
-  it('maps doc: anchor to evidence search', () => {
-    expect(anchorToHref('doc:features/F102-memory-adapter-refactor')).toBe(
-      '/memory/search?q=doc%3Afeatures%2FF102-memory-adapter-refactor',
-    );
-  });
-
-  it('maps LL-NNN lesson anchor to evidence search', () => {
-    expect(anchorToHref('LL-045')).toBe('/memory/search?q=LL-045');
-  });
-
-  it('maps feature ID anchor to evidence search', () => {
-    expect(anchorToHref('F102')).toBe('/memory/search?q=F102');
-  });
-
-  it('maps session anchor to evidence search', () => {
-    expect(anchorToHref('session-sess_abc')).toBe('/memory/search?q=session-sess_abc');
-  });
-
-  it('maps ADR anchor to evidence search', () => {
-    expect(anchorToHref('ADR-015')).toBe('/memory/search?q=ADR-015');
-  });
-
-  it('returns null for undefined', () => {
-    expect(anchorToHref(undefined)).toBeNull();
-  });
-
-  it('returns null for empty string', () => {
-    expect(anchorToHref('')).toBeNull();
-  });
-});
-
 // F102 bugfix regression: deduplicateRecallEvents
 describe('deduplicateRecallEvents', () => {
   const makeRecall = (id: string, query: string, timestamp: number, extra: Partial<RecallEvent> = {}): RecallEvent => ({
     id,
     query,
     timestamp,
+    catId: 'opus',
+    invocationId: 'inv-one',
     resultCount: 1,
     ...extra,
   });
@@ -176,7 +142,7 @@ describe('deduplicateRecallEvents', () => {
     expect(result[0]!.id).toBe('hist-1');
   });
 
-  it('deduplicates by timestamp:query — live takes precedence', () => {
+  it('deduplicates a unique operation within its exact cat and invocation', () => {
     const live = [makeRecall('live-1', 'F102', 1000)];
     const history = [
       makeRecall('hist-dup', 'F102', 1000), // same timestamp+query → duplicate
@@ -285,7 +251,7 @@ describe('recallEventDisplayTitle', () => {
       timestamp: 1000,
     };
 
-    expect(recallEventDisplayTitle(event)).toBe('最近记忆 · docs');
+    expect(recallEventDisplayTitle(event)).toBe('最近记忆');
   });
 
   it('keeps search_evidence queries as the primary title', () => {
@@ -310,7 +276,7 @@ describe('recallEventResultLabel', () => {
         resultCount: 0,
         results: [],
       }),
-    ).toBe('0 条命中');
+    ).toBe('没有命中');
   });
 
   it('marks status-less rows with unknown counts as pending parse', () => {
@@ -321,7 +287,7 @@ describe('recallEventResultLabel', () => {
         timestamp: 1000,
         results: [],
       }),
-    ).toBe('统计待解析');
+    ).toBe('结果没有记录下来');
   });
 
   it('uses structured resultStatus when count is absent', () => {
@@ -333,7 +299,7 @@ describe('recallEventResultLabel', () => {
         resultStatus: 'overflow',
         results: [],
       }),
-    ).toBe('结果已存档');
+    ).toBe('结果没有记录下来');
 
     expect(
       recallEventResultLabel({
@@ -343,7 +309,7 @@ describe('recallEventResultLabel', () => {
         resultStatus: 'legacy_unknown',
         results: [],
       }),
-    ).toBe('历史统计缺失');
+    ).toBe('结果没有记录下来');
   });
 
   it('does not label pending live tool_use events before a result arrives', () => {
@@ -353,6 +319,32 @@ describe('recallEventResultLabel', () => {
         query: 'F200',
         timestamp: 1000,
       }),
-    ).toBeUndefined();
+    ).toBe('结果没有记录下来');
+  });
+});
+
+// F321: a timestamp is never evidence of who called a tool.
+describe('F321 invocation boundaries', () => {
+  it('keeps two cats calling the same query at the same time separate', () => {
+    const base = { query: 'F321', timestamp: 100, invocationId: 'inv' };
+    expect(
+      deduplicateRecallEvents(
+        [{ ...base, id: 'live', catId: 'sonnet' }],
+        [{ ...base, id: 'history', catId: 'codex61-sol' }],
+      ),
+    ).toHaveLength(2);
+  });
+  it('extracts graph and recent-memory tools as recall operations', () => {
+    const recalls = filterRecallEvents([
+      {
+        id: 'g',
+        type: 'tool_use',
+        label: 'sonnet → cat_cafe_graph_resolve',
+        detail: '{"query":"F321"}',
+        timestamp: 100,
+      },
+      { id: 'l', type: 'tool_use', label: 'sonnet → cat_cafe_list_recent', detail: '{}', timestamp: 101 },
+    ]);
+    expect(recalls.map((event) => event.toolName)).toEqual(['graph_resolve', 'list_recent']);
   });
 });

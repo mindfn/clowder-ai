@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { useSettingsReadingEntry } from '@/components/shell/useSettingsSourceReturn';
 import { useCatData } from '@/hooks/useCatData';
 import { type ChatMessage as ChatMessageData, useChatStore } from '@/stores/chatStore';
 import type { EvidenceSourceType } from '@/types/evidence';
@@ -116,6 +117,7 @@ function formatConfigForDisplay(config: ConfigSnapshot): string {
  */
 export function useChatCommands() {
   const router = useRouter();
+  const captureSettingsOrigin = useSettingsReadingEntry();
   const { addMessageToThread } = useChatStore(useShallow((s) => ({ addMessageToThread: s.addMessageToThread })));
   const { cats } = useCatData();
 
@@ -183,6 +185,7 @@ export function useChatCommands() {
 
         // /config (no args) — navigate to Settings page
         if (!configArgs) {
+          captureSettingsOrigin();
           router.push('/settings?s=system');
           return true;
         }
@@ -953,7 +956,7 @@ export function useChatCommands() {
 
       return false;
     },
-    [addMessageToThread, router],
+    [addMessageToThread, router, captureSettingsOrigin],
   );
 
   return { processCommand };

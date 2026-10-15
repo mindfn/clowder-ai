@@ -5,13 +5,13 @@ import type { DeliveryCursorStore } from '../stores/ports/DeliveryCursorStore.js
 import { isDelivered, type StoredMessage } from '../stores/ports/MessageStore.js';
 import type { IThreadStore } from '../stores/ports/ThreadStore.js';
 import { canViewMessage } from '../stores/visibility.js';
+import { FreshnessAttentionEventLog } from './FreshnessAttentionEventLog.js';
+import { bindFreshnessNoticeBroker, FreshnessNoticeBroker } from './FreshnessNoticeBroker.js';
 import {
   createQueueChecker,
   type FreshnessMessageReader,
   type QueuedMessageChecker,
-} from './checkFreshnessForPostMessage.js';
-import { FreshnessAttentionEventLog } from './FreshnessAttentionEventLog.js';
-import { bindFreshnessNoticeBroker, FreshnessNoticeBroker } from './FreshnessNoticeBroker.js';
+} from './freshness-unseen-source.js';
 import { ThreadUnseenChecker } from './ThreadUnseenChecker.js';
 
 interface ProviderNativeFreshnessFactoryDeps {
@@ -25,7 +25,15 @@ interface ProviderNativeFreshnessFactoryDeps {
 export function createProviderNativeFreshnessFactory(
   deps: ProviderNativeFreshnessFactoryDeps,
 ): NonNullable<InvocationDeps['providerNativeFreshnessFactory']> {
-  return async ({ invocationId, threadId, userId, catId, capability }) => {
+  return async ({
+    invocationId,
+    threadId,
+    userId,
+    catId,
+    capability,
+    liveExposureReason,
+    liveResultConsumerActive,
+  }) => {
     const thread = await deps.threadStore.get(threadId);
     const playMode = (thread?.thinkingMode ?? 'debug') === 'play';
     const viewer = playMode ? ({ type: 'cat', catId } as const) : ({ type: 'user' } as const);
@@ -41,9 +49,12 @@ export function createProviderNativeFreshnessFactory(
       : undefined;
     const unseenChecker = new ThreadUnseenChecker({
       userId,
+      ...(capability.carrier === 'claude_agent_sdk' ? { includeExactMessageIds: true } : {}),
       cursorStore: deps.cursorStore,
       messageStore: deps.messageStore,
       messageFilter,
+      ...(liveExposureReason ? { exposureReason: liveExposureReason } : {}),
+      ...(liveResultConsumerActive ? { includeExpectedA2AReplies: true } : {}),
       ...(queueChecker ? { queueChecker } : {}),
     });
     const eventLog = new FreshnessAttentionEventLog(deps.redis);
@@ -60,7 +71,10 @@ export function createProviderNativeFreshnessFactory(
     );
     const broker = new FreshnessNoticeBroker({
       context: { invocationId, threadId, catId: catId as CatId },
-      checkUnseen: () => unseenChecker.checkUnseen({ threadId, catId }),
+      checkUnseen: () =>
+        liveResultConsumerActive && !liveResultConsumerActive()
+          ? Promise.resolve(null)
+          : unseenChecker.checkUnseen({ threadId, catId }),
       appendEvent: (event) => eventLog.append(event, { ownerUserId: userId }),
     });
     return bindFreshnessNoticeBroker(broker, capability);

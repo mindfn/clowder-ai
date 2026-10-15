@@ -81,8 +81,8 @@ class ConfigStoreImpl {
     return CONFIG_KEY_DEFINITIONS[key];
   }
 
-  /** Set a hot-updatable config key. Throws if key is not updatable. */
-  set(key: string, value: string | number | boolean): void {
+  /** Validate and normalize a hot-updatable value without mutating runtime state. */
+  normalize(key: string, value: string | number | boolean): string {
     const definition = this.definitionFor(key);
     if (!definition) {
       throw new Error(
@@ -93,6 +93,14 @@ class ConfigStoreImpl {
     if (!definition.validate(normalized)) {
       throw new Error(`invalid value for key '${key}': ${normalized}`);
     }
+    return normalized;
+  }
+
+  /** Set a hot-updatable config key. Throws if key is not updatable. */
+  set(key: string, value: string | number | boolean): void {
+    const normalized = this.normalize(key, value);
+    const definition = this.definitionFor(key);
+    if (!definition) throw new Error(`Key '${key}' is not hot-updatable`);
     const oldValue = this.overlay.get(key) ?? process.env[definition.envKey];
     this.overlay.set(key, normalized);
     process.env[definition.envKey] = normalized;

@@ -6,7 +6,13 @@ import { useCatData } from '@/hooks/useCatData';
 import { apiFetch } from '@/utils/api-client';
 import type { AccountsResponse } from './hub-accounts.types';
 import { normalizeBuiltinClientIds } from './hub-accounts.view';
-import { type AccountQuotaPoolGroup, buildAccountQuotaGroups } from './hub-quota-pools';
+import { type AccountQuotaPoolGroup, buildAccountQuotaGroups, resolveAccountQuotaRisk } from './hub-quota-pools';
+import {
+  type ConfiguredQuotaPlatforms,
+  projectAccountQuota,
+  reconcileQuotaProfiles,
+  refreshAccountQuotaPools,
+} from './hub-quota-refresh';
 import { type CodexUsageItem, QuotaPoolRow, type QuotaResponse, riskDotClass, toUtilization } from './quota-cards';
 
 export const POLL_INTERVAL_MS = 30_000;
@@ -14,21 +20,13 @@ export const QUOTA_ALERT_DEDUPE_WINDOW_MS = 30 * 60 * 1000;
 
 // --- Risk logic (kept for notification dedup) ---
 
-interface ConfiguredQuotaPlatforms {
-  claude: boolean;
-  codex: boolean;
-  gemini: boolean;
-  kimi: boolean;
-  antigravity: boolean;
-}
-
 export function resolveConfiguredQuotaPlatforms(
   profiles: AccountsResponse['providers'],
   cats: ReturnType<typeof useCatData>['cats'],
 ): ConfiguredQuotaPlatforms {
   const clients = new Set(
     normalizeBuiltinClientIds(profiles)
-      .filter((profile) => profile.authType === 'oauth')
+      .filter((profile) => profile.authType === 'oauth' && !profile.codex)
       .map((profile) => profile.clientId)
       .filter(Boolean),
   );
@@ -39,38 +37,6 @@ export function resolveConfiguredQuotaPlatforms(
     kimi: clients.has('kimi'),
     antigravity: cats.some((cat) => cat.clientId === 'antigravity' && cat.roster?.available !== false),
   };
-}
-
-function maxUtilization(quota: QuotaResponse | null, configured: ConfiguredQuotaPlatforms): number {
-  if (!quota) return 0;
-  let max = 0;
-  if (configured.codex) for (const item of quota.codex.usageItems) max = Math.max(max, toUtilization(item));
-  if (configured.claude) for (const item of quota.claude.usageItems ?? []) max = Math.max(max, toUtilization(item));
-  if (configured.gemini) for (const item of quota.gemini?.usageItems ?? []) max = Math.max(max, toUtilization(item));
-  if (configured.kimi) for (const item of quota.kimi?.usageItems ?? []) max = Math.max(max, toUtilization(item));
-  if (configured.antigravity)
-    for (const item of quota.antigravity?.usageItems ?? []) max = Math.max(max, toUtilization(item));
-  return max;
-}
-
-function resolveRisk(
-  quota: QuotaResponse | null,
-  refreshError: string | null,
-  configured: ConfiguredQuotaPlatforms,
-): 'ok' | 'warn' | 'high' {
-  if (
-    refreshError ||
-    (configured.codex && quota?.codex?.error) ||
-    (configured.claude && quota?.claude?.error) ||
-    (configured.gemini && quota?.gemini?.error) ||
-    (configured.kimi && quota?.kimi?.error) ||
-    (configured.antigravity && quota?.antigravity?.error)
-  )
-    return 'high';
-  const max = maxUtilization(quota, configured);
-  if (max >= 95) return 'high';
-  if (max >= 80) return 'warn';
-  return 'ok';
 }
 
 export function shouldSendQuotaRiskNotification({
@@ -104,9 +70,13 @@ export function HubQuotaBoardTab() {
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const previousRiskRef = useRef<'ok' | 'warn' | 'high'>('ok');
   const lastAlertAtRef = useRef<number>(0);
+  const profilesRequestSequence = useRef(0);
+  const profilesErrorEpoch = useRef(0);
+  const profilesRef = useRef(profiles);
 
   const configuredPlatforms = resolveConfiguredQuotaPlatforms(profiles, cats);
-  const riskLevel = resolveRisk(quota, refreshError, configuredPlatforms);
+  const accountGroups = buildAccountQuotaGroups(quota, profiles, cats);
+  const riskLevel = resolveAccountQuotaRisk(quota, refreshError, configuredPlatforms, profiles, accountGroups);
 
   const fetchQuota = useCallback(async () => {
     try {
@@ -130,27 +100,44 @@ export function HubQuotaBoardTab() {
 
   useEffect(() => {
     let cancelled = false;
-    setProfilesError(null);
-    apiFetch('/api/accounts')
-      .then(async (res) => {
-        if (!res.ok) {
-          if (!cancelled) setProfilesError(`账号配置加载失败 (${res.status})，额度池成员归属可能不完整`);
-          return null;
-        }
-        return (await res.json()) as AccountsResponse;
-      })
-      .then((body) => {
-        if (!cancelled && body) {
-          setProfiles(normalizeBuiltinClientIds(body.providers ?? []));
-          setProfilesLoaded(true);
-          setProfilesError(null);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setProfilesError('账号配置加载失败，额度池成员归属可能不完整');
-      });
+    const fetchProfiles = () => {
+      const requestedSequence = ++profilesRequestSequence.current;
+      const requestedErrorEpoch = profilesErrorEpoch.current;
+      const canReportError = () =>
+        !cancelled &&
+        requestedSequence === profilesRequestSequence.current &&
+        requestedErrorEpoch === profilesErrorEpoch.current;
+      void apiFetch('/api/accounts', undefined, { afterCurrentGet: true })
+        .then(async (res) => {
+          if (!res.ok) {
+            if (canReportError()) setProfilesError(`账号配置加载失败 (${res.status})，额度池成员归属可能不完整`);
+            return null;
+          }
+          return (await res.json()) as AccountsResponse;
+        })
+        .then((body) => {
+          // Only a newer list request supersedes this successful login-state read.
+          if (!cancelled && requestedSequence === profilesRequestSequence.current && body) {
+            profilesRef.current = reconcileQuotaProfiles(
+              normalizeBuiltinClientIds(body.providers ?? []),
+              profilesRef.current,
+            );
+            setProfiles(profilesRef.current);
+            setProfilesLoaded(true);
+            setProfilesError(null);
+          }
+        })
+        .catch(() => {
+          if (canReportError()) setProfilesError('账号配置加载失败，额度池成员归属可能不完整');
+        });
+    };
+    fetchProfiles();
+    const timer = setInterval(fetchProfiles, POLL_INTERVAL_MS);
+    window.addEventListener('accounts-changed', fetchProfiles);
     return () => {
       cancelled = true;
+      clearInterval(timer);
+      window.removeEventListener('accounts-changed', fetchProfiles);
     };
   }, []);
 
@@ -189,66 +176,23 @@ export function HubQuotaBoardTab() {
         setRefreshError(profilesError ?? '账号配置尚未加载，暂不能确定需要刷新的订阅账号');
         return;
       }
-      const officialProviders: Array<'claude' | 'codex'> = [];
-      if (configuredPlatforms.claude) officialProviders.push('claude');
-      if (configuredPlatforms.codex) officialProviders.push('codex');
-      const requests: Array<{ fallbackError: string; response: Promise<Response> }> = [];
-      if (officialProviders.length > 0) {
-        requests.push({
-          fallbackError: '获取官方额度失败',
-          response: apiFetch('/api/quota/refresh/official', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ interactive: true, providers: officialProviders }),
-          }),
-        });
-      }
-      if (configuredPlatforms.claude) {
-        requests.push({
-          fallbackError: '刷新 Claude 额度失败',
-          response: apiFetch('/api/quota/refresh/claude', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: '{}',
-          }),
-        });
-      }
-      if (configuredPlatforms.kimi) {
-        requests.push({
-          fallbackError: '刷新 Kimi 额度失败',
-          response: apiFetch('/api/quota/refresh/kimi', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: '{}',
-          }),
-        });
-      }
-
-      const results = await Promise.all(requests.map(async (entry) => ({ ...entry, result: await entry.response })));
-      const errors = new Set<string>();
-      for (const { result, fallbackError } of results) {
-        const body = (await result.json().catch(() => ({}))) as { error?: unknown; warnings?: unknown };
-        if (!result.ok) {
-          errors.add(typeof body.error === 'string' && body.error.trim() ? body.error : fallbackError);
-        }
-        if (Array.isArray(body.warnings)) {
-          for (const warning of body.warnings) {
-            if (typeof warning === 'string' && warning.trim()) errors.add(warning);
-          }
-        }
-      }
-      if (errors.size > 0) {
-        setRefreshError([...errors].join('；'));
-      }
+      const errors = await refreshAccountQuotaPools(profiles, configuredPlatforms, (accountRef, observation) => {
+        const next = projectAccountQuota(profilesRef.current, accountRef, observation);
+        if (!next) return;
+        // Suppress prior list failures without discarding a successful identity/status reconciliation.
+        profilesErrorEpoch.current++;
+        profilesRef.current = next;
+        setProfiles(profilesRef.current);
+      });
+      if (errors.length) setRefreshError(errors.join('；'));
       await fetchQuota();
     } catch {
       setRefreshError('刷新配额失败，请稍后重试');
     } finally {
       setRefreshing(false);
     }
-  }, [configuredPlatforms, fetchQuota, profilesError, profilesLoaded]);
+  }, [configuredPlatforms, fetchQuota, profiles, profilesError, profilesLoaded]);
 
-  const accountGroups = buildAccountQuotaGroups(quota, profiles, cats);
   const errors = [
     ...new Set(
       [
@@ -333,6 +277,7 @@ function PoolGroupSection({ group }: { group: AccountQuotaPoolGroup }) {
               items={pool.items}
               memberTags={pool.memberTags}
               emptyText={pool.emptyText}
+              checkedAt={pool.checkedAt}
             />
           ))
         ) : (
@@ -348,11 +293,13 @@ function PoolSection({
   items,
   memberTags,
   emptyText,
+  checkedAt,
 }: {
   title: string;
   items: CodexUsageItem[];
   memberTags: string[];
   emptyText?: string;
+  checkedAt?: number;
 }) {
   // Compute worst utilization for group header dot
   const worstUtil = items.length > 0 ? Math.max(...items.map(toUtilization)) : -1;
@@ -374,6 +321,9 @@ function PoolSection({
           </span>
         ))}
       </div>
+      {checkedAt !== undefined && (
+        <p className="text-xs text-cafe-muted">此账号查询于 {new Date(checkedAt).toLocaleString()}</p>
+      )}
       {items.length > 0
         ? items.map((item) => <QuotaPoolRow key={item.label} item={item} />)
         : emptyText && <div className="ml-5 text-xs text-cafe-muted">{emptyText}</div>}

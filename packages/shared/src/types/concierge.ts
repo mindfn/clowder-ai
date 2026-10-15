@@ -28,18 +28,20 @@ export interface ConciergeConfig {
   muted: boolean;
   /** 球位置 (PR-A3b INV-P3: per-user 持久化) — null = default bottom-right */
   ballPosition: { x: number; y: number } | null;
-  /** 球大小 (E3: per-user 持久化, 48-192px) — undefined/null = BALL_SIZE_DEFAULT */
+  /** 球大小 (E3: per-user 持久化, 43-192px) — undefined/null = BALL_SIZE_DEFAULT */
   ballSize?: number;
   /** 自主行为引擎开关 (E4, default true). When false, cat stays in business-projected state. */
   behaviorEnabled?: boolean;
+  /** Household lookup choice shared by all companion surfaces; absent means the owner default (allowed). */
+  householdReadsAllowed?: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // Ball size constants (E3: resizable ball)
 // ---------------------------------------------------------------------------
 
-/** Minimum ball size — "pocket cat" (48px). Any smaller loses icon readability. */
-export const BALL_SIZE_MIN = 48;
+/** Minimum saved size — renders the desktop cat at the approved compact 72×78 geometry. */
+export const BALL_SIZE_MIN = 43;
 
 /** Maximum ball size — matches native sprite atlas resolution (192×208 cells). */
 export const BALL_SIZE_MAX = 192;

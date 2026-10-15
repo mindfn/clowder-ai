@@ -1,3 +1,4 @@
+import { usePawFeelCopy } from '../paw-feel/paw-feel.shell-copy';
 export interface AvailableDutyCat {
   catId: string;
   handle: string;
@@ -17,9 +18,10 @@ export function PawFeelDutySelect({
   onChange: (value: string) => void;
   excludedCatId: string;
 }) {
+  const t = usePawFeelCopy();
   const options =
     value && !cats.some((cat) => cat.catId === value)
-      ? [{ catId: value, handle: `@${value}`, family: '已保存' }, ...cats]
+      ? [{ catId: value, handle: `@${value}`, family: t.savedCat }, ...cats]
       : cats;
 
   return (
@@ -30,7 +32,7 @@ export function PawFeelDutySelect({
         onChange={(event) => onChange(event.target.value)}
         className="mt-1 block w-full rounded-md border border-cafe bg-cafe-surface-elevated px-2.5 py-2 text-sm text-cafe"
       >
-        <option value="">未指定</option>
+        <option value="">{t.notAssigned}</option>
         {options
           .filter((cat) => cat.catId !== excludedCatId || cat.catId === value)
           .map((cat) => (

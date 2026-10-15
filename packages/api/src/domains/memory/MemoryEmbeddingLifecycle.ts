@@ -1,6 +1,6 @@
 import { EmbeddingService } from './EmbeddingService.js';
 import { IndexBuilder } from './IndexBuilder.js';
-import type { EmbedConfig, IEmbeddingService, RebuildResult } from './interfaces.js';
+import type { EmbedConfig, IEmbeddingService } from './interfaces.js';
 import { PassageVectorStore } from './PassageVectorStore.js';
 import { SqliteEvidenceStore } from './SqliteEvidenceStore.js';
 import { ensurePassageVectorTable, ensureVectorTable } from './schema.js';
@@ -47,6 +47,14 @@ async function initializeVectorBackend(store: SqliteEvidenceStore, dim: number):
   const passageTableReady = ensurePassageVectorTable(store.getDb(), dim);
   if (!documentTableReady || !passageTableReady) {
     throw new VectorBackendUnavailableError('vector_table_unavailable');
+  }
+
+  try {
+    const result = await store.repackPassageVectors();
+    if (result.status !== 'unchanged') console.info('[memory] passage vector layout', result);
+  } catch (error) {
+    // Optional layout maintenance cannot disable an otherwise usable index.
+    console.warn('[memory] vector repack unavailable; using current projection', error);
   }
 
   return {
@@ -140,8 +148,8 @@ export class MemoryEmbeddingLifecycle {
     return this.passageVectorStore;
   }
 
-  async catchUpAfterReady(): Promise<RebuildResult> {
-    const result = await this.indexBuilder.rebuild();
+  async catchUpAfterReady(): Promise<{ docsEmbedded: number; durationMs: number }> {
+    const result = await this.indexBuilder.embedMissingDocumentVectors();
     this.indexBuilder.startPassageEmbeddingWarmup();
     return result;
   }

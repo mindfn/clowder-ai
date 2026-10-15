@@ -68,6 +68,7 @@ describe('POST /api/workspace/navigate body validation', () => {
         payload: { href },
       });
       assert.equal(response.statusCode, 400, JSON.stringify({ href }));
+      assert.deepEqual(JSON.parse(response.body), { code: 'INVALID_HREF' });
     }
   });
 });

@@ -80,7 +80,7 @@ describe('POST /api/workspace/navigate authentication boundary', () => {
       payload: { href: resolve(repoRoot, 'README.md') },
     });
     assert.equal(documentRes.statusCode, 401);
-    assert.match(JSON.parse(documentRes.body).error, /authentication required/i);
+    assert.deepEqual(JSON.parse(documentRes.body), { code: 'AUTHENTICATION_REQUIRED' });
     await app.close();
   });
 

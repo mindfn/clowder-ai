@@ -51,6 +51,8 @@ description_updated_at: 2026-08-25T16:10:49Z
 > 2026-08-15 Research-First roadmap (internal)
 > 管剩余工作的依赖顺序；2026-08-02 closure plan 只保留历史运行凭据。
 > 各 feature doc / task 才是 phase 与 AC 的 canonical truth。
+> [发展史与未解问题](./memory/history/memory-history-map.md)另讲每次改变背后的痛点、取舍与尚未解决的问题；
+> 它保留历史时态，不替代本文的拓扑或 feature 的当前状态。
 >
 > **Freshness**：2026-08-15 增量核验加入 F276 首个真实
 > approve→materialize→recall slice、F282 `propose|defer|abstain`、F296 frozen-v1 contract 与已合入的

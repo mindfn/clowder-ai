@@ -11,6 +11,16 @@ export interface DurableDraftSnapshot {
   replyTo?: string;
 }
 
+export function durableDraftSnapshotFromOwner(draft: OwnerComposerDraft | null): DurableDraftSnapshot {
+  return {
+    text: draft?.text ?? '',
+    imageUrls: imageUrlsFromDraft(draft),
+    contextAttachments: contextAttachmentsFromDraft(draft),
+    preservedBlocks: preservedBlocksFromDraft(draft),
+    ...(draft?.replyTo ? { replyTo: draft.replyTo } : {}),
+  };
+}
+
 export type DurableDraftWriteResult =
   | { kind: 'saved'; revision: number }
   | { kind: 'conflict'; draft: OwnerComposerDraft | null; revision: number }
@@ -115,7 +125,10 @@ export async function writeOwnerComposerDraft(
   snapshot: DurableDraftSnapshot,
 ): Promise<DurableDraftWriteResult> {
   try {
-    const response = await apiFetch(`/api/threads/${threadId}/composer-draft`, buildDraftRequest(revision, snapshot));
+    const request = buildDraftRequest(revision, snapshot);
+    // Fetch keepalive bodies share a 64KiB browser budget. Large drafts still use the normal save path.
+    if (typeof request.body === 'string' && new Blob([request.body]).size <= 60_000) request.keepalive = true;
+    const response = await apiFetch(`/api/threads/${threadId}/composer-draft`, request);
     if (response.status === 409) {
       const current = await loadOwnerComposerDraft(threadId);
       return { kind: 'conflict', ...current };

@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { readPromptCapture } from '../../InvocationPromptCaptureInspector';
 import { type PromptCaptureData, PromptCaptureInspector } from '../../PromptCaptureInspector';
+import { trajectoryCopy } from './trajectory.shell-copy';
+import { useTrajectoryCopy } from './use-trajectory-copy';
 
 interface SourceOwnedLink {
   kind: 'trace' | 'task';
@@ -59,6 +61,7 @@ async function resolveTaskLink(invocationId: string): Promise<SourceOwnedLink | 
 }
 
 export function InvocationEvidenceLinks({ invocationId }: { invocationId: string }) {
+  const t = useTrajectoryCopy(trajectoryCopy);
   const [evidence, setEvidence] = useState<SourceOwnedEvidence[]>([]);
   const [openPromptCaptureId, setOpenPromptCaptureId] = useState<string | null>(null);
 
@@ -84,7 +87,7 @@ export function InvocationEvidenceLinks({ invocationId }: { invocationId: string
   return (
     <div className="mt-3">
       <div className="flex flex-wrap items-center gap-1.5" data-testid="source-owned-evidence-links">
-        <span className="text-micro text-cafe-muted">关联证据</span>
+        <span className="text-micro text-cafe-muted">{t.relatedEvidence}</span>
         {evidence.map((item) =>
           item.kind === 'prompt' ? (
             <button

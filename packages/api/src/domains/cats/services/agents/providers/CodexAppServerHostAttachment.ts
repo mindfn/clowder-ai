@@ -22,15 +22,10 @@ export async function createCodexAppServerHostAttachment(
   context: HostAttachmentContext,
 ): Promise<AgentCarrierSession> {
   context.ensureOpen();
-  const prepared = prepareCodexHostLaunch(options);
+  const prepared = await prepareCodexHostLaunch(options);
   await context.reapDeadEntries();
   context.ensureOpen();
-  let resolved = resolveHostAttachmentEntry(
-    context.entries,
-    context.sessionOwners,
-    prepared.signature,
-    options.sessionId,
-  );
+  let resolved = resolveHostAttachmentEntry(context.entries, context.sessionOwners, prepared, options.sessionId);
   if (resolved.retirement) {
     await retireCodexSessionHost({
       ...resolved.retirement,
@@ -39,12 +34,7 @@ export async function createCodexAppServerHostAttachment(
       close: (entry) => context.closeEntry(entry, 'session_migration'),
     });
     context.ensureOpen();
-    resolved = resolveHostAttachmentEntry(
-      context.entries,
-      context.sessionOwners,
-      prepared.signature,
-      options.sessionId,
-    );
+    resolved = resolveHostAttachmentEntry(context.entries, context.sessionOwners, prepared, options.sessionId);
   }
   let entry = resolved.entry;
   let reusedSessionHost = resolved.reusedSessionHost;

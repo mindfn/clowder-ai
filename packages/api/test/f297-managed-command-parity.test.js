@@ -16,7 +16,24 @@
  */
 
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, before, describe, it } from 'node:test';
+
+// The generic job ledger is independent of this legacy wake store. Keep the
+// fixture's filesystem namespace private even in the full concurrent Redis suite.
+const priorDataRoot = process.env.CAT_CAFE_DATA_DIR;
+const fixtureDataRoot = mkdtempSync(join(tmpdir(), 'managed-projection-fixture-'));
+before(() => {
+  process.env.CAT_CAFE_DATA_DIR = fixtureDataRoot;
+});
+after(() => {
+  if (priorDataRoot === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+  else process.env.CAT_CAFE_DATA_DIR = priorDataRoot;
+  rmSync(fixtureDataRoot, { recursive: true, force: true });
+});
+
 import { load } from './helpers/f297-presence-fixtures.js';
 
 /** 真实 hold-ball wake carrier 形状；overrides 用来逐维度破坏它。 */

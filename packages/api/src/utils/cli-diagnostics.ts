@@ -12,7 +12,7 @@
  *  - AC-A9 red line: no raw stderr ever in publicSummary / publicHint (humanized only)
  */
 
-import type { CliActiveWriterRecoveryState, CliDiagnostics, CliErrorReasonCode } from '@cat-cafe/shared';
+import type { CliDiagnostics, CliErrorReasonCode } from '@cat-cafe/shared';
 import { CLASSIFIER_PATTERNS } from './cli-error-patterns.js';
 import { sanitizeCliStderr } from './sanitize-cli-stderr.js';
 
@@ -86,6 +86,14 @@ const REASON_TEXT: Record<CliErrorReasonCode, { summary: string; hint: string }>
     summary: '网络连接失败',
     hint: '检查代理 / VPN / 防火墙；provider 上游也可能短暂不可用。',
   },
+  upstream_service_error: {
+    summary: '上游服务处理请求失败',
+    hint: '上游服务明确报告请求处理失败。请稍后重试；若持续出现，可携带下方 request ID 向对应服务商反馈。',
+  },
+  stream_disconnected: {
+    summary: '响应流中断，原因未确定',
+    hint: '响应在完成前中断，现有证据无法确定原因。请稍后重试；若反复出现，保留下方诊断信息以便追查。',
+  },
   invalid_config: {
     summary: 'CLI 配置文件无效',
     hint: '检查 config.toml / settings.json 语法和字段名（被外部工具改坏过？）。',
@@ -109,11 +117,11 @@ const REASON_TEXT: Record<CliErrorReasonCode, { summary: string; hint: string }>
     // generic 529 Overloaded / "Server is busy" patterns from any upstream. Hard-coding
     // "Anthropic" misdiagnoses non-Claude provider failures + sends users to the wrong
     // status page. Keep regex broad (correct cross-provider coverage), make text neutral.
-    summary: '上游 CLI provider 服务临时限流',
+    summary: '上游服务繁忙或暂时过载',
     // Plain text only — CliDiagnosticsPanel renders publicHint inside a <span> verbatim
     // (no markdown parser). @gpt52 R1 BLOCKED + cloud codex R1 P2 both caught the earlier
     // Markdown version. Provider-neutral phrasing per cloud codex R2 P2.
-    hint: '不是你的额度问题——是 CLI 上游 provider 服务器侧临时限流（provider 错误里通常会明示如 "not your usage limit" / "529 Overloaded"）。等 30-60 秒重试或换一只猫（不同 provider）；反复出现去你用的 provider 状态页（Anthropic / OpenAI / Google / DeepSeek 各有 status 页）。',
+    hint: '上游服务报告高负载、容量不足或临时限流。请稍后重试；若持续出现，可查看对应服务商的状态页。',
   },
   cli_response_timeout: {
     summary: 'CLI 响应超时',
@@ -136,10 +144,6 @@ const REASON_TEXT: Record<CliErrorReasonCode, { summary: string; hint: string }>
     // invocationId. Previous hint sent users to debugRef — wrong place, killed UX value.
     hint: 'CLI 进程正常退出，但没有可显示的文字输出（事件流没有 text event，或 plain-text stdout 为空）。建议：换一只猫试同样 prompt；换 model；或直接在终端跑 CLI 看 raw output 判断是 upstream / auth / profile 还是 prompt 问题。展开下方"详细诊断"查看 event 类型/数量、model、session 前缀等结构化证据；debugRef.invocationId 可用于后端日志检索。',
   },
-  active_writer_recovery: {
-    summary: '原生会话仍绑定原 writer host',
-    hint: '原 Session 已保留，本轮没有新建或封存会话。正在等待原 host 释放；若持续不恢复，重启对应 runtime 后重试。',
-  },
   // F212 Phase H (Sol runtime forensics 2026-07-09, archive 97449e4b): upstream provider
   // policy engine (Codex 0.98+) rejected content ("flagged for possible cybersecurity risk").
   // NOT a Clowder AI bug — the upstream policy layer made the call. User needs actionable
@@ -157,20 +161,6 @@ const REASON_TEXT: Record<CliErrorReasonCode, { summary: string; hint: string }>
     hint: 'CLI 上游 provider 的 policy 引擎拒绝了这次请求（例如判断为敏感内容）。这不是 Clowder AI bug — 是 provider 侧决策。建议：换个表达方式重试 prompt（provider 通常给了 "try rephrasing" 提示）；换一只不同 provider 的猫；反复触发去查你用的 provider policy 文档（Anthropic / OpenAI / DeepSeek 各有 acceptable use policy）。展开下方"详细诊断"看具体 policy 消息。',
   },
 };
-
-export function buildActiveWriterRecoveryDiagnostic(input: {
-  state: CliActiveWriterRecoveryState;
-  debugRef: CliDiagnostics['debugRef'];
-}): CliDiagnostics {
-  const text = REASON_TEXT.active_writer_recovery;
-  return {
-    reasonCode: 'active_writer_recovery',
-    publicSummary: text.summary,
-    publicHint: text.hint,
-    activeWriterRecovery: { state: input.state },
-    debugRef: input.debugRef,
-  };
-}
 
 const UNKNOWN_TEXT = {
   summary: '未识别的 CLI 错误',
@@ -356,6 +346,11 @@ export interface CliTimeoutTerminalContext {
   finalStage: CliTimeoutTerminationStage;
 }
 
+/** Only the witnessed UUID-shaped provider correlation token is public metadata. */
+export function extractUpstreamRequestId(text: string): string | undefined {
+  return /\brequest ID\s+([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\b/i.exec(text)?.[1];
+}
+
 export function buildCliDiagnostics(args: {
   rawText: string;
   debugRef: CliDiagnostics['debugRef'];
@@ -397,6 +392,8 @@ export function buildCliDiagnostics(args: {
     };
   }
 
+  const upstreamRequestId = extractUpstreamRequestId(args.safeExcerptRawText ?? args.rawText);
+  const debugRef = { ...args.debugRef, ...(upstreamRequestId ? { upstreamRequestId } : {}) };
   const classificationContext: CliErrorClassificationContext = {
     ...(args.managedArgvFlags ? { managedArgvFlags: args.managedArgvFlags } : {}),
   };
@@ -424,7 +421,7 @@ export function buildCliDiagnostics(args: {
     return {
       publicSummary: panicHeadline ? `CLI panic — ${panicHeadline}` : baseText.summary,
       publicHint: baseText.hint,
-      debugRef: args.debugRef,
+      debugRef,
       reasonCode,
       ...(classifierSafeExcerpt ? { safeExcerpt: classifierSafeExcerpt, excerptSource: 'classifier' as const } : {}),
     };
@@ -451,7 +448,7 @@ export function buildCliDiagnostics(args: {
       return {
         publicSummary: panicHeadline ? `CLI panic — ${panicHeadline}` : `Claude Code 报告：${headline}`,
         publicHint: '这是 Claude Code / 模型侧报告的错误，不是猫咖问题。展开看完整原因；可换一只猫或刷新对话重试。',
-        debugRef: args.debugRef,
+        debugRef,
         safeExcerpt: sanitized.slice(0, MAX_CHARS),
         excerptSource: 'cc_structured',
       };
@@ -485,7 +482,7 @@ export function buildCliDiagnostics(args: {
   return {
     publicSummary: panicHeadline ? `CLI panic — ${panicHeadline}` : UNKNOWN_TEXT.summary,
     publicHint: unknownHint,
-    debugRef: args.debugRef,
+    debugRef,
     ...(safeExcerpt && { safeExcerpt, excerptSource }),
   };
 }

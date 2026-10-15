@@ -58,7 +58,16 @@ export interface CustomModelHint {
   links?: Array<{ label: string; url: string }>;
 }
 
+/** Display-only words for one existing recommendation entry. Identity and matching stay on the entry. */
+export interface RecommendationDisplay {
+  models?: Record<string, Pick<ModelOption, 'description' | 'performance'>>;
+  unsupported?: UnsupportedReason;
+  notes?: string[];
+  customModelHint?: { requirement: string; unsupported?: string; linkLabels?: string[] };
+}
+
 export interface MatrixEntry {
+  display?: { en: RecommendationDisplay };
   match: MatchCriteria;
   models?: ModelOption[];
   unsupported?: UnsupportedReason;

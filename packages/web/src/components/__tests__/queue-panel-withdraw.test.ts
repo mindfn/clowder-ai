@@ -23,7 +23,7 @@ const QUEUED_ENTRY: QueueEntry = {
   content: 'queued to withdraw',
   messageId: 'm1',
   mergedMessageIds: [],
-  source: 'user',
+  from: { kind: 'user', userId: 'test-user' },
   targetCats: ['opus'],
   intent: 'execute',
   status: 'queued',
@@ -106,7 +106,6 @@ describe('QueuePanel withdraw UX (F39)', () => {
     useChatStore.setState({
       messages: [],
       queue: [],
-      queuePaused: false,
       currentThreadId: 'thread-1',
     });
     useToastStore.setState({ toasts: [] });
@@ -145,7 +144,7 @@ describe('QueuePanel withdraw UX (F39)', () => {
 
     const toasts = useToastStore.getState().toasts;
     expect(
-      toasts.some((t) => t.title === '已停止后续处理' && t.message === '原消息与已经发生的读取事实仍保留在历史中'),
+      toasts.some((t) => t.title === '已停止后续处理' && t.message === '原消息与已经发生的投递事实仍保留在历史中'),
     ).toBe(true);
   });
 
@@ -328,73 +327,6 @@ describe('QueuePanel withdraw UX (F39)', () => {
     expect(useToastStore.getState().toasts.at(-1)?.title).toBe('已撤回并回填输入框');
   });
 
-  it('recall-edit with replyToId triggers setReplyTo when parent message exists (#706 Phase 2)', () => {
-    // #706 Phase 2: parent in store → full preview content
-    const parentMessage = {
-      id: 'msg-original-123',
-      content: 'I am the quoted parent',
-      catId: 'opus',
-      userId: null,
-      threadId: 'thread-1',
-      timestamp: NOW - 1000,
-      type: 'assistant' as const,
-    };
-    useChatStore.setState({
-      messages: [parentMessage],
-      replyToMessage: null,
-    });
-
-    // Simulate ChatInput's useEffect logic
-    const replyToId = 'msg-original-123';
-    const { messages: storeMessages, setReplyTo } = useChatStore.getState();
-    const parentMsg = storeMessages.find((m) => m.id === replyToId);
-
-    setReplyTo({
-      id: replyToId,
-      content: parentMsg?.content ?? '(原消息未加载)',
-      senderCatId: parentMsg?.catId ?? null,
-      threadId: 'thread-1',
-    });
-
-    expect(useChatStore.getState().replyToMessage).toEqual({
-      id: 'msg-original-123',
-      content: 'I am the quoted parent',
-      senderCatId: 'opus',
-      threadId: 'thread-1',
-    });
-  });
-
-  it('recall-edit with replyToId still sets replyTo when parent not in store (#706 Phase 2 fallback)', () => {
-    // #706 Phase 2 edge case: parent message not loaded (e.g. page reload
-    // with partial history). replyTo ID must still be preserved so the
-    // re-sent message keeps its quote relationship on the server.
-    useChatStore.setState({
-      messages: [], // parent not in store
-      replyToMessage: null,
-    });
-
-    const replyToId = 'msg-not-loaded-456';
-    const { messages: storeMessages, setReplyTo } = useChatStore.getState();
-    const parentMsg = storeMessages.find((m) => m.id === replyToId);
-
-    setReplyTo({
-      id: replyToId,
-      content: parentMsg?.content ?? '(原消息未加载)',
-      senderCatId: parentMsg?.catId ?? null,
-      threadId: 'thread-1',
-    });
-
-    const replyState = useChatStore.getState().replyToMessage;
-    expect(replyState).toEqual({
-      id: 'msg-not-loaded-456',
-      content: '(原消息未加载)',
-      senderCatId: null,
-      threadId: 'thread-1',
-    });
-    // Key: replyState.id is set → onSend will pass it as replyTo
-    expect(replyState?.id).toBe('msg-not-loaded-456');
-  });
-
   it('rolls back queue state and does not queue composer insert when recall-edit fails', async () => {
     const { apiFetch } = await import('@/utils/api-client');
     (apiFetch as unknown as { mockImplementation: (fn: unknown) => void }).mockImplementation(async () => ({
@@ -480,14 +412,18 @@ describe('QueuePanel withdraw UX (F39)', () => {
   it('hydrates the authoritative remaining queue when clearing only partially succeeds', async () => {
     const { apiFetch } = await import('@/utils/api-client');
     const remaining = { ...QUEUED_ENTRY, id: 'q-remaining', content: 'still actionable' };
-    (apiFetch as unknown as { mockImplementation: (fn: unknown) => void }).mockImplementation(async () => ({
-      ok: false,
-      json: async () => ({
-        error: '只撤出了部分消息；其余消息仍保留在待处理队列中',
-        code: 'QUEUE_WITHDRAWAL_PARTIAL',
-        queue: [remaining],
-      }),
-    }));
+    (apiFetch as unknown as { mockImplementation: (fn: unknown) => void }).mockImplementation(async (url: string) =>
+      url.endsWith('/executions/active')
+        ? { ok: true, json: async () => ({ projectPath: null, executions: [] }) }
+        : {
+            ok: false,
+            json: async () => ({
+              error: '只撤出了部分消息；其余消息仍保留在待处理队列中',
+              code: 'QUEUE_WITHDRAWAL_PARTIAL',
+              queue: [remaining],
+            }),
+          },
+    );
     useChatStore.setState({ queue: [QUEUED_ENTRY, remaining] });
 
     act(() => {
@@ -504,5 +440,36 @@ describe('QueuePanel withdraw UX (F39)', () => {
 
     expect(useChatStore.getState().queue.map((entry) => entry.id)).toEqual(['q-remaining']);
     expect(useToastStore.getState().toasts.some((toast) => toast.title === '已停止部分消息')).toBe(true);
+  });
+
+  it('stops running work before clearing pending Queue entries', async () => {
+    const { apiFetch } = await import('@/utils/api-client');
+    const requests: string[] = [];
+    vi.mocked(apiFetch).mockImplementation(async (url) => {
+      requests.push(String(url));
+      if (String(url).endsWith('/executions/active')) {
+        return response({ projectPath: null, executions: [] }) as Response;
+      }
+      return response({ cleared: [QUEUED_ENTRY] }) as Response;
+    });
+    useChatStore.setState({ queue: [QUEUED_ENTRY] });
+
+    act(() => {
+      root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
+    });
+    const clearBtn = [...container.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('全部停止'),
+    );
+
+    await act(async () => {
+      clearBtn?.click();
+    });
+
+    expect(requests.filter((url) => url.startsWith('/api/threads/'))).toEqual([
+      '/api/threads/thread-1/executions/active',
+      '/api/threads/thread-1/queue',
+    ]);
+    expect(useChatStore.getState().queue).toEqual([]);
+    expect(useToastStore.getState().toasts.some((toast) => toast.title === '已全部停止')).toBe(true);
   });
 });

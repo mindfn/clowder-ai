@@ -49,8 +49,6 @@ type StoreState = {
   uiThinkingExpandedByDefault: boolean;
   workspaceWorktreeId: string | null;
   queue: [];
-  queuePaused: boolean;
-  queuePauseReason: null;
   queueFull: boolean;
   queueFullSource: null;
   threads: [];
@@ -93,8 +91,6 @@ const makeStoreState = (): StoreState => ({
   uiThinkingExpandedByDefault: false,
   workspaceWorktreeId: null,
   queue: [],
-  queuePaused: false,
-  queuePauseReason: null,
   queueFull: false,
   queueFullSource: null,
   threads: [],
@@ -170,14 +166,13 @@ vi.mock('@/hooks/useAgentMessages', () => ({
   useAgentMessages: () => ({
     handleAgentMessage: vi.fn(),
     handleStop: vi.fn(),
-    resetRefs: vi.fn(),
-    resetTimeout: vi.fn(),
-    clearDoneTimeout: vi.fn(),
   }),
 }));
 
 vi.mock('@/hooks/useChatHistory', () => ({
   useChatHistory: () => ({
+    messages: storeState.messages,
+    handleReadingIntent: vi.fn(),
     handleScroll: vi.fn(),
     scrollContainerRef: { current: null },
     messagesEndRef: { current: document.createElement('div') },
@@ -229,8 +224,6 @@ vi.mock('../ChatInput', () => ({
 vi.mock('../ChatContainerHeader', () => ({ ChatContainerHeader: () => null }));
 vi.mock('../ThreadSidebar', () => ({ ThreadSidebar: () => null }));
 vi.mock('../RightStatusPanel', () => ({ RightStatusPanel: () => null }));
-vi.mock('../ParallelStatusBar', () => ({ ParallelStatusBar: () => null }));
-vi.mock('../ThinkingIndicator', () => ({ ThinkingIndicator: () => null }));
 vi.mock('../MessageNavigator', () => ({ MessageNavigator: () => null }));
 vi.mock('../MessageActions', () => ({
   MessageActions: ({ children }: { children: React.ReactNode }) => children,
@@ -331,5 +324,14 @@ describe('ChatContainer bottom chrome observer', () => {
     expect(secondBottomChrome).not.toBe(firstBottomChrome);
     expect(resizeObserverInstances).toHaveLength(2);
     expect(resizeObserverInstances[1]?.observe.mock.calls[0]?.[0]).toBe(secondBottomChrome);
+  });
+
+  it('keeps the composer size subscription alive after StrictMode replays its effect', async () => {
+    await act(async () => {
+      root.render(React.createElement(React.StrictMode, null, renderChatContainer('thread-1')));
+    });
+    const active = resizeObserverInstances.filter((observer) => observer.disconnect.mock.calls.length === 0);
+    expect(active).toHaveLength(1);
+    expect(active[0]?.observe.mock.calls[0]?.[0]).toBe(container.querySelector('[data-thread-chat-footer]'));
   });
 });

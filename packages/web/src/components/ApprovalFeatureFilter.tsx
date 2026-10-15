@@ -4,6 +4,10 @@ import type { ApprovalFeatureId } from '@cat-cafe/shared';
 import { useEffect, useRef, useState } from 'react';
 import { APPROVAL_FEATURE_IDS, approvalFeatureMeta } from '@/lib/approval-features';
 
+import { approvalHistoryCopy } from './approval-history.shell-copy';
+import { useShellCopy } from './shell/shell-copy';
+import { useShellLanguage } from './shell/shell-language';
+
 interface ApprovalFeatureFilterProps {
   selected: ReadonlySet<ApprovalFeatureId>;
   counts: Partial<Record<ApprovalFeatureId, number>>;
@@ -12,6 +16,8 @@ interface ApprovalFeatureFilterProps {
 }
 
 export function ApprovalFeatureFilter({ selected, counts, onChange, testIdPrefix }: ApprovalFeatureFilterProps) {
+  const t = useShellCopy(approvalHistoryCopy);
+  const language = useShellLanguage();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -55,7 +61,7 @@ export function ApprovalFeatureFilter({ selected, counts, onChange, testIdPrefix
           data-testid={`${testIdPrefix}-feature-trigger`}
         >
           <FilterIcon />
-          <span>类型</span>
+          <span>{t.type}</span>
           {selected.size > 0 && (
             <span className="rounded-full bg-cafe-subtle/25 px-1 text-micro leading-4">{selected.size}</span>
           )}
@@ -69,7 +75,7 @@ export function ApprovalFeatureFilter({ selected, counts, onChange, testIdPrefix
             data-testid={`${testIdPrefix}-feature-menu`}
           >
             <FeatureOption
-              label="全部类型"
+              label={t.allTypes}
               count={Object.values(counts).reduce((sum, count) => sum + (count ?? 0), 0)}
               selected={selected.size === 0}
               onClick={() => {
@@ -84,7 +90,7 @@ export function ApprovalFeatureFilter({ selected, counts, onChange, testIdPrefix
               return (
                 <FeatureOption
                   key={featureId}
-                  label={meta.label}
+                  label={language === 'en' ? meta.badgeLabel : meta.label}
                   count={counts[featureId] ?? 0}
                   color={meta.color}
                   selected={selected.has(featureId)}
@@ -105,11 +111,11 @@ export function ApprovalFeatureFilter({ selected, counts, onChange, testIdPrefix
             type="button"
             onClick={() => toggleFeature(featureId)}
             className="flex items-center gap-1 rounded-full border border-cafe-subtle/30 bg-cafe-surface/70 px-2 py-0.5 text-micro text-cafe-interactive/70 hover:border-cafe-subtle/60 hover:text-cafe-interactive"
-            title={`移除${meta.label}筛选`}
+            title={t.removeFilter(language === 'en' ? meta.badgeLabel : meta.label)}
             data-testid={`${testIdPrefix}-active-${featureId}`}
           >
             <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: meta.color }} />
-            {meta.label}
+            {language === 'en' ? meta.badgeLabel : meta.label}
             <span aria-hidden="true" className="opacity-50">
               ×
             </span>
@@ -161,9 +167,10 @@ function FeatureOption({
 }
 
 function FilterIcon() {
+  const t = useShellCopy(approvalHistoryCopy);
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5">
-      <title>筛选类型</title>
+      <title>{t.filterType}</title>
       <path d="M4 6h16M7 12h10m-7 6h4" strokeLinecap="round" />
     </svg>
   );

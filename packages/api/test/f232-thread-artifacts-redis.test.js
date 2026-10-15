@@ -7,6 +7,7 @@
 
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, it } from 'node:test';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 import {
   assertRedisIsolationOrThrow,
   cleanupPrefixedRedisKeys,
@@ -20,6 +21,7 @@ describe('F232 thread artifacts — Redis-backed (AC-A6)', { skip: redisIsolatio
   let createRedisClient;
   let aggregateThreadArtifacts;
   let collectAllThreadMessages;
+  let collectRecentGlobalWorkCandidates;
   let redis;
   let store;
   let connected = false;
@@ -31,6 +33,9 @@ describe('F232 thread artifacts — Redis-backed (AC-A6)', { skip: redisIsolatio
     const aggMod = await import('../dist/domains/cats/services/agents/routing/thread-artifacts-aggregator.js');
     aggregateThreadArtifacts = aggMod.aggregateThreadArtifacts;
     collectAllThreadMessages = aggMod.collectAllThreadMessages;
+    collectRecentGlobalWorkCandidates = (
+      await import('../dist/domains/cats/services/agents/routing/recent-global-work-reader.js')
+    ).collectRecentGlobalWorkCandidates;
     createRedisClient = (await import('@cat-cafe/shared/utils')).createRedisClient;
     redis = createRedisClient({ url: REDIS_URL });
     try {
@@ -76,15 +81,17 @@ describe('F232 thread artifacts — Redis-backed (AC-A6)', { skip: redisIsolatio
       { ts: base + 500, block: { id: 'b5', kind: 'card', v: 1, title: 'ignored' } },
     ];
     for (const { ts, block } of rows) {
-      await store.append({
-        userId: 'u',
-        catId: 'opus-48',
-        content: '',
-        mentions: [],
-        timestamp: ts,
-        threadId: T,
-        extra: { rich: { v: 1, blocks: [block] } },
-      });
+      await store.append(
+        canonicalTestMessageInput({
+          userId: 'u',
+          catId: 'opus-48',
+          content: '',
+          mentions: [],
+          timestamp: ts,
+          threadId: T,
+          extra: { rich: { v: 1, blocks: [block] } },
+        }),
+      );
     }
 
     const messages = await store.getByThread(T, 100);
@@ -104,21 +111,23 @@ describe('F232 thread artifacts — Redis-backed (AC-A6)', { skip: redisIsolatio
 
   it('collects rich-block artifacts from published queued cat speech', async () => {
     const threadId = 'thread-f232-published-seed';
-    const seed = await store.append({
-      userId: 'u',
-      catId: 'codex-sol',
-      content: 'source-cat seed with an artifact',
-      mentions: ['opus'],
-      timestamp: Date.now(),
-      threadId,
-      deliveryStatus: 'queued',
-      extra: {
-        rich: {
-          v: 1,
-          blocks: [{ id: 'seed-file', kind: 'file', v: 1, url: '/uploads/seed.pdf', fileName: 'seed.pdf' }],
+    const seed = await store.append(
+      canonicalTestMessageInput({
+        userId: 'u',
+        catId: 'codex-sol',
+        content: 'source-cat seed with an artifact',
+        mentions: ['opus'],
+        timestamp: Date.now(),
+        threadId,
+        deliveryStatus: 'queued',
+        extra: {
+          rich: {
+            v: 1,
+            blocks: [{ id: 'seed-file', kind: 'file', v: 1, url: '/uploads/seed.pdf', fileName: 'seed.pdf' }],
+          },
         },
-      },
-    });
+      }),
+    );
 
     const messages = await collectAllThreadMessages(store, threadId);
     assert.deepEqual(
@@ -142,18 +151,20 @@ describe('F232 thread artifacts — Redis-backed (AC-A6)', { skip: redisIsolatio
     // 若游标用原始 timestamp(base+120) 作上界，下一页 zrevrangebyscore(< base+120) 会跳过 gap(base+150)，
     // gap.pdf 的 artifact 从 GET /api/threads/:threadId/artifacts 漏聚合。必须用 effective score。
     const append = (ts, fileName, deliveryStatus) =>
-      store.append({
-        userId: 'u',
-        catId: null,
-        content: '',
-        mentions: [],
-        timestamp: ts,
-        threadId: T,
-        ...(deliveryStatus ? { deliveryStatus } : {}),
-        extra: {
-          rich: { v: 1, blocks: [{ id: fileName, kind: 'file', v: 1, url: `/uploads/${fileName}`, fileName }] },
-        },
-      });
+      store.append(
+        canonicalTestMessageInput({
+          userId: 'u',
+          catId: null,
+          content: '',
+          mentions: [],
+          timestamp: ts,
+          threadId: T,
+          ...(deliveryStatus ? { deliveryStatus } : {}),
+          extra: {
+            rich: { v: 1, blocks: [{ id: fileName, kind: 'file', v: 1, url: `/uploads/${fileName}`, fileName }] },
+          },
+        }),
+      );
 
     await append(base + 100, 'old.pdf');
     await append(base + 150, 'gap.pdf');
@@ -178,15 +189,17 @@ describe('F232 thread artifacts — Redis-backed (AC-A6)', { skip: redisIsolatio
   });
 
   it('thread index isolates: getByThread(other) does not leak this thread artifacts', async () => {
-    await store.append({
-      userId: 'u',
-      catId: 'opus-48',
-      content: '',
-      mentions: [],
-      timestamp: Date.now(),
-      threadId: 'thread-A',
-      extra: { rich: { v: 1, blocks: [{ id: 'b', kind: 'file', v: 1, url: '/u/a', fileName: 'a' }] } },
-    });
+    await store.append(
+      canonicalTestMessageInput({
+        userId: 'u',
+        catId: 'opus-48',
+        content: '',
+        mentions: [],
+        timestamp: Date.now(),
+        threadId: 'thread-A',
+        extra: { rich: { v: 1, blocks: [{ id: 'b', kind: 'file', v: 1, url: '/u/a', fileName: 'a' }] } },
+      }),
+    );
 
     // thread-A has an artifact; thread-B index must not leak it
     const aArtifacts = aggregateThreadArtifacts({
@@ -198,5 +211,73 @@ describe('F232 thread artifacts — Redis-backed (AC-A6)', { skip: redisIsolatio
     const other = await store.getByThread('thread-B', 100);
     assert.equal(other.length, 0);
     assert.equal(aggregateThreadArtifacts({ messages: other, prTasks: [], fileLedger: [] }).length, 0);
+  });
+
+  it('bounded recent-work reader pages the real owner-global timeline and reports an incomplete partial result', async () => {
+    const threadId = 'thread-f232-recent-bounded';
+    const base = Date.now();
+    for (let index = 0; index < 70; index += 1) {
+      await store.append({
+        userId: 'u',
+        catId: 'codex-sol',
+        content: `non-work-${index}`,
+        mentions: [],
+        timestamp: base + index,
+        threadId,
+        extra: {
+          rich: { v: 1, blocks: [{ id: `diff-${index}`, kind: 'diff', v: 1, filePath: `src/${index}.ts` }] },
+        },
+      });
+    }
+    for (const [offset, fileName] of [
+      [100, 'one.pdf'],
+      [101, 'two.pdf'],
+    ]) {
+      await store.append({
+        userId: 'u',
+        catId: 'opus-48',
+        content: fileName,
+        mentions: [],
+        timestamp: base + offset,
+        threadId,
+        extra: {
+          rich: {
+            v: 1,
+            blocks: [{ id: fileName, kind: 'file', v: 1, url: `/uploads/${fileName}`, fileName }],
+          },
+        },
+      });
+    }
+    await store.append({
+      userId: 'other-owner',
+      catId: 'opus-48',
+      content: 'private work',
+      mentions: [],
+      timestamp: base + 102,
+      threadId,
+      extra: {
+        rich: {
+          v: 1,
+          blocks: [{ id: 'private', kind: 'file', v: 1, url: '/uploads/private.pdf', fileName: 'private.pdf' }],
+        },
+      },
+    });
+
+    const result = await collectRecentGlobalWorkCandidates({
+      store,
+      userId: 'u',
+      threadTitles: new Map([[threadId, 'Bounded works']]),
+      limit: 3,
+      pageSize: 8,
+      messageLimit: 64,
+    });
+
+    assert.deepEqual(
+      result.artifacts.map((artifact) => artifact.name),
+      ['two.pdf', 'one.pdf'],
+    );
+    assert.equal(result.complete, false);
+    assert.equal(result.scannedMessages, 64);
+    assert.ok(result.artifacts.every((artifact) => artifact.threadId === threadId));
   });
 });

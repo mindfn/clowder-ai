@@ -1,8 +1,10 @@
 /** F304: batched GitHub GraphQL reader for one cicd-check tick. */
+import { GitHubRateLimitError } from '../github/request-budget.js';
 import type { CiCheckDetail, CiPollResult } from './ci-cd-contract.js';
 import { enrichGitHubExecutionFailures } from './ci-execution-failure.js';
 import {
   computeAggregateBucket,
+  enrichPrCiFailure,
   executeGh,
   type FetchPrCiStatusOptions,
   fetchPrCiStatus,
@@ -183,6 +185,17 @@ async function graphQlPrToPollResult(
 
   const rollupContext = pr.commits?.nodes?.at(-1)?.commit?.statusCheckRollup?.contexts;
   if (rollupContext?.pageInfo?.hasNextPage) {
+    if (options.deferFailureDetails)
+      return {
+        repoFullName: ref.repoFullName,
+        prNumber: ref.prNumber,
+        headSha: pr.headRefOid,
+        prState,
+        aggregateBucket: 'pending',
+        checkRollup: 'present',
+        checks: [],
+        fullRollupPending: true,
+      };
     log.warn(`[ci-status] ${key} has more than 100 rollup contexts; using the exact single-PR fallback`);
     return fetchPrCiStatus(ref.repoFullName, ref.prNumber, log, options);
   }
@@ -194,9 +207,10 @@ async function graphQlPrToPollResult(
   }));
   const aggregateBucket = computeAggregateBucket(rollup);
   let checks = contexts.map(mapGraphQlCheck);
-  if (aggregateBucket === 'fail') {
+  if (aggregateBucket === 'fail' && !options.deferFailureDetails) {
     checks = (await fetchRequiredFailingChecks(ref.repoFullName, ref.prNumber, options)) ?? checks;
     checks = await enrichGitHubExecutionFailures({
+      signal: options.signal,
       repoFullName: ref.repoFullName,
       headSha: pr.headRefOid,
       checks,
@@ -212,15 +226,16 @@ async function graphQlPrToPollResult(
     aggregateBucket,
     checkRollup: contexts.length === 0 ? 'empty' : 'present',
     checks,
+    ...(aggregateBucket === 'fail' && options.deferFailureDetails ? { failureDetailsPending: true } : {}),
   };
 }
 
 /**
- * One GraphQL process reads every tracked PR's state and status rollup.
+ * One GraphQL process reads one bounded batch's state and status rollup.
  * Failed checks still use the existing typed REST enrichment; ordinary pass /
  * pending polls no longer spawn one or two `gh` processes per tracked PR.
  */
-export async function fetchPrCiStatuses(
+async function fetchBatch(
   targets: readonly PrCiStatusTarget[],
   log: MinimalLog,
   options: FetchPrCiStatusOptions = {},
@@ -230,6 +245,7 @@ export async function fetchPrCiStatuses(
   );
   const { query, refs } = buildBatchQuery(targets);
   if (refs.length === 0) return results;
+  const observedAt = Date.now();
 
   let parsed: BatchGraphQlResponse | null;
   try {
@@ -237,6 +253,7 @@ export async function fetchPrCiStatuses(
     parsed = parseBatchGraphQlResponse(stdout);
   } catch (error) {
     options.signal?.throwIfAborted();
+    if (error instanceof GitHubRateLimitError) throw error;
     parsed = parseBatchGraphQlResponse(stdoutFromExecError(error) ?? '');
     if (!parsed?.data) {
       log.warn(`[ci-status] batched GraphQL poll failed for ${refs.length} PRs: ${String(error)}`);
@@ -253,7 +270,44 @@ export async function fetchPrCiStatuses(
     options.signal?.throwIfAborted();
     const pr = parsed.data?.[ref.repoAlias]?.[ref.prAlias];
     if (!pr?.headRefOid) continue;
-    results.set(ciStatusTargetKey(ref.repoFullName, ref.prNumber), await graphQlPrToPollResult(ref, pr, log, options));
+    const poll = await graphQlPrToPollResult(ref, pr, log, options);
+    results.set(ciStatusTargetKey(ref.repoFullName, ref.prNumber), poll ? { ...poll, observedAt } : null);
   }
   return results;
+}
+
+/** Bound GraphQL fan-out. A failed batch leaves null only for its own targets. */
+export async function fetchPrCiStatuses(
+  targets: readonly PrCiStatusTarget[],
+  log: MinimalLog,
+  options: FetchPrCiStatusOptions = {},
+): Promise<ReadonlyMap<string, CiPollResult | null>> {
+  const results = new Map<string, CiPollResult | null>();
+  for (let offset = 0; offset < targets.length; offset += 20) {
+    options.signal?.throwIfAborted();
+    const batch = await fetchBatch(targets.slice(offset, offset + 20), log, options);
+    for (const [key, value] of batch) results.set(key, value);
+  }
+  return results;
+}
+
+/** Shared production/default wiring: bounded admission, per-PR failure details,
+ * and the same current credential resolver for both reads. */
+export function createCiCollectionReaders(
+  log: MinimalLog,
+  getToken: () => string | undefined,
+  transport: Pick<FetchPrCiStatusOptions, 'execFileAsync'> = {},
+) {
+  return {
+    fetchPrStatuses: (targets: readonly PrCiStatusTarget[], signal?: AbortSignal) =>
+      fetchPrCiStatuses(targets, log, {
+        ...transport,
+        ghToken: getToken(),
+        signal,
+        timeoutMs: 5_000,
+        deferFailureDetails: true,
+      }),
+    enrichFailureDetails: (poll: CiPollResult, signal: AbortSignal) =>
+      enrichPrCiFailure(poll, log, { ...transport, ghToken: getToken(), signal, timeoutMs: 5_000 }),
+  };
 }

@@ -10,6 +10,10 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { getServiceConfig } from '../domains/services/service-config.js';
 import { getServiceManifest, resolveServiceEndpoint } from '../domains/services/service-manifest.js';
 import { resolveUserId } from '../utils/request-identity.js';
+import { guardedAudioStopError } from './audio-capture-target.js';
+import { AudioCaptureController, audioCaptureFinalized, CONTROLLER_LEASE_TTL_S } from './audio-controller-lease.js';
+import { registerAudioEventProxy } from './audio-event-proxy.js';
+import { AUDIO_MUTATION_TIMEOUT_MS, audioRequestFailure, requestAudioJson } from './audio-request-deadline.js';
 
 export function resolveAudioServiceUrl(): string {
   const service = getServiceManifest('audio-capture');
@@ -36,89 +40,14 @@ async function proxyJson(reply: FastifyReply, method: string, path: string, body
   return reply.status(resp.status).send(data);
 }
 
-type ActiveCaptureLease = {
-  token: string;
-  threadId: string;
-  heartbeat: NodeJS.Timeout;
-  expiresAtMs: number;
-};
-
-const CONTROLLER_LEASE_TTL_S = 15;
-const SHUTDOWN_STOP_TIMEOUT_MS = 5_000;
-
 function captureBody(body: unknown): Record<string, unknown> | null {
   return body !== null && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
 }
 
-export const audioProxyRoutes: FastifyPluginAsync = async (app) => {
-  let activeLease: ActiveCaptureLease | null = null;
-
-  const releaseLease = (lease: ActiveCaptureLease): void => {
-    clearInterval(lease.heartbeat);
-    if (activeLease === lease) activeLease = null;
-  };
-
-  const releaseLeaseIfExpired = (lease: ActiveCaptureLease | null): boolean => {
-    if (!lease || Date.now() < lease.expiresAtMs) return false;
-    releaseLease(lease);
-    return true;
-  };
-
-  const getActiveLease = (): ActiveCaptureLease | null => {
-    const lease = activeLease;
-    return releaseLeaseIfExpired(lease) ? null : lease;
-  };
-
-  const renewLease = async (): Promise<void> => {
-    const lease = activeLease;
-    if (!lease) return;
-    try {
-      const resp = await fetch(`${resolveAudioServiceUrl()}/lease`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lease_token: lease.token, thread_id: lease.threadId }),
-        signal: AbortSignal.timeout(2_000),
-      });
-      if (!resp.ok) {
-        app.log.warn({ status: resp.status }, 'audio controller lease was rejected; capture will expire');
-        releaseLease(lease);
-      } else if (activeLease === lease) {
-        lease.expiresAtMs = Date.now() + CONTROLLER_LEASE_TTL_S * 1000;
-      }
-    } catch (error) {
-      if (releaseLeaseIfExpired(lease)) {
-        app.log.warn({ err: error }, 'audio controller lease expired after renewal failures');
-      } else {
-        // Keep retrying transient transport failures until the last confirmed
-        // renewal expires. The sidecar independently finalizes on the same TTL.
-        app.log.warn({ err: error }, 'audio controller lease renewal failed');
-      }
-    }
-  };
-
-  app.addHook('onClose', async () => {
-    const lease = activeLease;
-    activeLease = null;
-    if (!lease) return;
-    clearInterval(lease.heartbeat);
-    try {
-      const resp = await fetch(`${resolveAudioServiceUrl()}/stop`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lease_token: lease.token,
-          reason: 'runtime-graceful-shutdown',
-        }),
-        signal: AbortSignal.timeout(SHUTDOWN_STOP_TIMEOUT_MS),
-      });
-      if (!resp.ok) {
-        app.log.warn({ status: resp.status }, 'audio capture graceful stop was rejected; waiting for lease expiry');
-      }
-    } catch (error) {
-      // A failed graceful stop still converges through controller lease expiry.
-      app.log.warn({ err: error }, 'audio capture graceful stop failed; waiting for lease expiry');
-    }
-  });
+export const audioProxyRoutes: FastifyPluginAsync<{ requestTimeoutMs?: number }> = async (app, options) => {
+  const controller = new AudioCaptureController(resolveAudioServiceUrl, app.log);
+  const getActiveLease = () => controller.activeLease();
+  app.addHook('onClose', async () => controller.close());
 
   app.post('/api/audio/start', async (req, reply) => {
     if (!requireIdentity(req, reply)) return;
@@ -127,39 +56,59 @@ export const audioProxyRoutes: FastifyPluginAsync = async (app) => {
     if (typeof threadId !== 'string' || !threadId.trim()) {
       return reply.status(400).send({ error: 'thread_id is required for active audio capture' });
     }
-    if (getActiveLease()) {
+    if (controller.expired()) {
+      const before = controller.snapshot();
+      try {
+        const observed = await requestAudioJson(
+          req,
+          `${resolveAudioServiceUrl()}/status`,
+          'GET',
+          undefined,
+          options.requestTimeoutMs,
+        );
+        if (observed.ok) controller.observe(observed.data, before);
+      } catch (error) {
+        return audioRequestFailure(reply, error);
+      }
+    }
+    const meetingId =
+      typeof body?.meeting_id === 'string' && body.meeting_id
+        ? body.meeting_id
+        : `mtg-${randomUUID().replaceAll('-', '')}`;
+    const intent = controller.reserve(threadId.trim(), meetingId);
+    if (!intent) {
       return reply.status(409).send({ error: 'Audio capture is already owned by this runtime' });
     }
     try {
-      const resp = await fetch(`${resolveAudioServiceUrl()}/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const result = await requestAudioJson(
+        req,
+        `${resolveAudioServiceUrl()}/start`,
+        'POST',
+        {
           ...body,
           thread_id: threadId.trim(),
-          controller_id: `api-runtime:${process.pid}:${randomUUID()}`,
+          meeting_id: meetingId,
+          controller_id: intent.controllerId,
           lease_ttl_s: CONTROLLER_LEASE_TTL_S,
-        }),
-      });
-      const data = (await resp.json()) as Record<string, unknown>;
-      if (!resp.ok) return reply.status(resp.status).send(data);
-      const token = data.lease_token;
-      if (typeof token !== 'string' || !token) {
+        },
+        options.requestTimeoutMs ?? AUDIO_MUTATION_TIMEOUT_MS,
+        false,
+      );
+      const data = result.data as Record<string, unknown>;
+      if (!result.ok) {
+        controller.rejected(intent);
+        return reply.status(result.status).send(data);
+      }
+      if (!controller.accepted(intent, data)) {
         return reply.status(502).send({ error: 'Audio service start omitted controller lease token' });
       }
-      const heartbeat = setInterval(() => void renewLease(), (CONTROLLER_LEASE_TTL_S * 1000) / 3);
-      heartbeat.unref();
-      activeLease = {
-        token,
-        threadId: threadId.trim(),
-        heartbeat,
-        expiresAtMs: Date.now() + CONTROLLER_LEASE_TTL_S * 1000,
-      };
       const clientData = { ...data };
       delete clientData.lease_token;
       return reply.send(clientData);
-    } catch {
-      return reply.status(502).send({ error: 'Audio service unavailable' });
+    } catch (error) {
+      return audioRequestFailure(reply, error);
+    } finally {
+      controller.settled(intent);
     }
   });
 
@@ -169,28 +118,44 @@ export const audioProxyRoutes: FastifyPluginAsync = async (app) => {
     if (!lease) {
       return reply.status(409).send({ error: 'No audio capture lease is owned by this runtime' });
     }
+    const targetError = guardedAudioStopError(captureBody(req.body), lease.target);
+    if (targetError) return reply.status(targetError.status).send({ error: targetError.error });
     try {
-      const resp = await fetch(`${resolveAudioServiceUrl()}/stop`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lease_token: lease.token, reason: 'controller-stop' }),
-      });
-      const data = await resp.json();
-      if (resp.ok) {
-        releaseLease(lease);
+      const result = await requestAudioJson(
+        req,
+        `${resolveAudioServiceUrl()}/stop`,
+        'POST',
+        { lease_token: lease.token, reason: 'controller-stop' },
+        options.requestTimeoutMs ?? AUDIO_MUTATION_TIMEOUT_MS,
+        false,
+      );
+      if (result.ok) {
+        const status = captureBody(result.data)?.status;
+        if (!audioCaptureFinalized(status))
+          return reply.status(503).send({ error: 'Audio capture finalization unconfirmed' });
+        controller.release(lease);
       }
-      return reply.status(resp.status).send(data);
-    } catch {
-      return reply.status(502).send({ error: 'Audio service unavailable' });
+      return reply.status(result.status).send(result.data);
+    } catch (error) {
+      return audioRequestFailure(reply, error);
     }
   });
 
   app.get('/api/audio/status', async (req, reply) => {
     if (!requireIdentity(req, reply)) return;
+    const before = controller.snapshot();
     try {
-      return await proxyJson(reply, 'GET', '/status');
-    } catch {
-      return reply.status(502).send({ error: 'Audio service unavailable' });
+      const result = await requestAudioJson(
+        req,
+        `${resolveAudioServiceUrl()}/status`,
+        'GET',
+        undefined,
+        options.requestTimeoutMs,
+      );
+      if (result.ok) controller.observe(result.data, before);
+      return reply.code(result.status).send(controller.status(result.data));
+    } catch (error) {
+      return audioRequestFailure(reply, error);
     }
   });
 
@@ -292,68 +257,18 @@ export const audioProxyRoutes: FastifyPluginAsync = async (app) => {
   app.get('/api/audio/sources', async (req, reply) => {
     if (!requireIdentity(req, reply)) return;
     try {
-      return await proxyJson(reply, 'GET', '/sources');
-    } catch {
-      return reply.status(502).send({ error: 'Audio service unavailable' });
+      const result = await requestAudioJson(
+        req,
+        `${resolveAudioServiceUrl()}/sources`,
+        'GET',
+        undefined,
+        options.requestTimeoutMs,
+      );
+      return reply.code(result.status).send(result.data);
+    } catch (error) {
+      return audioRequestFailure(reply, error);
     }
   });
 
-  app.get('/api/audio/events', async (req, reply) => {
-    if (!requireIdentity(req, reply)) return;
-    const upstreamAbort = new AbortController();
-    let clientClosed = false;
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-    const closeUpstream = () => {
-      if (clientClosed) return;
-      clientClosed = true;
-      upstreamAbort.abort();
-      void reader?.cancel().catch(() => undefined);
-    };
-    const closeOnRequestAbort = () => {
-      if (req.raw.aborted) closeUpstream();
-    };
-    const closeOnResponseClose = () => {
-      if (!reply.raw.writableEnded) closeUpstream();
-    };
-    req.raw.once('close', closeOnRequestAbort);
-    reply.raw.once('close', closeOnResponseClose);
-    try {
-      const resp = await fetch(`${resolveAudioServiceUrl()}/events`, { signal: upstreamAbort.signal });
-      if (clientClosed) return;
-      if (!resp.ok || !resp.body) {
-        return reply.status(502).send({ error: 'Audio service SSE unavailable' });
-      }
-      const origin = req.headers.origin;
-      reply.raw.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-        'X-Accel-Buffering': 'no',
-        ...(origin && {
-          'Access-Control-Allow-Origin': origin,
-          'Access-Control-Allow-Credentials': 'true',
-        }),
-      });
-      reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (reply.raw.destroyed || reply.raw.writableEnded) break;
-          reply.raw.write(decoder.decode(value, { stream: true }));
-        }
-      } catch {
-        // stream ended or client disconnected
-      } finally {
-        if (!reply.raw.destroyed && !reply.raw.writableEnded) reply.raw.end();
-      }
-    } catch {
-      if (clientClosed) return;
-      return reply.status(502).send({ error: 'Audio service unavailable' });
-    } finally {
-      req.raw.off('close', closeOnRequestAbort);
-      reply.raw.off('close', closeOnResponseClose);
-    }
-  });
+  registerAudioEventProxy(app, { requireIdentity, resolveServiceUrl: resolveAudioServiceUrl });
 };

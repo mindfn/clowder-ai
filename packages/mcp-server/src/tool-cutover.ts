@@ -1,4 +1,7 @@
+import { type CutoverConsumerScan, classifyCutoverReferences } from './tool-cutover-negative-references.js';
 import type { EvidenceRef, McpRuntimeProfile } from './tool-governance-types.js';
+
+export type { CutoverConsumerScan, CutoverNegativeReference } from './tool-cutover-negative-references.js';
 
 export const FIXED_CUTOVER_CONSUMER_ROOTS = [
   'packages/mcp-server/src',
@@ -56,19 +59,13 @@ export type AtomicCutoverManifest = {
   layers: Partial<Record<CutoverLayer, CutoverLayerDisposition>>;
 };
 
-export type CutoverConsumerScan = {
-  retiredName: string;
-  scannedRoots: readonly string[];
-  matches: readonly { root: string; path: string; line: number }[];
-  resolvedConsumers: readonly string[];
-};
-
 export type CutoverFinding = {
   code:
     | 'missing-cutover-manifest'
     | 'cutover-set-mismatch'
     | 'missing-cutover-layer'
     | 'consumer-root-coverage-mismatch'
+    | 'invalid-negative-reference-evidence'
     | 'stale-retired-reference'
     | 'cross-family-cutover'
     | 'invalid-rollback-revision'
@@ -190,44 +187,65 @@ function manifestIntegrityFindings(manifest: AtomicCutoverManifest, index: numbe
   return findings;
 }
 
+function retiredNameScanFindings(
+  manifest: AtomicCutoverManifest,
+  index: number,
+  retiredName: string,
+  scan: CutoverConsumerScan | undefined,
+): CutoverFinding[] {
+  const findings: CutoverFinding[] = [];
+  if (!scan || !equalSet(scan.scannedRoots, FIXED_CUTOVER_CONSUMER_ROOTS)) {
+    findings.push({
+      code: 'consumer-root-coverage-mismatch',
+      manifestIndex: index,
+      name: retiredName,
+      message: `${retiredName} was not scanned across the fixed consumer-root set`,
+    });
+    return findings;
+  }
+  const fixtureTest = manifest.layers['fixture-test'];
+  const classified = classifyCutoverReferences(
+    scan,
+    fixtureTest?.status === 'covered' ? fixtureTest.consumers : undefined,
+  );
+  if (classified.invalidEvidence.length > 0) {
+    findings.push({
+      code: 'invalid-negative-reference-evidence',
+      manifestIndex: index,
+      name: retiredName,
+      message: `${retiredName} has invalid negative-test evidence: ${classified.invalidEvidence.join('; ')}`,
+    });
+  }
+  if (classified.activeMatches.length > 0 || scan.resolvedConsumers.length > 0) {
+    findings.push({
+      code: 'stale-retired-reference',
+      manifestIndex: index,
+      name: retiredName,
+      message: `${retiredName} still has production or resolved consumers`,
+    });
+  }
+  for (const layer of REQUIRED_CUTOVER_LAYERS) {
+    const disposition = manifest.layers[layer];
+    if (disposition?.status === 'not-applicable' && !disposition.absenceEvidence.includes(retiredName)) {
+      findings.push({
+        code: 'stale-retired-reference',
+        manifestIndex: index,
+        name: retiredName,
+        message: `${layer} not-applicable lacks absence evidence for ${retiredName}`,
+      });
+    }
+  }
+  return findings;
+}
+
 function scanFindings(
   manifest: AtomicCutoverManifest,
   index: number,
   scansByName: ReadonlyMap<string, CutoverConsumerScan>,
 ): CutoverFinding[] {
-  const findings: CutoverFinding[] = [];
-  for (const retiredName of manifest.retiredNames) {
-    const scan = scansByName.get(retiredName);
-    if (!scan || !equalSet(scan.scannedRoots, FIXED_CUTOVER_CONSUMER_ROOTS)) {
-      findings.push({
-        code: 'consumer-root-coverage-mismatch',
-        manifestIndex: index,
-        name: retiredName,
-        message: `${retiredName} was not scanned across the fixed consumer-root set`,
-      });
-      continue;
-    }
-    if (scan.matches.length > 0 || scan.resolvedConsumers.length > 0) {
-      findings.push({
-        code: 'stale-retired-reference',
-        manifestIndex: index,
-        name: retiredName,
-        message: `${retiredName} still has production or resolved consumers`,
-      });
-    }
-    for (const layer of REQUIRED_CUTOVER_LAYERS) {
-      const disposition = manifest.layers[layer];
-      if (disposition?.status === 'not-applicable' && !disposition.absenceEvidence.includes(retiredName)) {
-        findings.push({
-          code: 'stale-retired-reference',
-          manifestIndex: index,
-          name: retiredName,
-          message: `${layer} not-applicable lacks absence evidence for ${retiredName}`,
-        });
-      }
-    }
-  }
-  return findings;
+  return manifest.retiredNames.flatMap((retiredName) =>
+    retiredNameScanFindings(manifest, index, retiredName, scansByName.get(retiredName)),
+  );
 }
 
 function profileExpectationFindings(

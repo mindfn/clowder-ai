@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # intake-from-opensource.sh — Clowder AI → Clowder AI 社区贡献吸收
 #
-# Usage: see --help or run without args. V1: plan + record only (apply = V2).
+# Usage: see --help. Proven mechanical intake is delegated to the Node executor.
 # Design consensus (2026-03-13): no bidirectional sync, no reverse transform,
 # intake by PR, 3-class: safe-cherry-pick / manual-port / public-only.
 
@@ -49,6 +49,9 @@ ABSORB_PR=""
 REVIEW_PROOF=""
 SKIP_ABSORBED_GUARD=false
 VERIFY_MERGE_READY=false
+MECHANICAL_PROOF=""
+CLASSIFY_INTAKE_PATH=""
+ORIGINAL_ARGS=("$@")
 
 for arg in "$@"; do
   case "$arg" in
@@ -59,6 +62,8 @@ for arg in "$@"; do
     --intent-issue=*) INTENT_ISSUE="${arg#--intent-issue=}" ;;
     --absorb-pr=*) ABSORB_PR="${arg#--absorb-pr=}" ;;
     --review-proof=*) REVIEW_PROOF="${arg#--review-proof=}" ;;
+    --classify-intake-path=*) CLASSIFY_INTAKE_PATH="${arg#--classify-intake-path=}" ;;
+    --mechanical-proof=*) MECHANICAL_PROOF="${arg#--mechanical-proof=}"; REVIEW_PROOF="$MECHANICAL_PROOF" ;;
     --advance-ledger) ADVANCE_LEDGER=true ;;
     --force-overwrite) FORCE_OVERWRITE=true ;;
     --skip-absorbed-guard) SKIP_ABSORBED_GUARD=true ;;
@@ -73,13 +78,27 @@ done
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --pr) PR_NUMBER="$2"; shift 2 ;;
+    --mode) MODE="$2"; shift 2 ;;
     --decision) DECISION="$2"; shift 2 ;;
     --intent-issue) INTENT_ISSUE="$2"; shift 2 ;;
     --absorb-pr) ABSORB_PR="$2"; shift 2 ;;
     --review-proof) REVIEW_PROOF="$2"; shift 2 ;;
+    --classify-intake-path) CLASSIFY_INTAKE_PATH="$2"; shift 2 ;;
+    --mechanical-proof) MECHANICAL_PROOF="$2"; REVIEW_PROOF="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
+
+# Explicit write modes share the proven executor; no skip-guard path is used.
+case "$MODE" in
+  mechanical-plan|prepare|apply)
+    NODE_ARGS=()
+    for arg in "${ORIGINAL_ARGS[@]}"; do
+      if [ "$arg" = "--mode=mechanical-plan" ]; then NODE_ARGS+=("--mode=plan"); elif [ "$arg" = "mechanical-plan" ]; then NODE_ARGS+=("plan"); else NODE_ARGS+=("$arg"); fi
+    done
+    exec node "$SOURCE_DIR/scripts/intake-mechanical.mjs" "${NODE_ARGS[@]}"
+    ;;
+esac
 
 # ── Path classification ──
 # Files that are COMPLETELY REPLACED during outbound sync (never absorb)
@@ -89,7 +108,7 @@ is_public_only() {
     .github/FUNDING.yml|.github/ISSUE_TEMPLATE/*|.github/DISCUSSION_TEMPLATE/*) return 0 ;;
     CHANGELOG.md|docs/community/*) return 0 ;;
     # Generated/replaced files
-    CONTRIBUTING.md|SETUP.md|LICENSE|.env.example) return 0 ;;
+    LICENSE|.env.example) return 0 ;;
     .github/pull_request_template.md) return 0 ;;
     CLAUDE.md|AGENTS.md|GEMINI.md) return 0 ;;
     cat-config.json) return 0 ;;
@@ -245,7 +264,7 @@ detect_stateful_migration_quarantine() {
   STATE_ROLLOUT_COUNT=0
   STATEFUL_MIGRATION_QUARANTINE=false
 
-  while IFS= read -r file; do
+  while IFS= read -r -d '' file; do
     [ -z "$file" ] && continue
     if is_stateful_migration_core "$file"; then
       STATE_CORE_FILES="${STATE_CORE_FILES}  ${file}\n"
@@ -259,7 +278,7 @@ detect_stateful_migration_quarantine() {
       STATE_ROLLOUT_FILES="${STATE_ROLLOUT_FILES}  ${file}\n"
       STATE_ROLLOUT_COUNT=$((STATE_ROLLOUT_COUNT + 1))
     fi
-  done <<< "$files"
+  done < <(printf '%s' "$files" | node -e 'const t=require("fs").readFileSync(0,"utf8"); const p=t.startsWith("[")?JSON.parse(t):t.split("\n").filter(Boolean);process.stdout.write(p.map(x=>x+"\0").join(""));')
 
   # Aggregate risk matters more than any one path. The threshold requires a
   # persistent-state core, at least two downstream consumers, and rollout or a
@@ -402,35 +421,32 @@ _BRAND_VIOLATION_COUNT=0
 # Index-aware file helpers
 _brand_file_exists() {
   if [ "$FROM_INDEX" = true ]; then
-    git ls-files --stage -- "$1" 2>/dev/null | grep -q .
+    git -C "$SOURCE_DIR" ls-files --stage -- ":(literal)$1" 2>/dev/null | grep . >/dev/null
   else
-    [ -f "$1" ]
+    [ -f "$SOURCE_DIR/$1" ]
   fi
 }
 
 _brand_file_contains() {
   local file="$1" pattern="$2"
   if [ "$FROM_INDEX" = true ]; then
-    git show :"$file" 2>/dev/null | grep -q "$pattern"
+    git -C "$SOURCE_DIR" show :"$file" 2>/dev/null | grep -- "$pattern" >/dev/null
   else
-    grep -q "$pattern" "$file" 2>/dev/null
+    grep -- "$pattern" "$SOURCE_DIR/$file" >/dev/null 2>&1
   fi
 }
 
 _brand_scope_contains() {
-  local scope_files="$1"
-  local file="$2"
-  if [ -z "$scope_files" ]; then return 0; fi
-  printf '%s\n' "$scope_files" | grep -Fxq "$file"
+  if [ -z "$1" ]; then return 0; fi
+  local scoped_path
+  for scoped_path in ${_BRAND_SCOPE_ARRAY[@]+"${_BRAND_SCOPE_ARRAY[@]}"}; do
+    if [ "$scoped_path" = "$2" ]; then return 0; fi
+  done
+  return 1
 }
-
 _brand_scope_count() {
-  local scope_files="$1"
-  if [ -z "$scope_files" ]; then
-    echo 0
-    return
-  fi
-  printf '%s\n' "$scope_files" | sed '/^[[:space:]]*$/d' | sort -u | wc -l | tr -d ' '
+  if [ -z "$1" ]; then echo 0; return; fi
+  printf '%s' "$1" | node "$SOURCE_DIR/scripts/lib/intake-brand-paths.mjs" count "$SOURCE_DIR"
 }
 
 # gh retry + stderr-capture helpers. See scripts/lib/intake-gh-retry.sh for
@@ -438,41 +454,47 @@ _brand_scope_count() {
 # shellcheck source=lib/intake-gh-retry.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/intake-gh-retry.sh"
 
+resolve_pr_path_scope() {
+  local repo="$1" number="$2" out
+  if ! out=$(_gh_with_retry api --paginate --slurp "repos/$repo/pulls/$number/files"); then return 1; fi
+  printf '%s' "$out" | node -e 'const pages=JSON.parse(require("fs").readFileSync(0,"utf8"));if(!Array.isArray(pages))process.exit(1);const files=pages.flat();if(files.some(f=>typeof f.filename!=="string"||!f.filename||f.filename.includes("\0")))process.exit(1);console.log(JSON.stringify(files.map(f=>f.filename)))'
+}
 resolve_absorb_pr_brand_scope() {
   if [ -z "$ABSORB_PR" ]; then return 1; fi
-  local out
-  if ! out=$(_gh_with_retry pr diff "$ABSORB_PR" --repo "$SOURCE_REPO" --name-only); then
-    return 1
-  fi
-  printf '%s\n' "$out" \
-    | sed 's/\r$//; /^[[:space:]]*$/d' \
-    | sort -u
+  resolve_pr_path_scope "$SOURCE_REPO" "$ABSORB_PR"
 }
 
 resolve_local_brand_scope() {
-  if ! git -C "$SOURCE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    return 1
-  fi
-
-  if [ "$FROM_INDEX" = true ]; then
-    git -C "$SOURCE_DIR" diff --cached --name-only -- 2>/dev/null \
-      | sed 's/\r$//; /^[[:space:]]*$/d' \
-      | sort -u
-    return 0
-  fi
-
-  {
-    git -C "$SOURCE_DIR" diff --name-only HEAD -- 2>/dev/null || true
-    git -C "$SOURCE_DIR" ls-files --others --exclude-standard 2>/dev/null || true
-  } | sed 's/\r$//; /^[[:space:]]*$/d' | sort -u
+  if ! git -C "$SOURCE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then return 1; fi
+  local mode=worktree
+  if [ "$FROM_INDEX" = true ]; then mode=index; fi
+  node "$SOURCE_DIR/scripts/lib/intake-brand-paths.mjs" local "$SOURCE_DIR" "$mode"
 }
 
 run_brand_validation() {
   local scope_files="${1:-}"
   local scope_label="${2:-absorb PR}"
+  # A public export has provenance and no home exporter. Its sanitizer has
+  # transformed the home-only expectations below; validate the public domain
+  # instead. The checker validates provenance and HEAD as well as index state.
+  if _brand_file_exists ".sync-provenance.json" && ! _brand_file_exists "scripts/sync-to-opensource.sh"; then
+    local public_args=()
+    if [ "$FROM_INDEX" = true ]; then public_args+=(--from-index); fi
+    _BRAND_VIOLATION_COUNT=0
+    if ! printf '%s\n' "$scope_files" | node "$SOURCE_DIR/scripts/public-brand-validation.mjs" "${public_args[@]}"; then
+      _BRAND_VIOLATION_COUNT=1
+    fi
+    return
+  fi
+  local -a _BRAND_SCOPE_ARRAY=()
+  local scope_path_list scoped_path scope_path_count=0
   if [ -n "$scope_files" ]; then
-    scope_files=$(printf '%s\n' "$scope_files" | sed '/^[[:space:]]*$/d' | sort -u)
-    echo "  Brand Guard scope: $(_brand_scope_count "$scope_files") $scope_label file(s)"
+    scope_files=$(printf '%s' "$scope_files" | node -e 'const t=require("fs").readFileSync(0,"utf8"); console.log(JSON.stringify(t.startsWith("[")?JSON.parse(t):t.split("\n").filter(Boolean)))')
+    scope_path_list=$(mktemp) || return 1
+    if ! printf '%s' "$scope_files" | node "$SOURCE_DIR/scripts/lib/intake-brand-paths.mjs" null "$SOURCE_DIR" > "$scope_path_list"; then rm -f "$scope_path_list"; return 1; fi
+    while IFS= read -r -d '' scoped_path; do _BRAND_SCOPE_ARRAY+=("$scoped_path"); scope_path_count=$((scope_path_count + 1)); done < "$scope_path_list"
+    rm -f "$scope_path_list"
+    echo "  Brand Guard scope: $scope_path_count $scope_label file(s)"
   fi
   _BRAND_VIOLATION_COUNT=0
   # ── Phase 1: Legacy BRAND_EXPECTATIONS (specific must_contain/must_not_contain rules) ──
@@ -579,56 +601,37 @@ run_brand_validation() {
       bs_patterns=$(printf '%s\n%s' "$bs_raw" "$mp_raw" | sort -u)
 
       if [ -n "$bs_patterns" ]; then
-        # Build a list of existing files matching brand-sensitive patterns
-        local bs_files=""
-        if [ -n "$scope_files" ]; then
-          while IFS= read -r sf; do
-            [ -z "$sf" ] && continue
-            local sf_cls
-            sf_cls=$(node "$SOURCE_DIR/scripts/brand-dictionary-helper.mjs" --classify-path "$sf" 2>/dev/null | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8')); console.log(d.classification)" 2>/dev/null || true)
-            if [ "$sf_cls" = "brand-sensitive" ] || [ "$sf_cls" = "manual-port" ]; then
-              bs_files="${bs_files}${sf}\n"
-            fi
-          done <<< "$scope_files"
+        # JSON carries escaped names; only NUL transports raw paths to Bash.
+        local path_scope="$scope_files" path_list glob_pat
+        path_list=$(mktemp) || return 1
+        if [ -n "$path_scope" ]; then
+          if ! printf '%s' "$path_scope" | node "$SOURCE_DIR/scripts/lib/intake-brand-paths.mjs" protected "$SOURCE_DIR" > "$path_list"; then rm -f "$path_list"; return 1; fi
         elif [ "$FROM_INDEX" = true ]; then
-          # Match staged files against glob using the dictionary helper's classify
-          local staged_files
-          staged_files=$(git diff --cached --name-only 2>/dev/null || true)
-          while IFS= read -r sf; do
-            [ -z "$sf" ] && continue
-            local sf_cls
-            sf_cls=$(node "$SOURCE_DIR/scripts/brand-dictionary-helper.mjs" --classify-path "$sf" 2>/dev/null | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8')); console.log(d.classification)" 2>/dev/null || true)
-            if [ "$sf_cls" = "brand-sensitive" ] || [ "$sf_cls" = "manual-port" ]; then
-              bs_files="${bs_files}${sf}\n"
-            fi
-          done <<< "$staged_files"
+          path_scope=$(resolve_local_brand_scope) || { rm -f "$path_list"; return 1; }
+          if ! printf '%s' "$path_scope" | node "$SOURCE_DIR/scripts/lib/intake-brand-paths.mjs" protected "$SOURCE_DIR" > "$path_list"; then rm -f "$path_list"; return 1; fi
         else
+          # Preserve the legacy full-scan glob scope, but never serialize names by line.
           while IFS= read -r glob_pat; do
             [ -z "$glob_pat" ] && continue
-            # Working tree: find files matching patterns
-            local found
-            found=$(find . -path "./$glob_pat" -type f 2>/dev/null | sed 's|^\./||' || true)
-            bs_files="${bs_files}${found}\n"
+            find "$SOURCE_DIR" -path "$SOURCE_DIR/$glob_pat" -type f -print0 >> "$path_list" || { rm -f "$path_list"; return 1; }
           done <<< "$bs_patterns"
         fi
-
-        # Deduplicate and check each file
-        local checked_files=""
-        while IFS= read -r bsf; do
-          [ -z "$bsf" ] && continue
-          # Skip files already checked by BRAND_EXPECTATIONS (avoid double-counting)
-          # Fix: use printf + [@] so each entry gets its own line; the old echo + [*]
-          # joined everything on one line, so ^${bsf}| anchor only matched the first entry,
-          # letting later BRAND_EXPECTATIONS files leak into Phase 2 dictionary scan.
-          if printf '%s\n' "${BRAND_EXPECTATIONS[@]}" | grep -q "^${bsf}|"; then continue; fi
-          # Skip brand-validation toolchain files — they reference brand terms as
-          # detection constants, not as content that needs sanitization.
+        local -a checked_paths=()
+        while IFS= read -r -d '' bsf; do
+          bsf=${bsf#"$SOURCE_DIR"/}
+          local already_checked=false checked_path
+          for checked_path in ${checked_paths[@]+"${checked_paths[@]}"}; do if [ "$checked_path" = "$bsf" ]; then already_checked=true; break; fi; done
+          if [ "$already_checked" = true ]; then continue; fi
+          checked_paths+=("$bsf")
+          local legacy_hit=false expectation_file
+          for expectation in "${BRAND_EXPECTATIONS[@]}"; do
+            expectation_file=${expectation%%|*}
+            if [ "$expectation_file" = "$bsf" ]; then legacy_hit=true; break; fi
+          done
+          if [ "$legacy_hit" = true ]; then continue; fi
           case "$bsf" in
             scripts/intake-from-opensource.sh|scripts/sync-to-opensource.sh|scripts/brand-dictionary-helper.mjs|scripts/brand-dictionary-helper.test.mjs) continue ;;
           esac
-          # Skip already-checked files (dedup)
-          if echo "$checked_files" | grep -qF "$bsf"; then continue; fi
-          checked_files="${checked_files}${bsf}\n"
 
           while IFS= read -r pub_term; do
             [ -z "$pub_term" ] && continue
@@ -637,7 +640,8 @@ run_brand_validation() {
               _BRAND_VIOLATION_COUNT=$((_BRAND_VIOLATION_COUNT + 1))
             fi
           done <<< "$public_p1_patterns"
-        done <<< "$(echo -e "$bs_files")"
+        done < "$path_list"
+        rm -f "$path_list"
       fi
     fi
   fi
@@ -722,6 +726,11 @@ validate_review_proof_verdict() {
 }
 
 validate_review_proof_continuity() {
+  if [ -n "$MECHANICAL_PROOF" ]; then
+    node "$SOURCE_DIR/scripts/intake-mechanical-proof.mjs" "$MECHANICAL_PROOF" "$PR_NUMBER" "$ABSORB_PR" record
+    return $?
+  fi
+
   local absorb_pr_head="$1"
   local review_proof_mode="$2"
   local absorb_pr_head_short="${absorb_pr_head:0:8}"
@@ -729,6 +738,10 @@ validate_review_proof_continuity() {
   if [ "$review_proof_mode" = "file" ]; then
     local proof_body
     proof_body="$(cat "$REVIEW_PROOF" 2>/dev/null || true)"
+    if [[ "$proof_body" == *mechanical-continuity* ]]; then
+      echo "Typed mechanical proof requires --mechanical-proof; it is not a home reviewer verdict."
+      return 1
+    fi
     if review_proof_contains_head "$proof_body" "$absorb_pr_head" "$absorb_pr_head_short"; then
       validate_review_proof_verdict "file" "" "$proof_body" || return 1
       return 0
@@ -786,6 +799,10 @@ validate_review_proof_continuity() {
     return 1
   fi
 
+  if [[ "$proof_body" == *cat-cafe:mechanical-continuity* ]]; then
+    echo "Typed mechanical proof requires --mechanical-proof; it is not a home reviewer verdict."
+    return 1
+  fi
   validate_review_proof_verdict "$proof_kind" "$proof_id" "$proof_body" "$proof_state" || return 1
 
   if [ -n "$proof_commit" ] && [ "$proof_commit" = "$absorb_pr_head" ]; then
@@ -801,29 +818,64 @@ validate_review_proof_continuity() {
   return 1
 }
 
+resolve_intake_source_projections() {
+  node --input-type=module -e '
+import { pathToFileURL } from "node:url";
+import { resolve } from "node:path";
+const root = process.argv[1];
+const { loadPublicExportCoverage } = await import(pathToFileURL(resolve(root, "scripts/lib/sync-public-export-coverage.mjs")));
+const coverage = loadPublicExportCoverage(root);
+if (!coverage) throw new Error("Intake source projection guard requires sync-manifest.yaml");
+const entries = [...coverage.transformExactByTarget].filter(([, entry]) =>
+  entry.type === "generate" && !entry.target.includes("/") && entry.target.endsWith(".md") &&
+  typeof entry.source === "string" && entry.source.length > 0);
+console.log(JSON.stringify(Object.fromEntries(entries.map(([target, entry]) => [target, entry.source]))));
+' "$SOURCE_DIR"
+}
+
+validate_absorb_source_projections() {
+  local missing_projections
+  missing_projections=$(PUBLIC_PR_FILES="$1" ABSORB_PR_FILES="$2" SOURCE_PROJECTIONS_JSON="$3" node -e '
+const paths = (value) => String(value||"").startsWith("[") ? JSON.parse(value) : String(value||"").split("\n").filter(Boolean);
+const absorbed = new Set(paths(process.env.ABSORB_PR_FILES));
+const mappings = JSON.parse(process.env.SOURCE_PROJECTIONS_JSON);
+const missing = paths(process.env.PUBLIC_PR_FILES)
+  .filter((path) => mappings[path] && !absorbed.has(mappings[path]))
+  .map((path) => `${path} -> ${mappings[path]}`);
+process.stdout.write(missing.join("\n"));
+') || return 1
+  if [ -n "$missing_projections" ]; then
+    echo -e "${RED}✗ Absorbed intake omits canonical source projection(s):${NC}"
+    printf '%s\n' "$missing_projections" | sed 's/^/    - /'
+    echo "  Port each public document into its mapped source in the reviewed absorb PR."
+    echo "  An existing source template or PR-level absorbed decision is not preservation proof."
+    return 1
+  fi
+}
+
 validate_absorb_pr_scope_alignment() {
   local scope_issue_bodies_b64="$1"
   local absorb_pr_files="${2:-}"
+  local source_projections_json="${3:-\{\}}"
 
   if [ -z "$absorb_pr_files" ]; then
     absorb_pr_files=$(resolve_absorb_pr_brand_scope || true)
   fi
-  if [ -z "$absorb_pr_files" ]; then
+  if [ "$(_brand_scope_count "$absorb_pr_files")" = 0 ]; then
     echo -e "${RED}✗ Cannot resolve absorb PR #$ABSORB_PR file list for Path Guard${NC}"
     return 1
   fi
 
   local out_of_scope_files
-  out_of_scope_files=$(INTENT_BODIES_B64="$scope_issue_bodies_b64" ABSORB_PR_FILES="$absorb_pr_files" node -e '
+  out_of_scope_files=$(INTENT_BODIES_B64="$scope_issue_bodies_b64" ABSORB_PR_FILES="$absorb_pr_files" SOURCE_PROJECTIONS_JSON="$source_projections_json" node -e '
+const sourceProjections = JSON.parse(process.env.SOURCE_PROJECTIONS_JSON);
 const scopeBodies = String(process.env.INTENT_BODIES_B64 || "")
   .split("\n")
   .map((line) => line.trim())
   .filter(Boolean)
   .map((line) => Buffer.from(line, "base64").toString("utf8").replace(/\r/g, ""));
-const absorbFiles = String(process.env.ABSORB_PR_FILES || "")
-  .split("\n")
-  .map((line) => line.trim())
-  .filter(Boolean);
+const rawFiles=process.env.ABSORB_PR_FILES || "[]";
+const absorbFiles = rawFiles.startsWith("[")?JSON.parse(rawFiles):rawFiles.split("\n").filter(Boolean);
 const decisionTokenRe = /\b(absorb(?:ed)?|safe[- ]?cherry[- ]?pick|manual[- ]?port|high[- ]?risk|skip|public[- ]?only)\b/i;
 
 function normalizeToken(value) {
@@ -865,6 +917,9 @@ function isDeclaredInDecisionTable(file) {
       if (cells.every((cell) => /^:?-{3,}:?$/.test(cell))) continue;
       if (!decisionTokenRe.test(cells.slice(1).join(" | "))) continue;
       if (matchesDeclaredToken(cells[0], file)) return true;
+      const absorbs = cells.slice(1).some((cell) => /^(absorb(?:ed)?|safe[- ]?cherry[- ]?pick|manual[- ]?port|high[- ]?risk)$/i.test(normalizeToken(cell)));
+      if (absorbs && Object.entries(sourceProjections).some(([target, source]) =>
+        source === file && matchesDeclaredToken(cells[0], target))) return true;
     }
   }
   return false;
@@ -914,10 +969,8 @@ validate_absorb_pr_validation_evidence() {
 
   local evidence_ok
   evidence_ok=$(ABSORB_PR_FILES="$absorb_pr_files" ABSORB_PR_BODY="$absorb_pr_body" node -e '
-const files = String(process.env.ABSORB_PR_FILES || "")
-  .split("\n")
-  .map((line) => line.trim())
-  .filter(Boolean);
+const rawFiles=process.env.ABSORB_PR_FILES || "[]";
+const files = rawFiles.startsWith("[")?JSON.parse(rawFiles):rawFiles.split("\n").filter(Boolean);
 const body = String(process.env.ABSORB_PR_BODY || "").replace(/\r/g, "");
 const touchesA2A = files.includes("packages/api/src/domains/cats/services/agents/routing/a2a-mentions.ts");
 if (!touchesA2A) {
@@ -958,11 +1011,11 @@ run_absorbed_record_guard() {
   local source_pr_state
   source_pr_state=$(echo "$source_pr_info" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8')); console.log(String(d.state||''))")
   local source_pr_files
-  if ! source_pr_files=$(gh api --paginate "repos/$TARGET_REPO/pulls/$PR_NUMBER/files" --jq '.[].filename' 2>/dev/null); then
+  if ! source_pr_files=$(resolve_pr_path_scope "$TARGET_REPO" "$PR_NUMBER"); then
     echo -e "${RED}✗ Cannot fetch source PR #$PR_NUMBER files for migration quarantine${NC}"
     return 1
   fi
-  if [ -z "$source_pr_files" ]; then
+  if [ "$(_brand_scope_count "$source_pr_files")" = 0 ]; then
     local source_changed_files
     source_changed_files=$(echo "$source_pr_info" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8')); const n=d.changedFiles; console.log(Number.isInteger(n)&&n>=0?String(n):'invalid')")
     if [ "$SKIP_ABSORBED_GUARD" = true ] && [ "$source_pr_state" = "MERGED" ] && [ "$source_changed_files" = "0" ]; then
@@ -1258,7 +1311,14 @@ console.log(required.every((pattern) => pattern.test(text)) ? "yes" : "no");
     scope_issue_bodies_b64+="$scope_issue_body_b64"
   done <<< "$scope_issue_ids"
 
-  validate_absorb_pr_scope_alignment "$scope_issue_bodies_b64" "${BRAND_SCOPE_FILES:-}" || return 1
+  local absorb_scope_files="${BRAND_SCOPE_FILES:-}"
+  if [ -z "$absorb_scope_files" ]; then
+    absorb_scope_files=$(resolve_absorb_pr_brand_scope) || return 1
+  fi
+  local source_projection_map
+  source_projection_map=$(resolve_intake_source_projections) || return 1
+  validate_absorb_source_projections "$source_pr_files" "$absorb_scope_files" "$source_projection_map" || return 1
+  validate_absorb_pr_scope_alignment "$scope_issue_bodies_b64" "$absorb_scope_files" "$source_projection_map" || return 1
   validate_absorb_pr_validation_evidence "${BRAND_SCOPE_FILES:-}" "$(echo "$absorb_pr_info" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8')); console.log(String(d.body||''))")" || return 1
   validate_review_proof_continuity "$absorb_pr_head" "$review_proof_mode" || return 1
 
@@ -1270,6 +1330,15 @@ console.log(required.every((pattern) => pattern.test(text)) ? "yes" : "no");
   return 0
 }
 
+if [ -n "$CLASSIFY_INTAKE_PATH" ]; then
+  if is_public_only "$CLASSIFY_INTAKE_PATH"; then echo public-only
+  elif is_brand_sensitive "$CLASSIFY_INTAKE_PATH"; then echo brand-sensitive
+  elif is_high_risk "$CLASSIFY_INTAKE_PATH"; then echo manual-port
+  else classify_path "$CLASSIFY_INTAKE_PATH"
+  fi
+  exit 0
+fi
+
 if [ "$VALIDATE_INBOUND" = true ]; then
   echo -e "${GREEN}=== 🛡 Inbound Guard ===${NC}"
   echo ""
@@ -1279,6 +1348,7 @@ if [ "$VALIDATE_INBOUND" = true ]; then
     VALIDATION_SCOPE_LABEL="staged"
   fi
   if VALIDATION_SCOPE_FILES=$(resolve_local_brand_scope); then
+    # Preserve the existing migration policy; classify each raw path, not display text.
     detect_stateful_migration_quarantine "$VALIDATION_SCOPE_FILES"
     if [ "$STATEFUL_MIGRATION_QUARANTINE" = true ]; then
       print_stateful_migration_quarantine
@@ -1293,13 +1363,16 @@ if [ "$VALIDATE_INBOUND" = true ]; then
         exit 2
       fi
     fi
-    if [ -z "$VALIDATION_SCOPE_FILES" ]; then
+    if [ "$(_brand_scope_count "$VALIDATION_SCOPE_FILES")" = 0 ]; then
       echo "  Brand Guard scope: 0 $VALIDATION_SCOPE_LABEL file(s)"
       echo -e "${GREEN}✓ No brand violations detected. Safe to commit.${NC}"
       exit 0
     fi
     run_brand_validation "$VALIDATION_SCOPE_FILES" "$VALIDATION_SCOPE_LABEL"
   else
+    if [ "$FROM_INDEX" = true ] || git -C "$SOURCE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "Cannot resolve authoritative Git path scope" >&2; exit 1
+    fi
     run_brand_validation
   fi
   if [ "$_BRAND_VIOLATION_COUNT" -gt 0 ]; then
@@ -1351,7 +1424,7 @@ if [ "$RECORD_DECISION" = true ]; then
       BRAND_SCOPE_FILES=""
       if [ -n "$ABSORB_PR" ]; then
         BRAND_SCOPE_FILES=$(resolve_absorb_pr_brand_scope || true)
-        if [ -z "$BRAND_SCOPE_FILES" ]; then
+        if [ -z "$BRAND_SCOPE_FILES" ] || [ "$(_brand_scope_count "$BRAND_SCOPE_FILES")" = 0 ]; then
           echo -e "${RED}✗ Could not resolve absorb PR #$ABSORB_PR file list for scoped Brand Guard (after 3 retries with backoff)${NC}"
           echo "  Refusing to fall back to whole-repo scan during absorbed record; whole-repo scan has known pre-existing false positives."
           echo "  Check: gh pr diff $ABSORB_PR --repo $SOURCE_REPO --name-only"
@@ -1453,7 +1526,10 @@ if [ "$RECORD_DECISION" = true ]; then
     } else {
       ledger.entries.push(entry);
     }
-    fs.writeFileSync('$INTAKE_LEDGER', JSON.stringify(ledger, null, 2) + '\n');
+    const bytes = JSON.stringify(ledger, null, 2) + '\n';
+    if (process.env.CAT_CAFE_INTAKE_JOURNAL) {
+      require('child_process').execFileSync('node', ['$SOURCE_DIR/scripts/lib/intake-ledger-write.mjs', '$INTAKE_LEDGER'], { input: bytes });
+    } else fs.writeFileSync('$INTAKE_LEDGER', bytes);
     const mergeShort = (process.env.PR_MERGE_SHA_ENV || '').slice(0, 12);
     if (existing) {
       console.log('✓ Upgraded PR #' + prNumber + ': public-only → absorbed (merge: ' + mergeShort + ')');
@@ -1557,7 +1633,10 @@ if [ "$ADVANCE_LEDGER" = true ]; then
         notes: 'Force-advanced without per-PR review'
       });
       ledger.last_reviewed_target_head = '$CURRENT_HEAD';
-      fs.writeFileSync('$INTAKE_LEDGER', JSON.stringify(ledger, null, 2) + '\n');
+      const bytes = JSON.stringify(ledger, null, 2) + '\n';
+    if (process.env.CAT_CAFE_INTAKE_JOURNAL) {
+      require('child_process').execFileSync('node', ['$SOURCE_DIR/scripts/lib/intake-ledger-write.mjs', '$INTAKE_LEDGER'], { input: bytes });
+    } else fs.writeFileSync('$INTAKE_LEDGER', bytes);
       console.log('⚠ Ledger force-advanced to: $CURRENT_HEAD');
     "
     exit 0
@@ -1567,7 +1646,10 @@ if [ "$ADVANCE_LEDGER" = true ]; then
     const fs = require('fs');
     const ledger = JSON.parse(fs.readFileSync('$INTAKE_LEDGER', 'utf-8'));
     ledger.last_reviewed_target_head = '$CURRENT_HEAD';
-    fs.writeFileSync('$INTAKE_LEDGER', JSON.stringify(ledger, null, 2) + '\n');
+    const bytes = JSON.stringify(ledger, null, 2) + '\n';
+    if (process.env.CAT_CAFE_INTAKE_JOURNAL) {
+      require('child_process').execFileSync('node', ['$SOURCE_DIR/scripts/lib/intake-ledger-write.mjs', '$INTAKE_LEDGER'], { input: bytes });
+    } else fs.writeFileSync('$INTAKE_LEDGER', bytes);
     console.log('✓ Ledger advanced to: $CURRENT_HEAD (only sync commits since last review)');
   "
   exit 0
@@ -1614,6 +1696,11 @@ post_review_continuity_comment() {
 
 # ── Verify merge readiness (post-record continuity check) ──
 if [ "$VERIFY_MERGE_READY" = true ]; then
+  if [ -n "$MECHANICAL_PROOF" ]; then
+    echo "Mechanical file proof does not approve merge. Use the existing home validation and merge-gate; --mechanical-proof remains a post-merge record consumer."
+    exit 1
+  fi
+
   if [ -z "$ABSORB_PR" ]; then
     echo -e "${RED}✗ --verify-merge-ready requires --absorb-pr <number>${NC}"; exit 1
   fi
@@ -1788,9 +1875,9 @@ fi
 # `gh pr view --json files` only returns the first page for large PRs; use
 # the REST files endpoint with pagination so the intake table cannot silently
 # miss files beyond the first 100.
-FILES=$(gh api --paginate "repos/$TARGET_REPO/pulls/$PR_NUMBER/files" --jq '.[].filename' 2>/dev/null || true)
+FILES=$(resolve_pr_path_scope "$TARGET_REPO" "$PR_NUMBER") || { echo "Cannot resolve complete source path scope" >&2; exit 1; }
 
-if [ -z "$FILES" ]; then
+if [ "$(_brand_scope_count "$FILES")" = 0 ]; then
   # cat-cafe#2518: PR_STATE was verified MERGED above (line 1101). An empty
   # FILES list here means the GitHub files API returned no rows — almost
   # certainly a transient flake, NOT a legitimate empty PR. Silently exiting
@@ -1820,7 +1907,7 @@ PASSTHROUGH_FILES=""
 PASSTHROUGH_COUNT=0
 detect_stateful_migration_quarantine "$FILES"
 
-while IFS= read -r file; do
+while IFS= read -r -d '' file; do
   [ -z "$file" ] && continue
   if is_public_only "$file"; then
     PUBLIC_FILES="${PUBLIC_FILES}  ${file}\n"
@@ -1841,14 +1928,14 @@ while IFS= read -r file; do
     SAFE_FILES="${SAFE_FILES}  ${file}\n"
     SAFE_COUNT=$((SAFE_COUNT + 1))
   fi
-done <<< "$FILES"
+done < <(printf '%s' "$FILES" | node "$SOURCE_DIR/scripts/lib/intake-brand-paths.mjs" null "$SOURCE_DIR")
 
 # Report
 echo -e "${GREEN}── Intake Classification ──${NC}"
 echo ""
 
 if [ "$SAFE_COUNT" -gt 0 ]; then
-  echo -e "${GREEN}✓ safe-cherry-pick ($SAFE_COUNT files)${NC} — can absorb directly"
+  echo -e "${GREEN}✓ safe-cherry-pick ($SAFE_COUNT files)${NC} — path candidate only; byte proof required"
   echo -e "$SAFE_FILES"
 fi
 
@@ -1910,7 +1997,7 @@ fi
 echo ""
 echo -e "${BLUE}── Summary ──${NC}"
 echo "  Total files: $((SAFE_COUNT + BRAND_COUNT + HIGH_RISK_COUNT + MANUAL_COUNT + PUBLIC_COUNT + PASSTHROUGH_COUNT))"
-echo -e "  ${GREEN}Safe:${NC}   $SAFE_COUNT  (auto-absorbable)"
+echo -e "  ${GREEN}Safe:${NC}   $SAFE_COUNT  (path candidates; NOT mechanical approval)"
 if [ "$BRAND_COUNT" -gt 0 ]; then
   echo -e "  ${RED}Brand:${NC} $BRAND_COUNT  (🛡 manual diff-merge only!)"
 fi
@@ -1935,6 +2022,15 @@ fi
 
 if [ "$MODE" = "plan" ]; then
   echo ""
+  echo "── Mechanical eligibility (separate from path candidates) ──"
+  if git -C "$SOURCE_DIR" rev-parse --verify origin/main >/dev/null 2>&1 && git -C "$TARGET_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
+    if ! node "$SOURCE_DIR/scripts/intake-mechanical.mjs" --pr "$PR_NUMBER" --mode=plan; then
+      echo "Mechanical eligibility: INSUFFICIENT — retain manual review; no writer is admitted."
+    fi
+  else
+    echo "Mechanical eligibility: UNPROVED — source/home Git baselines unavailable; retain manual review."
+  fi
+  echo ""
   echo -e "${BLUE}── Recommended Actions ──${NC}"
   if [ "$BRAND_COUNT" -gt 0 ]; then
     echo -e "  ${RED}0. 🛡 BRAND GUARD: Manually diff-merge $BRAND_COUNT brand-sensitive file(s)${NC}"
@@ -1947,7 +2043,7 @@ if [ "$MODE" = "plan" ]; then
   fi
   if [ "$SAFE_COUNT" -gt 0 ]; then
     echo "  1. Cherry-pick safe files from clowder-ai PR #$PR_NUMBER"
-    echo "     (V2 will automate this with --mode=apply)"
+    echo "     Prove first: --mode=mechanical-plan; authorized execution: --mode=apply --config <file>"
   fi
   if [ "$MANUAL_COUNT" -gt 0 ]; then
     echo "  2. Manually review and port transformed files"
@@ -1965,8 +2061,4 @@ if [ "$MODE" = "plan" ]; then
   echo "     (or: --decision public-only | --decision rejected)"
   echo "  5. After all PRs recorded: --advance-ledger"
   echo "  6. Default lane only: after absorb PR merge, confirm the Intake Intent Issue is closed"
-elif [ "$MODE" = "apply" ]; then
-  echo ""
-  echo -e "${YELLOW}⚠ --mode=apply not yet implemented (V2)${NC}"
-  echo "  For now, manually cherry-pick the safe files."
 fi

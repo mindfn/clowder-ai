@@ -20,6 +20,8 @@ import { promisify } from 'node:util';
 import type { FastifyInstance } from 'fastify';
 import * as pty from 'node-pty';
 import { z } from 'zod';
+import { resolveForClient } from '../config/account-resolver.js';
+import { type CodexAccountLaunchDescriptor, resolveCodexAccountLaunch } from '../config/codex-account-launch.js';
 import type { RoutingQuotaSnapshotObserver } from '../domains/routing-context/F051QuotaRoutingSignalAdapter.js';
 import { resolveCliCommand } from '../utils/cli-resolve.js';
 
@@ -994,7 +996,13 @@ export function parseCodexWhamUsageResponse(json: CodexWhamUsageResponse, header
       if (!window || typeof window !== 'object') continue;
       const pct = window.used_percent;
       if (pct == null || typeof pct !== 'number') continue;
-      const resetsAt = normalizeCodexResetAt(window.reset_at);
+      const resetsAt =
+        normalizeCodexResetAt(window.reset_at) ??
+        (def.key === 'primary_window'
+          ? readCodexResetHeader(headers, 'x-codex-primary-reset-at')
+          : def.key === 'secondary_window'
+            ? readCodexResetHeader(headers, 'x-codex-secondary-reset-at')
+            : undefined);
       parsedBodySources.add(def.key);
       items.push({
         label: codexWindowLabel(window, def.label, def.prefix),
@@ -1023,6 +1031,7 @@ export function parseCodexWhamUsageResponse(json: CodexWhamUsageResponse, header
     label: string;
     poolId: string;
     percentKind: 'used' | 'remaining';
+    resetHeader?: string;
   }> = [
     {
       header: 'x-codex-primary-used-percent',
@@ -1030,6 +1039,7 @@ export function parseCodexWhamUsageResponse(json: CodexWhamUsageResponse, header
       label: '5小时使用限额',
       poolId: 'codex-main',
       percentKind: 'used',
+      resetHeader: 'x-codex-primary-reset-at',
     },
     {
       header: 'x-codex-secondary-used-percent',
@@ -1037,6 +1047,7 @@ export function parseCodexWhamUsageResponse(json: CodexWhamUsageResponse, header
       label: '每周使用限额',
       poolId: 'codex-main',
       percentKind: 'used',
+      resetHeader: 'x-codex-secondary-reset-at',
     },
     {
       header: 'x-codex-credits-balance',
@@ -1050,11 +1061,13 @@ export function parseCodexWhamUsageResponse(json: CodexWhamUsageResponse, header
     if (parsedBodySources.has(def.bodySource)) continue;
     const pct = readPercentHeader(headers, def.header);
     if (pct == null) continue;
+    const resetsAt = def.resetHeader ? readCodexResetHeader(headers, def.resetHeader) : undefined;
     items.push({
       label: def.label,
       usedPercent: pct,
       percentKind: def.percentKind,
       poolId: def.poolId,
+      ...(resetsAt ? { resetsAt } : {}),
     });
   }
 
@@ -1067,6 +1080,17 @@ function normalizeCodexResetAt(value: string | number | undefined): string | und
   const milliseconds = value < 10_000_000_000 ? value * 1000 : value;
   const date = new Date(milliseconds);
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+/** Codex 0.159.0 rate_limits.rs uses Unix seconds for these two official reset headers. */
+function readCodexResetHeader(headers: HeaderReader, name: string): string | undefined {
+  if (!headers) return undefined;
+  const value =
+    'get' in headers && typeof headers.get === 'function'
+      ? headers.get(name)
+      : (headers as Record<string, string | undefined>)[name];
+  if (!value?.trim() || !/^\d+$/.test(value.trim())) return undefined;
+  return normalizeCodexResetAt(Number(value));
 }
 
 function readPercentHeader(headers: HeaderReader, name: string): number | undefined {
@@ -1131,7 +1155,11 @@ function readCodexCredentialsFile(credPath: string): CodexOAuthCredentials | nul
   }
 }
 
-function loadCodexCredentials(envPath?: string): CodexOAuthCredentials | null {
+function loadCodexCredentials(
+  envPath?: string,
+  accountLaunch?: CodexAccountLaunchDescriptor,
+): CodexOAuthCredentials | null {
+  if (accountLaunch) return readCodexCredentialsFile(join(accountLaunch.credentialHome, 'auth.json'));
   const explicitPath = envPath?.trim();
   // CODEX_CREDENTIALS_PATH is an operator-selected account boundary. When it is
   // present, its native or legacy file is the only allowed source; missing or
@@ -1703,8 +1731,16 @@ export async function quotaRoutes(app: FastifyInstance, options: QuotaRoutesOpti
     const claudeCredentials = requestedProviders.has('claude')
       ? loadClaudeCredentials(process.env[CLAUDE_CREDENTIALS_PATH_ENV])
       : null;
+    // Legacy operator path remains authoritative for the aggregate endpoint; a selected descriptor never falls back to it.
+    const codexAccount =
+      requestedProviders.has('codex') && !process.env[CODEX_CREDENTIALS_PATH_ENV]?.trim()
+        ? resolveForClient(process.cwd(), 'openai', 'codex')
+        : null;
     const codexCredentials = requestedProviders.has('codex')
-      ? loadCodexCredentials(process.env[CODEX_CREDENTIALS_PATH_ENV])
+      ? loadCodexCredentials(
+          process.env[CODEX_CREDENTIALS_PATH_ENV],
+          codexAccount ? resolveCodexAccountLaunch(codexAccount) : undefined,
+        )
       : null;
     if (!claudeCredentials && !codexCredentials) {
       const message = `No official quota credentials found for requested providers. ${requestedCredentialHints(requestedProviders)}`;

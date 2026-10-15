@@ -1,5 +1,9 @@
 export type CloudBridgeOutboundStatus = 'sent' | 'failed' | 'unknown';
-export type CloudBridgeOutboundTransport = 'host' | 'legacy-pinchtab' | 'none';
+/**
+ * `legacy-pinchtab` is read-only history: receipts written while the legacy PinchTab bridge existed
+ * stay valid, but the Host no longer produces it (issue #1538).
+ */
+export type CloudBridgeOutboundTransport = 'host' | 'events' | 'legacy-pinchtab' | 'none';
 export type CloudBridgeIdempotencyDisposition = 'fresh' | 'replayed' | 'not_attempted' | 'unknown';
 const DIAGNOSTIC_FIELDS = new Set(['v', 'errorCode', 'nextAction', 'fingerprint']);
 const FINGERPRINT_FIELDS = new Set([
@@ -79,6 +83,14 @@ export interface CloudBridgeRecoveryV1 {
   readonly dispatchInvocationId: string;
 }
 
+/** Durable refs-only provenance for the fresh user source created by Retry. */
+export interface CloudBridgeRetryV1 {
+  readonly v: 1;
+  readonly sourceMessageId: string;
+  readonly targetCatId: string;
+  readonly priorDispatchInvocationId: string;
+}
+
 const RECOVERY_FIELDS = new Set(['v', 'kind', 'sourceMessageId', 'targetCatId', 'dispatchInvocationId']);
 
 export function isCloudBridgeRecoveryV1(value: unknown): value is CloudBridgeRecoveryV1 {
@@ -91,6 +103,20 @@ export function isCloudBridgeRecoveryV1(value: unknown): value is CloudBridgeRec
     isBoundedReceiptRef(recovery.sourceMessageId) &&
     isBoundedReceiptRef(recovery.targetCatId) &&
     isBoundedReceiptRef(recovery.dispatchInvocationId)
+  );
+}
+
+const RETRY_FIELDS = new Set(['v', 'sourceMessageId', 'targetCatId', 'priorDispatchInvocationId']);
+
+export function isCloudBridgeRetryV1(value: unknown): value is CloudBridgeRetryV1 {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const retry = value as Record<string, unknown>;
+  return (
+    Object.keys(retry).every((field) => RETRY_FIELDS.has(field)) &&
+    retry.v === 1 &&
+    isBoundedReceiptRef(retry.sourceMessageId) &&
+    isBoundedReceiptRef(retry.targetCatId) &&
+    isBoundedReceiptRef(retry.priorDispatchInvocationId)
   );
 }
 
@@ -194,7 +220,7 @@ export function isCloudBridgeOutboundReceiptV1(value: unknown): value is CloudBr
   if (receipt.v !== 1 || !isBoundedReceiptRef(receipt.sourceMessageId)) return false;
   if (!isBoundedReceiptRef(receipt.dispatchInvocationId) || !isBoundedReceiptRef(receipt.targetCatId)) return false;
   if (!['sent', 'failed', 'unknown'].includes(String(receipt.status))) return false;
-  if (!['host', 'legacy-pinchtab', 'none'].includes(String(receipt.transport))) return false;
+  if (!['host', 'events', 'legacy-pinchtab', 'none'].includes(String(receipt.transport))) return false;
   if (receipt.hostMessageId !== undefined && !isBoundedReceiptRef(receipt.hostMessageId)) return false;
   if (receipt.failure !== undefined && !isCloudBridgeFailureDiagnosticV1(receipt.failure)) return false;
 

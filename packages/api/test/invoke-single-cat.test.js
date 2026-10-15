@@ -18,8 +18,9 @@ const hasSourceStagingContent = existsSync(
 
 import { afterEach, before, beforeEach, describe, it, mock } from 'node:test';
 import { catRegistry } from '@cat-cafe/shared';
-import { ContextEpochOwner } from '../dist/domains/cats/services/session/ContextEpochOwner.js';
+import { ContextEpochOwner } from '../dist/domains/cats/services/session/context/ContextEpochOwner.js';
 import { InMemoryContextEpochStore } from '../dist/domains/cats/services/stores/ports/ContextEpochStore.js';
+import { scopedTestSessions, scriptedSessionInit } from './helpers/scoped-test-sessions.js';
 
 function assertStagingPromptContract(prompt, mode) {
   if (hasSourceStagingContent) {
@@ -288,6 +289,161 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       contextEpochOwner: new ContextEpochOwner(new InMemoryContextEpochStore()),
     };
   }
+
+  it('F290 carries an authenticated home delegation into the receiving Cat private Work binding', async () => {
+    const previousDataDir = process.env.CAT_CAFE_DATA_DIR;
+    process.env.CAT_CAFE_DATA_DIR = join(testGlobalConfigRoot, 'private-work');
+    const createCalls = [];
+    const delegationMessage = {
+      id: 'message-home-delegation',
+      userId: 'owner-1',
+      threadId: 'thread-private-work',
+      catId: 'codex-astra',
+      content: '@codex-sol continue the admitted Work',
+      mentions: ['codex-sol'],
+      origin: 'callback',
+      timestamp: 1,
+      extra: {
+        isExplicitPost: true,
+        collectiveWorkDelegationV1: {
+          v: 1,
+          taskId: 'task-private-work',
+          observedRevision: 3,
+          resultRevision: 1,
+          executionRevision: 2,
+          executionRef: 'message:owner-admission',
+          ownerCatId: 'codex-astra',
+          targetCatIds: ['codex-sol'],
+        },
+      },
+    };
+    const privateCalls = [];
+    const verifiedCalls = [];
+    const source = {
+      serviceInstanceId: 'service-test',
+      collectiveId: 'world-test',
+      location: { channelId: 'channel-test' },
+    };
+    const deps = {
+      ...makeDeps(),
+      ...scopedTestSessions(process.env.CAT_CAFE_DATA_DIR),
+      registry: {
+        create: async (...args) => {
+          createCalls.push(args);
+          return { invocationId: 'inv-home-delegation', callbackToken: 'tok-home-delegation' };
+        },
+        verify: async (invocationId, callbackToken) => {
+          verifiedCalls.push({ invocationId, callbackToken });
+          assert.equal(invocationId, 'inv-home-delegation');
+          assert.equal(callbackToken, 'tok-home-delegation');
+          return { ok: true };
+        },
+      },
+      messageStore: { getById: async () => delegationMessage },
+      collectiveContext: () => ({
+        resolvePrivate: async (input, phase) => {
+          privateCalls.push({ input, phase });
+          return {
+            sourceRef: 'message:collective-source',
+            grant: { source },
+            context: {
+              events: [],
+              source: {
+                ...source,
+                eventId: 'collective-source',
+                sequence: 1,
+                actor: { type: 'human' },
+                body: 'CURRENT_WORK_SOURCE_CANARY',
+              },
+            },
+            work: {
+              task: { id: 'task-private-work', title: 'Current Work', why: 'Continue this matter' },
+              revision: 3,
+              resultRevision: 1,
+              authorityRef: 'message:owner-admission',
+              executionRevision: 2,
+              executionRef: 'message:owner-admission',
+            },
+          };
+        },
+      }),
+    };
+    const launched = [];
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      supportsToolExecutionPolicy: (policy) => policy.mode === 'collective_work',
+      async *invoke(prompt, options) {
+        launched.push({ prompt, options });
+        yield* scriptedSessionInit('codex-sol', prompt, options);
+        yield { type: 'done', catId: 'codex-sol', timestamp: Date.now() };
+      },
+    };
+    const params = {
+      catId: 'codex-sol',
+      service,
+      prompt: 'UNRELATED_HOME_HISTORY_CANARY',
+      userId: 'owner-1',
+      ownerAuthProvenance: 'strict',
+      threadId: 'thread-private-work',
+      a2aTriggerMessageId: delegationMessage.id,
+      isLastCat: true,
+    };
+    try {
+      await assert.rejects(
+        collect(
+          invokeSingleCat(deps, {
+            ...params,
+            service: { ...service, supportsToolExecutionPolicy: () => false },
+          }),
+        ),
+        (error) => {
+          assert.equal(error.code, 'collective_private_work_refused');
+          assert.equal(error.reason, 'private_provider_unsupported');
+          return true;
+        },
+      );
+      assert.equal(createCalls.length, 0, 'unsupported private provider must not register an invocation');
+      assert.equal(launched.length, 0, 'unsupported private provider must not start a model');
+      privateCalls.length = 0;
+
+      const events = await collect(invokeSingleCat(deps, params));
+      assert.deepEqual(
+        events.filter((event) => event.type === 'error'),
+        [],
+      );
+
+      assert.equal(privateCalls.length, 1);
+      assert.equal(privateCalls[0].phase, 'admission');
+      assert.equal(createCalls.length, 1);
+      assert.equal(createCalls[0][7], 'unknown', 'Work admission must not inherit strict owner authority');
+      assert.deepEqual(createCalls[0][10], {
+        v: 1,
+        taskId: 'task-private-work',
+        observedRevision: 3,
+        resultRevision: 1,
+        executionRevision: 2,
+        executionRef: 'message:owner-admission',
+        sourceRef: 'message:collective-source',
+        authorityRef: 'message:owner-admission',
+      });
+      assert.equal(launched.length, 1);
+      const { prompt, options } = launched[0];
+      assert.match(prompt, /CURRENT_WORK_SOURCE_CANARY/);
+      assert.match(prompt, /continue the admitted Work/);
+      assert.doesNotMatch(prompt, /UNRELATED_HOME_HISTORY_CANARY/);
+      assert.deepEqual(options.toolExecutionPolicy, createCalls[0][5]);
+      assert.equal(options.toolExecutionPolicy.mode, 'collective_work');
+      assert.equal(options.toolExecutionPolicy.taskId, 'task-private-work');
+      assert.equal(options.toolExecutionPolicy.executionRevision, 2);
+      assert.equal(options.toolExecutionPolicy.executionRef, 'message:owner-admission');
+      assert.ok(options.workingDirectory.startsWith(await realpath(process.env.CAT_CAFE_DATA_DIR)));
+      assert.equal(options.sessionId, undefined);
+      assert.ok(verifiedCalls.length > 0, 'private launch must revalidate the current invocation');
+    } finally {
+      if (previousDataDir === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+      else process.env.CAT_CAFE_DATA_DIR = previousDataDir;
+    }
+  });
 
   it('F275 binds an admitted work from strict invocation truth and carries it in callback auth context', async () => {
     const createCalls = [];
@@ -1173,6 +1329,84 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.equal(payload.usage.inputTokens, 1000);
     assert.equal(payload.usage.outputTokens, 500);
     assert.equal(payload.usage.costUsd, 0.03);
+  });
+
+  it('F319 Phase E.1: invocation_usage carries the observed served facts so live bubbles see them without a reload', async () => {
+    const servedService = {
+      async *invoke() {
+        yield { type: 'text', catId: 'codex-sol', content: 'OK', timestamp: Date.now() };
+        yield {
+          type: 'done',
+          catId: 'codex-sol',
+          timestamp: Date.now(),
+          metadata: {
+            provider: 'openai',
+            model: 'gpt-5.6-sol',
+            usage: { inputTokens: 10, outputTokens: 2 },
+            servedModel: 'gpt-5.6-sol',
+            servedResponseId: 'resp_live_1',
+            servedModelSource: 'ws_response_object',
+            modelVerified: true,
+            upstreamTurnStateLength: 312,
+            upstreamSafetyBufferingFasterModel: 'gpt-5.6-luna',
+            upstreamSafetyBuffering: false,
+          },
+        };
+      },
+    };
+    const msgs = await collect(
+      invokeSingleCat(makeDeps(), {
+        catId: 'codex-sol',
+        service: servedService,
+        prompt: 'test',
+        userId: 'user1',
+        threadId: 'thread-served-live',
+        isLastCat: true,
+      }),
+    );
+    const payload = msgs
+      .filter((m) => m.type === 'system_info')
+      .map((m) => JSON.parse(m.content))
+      .find((p) => p.type === 'invocation_usage');
+    assert.ok(payload, 'invocation_usage must be emitted');
+    assert.deepEqual(payload.served, {
+      servedModel: 'gpt-5.6-sol',
+      servedResponseId: 'resp_live_1',
+      servedModelSource: 'ws_response_object',
+      upstreamTurnStateLength: 312,
+      upstreamSafetyBufferingFasterModel: 'gpt-5.6-luna',
+      upstreamSafetyBuffering: false,
+    });
+  });
+
+  it('F319 Phase E.1: no served facts observed → invocation_usage has no served key (unobserved stays absent)', async () => {
+    const plainService = {
+      async *invoke() {
+        yield { type: 'text', catId: 'opus', content: 'hi', timestamp: Date.now() };
+        yield {
+          type: 'done',
+          catId: 'opus',
+          timestamp: Date.now(),
+          metadata: { provider: 'anthropic', model: 'opus', usage: { inputTokens: 1, outputTokens: 1 } },
+        };
+      },
+    };
+    const msgs = await collect(
+      invokeSingleCat(makeDeps(), {
+        catId: 'opus',
+        service: plainService,
+        prompt: 'test',
+        userId: 'user1',
+        threadId: 'thread-served-none',
+        isLastCat: true,
+      }),
+    );
+    const payload = msgs
+      .filter((m) => m.type === 'system_info')
+      .map((m) => JSON.parse(m.content))
+      .find((p) => p.type === 'invocation_usage');
+    assert.ok(payload);
+    assert.equal(Object.hasOwn(payload, 'served'), false);
   });
 
   it('F8: does not yield invocation_usage when done has no usage', async () => {
@@ -4457,6 +4691,165 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.ok(sessionStores.includes('new-sess'), 'new session should be stored after recovery');
   });
 
+  it('F325 replaces a changed Native binding through a visible seal and a cold history rebuild', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const { SessionSealer } = await import('../dist/domains/cats/services/session/SessionSealer.js');
+    const { AgyNativeAgentService } = await import(
+      '../dist/domains/cats/services/agents/providers/agy-native/AgyNativeAgentService.js'
+    );
+    const chain = new SessionChainStore();
+    const old = await chain.create({ catId: 'gemini38', threadId: 'native-binding-change', userId: 'owner' });
+    await chain.update(old.id, { cliSessionId: 'old-native-session' });
+    let sessionId = 'old-native-session';
+    const service = new AgyNativeAgentService({
+      catId: 'gemini38',
+      profile: {
+        enabled: true,
+        profileId: 'gemini38',
+        model: 'gemini-3.8-flash-high',
+      },
+    });
+    const calls = [];
+    service.invokeWithContinuityPreflight = async function* (preflight, options) {
+      const call = { sessionId: options.sessionId };
+      calls.push(call);
+      if (calls.length === 1) {
+        yield {
+          type: 'error',
+          catId: 'gemini38',
+          errorCode: 'AGY_NATIVE_RESUME_MISMATCH',
+          error: 'Native L0 binding changed',
+          timestamp: Date.now(),
+        };
+        yield { type: 'done', catId: 'gemini38', errorCode: 'AGY_NATIVE_RESUME_MISMATCH', timestamp: Date.now() };
+        return;
+      }
+      assert.equal((await chain.get(old.id)).status, 'sealed', 'old history is committed before a new provider starts');
+      const generation = await preflight.settle({
+        evidence: { kind: 'started', runtimeSessionId: 'new-native-session' },
+      });
+      call.prompt = generation.prompt;
+      yield { type: 'session_init', catId: 'gemini38', sessionId: 'new-native-session', timestamp: Date.now() };
+      yield { type: 'text', catId: 'gemini38', content: 'Continued with preserved history.', timestamp: Date.now() };
+      yield { type: 'done', catId: 'gemini38', timestamp: Date.now() };
+    };
+    const messages = await collect(
+      invokeSingleCat(
+        {
+          ...makeDeps(),
+          sessionChainStore: chain,
+          sessionSealer: new SessionSealer(chain),
+          sessionManager: {
+            get: async () => sessionId,
+            delete: async () => {
+              sessionId = undefined;
+            },
+            store: async (_u, _c, _t, id) => {
+              sessionId = id;
+            },
+            resolveWorkingDirectory: () => process.cwd(),
+          },
+          threadStore: {
+            get: async () => ({ projectPath: process.cwd(), createdBy: 'owner' }),
+            updateParticipantActivity: async () => {},
+          },
+        },
+        {
+          catId: 'gemini38',
+          service,
+          prompt: 'LATEST-MESSAGE-ONLY',
+          userId: 'owner',
+          threadId: 'native-binding-change',
+          isLastCat: true,
+          rebuildPromptAfterSessionSeal: async () => 'PRESERVED-THREAD-HISTORY\nLATEST-MESSAGE-ONLY',
+        },
+      ),
+    );
+    assert.equal(calls.length, 2, JSON.stringify(messages.filter((m) => m.type === 'error')));
+    assert.equal(calls[0].sessionId, 'old-native-session');
+    assert.equal(calls[1].sessionId, undefined);
+    assert.match(calls[1].prompt, /PRESERVED-THREAD-HISTORY/);
+    assert.equal((await chain.get(old.id)).sealReason, 'native_binding_changed');
+    const notice = messages.find((m) => m.type === 'system_info' && m.content?.includes('native_binding_changed'));
+    assert.equal(JSON.parse(notice.content).type, 'session_seal_requested');
+    assert.equal(messages.filter((m) => m.type === 'error').length, 0);
+    assert.equal(
+      (await chain.getActive('gemini38', 'native-binding-change', 'owner')).cliSessionId,
+      'new-native-session',
+    );
+  });
+
+  it('F325 refuses Native replacement without history or after visible provider output', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const { SessionSealer } = await import('../dist/domains/cats/services/session/SessionSealer.js');
+    const { AgyNativeAgentService } = await import(
+      '../dist/domains/cats/services/agents/providers/agy-native/AgyNativeAgentService.js'
+    );
+    for (const partial of [false, true]) {
+      const chain = new SessionChainStore();
+      const old = await chain.create({ catId: 'gemini38', threadId: 'native-no-replay', userId: 'owner' });
+      await chain.update(old.id, { cliSessionId: 'old-native-session' });
+      const service = new AgyNativeAgentService({
+        catId: 'gemini38',
+        profile: {
+          enabled: true,
+          profileId: 'gemini38',
+          model: 'gemini-3.8-flash-high',
+        },
+      });
+      let calls = 0;
+      service.invokeWithContinuityPreflight = async function* (preflight) {
+        calls++;
+        if (partial) {
+          await preflight.settle({
+            evidence: {
+              kind: 'resumed',
+              requestedRuntimeSessionId: 'old-native-session',
+              runtimeSessionId: 'old-native-session',
+            },
+          });
+          yield { type: 'text', catId: 'gemini38', content: 'Already delivered.', timestamp: Date.now() };
+        }
+        yield {
+          type: 'error',
+          catId: 'gemini38',
+          errorCode: 'AGY_NATIVE_RESUME_MISMATCH',
+          error: 'Native L0 binding changed',
+          timestamp: Date.now(),
+        };
+        yield { type: 'done', catId: 'gemini38', errorCode: 'AGY_NATIVE_RESUME_MISMATCH', timestamp: Date.now() };
+      };
+      const deps = makeDeps();
+      deps.sessionManager.get = async () => 'old-native-session';
+      deps.sessionManager.resolveWorkingDirectory = () => process.cwd();
+      const messages = await collect(
+        invokeSingleCat(
+          {
+            ...deps,
+            sessionChainStore: chain,
+            sessionSealer: new SessionSealer(chain),
+            threadStore: {
+              get: async () => ({ projectPath: process.cwd(), createdBy: 'owner' }),
+              updateParticipantActivity: async () => {},
+            },
+          },
+          {
+            catId: 'gemini38',
+            service,
+            prompt: 'Latest message',
+            userId: 'owner',
+            threadId: 'native-no-replay',
+            isLastCat: true,
+            ...(partial ? { rebuildPromptAfterSessionSeal: async () => 'Recovered history' } : {}),
+          },
+        ),
+      );
+      assert.equal(calls, 1);
+      assert.equal((await chain.get(old.id)).status, 'active');
+      assert.ok(messages.some((m) => m.type === 'error' && m.errorCode === 'AGY_NATIVE_RESUME_MISMATCH'));
+    }
+  });
+
   // #1186: Active-lease guard regression — proves invoke-single-cat.ts:3368-3369
   // calls .return() on the first service iterator (releasing the ACP lease) BEFORE
   // starting the second service.invoke() (which acquires a new lease).
@@ -6166,6 +6559,345 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.equal(sessionRecordCreated, true, 'should create SessionRecord when sessionChain enabled');
   });
 
+  it('F317 Live follow-ups retain the accepted output fence and exact rejected receipts without repeating bootstrap nudges', async () => {
+    const activeRecord = {
+      id: 'sr-live-input',
+      seq: 0,
+      status: 'active',
+      catId: 'opus',
+      threadId: 'thread-live-input',
+      userId: 'u1',
+    };
+    const durable = [];
+    let confirmations = 0;
+    const prepared = (body, injectionDecision) => ({
+      v: 1,
+      message: { body, ...(injectionDecision ? { injectionDecision } : {}) },
+      nativeInstructions: [],
+      runtime: { provider: 'openai', carrier: 'app_server' },
+      tools: { finalSurface: 'unknown' },
+      providerNativeVisibility: 'unknown',
+    });
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke(prompt, options) {
+        await options.beforeProviderLaunch(prepared(prompt));
+        yield { type: 'text', catId: 'opus', content: 'bootstrap accepted', timestamp: Date.now() };
+        for (const outcome of ['rejected', 'accepted', 'cancelled', 'accepted']) {
+          const request = await options.beforeProviderLaunch(
+            prepared('follow-up without nudge', 'app_server_live_typed_input'),
+          );
+          await options.onLiveInputOutcome({
+            request,
+            outcome,
+            ...(outcome === 'accepted' ? { nativeTurnId: 'native-real' } : {}),
+          });
+          yield { type: 'text', catId: 'opus', content: `ongoing output after ${outcome}`, timestamp: Date.now() };
+        }
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+    const messages = await collect(
+      invokeSingleCat(
+        {
+          ...makeDeps(),
+          sessionChainStore: {
+            getChain: async () => [activeRecord],
+            getActive: async () => activeRecord,
+            get: async () => activeRecord,
+            create: async () => activeRecord,
+            update: async () => activeRecord,
+          },
+          transcriptWriter: {
+            appendEvent() {},
+            appendDurableEvent: async (_session, event) => {
+              durable.push(event);
+            },
+            keyedContentDigest: async () => `hmac-sha256:${'a'.repeat(64)}`,
+          },
+        },
+        {
+          catId: 'opus',
+          service,
+          prompt: 'test',
+          userId: 'u1',
+          threadId: activeRecord.threadId,
+          isLastCat: true,
+          liveCompanion: {},
+          entityNudgePresentation: {
+            sourceMessageId: 'source',
+            candidates: {},
+            service: {
+              preparePresentation: () => ({
+                promptContext: '[entity-nudge]known source[/entity-nudge]',
+                confirmAssembled: () => {
+                  confirmations++;
+                },
+              }),
+            },
+          },
+        },
+      ),
+    );
+    assert.equal(
+      messages.filter((message) => message.type === 'text').length,
+      5,
+      JSON.stringify(messages.filter((message) => message.type === 'error')),
+    );
+    assert.equal(confirmations, 1, 'bootstrap nudge is confirmed once, never invented in a follow-up');
+    assert.deepEqual(
+      durable
+        .filter((event) => event.type === 'request_generation_terminal')
+        .map((event) => [event.generationOrdinal, event.outcome]),
+      [
+        [1, 'accepted'],
+        [2, 'rejected'],
+        [3, 'accepted'],
+        [4, 'cancelled'],
+        [5, 'accepted'],
+      ],
+    );
+  });
+
+  it('capacity-recovery prepared requests skip the entity-nudge exact check and never re-confirm delivery', async () => {
+    // A capacity-recovery request carries an empty body by design (turn/start
+    // sends input: []), so it can never contain the nudge promptContext. Before
+    // the dedicated boundary, recovery generations were tagged provider_fallback
+    // and died on entity_nudge_prepared_prompt_not_exact — the exact failure
+    // seen live on invocation 0d676739-4949-4b8c-8fa4-afd362b90110.
+    const activeRecord = {
+      id: 'sr-capacity-recovery-nudge',
+      seq: 0,
+      status: 'active',
+      catId: 'opus',
+      threadId: 'thread-capacity-recovery-nudge',
+      userId: 'u1',
+    };
+    const durable = [];
+    let confirmations = 0;
+    const prepared = (body, boundaryReason) => ({
+      v: 1,
+      ...(boundaryReason ? { boundaryReason } : {}),
+      message: { body },
+      nativeInstructions: [],
+      runtime: { provider: 'openai', carrier: 'app_server' },
+      tools: { finalSurface: 'unknown' },
+      providerNativeVisibility: 'unknown',
+    });
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke(prompt, options) {
+        await options.beforeProviderLaunch(prepared(prompt));
+        await options.beforeProviderLaunch(prepared('', 'provider_capacity_recovery'));
+        yield { type: 'text', catId: 'opus', content: 'recovered', timestamp: Date.now() };
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+    const messages = await collect(
+      invokeSingleCat(
+        {
+          ...makeDeps(),
+          sessionChainStore: {
+            getChain: async () => [activeRecord],
+            getActive: async () => activeRecord,
+            get: async () => activeRecord,
+            create: async () => activeRecord,
+            update: async () => activeRecord,
+          },
+          transcriptWriter: {
+            appendEvent() {},
+            appendDurableEvent: async (_session, event) => {
+              durable.push(event);
+            },
+            keyedContentDigest: async () => `hmac-sha256:${'a'.repeat(64)}`,
+          },
+        },
+        {
+          catId: 'opus',
+          service,
+          prompt: 'test',
+          userId: 'u1',
+          threadId: activeRecord.threadId,
+          isLastCat: true,
+          entityNudgePresentation: {
+            sourceMessageId: 'source',
+            candidates: {},
+            service: {
+              preparePresentation: () => ({
+                promptContext: '[entity-nudge]known source[/entity-nudge]',
+                confirmAssembled: () => {
+                  confirmations++;
+                },
+              }),
+            },
+          },
+        },
+      ),
+    );
+    assert.equal(
+      messages.some((message) => message.type === 'error'),
+      false,
+      JSON.stringify(messages.filter((message) => message.type === 'error')),
+    );
+    assert.equal(confirmations, 1, 'the recovery generation must not re-confirm an already-delivered nudge');
+    const firstTerminal = durable.find((event) => event.type === 'request_generation_terminal');
+    assert.equal(
+      firstTerminal?.reason,
+      'provider_capacity_recovery',
+      'the replaced prompt generation must record the dedicated recovery boundary, not a generic fallback',
+    );
+  });
+
+  it('non-recovery prepared requests that drop the entity nudge stay fail-closed', async () => {
+    // The exemption is scoped to provider_capacity_recovery only: Claude carrier
+    // fallback reuses provider_fallback and may still carry a real body, so a
+    // fallback generation that drops the nudge must keep failing closed.
+    const activeRecord = {
+      id: 'sr-fallback-nudge-strict',
+      seq: 0,
+      status: 'active',
+      catId: 'opus',
+      threadId: 'thread-fallback-nudge-strict',
+      userId: 'u1',
+    };
+    let confirmations = 0;
+    const prepared = (body, boundaryReason) => ({
+      v: 1,
+      ...(boundaryReason ? { boundaryReason } : {}),
+      message: { body },
+      nativeInstructions: [],
+      runtime: { provider: 'openai', carrier: 'app_server' },
+      tools: { finalSurface: 'unknown' },
+      providerNativeVisibility: 'unknown',
+    });
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke(prompt, options) {
+        await options.beforeProviderLaunch(prepared(prompt));
+        await options.beforeProviderLaunch(prepared('fallback body without the nudge', 'provider_fallback'));
+        yield { type: 'text', catId: 'opus', content: 'must not escape', timestamp: Date.now() };
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+    const messages = await collect(
+      invokeSingleCat(
+        {
+          ...makeDeps(),
+          sessionChainStore: {
+            getChain: async () => [activeRecord],
+            getActive: async () => activeRecord,
+            get: async () => activeRecord,
+            create: async () => activeRecord,
+            update: async () => activeRecord,
+          },
+        },
+        {
+          catId: 'opus',
+          service,
+          prompt: 'test',
+          userId: 'u1',
+          threadId: activeRecord.threadId,
+          isLastCat: true,
+          entityNudgePresentation: {
+            sourceMessageId: 'source',
+            candidates: {},
+            service: {
+              preparePresentation: () => ({
+                promptContext: '[entity-nudge]known source[/entity-nudge]',
+                confirmAssembled: () => {
+                  confirmations++;
+                },
+              }),
+            },
+          },
+        },
+      ),
+    );
+    const error = messages.find((message) => message.type === 'error');
+    assert.match(error?.error ?? '', /entity_nudge_prepared_prompt_not_exact/);
+    assert.equal(
+      messages.some((message) => message.type === 'text' && message.content === 'must not escape'),
+      false,
+    );
+    assert.equal(confirmations, 1, 'only the exact first generation may be confirmed');
+  });
+
+  it('a capacity-recovery label on a non-empty body that drops the nudge stays fail-closed', async () => {
+    // The exemption covers the empty-body recovery shape only. A carrier that
+    // misuses provider_capacity_recovery on a real body must fall back to the
+    // strict check instead of inheriting the skip.
+    const activeRecord = {
+      id: 'sr-mislabeled-recovery-nudge',
+      seq: 0,
+      status: 'active',
+      catId: 'opus',
+      threadId: 'thread-mislabeled-recovery-nudge',
+      userId: 'u1',
+    };
+    let confirmations = 0;
+    const prepared = (body, boundaryReason) => ({
+      v: 1,
+      ...(boundaryReason ? { boundaryReason } : {}),
+      message: { body },
+      nativeInstructions: [],
+      runtime: { provider: 'openai', carrier: 'app_server' },
+      tools: { finalSurface: 'unknown' },
+      providerNativeVisibility: 'unknown',
+    });
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke(prompt, options) {
+        await options.beforeProviderLaunch(prepared(prompt));
+        await options.beforeProviderLaunch(
+          prepared('mislabeled recovery body without the nudge', 'provider_capacity_recovery'),
+        );
+        yield { type: 'text', catId: 'opus', content: 'must not escape', timestamp: Date.now() };
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+    const messages = await collect(
+      invokeSingleCat(
+        {
+          ...makeDeps(),
+          sessionChainStore: {
+            getChain: async () => [activeRecord],
+            getActive: async () => activeRecord,
+            get: async () => activeRecord,
+            create: async () => activeRecord,
+            update: async () => activeRecord,
+          },
+        },
+        {
+          catId: 'opus',
+          service,
+          prompt: 'test',
+          userId: 'u1',
+          threadId: activeRecord.threadId,
+          isLastCat: true,
+          entityNudgePresentation: {
+            sourceMessageId: 'source',
+            candidates: {},
+            service: {
+              preparePresentation: () => ({
+                promptContext: '[entity-nudge]known source[/entity-nudge]',
+                confirmAssembled: () => {
+                  confirmations++;
+                },
+              }),
+            },
+          },
+        },
+      ),
+    );
+    const error = messages.find((message) => message.type === 'error');
+    assert.match(error?.error ?? '', /entity_nudge_prepared_prompt_not_exact/);
+    assert.equal(
+      messages.some((message) => message.type === 'text' && message.content === 'must not escape'),
+      false,
+    );
+    assert.equal(confirmations, 1, 'only the exact first generation may be confirmed');
+  });
+
   it('F299 rejects substantive output when a provider bypasses the durable request-generation fence', async () => {
     const activeRecord = {
       id: 'sr-f299-bypass',
@@ -6368,7 +7100,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.ok(promptsSeen[0].includes('user message'), 'original user prompt still present');
   });
 
-  it('F293: fresh sparse routing context reaches a resumed provider session with deterministic intent', async () => {
+  it('normal delivery does not resolve or inject routing availability advice on resume', async () => {
     const promptsSeen = [];
     const resolutions = [];
     const service = {
@@ -6404,12 +7136,12 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       }),
     );
 
-    assert.deepEqual(resolutions, [{ ownerId: 'owner-f293', intent: 'review' }]);
-    assert.ok(promptsSeen[0].includes('F293-SPARSE'));
+    assert.deepEqual(resolutions, [], 'normal delivery does not consult the availability projection');
+    assert.ok(!promptsSeen[0].includes('F293-SPARSE'));
     assert.ok(!promptsSeen[0].includes('static identity here'), 'dynamic projection is independent of static identity');
   });
 
-  it('F293: projection failure omits dynamic bytes, preserves invocation, and writes a bounded audit event', async () => {
+  it('normal delivery does not invoke or audit a failing legacy availability projection', async () => {
     const promptsSeen = [];
     const service = {
       l0CompilerFn: dummyL0CompilerFn,
@@ -6442,12 +7174,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     const { getEventAuditLog } = await import('../dist/domains/cats/services/orchestration/EventAuditLog.js');
     const events = await getEventAuditLog().readByThread('thread-routing-context-projection-failure');
     const failure = events.find((event) => event.type === 'routing_context_projection_failed');
-    assert.ok(failure, 'projection failure must be auditable');
-    assert.deepEqual(failure.data, {
-      catId: 'opus',
-      invocationId: 'inv-1',
-      errorName: 'RangeError',
-    });
+    assert.equal(failure, undefined, 'unused availability projection cannot create invocation audit noise');
   });
 
   it('F053: Gemini (sessionChain=true) skips systemPrompt on resume like other cats', async () => {
@@ -10212,6 +10939,334 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       msgs.some((m) => m.type === 'error' && String(m.error).includes('OpenCode requires a thread projectPath')),
       `expected missing projectPath error, got: ${msgs.map((m) => m.type).join(',')}`,
     );
+  });
+
+  it('fails loud for native AGY when thread projectPath is default', async () => {
+    const { AgyNativeAgentService } = await import(
+      '../dist/domains/cats/services/agents/providers/agy-native/AgyNativeAgentService.js'
+    );
+    const service = new AgyNativeAgentService({
+      catId: 'gemini38',
+      profile: { enabled: true, profileId: 'gemini38', model: 'gemini-3.8-flash-high' },
+      command: '/usr/bin/true',
+    });
+    service.contextCapability = () => ({
+      provider: 'google',
+      carrier: 'agy_stream_json',
+      reportsRuntimeWindow: false,
+      authoritativeUsage: false,
+      nativeWindowControl: false,
+      nativeCompressionControl: false,
+      observesCompression: false,
+      reason: 'native workspace boundary fixture',
+    });
+    let invokedService = false;
+    service.invoke = async function* () {
+      invokedService = true;
+      yield { type: 'done', catId: 'gemini38', timestamp: Date.now() };
+    };
+
+    const msgs = await collect(
+      invokeSingleCat(
+        {
+          ...makeDeps(),
+          threadStore: {
+            get: async () => ({ projectPath: 'default', createdBy: 'user1' }),
+            updateParticipantActivity: async () => {},
+          },
+        },
+        {
+          catId: 'gemini38',
+          service,
+          prompt: 'test missing project path',
+          userId: 'user1',
+          threadId: 'thread-agy-default-project-path',
+          isLastCat: true,
+        },
+      ),
+    );
+    assert.equal(invokedService, false, 'native AGY must not inherit runtime cwd');
+    assert.ok(
+      msgs.some(
+        (message) =>
+          message.type === 'error' && String(message.error).includes('AGY native requires a thread projectPath'),
+      ),
+    );
+  });
+
+  it('F325 ordinary route compiles native L0 without a prepend and excludes resumed dynamic pack content', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const { AgyNativeAgentService } = await import(
+      '../dist/domains/cats/services/agents/providers/agy-native/AgyNativeAgentService.js'
+    );
+    const base = await mkdtemp(join(tmpdir(), 'f325-native-route-l0-'));
+    await mkdir(join(base, 'workspace'));
+    const workspace = await realpath(join(base, 'workspace'));
+    const compiledBodies = [];
+    const launches = [];
+    const compilerCalls = [];
+    const nativePolicies = [];
+    const nativeBody = '# Identity\nF325-CANONICAL-NATIVE-L0\n';
+    const service = new AgyNativeAgentService({
+      catId: 'gemini38',
+      profile: {
+        enabled: true,
+        profileId: 'gemini38',
+        homeRoot: join(base, 'profiles'),
+        model: 'gemini-3.8-flash-high',
+        trustedWorkspaces: [workspace],
+      },
+      command: '/usr/bin/true',
+      l0CompilerFn: async (options) => {
+        compilerCalls.push(options);
+        return nativeBody;
+      },
+    });
+    service.contextCapability = () => ({
+      provider: 'google',
+      carrier: 'agy_stream_json',
+      reportsRuntimeWindow: false,
+      authoritativeUsage: false,
+      nativeWindowControl: false,
+      nativeCompressionControl: false,
+      observesCompression: false,
+      reason: 'native L0 route fixture',
+    });
+    const actualInvoke = service.invokeWithContinuityPreflight.bind(service);
+    service.invokeWithContinuityPreflight = (preflight, options) => {
+      nativePolicies.push(options.toolExecutionPolicy);
+      return actualInvoke(preflight, {
+        ...options,
+        beforeProviderLaunch: async (request) => {
+          compiledBodies.push(request.nativeInstructions[0].body);
+          return options.beforeProviderLaunch?.(request);
+        },
+        spawnCliOverride: async function* (launch) {
+          launches.push(launch);
+          let deliveredPrompt;
+          launch.onStdinReady((value) => {
+            deliveredPrompt = value;
+          });
+          const nativeSessionId = launches.length === 3 ? 'f325-native-ordinary-session' : 'f325-native-route-session';
+          yield {
+            event: 'init',
+            conversation_id: nativeSessionId,
+            init: {
+              agent: launch.args[launch.args.indexOf('--agent') + 1],
+              cwd: launch.cwd,
+              model: 'gemini-3.8-flash-high',
+              permission_mode: 'request-review',
+              tools: [],
+            },
+          };
+          assert.equal(typeof deliveredPrompt, 'string', 'only the generation settled after init reaches stdin');
+          if (launches.length === 3) {
+            yield {
+              event: 'step_update',
+              step_update: {
+                conversation_id: nativeSessionId,
+                step_index: 1,
+                step_type: 'tool',
+                state: 'DONE',
+                tool_name: 'call_mcp_tool',
+                tool_info: {
+                  parameters: {
+                    ServerName: 'cat-cafe-memory',
+                    ToolName: 'cat_cafe_search_evidence',
+                    Arguments: { query: 'project decision' },
+                  },
+                  output: 'Found the original decision.',
+                },
+              },
+            };
+          }
+          yield {
+            event: 'result',
+            result: { conversation_id: nativeSessionId, status: 'SUCCESS', response: 'OK', num_turns: 1 },
+          };
+        },
+      });
+    };
+    const nativeEpochStore = new InMemoryContextEpochStore();
+    const deps = {
+      ...makeDeps(),
+      contextEpochOwner: new ContextEpochOwner(nativeEpochStore),
+      sessionChainStore: new SessionChainStore(),
+      threadStore: {
+        get: async () => ({ projectPath: workspace, createdBy: 'user1' }),
+        updateParticipantActivity: async () => {},
+      },
+    };
+    const params = {
+      catId: 'gemini38',
+      service,
+      prompt: 'Read the current task.',
+      userId: 'user1',
+      threadId: 'thread-native-route-l0',
+      isLastCat: true,
+      toolExecutionPolicy: { mode: 'read_only' },
+    };
+    let storedSession;
+    deps.sessionManager = {
+      ...deps.sessionManager,
+      get: async () => storedSession,
+      store: async (_userId, _catId, _threadId, sessionId) => {
+        storedSession = sessionId;
+      },
+    };
+    try {
+      const first = await collect(invokeSingleCat(deps, params));
+      assert.equal(first.find((message) => message.type === 'error')?.error, undefined);
+      const persisted = await deps.sessionChainStore.getActive('gemini38', params.threadId, 'user1');
+      assert.equal(persisted.nativeSessionBinding.cliSessionId, 'f325-native-route-session');
+      const resumed = await collect(
+        invokeSingleCat(deps, {
+          ...params,
+          systemPrompt: 'F129-DYNAMIC-PACK-MUST-NOT-BECOME-NATIVE-L0',
+        }),
+      );
+      assert.equal(resumed.find((message) => message.type === 'error')?.error, undefined);
+      const epoch = nativeEpochStore.get('user1::gemini38::thread-native-route-l0');
+      assert.equal(epoch.contextEpoch, 1, 'verified resume does not create another cold epoch');
+      assert.equal(epoch.contextMode, 'hot');
+      assert.equal(epoch.boundRuntimeSessionId, 'f325-native-route-session');
+      assert.equal(service.injectsL0Natively(), true);
+      assert.equal(compilerCalls.length, 2);
+      assert.ok(compilerCalls.every((options) => options.catId === 'gemini38' && options.userId === 'user1'));
+      assert.equal(compiledBodies.length, 2);
+      for (const body of compiledBodies) {
+        assert.match(body, /F325-CANONICAL-NATIVE-L0/);
+        assert.ok(!body.includes('F129-DYNAMIC-PACK-MUST-NOT-BECOME-NATIVE-L0'));
+      }
+      assert.deepEqual(launches[1].args.slice(-2), ['--conversation', 'f325-native-route-session']);
+      assert.deepEqual(
+        nativePolicies.slice(0, 2),
+        [{ mode: 'read_only' }, { mode: 'read_only' }],
+        'host read_only stays the canonical policy',
+      );
+      const { toolExecutionPolicy: _readOnly, ...ordinaryParams } = params;
+      await deps.sessionChainStore.update(persisted.id, { status: 'sealed' });
+      storedSession = undefined;
+      const ordinary = await collect(invokeSingleCat(deps, ordinaryParams));
+      assert.equal(ordinary.find((message) => message.type === 'error')?.error, undefined);
+      const { toolExecutionPolicyDenial } = await import(
+        '../dist/domains/cats/services/agents/invocation/tool-execution-policy.js'
+      );
+      assert.equal(
+        toolExecutionPolicyDenial(nativePolicies[2], 'GET /api/callbacks/search-evidence'),
+        null,
+        'normal owner invocation must reach the existing callback authorization instead of a Native-only short list',
+      );
+      assert.ok(
+        ordinary.some(
+          (message) => message.type === 'tool_result' && message.content === 'Found the original decision.',
+        ),
+      );
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses private native Work before consulting an unrelated operator coding grant', async () => {
+    const { AgyNativeAgentService } = await import(
+      '../dist/domains/cats/services/agents/providers/agy-native/AgyNativeAgentService.js'
+    );
+    const base = await mkdtemp(join(tmpdir(), 'f325-private-native-refusal-'));
+    const previousDataDir = process.env.CAT_CAFE_DATA_DIR;
+    process.env.CAT_CAFE_DATA_DIR = base;
+    const configs = catRegistry.getAllConfigs();
+    const grant = {
+      threadId: 'private-thread',
+      taskId: 'approved-native-task',
+      workUnitRef: 'file:docs/plans/2026-09-29-f325-three-pr-execution.md#p2-first-coding',
+      acceptedRevision: 'a'.repeat(40),
+      workspaceRoot: base,
+      writableFiles: ['task.ts', 'task.test.mjs'],
+      testFile: 'task.test.mjs',
+    };
+    catRegistry.reset();
+    for (const [id, config] of Object.entries(configs)) {
+      catRegistry.register(
+        id,
+        id === 'gemini38' ? { ...config, agyProfile: { ...config.agyProfile, nativeCodingGrant: grant } } : config,
+      );
+    }
+    let grantReads = 0;
+    let authRegistrations = 0;
+    let launches = 0;
+    try {
+      assert.deepEqual(catRegistry.tryGet('gemini38')?.config.agyProfile?.nativeCodingGrant, grant);
+      const service = new AgyNativeAgentService({
+        catId: 'gemini38',
+        profile: { enabled: true, profileId: 'gemini38', model: 'gemini-3.8-flash-high' },
+        command: '/usr/bin/true',
+      });
+      service.contextCapability = () => ({
+        provider: 'google',
+        carrier: 'agy_stream_json',
+        reportsRuntimeWindow: false,
+        authoritativeUsage: false,
+        nativeWindowControl: false,
+        nativeCompressionControl: false,
+        observesCompression: false,
+        reason: 'private native Work refusal fixture preserves the concrete carrier',
+      });
+      service.invoke = async function* () {
+        launches++;
+      };
+      await assert.rejects(
+        collect(
+          invokeSingleCat(
+            {
+              ...makeDeps(),
+              taskStore: {
+                get: async () => {
+                  grantReads++;
+                },
+              },
+              registry: {
+                create: async () => {
+                  authRegistrations++;
+                },
+              },
+              collectiveContext: () => ({
+                resolvePrivate: async () => ({
+                  work: {
+                    task: { id: 'private-task' },
+                    executionRevision: 1,
+                    authorityRef: 'message:private-admission',
+                  },
+                }),
+              }),
+            },
+            {
+              catId: 'gemini38',
+              service,
+              userId: 'user1',
+              threadId: 'private-thread',
+              executionScope: 'collective-work',
+              prompt: 'Current private Work',
+              isLastCat: true,
+            },
+          ),
+        ),
+        (error) => {
+          assert.equal(error.code, 'collective_private_work_refused');
+          assert.equal(error.reason, 'private_provider_unsupported');
+          return true;
+        },
+      );
+      assert.deepEqual(
+        { grantReads, authRegistrations, launches },
+        { grantReads: 0, authRegistrations: 0, launches: 0 },
+      );
+    } finally {
+      catRegistry.reset();
+      for (const [id, config] of Object.entries(configs)) catRegistry.register(id, config);
+      if (previousDataDir === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+      else process.env.CAT_CAFE_DATA_DIR = previousDataDir;
+      await rm(base, { recursive: true, force: true });
+    }
   });
 
   it('fails loud for OpenCode when thread projectPath is rejected by project-path validation', async () => {

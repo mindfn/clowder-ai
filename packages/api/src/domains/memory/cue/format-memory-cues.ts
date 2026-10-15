@@ -59,6 +59,16 @@ function catOwnedSeedAction(cue: CueEnvelopeV1): string[] {
     : [];
 }
 
+function threadOverviewAction(cue: CueEnvelopeV1): string[] {
+  if (cue.resolverFamily !== 'thread_overview') return [];
+  return [
+    `Historical thread clue (T2): ${cue.title}`,
+    `Why related: ${cue.whyNow}`,
+    `Useful background with original sources: ${cue.summary}`,
+    'Action: Drill the full current overview and original messages before relying on it. Verify current agreements in canonical sources; verify work progress against current Task/PR. Record applied only when this background changes your response, otherwise dismissed.',
+  ];
+}
+
 export function renderMemoryCue(cue: CueEnvelopeV1): string {
   return [
     `<memory-cue v="1" cue-id="${cue.cueId}" why-now="${cue.whyNow}">`,
@@ -73,11 +83,12 @@ export function renderMemoryCue(cue: CueEnvelopeV1): string {
     ...eventAction(cue),
     ...operationalKnowledgeAction(cue),
     ...catOwnedSeedAction(cue),
+
     '</memory-cue>',
   ].join('\n');
 }
 
-/** F296 T2 rendering: an exact retrieval entry, never candidate title/summary/body. */
+/** F296 generic T2 pointer remains content-free. F321 clues use their distinct admitted rendering. */
 export function renderMemoryCuePointer(cue: CueEnvelopeV1): string {
   return [
     `<recall-opportunity-pointer v="1" opportunity-id="${cue.opportunityId}">`,
@@ -87,6 +98,7 @@ export function renderMemoryCuePointer(cue: CueEnvelopeV1): string {
     ...eventAction(cue),
     ...operationalKnowledgeAction(cue),
     ...catOwnedSeedAction(cue),
+
     '</recall-opportunity-pointer>',
   ].join('\n');
 }
@@ -111,4 +123,13 @@ export function formatMemoryCues(
     estimatedTokens = nextTokens;
   }
   return { cues, text: blocks.join('\n\n'), estimatedTokens };
+}
+
+export function renderThreadOpeningClue(cue: CueEnvelopeV1): string {
+  return [
+    `<thread-opening-clue v="1" source-tier="T2" cue-id="${cue.cueId}" opportunity-id="${cue.opportunityId}">`,
+    ...threadOverviewAction(cue),
+    `Drill: ${cue.drill.family} ${cue.drill.handle}`,
+    '</thread-opening-clue>',
+  ].join('\n');
 }

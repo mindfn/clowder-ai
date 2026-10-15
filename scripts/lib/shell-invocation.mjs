@@ -1,246 +1,348 @@
-import { resolve } from 'node:path';
-
-import { commandName, tokenizeSimpleShellCommand } from '../native-effect-shell-tokenizer.mjs';
+import { findExecutedCommands } from '../native-effect-find-classifier.mjs';
+import { commandName, shellInvocation, shellWords } from '../native-effect-shell-tokenizer.mjs';
+import { packageManagerInvocation } from './package-manager-invocation.mjs';
+import {
+  argumentEvidence,
+  attachArgumentEvidence,
+  codeParameters,
+  forkParameterFrame,
+  inlineCode,
+  inputCode,
+  launcherInputs,
+  literalOutput,
+  mergedPipelineOutput,
+  opaqueCodeEvidence,
+  operandSources,
+  optionValue,
+  parameterEvidence,
+  parameterFrame,
+  parameterValue,
+  pipelineOutput,
+  SHELLS,
+  scriptFileCall,
+  setParameters,
+  shellCall,
+} from './shell-code-inputs.mjs';
+import { scanShellText } from './shell-lexical.mjs';
+import { annotateCoordinate, moveCoordinate, programTokens, unreadableProgram } from './shell-program-tokens.mjs';
 import { extractSubstitutions, SUBSTITUTION, splitCommandLines, splitPipelineStages, unquote } from './shell-text.mjs';
-import { afterWrapper, WRAPPERS } from './shell-wrappers.mjs';
-
-/**
- * F300 -- reading a command line as argv rather than as prose.
- *
- * Two mistakes produced this module, and they are the same mistake twice.
- *
- * First, matching a dangerous word wherever it appears: `rg "runtime:stop"` and
- * `echo pnpm runtime:stop` contain the word and run nothing. A guard that
- * cannot tell them apart blocks the only way to inspect what it guards.
- *
- * Then, reading only the first token of a line: `bash -c 'kill -TERM 4242'`,
- * `printf x | pnpm runtime:stop`, `if true; then pnpm runtime:stop; fi`,
- * `echo $(pnpm runtime:stop)` and `sudo -u root kill -TERM 4242` all run
- * something the first token is not. Skipping a wrapper's option *value* as if it
- * were a flag is the same error wearing a different hat.
- *
- * So there is one answer to "what would this actually run", with a completeness
- * result attached, and every consumer reads that same answer. Executed content
- * is executed wherever it sits: behind a wrapper, inside a shell string, in a
- * later pipeline stage, inside a command substitution. What we could not read
- * comes back `complete: false` -- unreadable is not the same as harmless.
- */
-
-export { splitCommandLines, unquote };
-
+import { afterWrapper, XARGS_WRAPPER } from './shell-wrappers.mjs';
+/** F300/F306 reader: program, argv, code input and completeness stay separate. */
+export { optionValue, splitCommandLines, unquote };
 const MAX_RECURSION = 8;
-/** Shell grammar, not programs. `then pnpm runtime:stop` runs pnpm. */
-const SHELL_KEYWORDS = new Set([
-  'if',
-  'then',
-  'else',
-  'elif',
-  'fi',
-  'do',
-  'done',
-  'while',
-  'until',
-  'for',
-  'in',
-  'case',
-  'esac',
-  'select',
-  'function',
-  '{',
-  '}',
-  '(',
-  ')',
-  '!',
-]);
-
-/** Shells whose `-c` operand is a script we have to read. */
-const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh']);
-
-/** The value of `--opt value` or `--opt=value`, whichever form was used. */
-export function optionValue(tokens, option) {
-  const index = tokens.indexOf(option);
-  if (index >= 0) return tokens[index + 1];
-  const inline = tokens.find((token) => token.startsWith(`${option}=`));
-  return inline?.slice(option.length + 1);
-}
-
-/**
- * Everything a command line would actually run.
- *
- * @returns {{pipelines: {name: string|undefined, operands: string[], text: string}[][],
- *   complete: boolean}} pipelines in stage order (adjacency matters: only the
- *   stage feeding a killer directly can describe its stdin), and whether every
- *   construct that executes something was read to a conclusion.
- */
-export function executedInvocations(raw, { depth = 0, cwd } = {}) {
+export function executedInvocations(
+  raw,
+  { depth = 0, cwd, parameters = parameterFrame(), bindings, stdin: input } = {},
+) {
   if (depth > MAX_RECURSION) return { pipelines: [], complete: false };
-
   const pipelines = [];
-  let complete = true;
-
-  for (const line of splitCommandLines(String(raw ?? ''))) {
+  const directInvocations = [];
+  const outputs = [];
+  const unresolvedEvidence = [];
+  const lexical = scanShellText(raw);
+  let complete = lexical.complete;
+  const frame = forkParameterFrame(parameters);
+  const lines = splitCommandLines(lexical.text, { groups: true });
+  const uncertain =
+    !lexical.complete ||
+    lexical.boundaries.some((b) => b.kind === 'group' || ['&&', '||'].includes(raw.slice(b.start, b.end))) ||
+    lines.some((line) => /^(?:if|then|else|elif|for|while|until|case|function)\b/.test(line));
+  for (const line of lines) {
     const pipeline = [];
+    let stdin = input;
     for (const stage of splitPipelineStages(line)) {
-      const parsed = parseStage(stage, depth, cwd);
+      const parsed = parseStage(stage, depth, cwd, stdin, frame, bindings);
       if (!parsed.complete) complete = false;
-      // Every stage keeps its place, even one whose insides we read separately.
-      // Dropping it would hand the next stage a stdin that never came from here.
-      if (parsed.invocation) pipeline.push(parsed.invocation);
+      // Keep every stage: dropping one would hand its successor the wrong stdin.
+      if (parsed.invocation) {
+        pipeline.push(parsed.invocation);
+        directInvocations.push(parsed.invocation);
+      }
       pipelines.push(...parsed.nested);
+      unresolvedEvidence.push(...(parsed.unresolvedEvidence ?? []));
+      if (!parsed.invocation && !parsed.complete) unresolvedEvidence.push(stage);
+      if (parsed.invocation || !parsed.complete) stdin = pipelineOutput(parsed.output, stdin, stage);
+      if (parsed.invocation?.name === 'set' && parsed.invocation.operands[0] === '--') {
+        const values = parsed.invocation.operands.slice(1);
+        const sources = operandSources(values, parsed.markers, bindings, frame);
+        setParameters(frame, values, sources, uncertain);
+      }
     }
     if (pipeline.length > 0) pipelines.push(pipeline);
+    if (stdin) outputs.push(stdin);
   }
-
-  return { pipelines, complete };
+  const output = mergedPipelineOutput(outputs);
+  return { pipelines, complete, directInvocations, unresolvedEvidence, parameterScope: depth, output };
 }
-
-function nestedFrom(source, depth, cwd) {
-  const result = executedInvocations(source, { depth: depth + 1, cwd });
-  return { nested: result.pipelines, complete: result.complete };
-}
-
-/** Shell grammar and variable assignments; neither is the program. */
-function skipNoise(tokens) {
-  let index = 0;
-  while (index < tokens.length) {
-    const token = tokens[index];
-    if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(token) && !SHELL_KEYWORDS.has(token)) break;
-    index += 1;
+export function executionChainInvocations(raw, { cwd, bindings, stdin: input } = {}) {
+  const combined = { pipelines: [], complete: true, unresolvedEvidence: [] };
+  let stdin = input;
+  for (const unit of splitPipelineStages(raw)) {
+    const reader = executedInvocations(unit, { cwd, bindings, stdin });
+    combined.pipelines.push(...reader.pipelines);
+    combined.unresolvedEvidence.push(...reader.unresolvedEvidence);
+    combined.complete &&= reader.complete;
+    stdin = reader.output;
   }
-  return tokens.slice(index);
+  return { ...combined, output: stdin };
 }
-
-/**
- * A coordinate change resolves against the coordinate in force when it happens.
- *
- * Carrying the raw string and resolving it later means resolving it against
- * whoever looks at it -- which for a relative `-C` was this process's own cwd.
- * And two changes compose: `env -C /a env -C b` runs in `/a/b`, not `b`.
- */
-function moveCoordinate(value, base) {
-  if (value.startsWith('/')) return resolve(value);
-  return base ? resolve(base, value) : undefined;
+function nestedFrom(source, depth, cwd, parameters = parameterFrame(), bindings) {
+  const result = executedInvocations(source, { depth: depth + 1, cwd, parameters, bindings });
+  attachArgumentEvidence(result, parameters);
+  return {
+    nested: result.pipelines,
+    complete: result.complete,
+    unresolvedEvidence: result.unresolvedEvidence,
+    parameterScope: result.parameterScope,
+  };
 }
-
-/**
- * Strip keyword, assignment and wrapper noise; hand back what actually runs,
- * plus anything the wrapper changed about how it runs.
- *
- * The loop matters twice over: `env FOO=1 kill ...` puts assignments *after*
- * the wrapper, and a wrapper can hand off to another wrapper.
- */
-function programTokens(tokens, outerCwd) {
-  let rest = tokens;
-  let cwd = outerCwd;
-  for (let guard = 0; guard <= MAX_RECURSION; guard++) {
-    rest = skipNoise(rest);
-    if (rest.length === 0) return { rest: [], complete: true, cwd };
-    const spec = WRAPPERS.get(commandName(rest[0]) ?? '');
-    if (!spec) return { rest, complete: true, cwd };
-    const consumed = afterWrapper(spec, rest.slice(1));
-    if (!consumed.complete) return { rest: [], complete: false, cwd };
-    if (consumed.cwd !== undefined) {
-      const moved = moveCoordinate(consumed.cwd, cwd);
-      if (moved === undefined) return { rest: [], complete: false, cwd };
-      cwd = moved;
-    }
-    if (consumed.splitString !== undefined) {
-      // `-S` splits a string into argv words. It is not a shell: a `;` in there
-      // is an argument, not a separator, and nothing after it is a command.
-      const words = tokenizeSimpleShellCommand(consumed.splitString);
-      if (!words) return { rest: [], complete: false, cwd };
-      rest = [...words, ...consumed.rest];
-      continue;
-    }
-    rest = consumed.rest;
-  }
-  return { rest: [], complete: false, cwd };
-}
-
-/** Nothing here can be read as a name: an expansion, or a substitution's output. */
-function unreadableProgram(token) {
-  return token === SUBSTITUTION || /\$\w|\$\{/.test(token);
-}
-
-/** The script an interpreter was told to run inline, if it was told inline. */
-function inlineScriptOf(name, operands) {
-  if (name === 'eval') return operands.length > 0 ? operands.join(' ') : '';
-  if (!SHELLS.has(name ?? '')) return undefined;
-  const flagIndex = operands.findIndex((token) => /^-[A-Za-z]*c[A-Za-z]*$/.test(token));
-  return flagIndex >= 0 ? (operands[flagIndex + 1] ?? '') : undefined;
-}
-
-function invocation(name, operands, stage, cwd) {
-  return { name, operands, text: stage, cwd };
-}
-
-/** An interpreter given a script *file* runs that file, so the file is the program. */
-function scriptFileInvocation(operands, stage, cwd) {
-  const fileIndex = operands.findIndex((token) => !token.startsWith('-'));
-  if (fileIndex < 0) return undefined;
-  return invocation(commandName(operands[fileIndex]), operands.slice(fileIndex + 1), stage, cwd);
-}
-
-/**
- * A stage that runs a script string: read the script, and keep the stage.
- *
- * The stage still occupies its slot in the pipeline. It does not describe what
- * it writes to the next stage, so anything downstream that reads stdin can no
- * longer point past it -- which is the whole reason it must not vanish.
- */
-function inlineExecution({ script, name, stage, depth, cwd, nested, complete }) {
-  const stageInvocation = invocation(name, [], stage, cwd);
-  if (!script || unreadableProgram(script)) {
+/** Read a code input without dropping its producer's pipeline slot. */
+function inlineExecution({
+  script,
+  name,
+  stage,
+  depth,
+  cwd,
+  nested,
+  complete,
+  parameters = parameterFrame(),
+  bindings,
+  sourceScope = depth,
+  codeEvidence,
+}) {
+  const stageInvocation = shellCall(name, [], stage, cwd);
+  stageInvocation.script = script;
+  stageInvocation.codeEvidence = codeEvidence;
+  stageInvocation.parameterScope = sourceScope;
+  if (script?.includes(SUBSTITUTION)) {
+    // A generated code operand is re-parsed; its literal prefix proves nothing.
+    stageInvocation.generatedCode = true;
     return { invocation: stageInvocation, nested, complete: false };
   }
-  const result = nestedFrom(unquote(script) ?? '', depth, cwd);
+  if (!script) {
+    return { invocation: stageInvocation, nested, complete: false };
+  }
+  const result = nestedFrom(script, depth, cwd, parameters, bindings);
+  for (const call of result.nested.flat())
+    if (call.parameterScope === result.parameterScope && (call.generatedCode || call.name === undefined))
+      call.codeEvidence = [...(call.codeEvidence ?? []), ...(codeEvidence ?? [])];
+  stageInvocation.delegated = true;
   return {
     invocation: stageInvocation,
     nested: [...nested, ...result.nested],
     complete: complete && result.complete,
+    unresolvedEvidence: result.unresolvedEvidence,
   };
 }
-
-function parseStage(stage, depth, outerCwd) {
-  const substitutions = extractSubstitutions(stage);
+function parseStage(stage, depth, outerCwd, stdin, frame, bindings) {
+  const substitutions = extractSubstitutions(stage, {
+    continuations: true,
+    parameters: true,
+    indexed: true,
+    parameterValue: (word, quote) => parameterValue(word, quote, frame, bindings),
+  });
   const nested = [];
   let complete = substitutions.readable;
   for (const inner of substitutions.inner) {
-    const result = nestedFrom(inner, depth, outerCwd);
+    const result = nestedFrom(inner, depth, outerCwd, frame, bindings);
     nested.push(...result.nested);
     if (!result.complete) complete = false;
   }
   const unreadable = { invocation: undefined, nested, complete: false };
 
-  const tokens = tokenizeSimpleShellCommand(substitutions.text);
+  const parsed = shellInvocation(substitutions.text);
+  if (parsed.redirections.some((item) => /^(?:\d*)<<-?$/.test(item.operator))) complete = false;
+  let tokens = parsed.syntaxComplete ? parsed.words.map(({ value }) => value) : null;
+  if (!tokens) {
+    // Bash may execute complete words before a dangling EOF escape/quote.
+    tokens = shellWords(substitutions.text, { prefixOnly: true, operatorsAreData: true })?.map(({ value }) => value);
+    complete = false;
+  }
   if (!tokens || tokens.length === 0) return unreadable;
-
-  // A wrapper that moved the coordinate moved it for everything it runs.
   const program = programTokens(tokens, outerCwd);
+  const result = parseArgv(program, stage, depth, nested, complete, {
+    stdin,
+    frame,
+    sourceScope: depth,
+    bindings,
+    markers: substitutions.markers,
+    redirections: parsed.redirections,
+  });
+  if (result.invocation) {
+    if (result.invocation.name === undefined) {
+      result.invocation.generatedCode = true;
+      result.invocation.codeEvidence = parameterEvidence(stage, undefined, frame);
+    }
+    const linked = parameterEvidence(stage, bindings, frame);
+    result.invocation.parameterScope = depth;
+    const operandEvidence =
+      result.invocation.argumentEvidence ??
+      argumentEvidence(result.invocation.operands, substitutions.markers, bindings, frame);
+    result.invocation.argumentEvidence = [...new Set([...operandEvidence, ...linked])];
+    result.invocation.inputEvidence = stdin?.evidence ?? [];
+    result.invocation.redirections = parsed.redirections;
+    result.output = literalOutput(result.invocation.name, result.invocation.operands, stage);
+    result.output.evidence.push(...linked);
+  } else if (!result.complete) {
+    result.unresolvedEvidence = [...(result.unresolvedEvidence ?? []), ...parameterEvidence(stage, bindings, frame)];
+  }
+  result.markers = substitutions.markers;
+  return annotateCoordinate(result, program, parsed.complete && substitutions.inner.length === 0);
+}
+function parseArgv(program, stage, depth, nested = [], complete = true, inputs = {}) {
+  if (depth > MAX_RECURSION) return { invocation: undefined, nested, complete: false };
+  const unreadable = { invocation: undefined, nested, complete: false };
+
+  if (program.script !== undefined)
+    return inlineExecution({
+      script: program.script,
+      name: commandName(program.rest[0]),
+      stage,
+      depth,
+      cwd: program.cwd,
+      nested,
+      complete: complete && program.complete,
+      parameters: inputs.frame,
+      bindings: inputs.bindings,
+      sourceScope: inputs.sourceScope,
+      codeEvidence: operandSources([program.script], inputs.markers, inputs.bindings, inputs.frame).flat(),
+    });
   if (!program.complete) return unreadable;
   const cwd = program.cwd;
-
   const rest = program.rest;
   if (rest.length === 0) return { invocation: undefined, nested, complete };
-  if (unreadableProgram(rest[0])) return unreadable;
+  if (unreadableProgram(rest[0])) {
+    const call = shellCall(undefined, rest.slice(1), stage, cwd);
+    call.generatedCode = true;
+    call.parameterScope = inputs.sourceScope ?? depth;
+    call.codeEvidence = operandSources([rest[0]], inputs.markers, inputs.bindings, inputs.frame).flat();
+    return { invocation: call, nested, complete: false };
+  }
 
   const name = commandName(rest[0]);
   const operands = rest.slice(1);
 
-  // `bash -c "<script>"` and `eval "<script>"` run the string they were handed.
-  const inlineScript = inlineScriptOf(name, operands);
-  if (inlineScript !== undefined) {
-    return inlineExecution({ script: inlineScript, name, stage, depth, cwd, nested, complete });
+  if (name === 'pnpm' || name === 'npm') {
+    const command = packageManagerInvocation(name, operands);
+    const childCwd = command.cwdUnknown
+      ? undefined
+      : command.cwd === undefined
+        ? cwd
+        : moveCoordinate(command.cwd, cwd);
+    const coordinateComplete = command.cwd === undefined || childCwd !== undefined;
+    if (command.kind === 'shell')
+      return inlineExecution({
+        script: command.source,
+        name,
+        stage,
+        depth,
+        cwd: childCwd,
+        nested,
+        complete: complete && command.complete && coordinateComplete,
+        sourceScope: inputs.sourceScope,
+        codeEvidence: operandSources([command.source], inputs.markers, inputs.bindings, inputs.frame).flat(),
+      });
+    if (command.kind === 'argv') {
+      const childProgram = programTokens(command.argv, childCwd);
+      const child = parseArgv(childProgram, stage, depth + 1, [], true, {
+        ...inputs,
+        sourceScope: inputs.sourceScope ?? depth,
+      });
+      if (child.invocation) {
+        child.invocation.parameterScope = inputs.sourceScope ?? depth;
+        nested.push([child.invocation]);
+      }
+      nested.push(...child.nested);
+      complete = complete && command.complete && coordinateComplete && child.complete;
+      inputs.delegated = true;
+    } else complete = complete && command.complete;
   }
 
-  if (SHELLS.has(name ?? '')) return { invocation: scriptFileInvocation(operands, stage, cwd), nested, complete };
+  const inline = inlineCode(name, operands);
+  if (inline !== undefined) {
+    return inlineExecution({
+      script: inline.script,
+      name,
+      stage,
+      depth,
+      cwd,
+      nested,
+      complete,
+      parameters: codeParameters(inline, inputs),
+      bindings: SHELLS.has(name) ? undefined : inputs.bindings,
+      sourceScope: inputs.sourceScope,
+      codeEvidence: operandSources([inline.script], inputs.markers, inputs.bindings, inputs.frame).flat(),
+    });
+  }
+
+  const input = inputCode(
+    name,
+    operands,
+    inputs.redirections ?? [],
+    inputs.stdin,
+    stage,
+    inputs.bindings,
+    inputs.frame,
+  );
+  if (input)
+    return inlineExecution({
+      script: input.generated ? SUBSTITUTION : input.source,
+      name,
+      stage,
+      depth,
+      cwd,
+      nested,
+      complete,
+      parameters: inputs.frame,
+      sourceScope: inputs.sourceScope,
+      bindings: ['source', '.'].includes(name) ? inputs.bindings : undefined,
+      codeEvidence: [...input.evidence, ...parameterEvidence(input.source ?? '', inputs.bindings, inputs.frame)],
+    });
+
+  if (SHELLS.has(name ?? '') || ['source', '.'].includes(name))
+    return { invocation: scriptFileCall(operands, stage, cwd), nested, complete };
+
+  if (name === 'find' || name === 'xargs') {
+    const consumed = name === 'xargs' ? afterWrapper(XARGS_WRAPPER, operands) : undefined;
+    const childInputs = launcherInputs(name, consumed, inputs, stage);
+    const children =
+      name === 'find'
+        ? findExecutedCommands(operands)
+        : [{ args: childInputs.args, complete: consumed.complete, localCwd: true }];
+    for (const child of children) {
+      const childProgram = programTokens(child.args, child.localCwd ? cwd : undefined);
+      const parsed = parseArgv(childProgram, stage, depth + 1, [], true, {
+        ...childInputs,
+        stdin:
+          child.stdinUnknown && childInputs.stdin
+            ? { generated: true, evidence: childInputs.stdin.evidence }
+            : childInputs.stdin,
+        sourceScope: inputs.sourceScope ?? depth,
+      });
+      if (parsed.invocation) {
+        if (name === 'xargs') parsed.invocation.inputOwner = 'xargs';
+        nested.push([parsed.invocation]);
+      }
+      nested.push(...parsed.nested);
+      complete = complete && child.complete && parsed.complete;
+    }
+    inputs.delegated = complete;
+  }
 
   if (name === 'node') {
     // `node -e '<js>'` executes code this module does not model.
-    if (operands.some((token) => ['-e', '--eval', '-p', '--print'].includes(token))) return unreadable;
-    const invocation = scriptFileInvocation(operands, stage, cwd);
-    if (invocation) return { invocation, nested, complete };
+    const inline = operands.some((token) => ['-e', '--eval', '-p', '--print'].includes(token));
+    const invocation = inline ? shellCall(name, operands, stage, cwd) : scriptFileCall(operands, stage, cwd);
+    if (invocation) {
+      invocation.interpreter = name;
+      return { invocation, nested, complete };
+    }
   }
 
-  return { invocation: invocation(name, operands, stage, cwd), nested, complete };
+  const result = shellCall(name, operands, stage, cwd);
+  result.argumentEvidence = argumentEvidence(operands, inputs.markers, inputs.bindings, inputs.frame);
+  result.unprovedCodeEvidence = opaqueCodeEvidence(name, operands, inputs);
+  result.inputEvidence = inputs.stdin?.evidence ?? [];
+  result.delegated = inputs.delegated || name === 'set';
+  return { invocation: result, nested, complete };
 }

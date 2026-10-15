@@ -1,12 +1,4 @@
-/**
- * F260 Phase A: Redis-backed EntityProposal store.
- *
- * Persists entity proposals pending operator approval in the Approval Hub.
- * Lifecycle: create(pending) → approve/reject(terminal, one-shot).
- *
- * Iron Law #5 (LL-048): TTL=0 — all proposals and settled history are persistent.
- * User-visible in Hub via F260ApprovalAdapter; process restart must not drop state.
- */
+/** F260 Redis proposal state: persistent TTL=0, pending → approved/rejected. */
 
 import type {
   ApprovalEnvelope,
@@ -141,6 +133,21 @@ export class RedisEntityProposalStore implements IEntityProposalStore, ApprovalP
     const ids = await this.redis.zrevrange(pendingKey, 0, limit - 1);
     if (!ids.length) return [];
     return this.batchGet(ids, (p) => p.status === 'pending');
+  }
+
+  async listByTarget(userId: string, entityId: string, limit = 100): Promise<EntityProposal[]> {
+    const [pendingIds, settledIds] = await Promise.all([
+      this.redis.zrevrange(EntityProposalKeys.userPending(userId), 0, -1),
+      this.redis.zrevrange(EntityProposalKeys.userSettled(userId), 0, -1),
+    ]);
+    return (
+      await this.batchGet(
+        [...new Set([...pendingIds, ...settledIds])],
+        (proposal) => proposal.ownerUserId === userId && proposal.entityId === entityId,
+      )
+    )
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .slice(0, Math.max(0, limit));
   }
 
   async listSettledByUser(userId: string, limit = 100): Promise<EntityProposal[]> {

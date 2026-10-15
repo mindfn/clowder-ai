@@ -2,6 +2,24 @@
 
 import { useIMEGuard } from '@/hooks/useIMEGuard';
 
+interface BrowserToolbarCopy {
+  back: string;
+  forward: string;
+  refresh: string;
+  go: string;
+  screenshot: string;
+  consoleToggle: string;
+}
+
+const DEFAULT_COPY: BrowserToolbarCopy = {
+  back: 'Back',
+  forward: 'Forward',
+  refresh: 'Refresh',
+  go: 'Go',
+  screenshot: 'Capture Screenshot',
+  consoleToggle: 'Toggle Console',
+};
+
 interface BrowserToolbarProps {
   urlInput: string;
   onUrlChange: (value: string) => void;
@@ -15,6 +33,8 @@ interface BrowserToolbarProps {
   consoleOpen: boolean;
   onConsoleToggle: () => void;
   consoleCount: number;
+  /** F322: wording from the panel's presentation; defaults to the classic literals. */
+  copy?: BrowserToolbarCopy;
 }
 
 export function BrowserToolbar({
@@ -30,6 +50,7 @@ export function BrowserToolbar({
   consoleOpen,
   onConsoleToggle,
   consoleCount,
+  copy = DEFAULT_COPY,
 }: BrowserToolbarProps) {
   const ime = useIMEGuard();
   return (
@@ -38,7 +59,7 @@ export function BrowserToolbar({
         type="button"
         onClick={onBack}
         className="p-1 rounded hover:bg-[var(--ws-surface-hover)] text-[var(--ws-text)]/60 text-sm"
-        title="Back"
+        title={copy.back}
       >
         ‹
       </button>
@@ -46,7 +67,7 @@ export function BrowserToolbar({
         type="button"
         onClick={onForward}
         className="p-1 rounded hover:bg-[var(--ws-surface-hover)] text-[var(--ws-text)]/60 text-sm"
-        title="Forward"
+        title={copy.forward}
       >
         ›
       </button>
@@ -54,7 +75,7 @@ export function BrowserToolbar({
         type="button"
         onClick={onRefresh}
         className="p-1 rounded hover:bg-[var(--ws-surface-hover)] text-[var(--ws-text)]/60 text-sm"
-        title="Refresh"
+        title={copy.refresh}
       >
         ↻
       </button>
@@ -79,7 +100,7 @@ export function BrowserToolbar({
         onClick={onNavigate}
         className="px-2.5 py-1 text-xs rounded bg-[var(--ws-accent)] text-[var(--cafe-surface)] hover:bg-[var(--ws-accent-hover)] transition-colors"
       >
-        Go
+        {copy.go}
       </button>
 
       <button
@@ -87,7 +108,7 @@ export function BrowserToolbar({
         onClick={onScreenshot}
         disabled={isCapturing || !hasTarget}
         className="p-1 rounded hover:bg-[var(--ws-surface-hover)] text-[var(--ws-text)]/60 text-sm disabled:opacity-30"
-        title="Capture Screenshot"
+        title={copy.screenshot}
       >
         {isCapturing ? '...' : '📷'}
       </button>
@@ -100,7 +121,7 @@ export function BrowserToolbar({
             ? 'bg-[var(--ws-accent)]/20 text-[var(--ws-accent)]'
             : 'hover:bg-[var(--ws-surface-hover)] text-[var(--ws-text)]/60'
         }`}
-        title="Toggle Console"
+        title={copy.consoleToggle}
       >
         {consoleCount > 0 ? `⌥${consoleCount}` : '⌥'}
       </button>

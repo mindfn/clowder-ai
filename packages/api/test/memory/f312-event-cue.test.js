@@ -36,12 +36,20 @@ function event(overrides = {}) {
     cognitiveTransition: 'user_brake',
     relatedHarness: null,
     confidence: 'high',
+    status: 'active',
+    updatedAt: 1_000_000,
     ...overrides,
   };
 }
 
 function record(overrides = {}) {
-  const { eventId: _eventId, ownerUserId: _ownerUserId, ...input } = event(overrides);
+  const {
+    eventId: _eventId,
+    ownerUserId: _ownerUserId,
+    status: _status,
+    updatedAt: _updatedAt,
+    ...input
+  } = event(overrides);
   return input;
 }
 
@@ -168,6 +176,12 @@ describe('F312 Event cue vertical slice', () => {
     };
 
     current = { ...current, summary: 'corrected summary' };
+    assert.deepEqual(await source.read(coordinate), {
+      status: 'not_available',
+      invalidationReason: 'source_corrected',
+    });
+
+    current = { ...event(), status: 'retired', updatedAt: 1_000_001 };
     assert.deepEqual(await source.read(coordinate), {
       status: 'not_available',
       invalidationReason: 'source_corrected',

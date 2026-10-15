@@ -3,10 +3,14 @@
 import type { ThreadAttentionMemberSort } from '@cat-cafe/shared';
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import type { SidebarSnapshotRow } from '@/stores/sidebarProjectionStore';
+import { useShellPresentation } from '../shell/shell-presentation';
+import { AttentionClusterHeaderV2 } from './AttentionClusterHeaderV2';
 import type { AttentionCluster } from './attention-clusters';
+import type { GroupPeekProjection } from './collapsed-group-peek';
+import { SidebarGroupSegmentV2 } from './SidebarGroupSegmentV2';
 import { formatRelativeTime } from './thread-utils';
 
-interface AttentionClusterHeaderProps {
+export interface AttentionClusterHeaderProps {
   cluster: AttentionCluster;
   members: readonly SidebarSnapshotRow[];
   expanded: boolean;
@@ -16,7 +20,14 @@ interface AttentionClusterHeaderProps {
   onAdd?: () => void;
   memberSort?: ThreadAttentionMemberSort;
   onMemberSort?: (mode: ThreadAttentionMemberSort) => void;
+  onResetMemberSort?: () => void;
   sortingDisabled?: boolean;
+  peek?: GroupPeekProjection;
+  peekEnabled?: boolean;
+  decisionsConfirmed?: boolean;
+  currentId?: string | null;
+  onSelectPeek?: (threadId: string) => void;
+  onTogglePeek?: () => void;
 }
 
 interface AttentionClusterMemberProps {
@@ -52,10 +63,18 @@ export function AttentionClusterHeader({
   onToggle,
   onRename,
   onAdd,
-  memberSort = 'manual',
+  memberSort,
   onMemberSort,
+  onResetMemberSort,
   sortingDisabled = false,
+  peek,
+  peekEnabled,
+  decisionsConfirmed,
+  currentId,
+  onSelectPeek,
+  onTogglePeek,
 }: AttentionClusterHeaderProps) {
+  const isV2 = useShellPresentation() === 'v2';
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState(displayTitle);
   useEffect(() => setDraftName(displayTitle), [displayTitle]);
@@ -70,6 +89,29 @@ export function AttentionClusterHeader({
   const workingCount = members.filter((member) => member.presence.status === 'working').length;
   const unreadCount = members.reduce((sum, member) => sum + member.unreadCount, 0);
   const latestActivity = Math.max(...members.map((member) => member.lastActiveAt));
+
+  if (isV2)
+    return (
+      <AttentionClusterHeaderV2
+        cluster={cluster}
+        members={members}
+        expanded={expanded}
+        displayTitle={displayTitle}
+        onToggle={onToggle}
+        onRename={onRename}
+        onAdd={onAdd}
+        memberSort={memberSort}
+        onMemberSort={onMemberSort}
+        onResetMemberSort={onResetMemberSort}
+        sortingDisabled={sortingDisabled}
+        peek={peek}
+        peekEnabled={peekEnabled}
+        decisionsConfirmed={decisionsConfirmed}
+        currentId={currentId}
+        onSelectPeek={onSelectPeek}
+        onTogglePeek={onTogglePeek}
+      />
+    );
 
   return (
     <section
@@ -139,7 +181,7 @@ export function AttentionClusterHeader({
         <select
           aria-label={`${displayTitle} 组内排序`}
           title="运行优先在展开时排序；展开期间位置保持稳定。拖动整理时显示手动顺序。"
-          value={memberSort}
+          value={memberSort ?? 'manual'}
           disabled={sortingDisabled}
           onChange={(event) => {
             const value = event.target.value;
@@ -211,6 +253,20 @@ export function AttentionClusterMember({
   isLast,
   renderThread,
 }: AttentionClusterMemberProps) {
+  const isV2 = useShellPresentation() === 'v2';
+  if (isV2)
+    return (
+      <SidebarGroupSegmentV2 segment={isLast ? 'end' : 'middle'}>
+        <div
+          id={isFirst ? `attention-members-${cluster.rootThreadId}` : undefined}
+          data-attention-cluster-member={cluster.anchor}
+          data-cluster-segment={isLast ? 'end' : 'middle'}
+          className="relative pl-5"
+        >
+          {renderThread(member)}
+        </div>
+      </SidebarGroupSegmentV2>
+    );
   return (
     <div
       id={isFirst ? `attention-members-${cluster.rootThreadId}` : undefined}

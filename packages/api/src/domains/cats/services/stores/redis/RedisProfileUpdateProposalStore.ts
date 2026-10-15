@@ -71,6 +71,7 @@ export class RedisProfileUpdateProposalStore implements IProfileUpdateProposalSt
     pipeline.hset(key, ...serializeProfileUpdateProposal(proposal));
     if (this.ttlSeconds) pipeline.expire(key, this.ttlSeconds);
     pipeline.zadd(ProfileUpdateProposalKeys.userPending(proposal.createdBy), String(now), proposal.proposalId);
+    pipeline.zadd(ProfileUpdateProposalKeys.userAll(proposal.createdBy), String(now), proposal.proposalId);
     pipeline.zadd(ProfileUpdateProposalKeys.threadList(proposal.sourceThreadId), String(now), proposal.proposalId);
     await pipeline.exec();
     return proposal;
@@ -88,6 +89,25 @@ export class RedisProfileUpdateProposalStore implements IProfileUpdateProposalSt
 
   async listByThread(threadId: string, limit: number = DEFAULT_LIST_LIMIT): Promise<ProfileUpdateProposal[]> {
     return this.loadFromIndex(ProfileUpdateProposalKeys.threadList(threadId), limit);
+  }
+
+  async listByTarget(
+    userId: string,
+    targetPath: string,
+    limit: number = DEFAULT_LIST_LIMIT,
+  ): Promise<ProfileUpdateProposal[]> {
+    const [indexed, legacyPending, legacySettled] = await Promise.all([
+      this.loadFromIndex(ProfileUpdateProposalKeys.userAll(userId)),
+      this.loadFromIndex(ProfileUpdateProposalKeys.userPending(userId)),
+      this.loadFromIndex(ProfileUpdateProposalKeys.userSettled(userId)),
+    ]);
+    const byId = new Map(
+      [...indexed, ...legacyPending, ...legacySettled].map((proposal) => [proposal.proposalId, proposal]),
+    );
+    return [...byId.values()]
+      .filter((proposal) => proposal.createdBy === userId && proposal.targetPath === targetPath)
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .slice(0, Math.max(0, limit));
   }
 
   /** F246 Phase H: list settled (approved/rejected) proposals for a user, newest first. */
@@ -238,6 +258,7 @@ export class RedisProfileUpdateProposalStore implements IProfileUpdateProposalSt
       ProfileUpdateProposalKeys.detail(proposalId),
       [
         ProfileUpdateProposalKeys.userPending(proposal.createdBy),
+        ProfileUpdateProposalKeys.userAll(proposal.createdBy),
         ProfileUpdateProposalKeys.userSettled(proposal.createdBy),
         ProfileUpdateProposalKeys.threadList(proposal.sourceThreadId),
       ],
@@ -251,6 +272,7 @@ export class RedisProfileUpdateProposalStore implements IProfileUpdateProposalSt
     pipeline.del(ProfileUpdateProposalKeys.detail(proposalId));
     if (proposal) {
       pipeline.zrem(ProfileUpdateProposalKeys.userPending(proposal.createdBy), proposalId);
+      pipeline.zrem(ProfileUpdateProposalKeys.userAll(proposal.createdBy), proposalId);
       pipeline.zrem(ProfileUpdateProposalKeys.threadList(proposal.sourceThreadId), proposalId);
     }
     await pipeline.exec();
@@ -278,8 +300,8 @@ export class RedisProfileUpdateProposalStore implements IProfileUpdateProposalSt
     return result === 1;
   }
 
-  private async loadFromIndex(indexKey: string, limit: number): Promise<ProfileUpdateProposal[]> {
-    const ids = await this.redis.zrevrange(indexKey, 0, Math.max(0, limit - 1));
+  private async loadFromIndex(indexKey: string, limit?: number): Promise<ProfileUpdateProposal[]> {
+    const ids = await this.redis.zrevrange(indexKey, 0, limit === undefined ? -1 : Math.max(0, limit - 1));
     const out: ProfileUpdateProposal[] = [];
     for (const id of ids) {
       const p = await this.get(id);

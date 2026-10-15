@@ -4,14 +4,17 @@
  * preview swatches must render dynamic oklch() literals computed from live params.
  * This file is the documented AC-E11 exception. */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useActualColours } from '@/hooks/useActualColours';
 import { applyThemeCSS, getActiveTheme, useThemeStore } from '@/stores/themeStore';
 import { PaletteIcon } from '../ThemeMenu';
 import { exportText } from './oklch-tuner-css';
 import { useDrag } from './oklch-tuner-drag';
 import { type CatTier, type Mode, SURF_KEYS, SURF_LABELS, TIER_LABELS, type TunerState } from './oklch-tuner-engine';
-import { BubbleIcon, LayersIcon, TagIcon, TunerExtraSections } from './oklch-tuner-extra';
+import { BubbleIcon, LayersIcon, TunerExtraSections } from './oklch-tuner-extra';
 import { useOklchTunerActions } from './oklch-tuner-hooks';
+import { resolveTunerNameAndPlate } from './oklch-tuner-name-role';
+import { CatNameSection } from './oklch-tuner-name-section';
 import { Slider } from './oklch-tuner-slider';
 
 /* Only surface (bubble bg) and inset (thinking block) are user-tunable;
@@ -22,6 +25,7 @@ const TUNER_TIERS: readonly CatTier[] = ['surface', 'inset'];
 export function OklchTuner({ onClose }: { onClose: () => void }) {
   const store = useThemeStore();
   const active = getActiveTheme(store);
+  const actual = useActualColours();
   const mode: Mode = active.base;
   const [params, setParams] = useState<TunerState>(() => structuredClone(active.params));
   const [copied, setCopied] = useState(false);
@@ -33,9 +37,13 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
     setParams(structuredClone(getActiveTheme(useThemeStore.getState()).params));
   }, [store.activeId]);
 
-  /* Live CSS injection + sync to store (skip store write after theme switch) */
+  /* Live CSS injection, against the cats and human colour that really exist (the same as ThemeApplier). */
   useEffect(() => {
-    applyThemeCSS(params);
+    applyThemeCSS(params, actual);
+  }, [params, actual]);
+
+  /* Sync to store (skip store write after theme switch) */
+  useEffect(() => {
     if (skipSync.current) {
       skipSync.current = false;
     } else {
@@ -57,6 +65,8 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
 
   const mp = params[mode];
   const { pos, onPointerDown } = useDrag({ x: 70, y: 80 });
+  /* What the name role and the plate are drawn at (the same resolution buildCSS emits), for the hint next to the slider. */
+  const drawnName = useMemo(() => resolveTunerNameAndPlate(params, mode === 'dark', actual), [params, mode, actual]);
 
   return (
     <div
@@ -260,49 +270,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
         ))}
 
         {/* ── 5. Cat name text (unified H/L/C — 所有猫共用，不跟成员主题色) ── */}
-        <div className="space-y-0.5 pb-2 border-b border-[var(--console-border-soft)]">
-          <div className="flex items-center gap-2">
-            <div className="text-[10px] text-cafe-muted font-bold flex items-center gap-1">
-              <TagIcon /> 猫名文字 (统一)
-            </div>
-            <div
-              className="w-4 h-4 rounded border border-[var(--console-border-soft)] shrink-0 ml-auto"
-              style={{
-                background: `oklch(${mode === 'light' ? params.catTextLightL : params.catTextDarkL} ${params.catTextC} ${params.catTextH})`,
-              }}
-            />
-          </div>
-          <Slider
-            label="H"
-            value={params.catTextH}
-            min={0}
-            max={360}
-            step={1}
-            fmt={`${params.catTextH}`}
-            onChange={(v) => setParams((p) => ({ ...p, catTextH: v }))}
-          />
-          <Slider
-            label="L"
-            value={mode === 'light' ? params.catTextLightL : params.catTextDarkL}
-            min={0}
-            max={1}
-            step={0.01}
-            fmt={(mode === 'light' ? params.catTextLightL : params.catTextDarkL).toFixed(2)}
-            onChange={(v) => {
-              const key = mode === 'light' ? 'catTextLightL' : 'catTextDarkL';
-              setParams((p) => ({ ...p, [key]: v }));
-            }}
-          />
-          <Slider
-            label="C"
-            value={params.catTextC}
-            min={0}
-            max={0.3}
-            step={0.005}
-            fmt={params.catTextC.toFixed(3)}
-            onChange={(v) => setParams((p) => ({ ...p, catTextC: v }))}
-          />
-        </div>
+        <CatNameSection params={params} mode={mode} setParams={setParams} drawn={drawnName} />
 
         <TunerExtraSections
           mode={mode}

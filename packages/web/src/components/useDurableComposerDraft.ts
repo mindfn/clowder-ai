@@ -4,57 +4,35 @@ import type { ContextAttachment, MessageContent } from '@cat-cafe/shared';
 import { type Dispatch, type RefObject, type SetStateAction, useCallback, useEffect, useRef, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { loadOwnerComposerDraft } from '@/utils/true-recall';
-import { registerComposerDraftFlusher } from './composer-draft-flush-registry';
+import {
+  type ComposerAdmissionReply,
+  type ComposerAdmissionSnapshot,
+  durableDraftForAdmission,
+} from './composer-draft-admission';
+import { useComposerDraftConsumption } from './composer-draft-consumption';
+import { composerAttachments, queuedServerAckBlocks } from './composer-queue';
+import {
+  type PendingComposerAdmissionDraft,
+  registerDurableComposerDraftAdmissionFlusher,
+} from './durable-composer-draft-admission-flusher';
 import {
   composerDraftSignature,
   contextAttachmentsFromDraft,
   type DurableDraftSnapshot,
+  durableDraftSnapshotFromOwner,
   imageUrlsFromDraft,
   mergeHydratedDraft,
   preservedBlocksFromDraft,
   writeOwnerComposerDraft,
 } from './durable-composer-draft-helpers';
 import { mergeContextAttachments } from './durable-composer-draft-merge';
-import { removeDraftImage, useDraftImageRestoration } from './use-durable-composer-draft-images';
+import { enqueueComposerDraftSave, waitForComposerDraftSaves } from './durable-composer-draft-save-queue';
+import { useComposerDraftAutosave } from './use-composer-draft-autosave';
+import { useComposerDraftObservation } from './use-composer-draft-observation';
+import { useDurableComposerDraftImageState } from './use-durable-composer-draft-images';
 import { usePendingComposerDraftInsert } from './use-pending-composer-draft-insert';
-import { usePendingComposerSelection } from './use-pending-composer-selection';
-
-interface ReplyDraft {
-  id: string;
-  content: string;
-  senderCatId: string | null;
-  threadId: string;
-}
-
-interface AdmissionSnapshot {
-  text: string;
-  images: File[];
-  contextAttachments: ContextAttachment[];
-  replyTo: ReplyDraft | null;
-}
-
-type ComposerDraftSave = () => Promise<boolean>;
-
-const composerDraftSaveTails = new Map<string, Promise<boolean>>();
-
-function enqueueComposerDraftSave(threadId: string, save: ComposerDraftSave): Promise<boolean> {
-  const previous = composerDraftSaveTails.get(threadId) ?? Promise.resolve(true);
-  const next = previous.catch(() => false).then(save);
-  composerDraftSaveTails.set(threadId, next);
-  void next.then(
-    () => {
-      if (composerDraftSaveTails.get(threadId) === next) composerDraftSaveTails.delete(threadId);
-    },
-    () => {
-      if (composerDraftSaveTails.get(threadId) === next) composerDraftSaveTails.delete(threadId);
-    },
-  );
-  return next;
-}
-
-async function waitForComposerDraftSaves(threadId: string): Promise<void> {
-  await composerDraftSaveTails.get(threadId)?.catch(() => false);
-}
+import { type PendingComposerSelection, usePendingComposerSelection } from './use-pending-composer-selection';
+import { useThreadDraftSelection } from './use-thread-draft-selection';
 
 interface UseDurableComposerDraftOptions {
   threadId?: string;
@@ -64,7 +42,7 @@ interface UseDurableComposerDraftOptions {
   setImages: Dispatch<SetStateAction<File[]>>;
   contextAttachments: ContextAttachment[];
   setContextAttachments: Dispatch<SetStateAction<ContextAttachment[]>>;
-  replyToMessage: ReplyDraft | null;
+  replyToMessage: ComposerAdmissionReply | null;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   setIsPreparingImages: Dispatch<SetStateAction<boolean>>;
 }
@@ -85,22 +63,36 @@ export function useDurableComposerDraft({
   const inputRef = useRef(input);
   const revisionRef = useRef(0);
   const hydratedRef = useRef(false);
+  const hydrationSettledRef = useRef<Promise<void>>(Promise.resolve());
   const lastSavedSignatureRef = useRef('');
   const hydrationGenerationRef = useRef(0);
-  const imageUrlsRef = useRef<string[]>([]);
   const contextAttachmentsRef = useRef<ContextAttachment[]>(contextAttachments);
   const preservedBlocksRef = useRef<MessageContent[]>([]);
   const replyToIdRef = useRef(replyToMessage?.id);
   const admissionsPendingRef = useRef(0);
-  const clearFallbackRef = useRef<(AdmissionSnapshot & { imageUrls: string[] }) | null>(null);
-  const pendingSelectionRef = useRef<{ text: string; start: number; end: number } | null>(null);
+  const pendingAdmissionDraftRef = useRef<PendingComposerAdmissionDraft | null>(null);
+  const canonicalDraftRef = useRef<DurableDraftSnapshot | null>(null);
+  const recoveredDraftAwaitingConfirmationRef = useRef(false);
+  const clearFallbackRef = useRef<(ComposerAdmissionSnapshot & { imageUrls: string[] }) | null>(null);
+  const pendingSelectionRef = useRef<PendingComposerSelection | null>(null);
   const [admissionEpoch, setAdmissionEpoch] = useState(0);
-
-  const restoreDraftImages = useDraftImageRestoration({
-    threadId,
+  useComposerDraftConsumption(threadId, revisionRef, canonicalDraftRef, lastSavedSignatureRef);
+  const saveCurrentDraftForImagesRef = useRef<() => Promise<boolean>>(async () => false);
+  const {
+    admissionImagesReady,
+    discardUnrestoredImages,
     imageUrlsRef,
+    removeImage,
+    resetImageRecovery,
+    restoreDraftImages,
+    restoreFallbackImages,
+    retryUnrestoredImages,
+    unrestoredImageCount,
+  } = useDurableComposerDraftImageState({
+    threadId,
     setImages,
     setIsPreparingImages,
+    saveCurrentDraftRef: saveCurrentDraftForImagesRef,
   });
 
   usePendingComposerDraftInsert({
@@ -109,6 +101,8 @@ export function useDurableComposerDraft({
     setContextAttachments,
     restoreDraftImages,
     hydrationGenerationRef,
+    hydrationSettledRef,
+    textareaRef,
     imageUrlsRef,
     revisionRef,
     hydratedRef,
@@ -119,33 +113,30 @@ export function useDurableComposerDraft({
   });
 
   usePendingComposerSelection(input, textareaRef, pendingSelectionRef, contextAttachments.length);
-
+  useThreadDraftSelection(threadId, input, textareaRef);
   useEffect(() => {
     inputRef.current = input;
-  }, [input]);
-
-  useEffect(() => {
     contextAttachmentsRef.current = contextAttachments;
-  }, [contextAttachments]);
-
-  useEffect(() => {
     replyToIdRef.current = replyToMessage?.id;
-  }, [replyToMessage?.id]);
+  }, [contextAttachments, input, replyToMessage?.id]);
 
   useEffect(() => {
     if (!threadId) return;
     const generation = ++hydrationGenerationRef.current;
     hydratedRef.current = false;
-    void waitForComposerDraftSaves(threadId)
+    canonicalDraftRef.current = null;
+    resetImageRecovery();
+    recoveredDraftAwaitingConfirmationRef.current = false;
+    const hydration = waitForComposerDraftSaves(threadId)
       .then(() => loadOwnerComposerDraft(threadId))
-      .then(({ draft, revision }) => {
+      .then(async ({ draft, revision }) => {
         if (hydrationGenerationRef.current !== generation) return;
         const serverText = draft?.text ?? '';
         const imageUrls = imageUrlsFromDraft(draft);
         const serverContextAttachments = contextAttachmentsFromDraft(draft);
         preservedBlocksRef.current = preservedBlocksFromDraft(draft);
+        canonicalDraftRef.current = durableDraftSnapshotFromOwner(draft);
         revisionRef.current = revision;
-        imageUrlsRef.current = imageUrls;
         lastSavedSignatureRef.current = composerDraftSignature(
           serverText,
           imageUrls,
@@ -165,26 +156,28 @@ export function useDurableComposerDraft({
             threadId,
           });
         }
-        void restoreDraftImages(imageUrls, threadId, false);
+        await restoreDraftImages(imageUrls, threadId, false);
+        if (hydrationGenerationRef.current !== generation) return;
         hydratedRef.current = true;
       })
       .catch(() => {
         // The local session mirror remains available; autosave stays fenced.
       });
+    hydrationSettledRef.current = hydration;
+    void hydration;
     return () => {
       if (hydrationGenerationRef.current === generation) hydrationGenerationRef.current += 1;
     };
-  }, [restoreDraftImages, setContextAttachments, setInput, setReplyTo, threadId]);
+  }, [resetImageRecovery, restoreDraftImages, setContextAttachments, setInput, setReplyTo, threadId]);
 
   const restoreAdmissionFallback = useCallback(() => {
     const fallback = clearFallbackRef.current;
     if (!fallback) return;
-    setInput((current) => mergeHydratedDraft(fallback.text, current));
-    setImages((current) => [...new Set([...fallback.images, ...current])].slice(0, 5));
-    setContextAttachments((current) => mergeContextAttachments(fallback.contextAttachments, current));
-    imageUrlsRef.current = [...new Set([...fallback.imageUrls, ...imageUrlsRef.current])].slice(0, 5);
+    setInput((current) => mergeHydratedDraft(current, fallback.text));
+    restoreFallbackImages(fallback.images, fallback.imageUrls);
+    setContextAttachments((current) => mergeContextAttachments(current, fallback.contextAttachments));
     if (fallback.replyTo && !useChatStore.getState().replyToMessage) setReplyTo(fallback.replyTo);
-  }, [setContextAttachments, setImages, setInput, setReplyTo]);
+  }, [restoreFallbackImages, setContextAttachments, setInput, setReplyTo]);
 
   const reconcileConflict = useCallback(
     (draft: Awaited<ReturnType<typeof loadOwnerComposerDraft>>, shouldClear: boolean) => {
@@ -192,6 +185,7 @@ export function useDurableComposerDraft({
       const currentImages = imageUrlsFromDraft(draft.draft);
       const currentContextAttachments = contextAttachmentsFromDraft(draft.draft);
       preservedBlocksRef.current = preservedBlocksFromDraft(draft.draft);
+      canonicalDraftRef.current = durableDraftSnapshotFromOwner(draft.draft);
       lastSavedSignatureRef.current = composerDraftSignature(
         draft.draft?.text ?? '',
         currentImages,
@@ -222,16 +216,20 @@ export function useDurableComposerDraft({
     (): DurableDraftSnapshot => ({
       text: inputRef.current,
       imageUrls: [...imageUrlsRef.current],
-      contextAttachments: [...contextAttachmentsRef.current],
+      // A file-side edit can be queued before React commits it. A server ACK keeps its own revision boundary.
+      contextAttachments:
+        threadId && !queuedServerAckBlocks()
+          ? composerAttachments(threadId, contextAttachmentsRef.current)
+          : [...contextAttachmentsRef.current],
       preservedBlocks: [...preservedBlocksRef.current],
       replyTo: replyToIdRef.current,
     }),
-    [],
+    [imageUrlsRef, threadId],
   );
 
   const persistDraftSnapshot = useCallback(
-    async (snapshot: DurableDraftSnapshot) => {
-      if (!threadId || admissionsPendingRef.current > 0) return false;
+    async (snapshot: DurableDraftSnapshot, allowPendingAdmission = false) => {
+      if (!threadId || (admissionsPendingRef.current > 0 && !allowPendingAdmission)) return false;
       const signature = composerDraftSignature(
         snapshot.text,
         snapshot.imageUrls,
@@ -257,6 +255,7 @@ export function useDurableComposerDraft({
       }
       revisionRef.current = result.revision;
       lastSavedSignatureRef.current = signature;
+      canonicalDraftRef.current = snapshot;
       clearFallbackRef.current = null;
       return true;
     },
@@ -267,73 +266,89 @@ export function useDurableComposerDraft({
     () => persistDraftSnapshot(captureCurrentDraft()),
     [captureCurrentDraft, persistDraftSnapshot],
   );
+  saveCurrentDraftForImagesRef.current = threadId
+    ? () => enqueueComposerDraftSave(threadId, persistCurrentDraft)
+    : async () => false;
+  const { persistSettledDraft } = useComposerDraftAutosave({
+    threadId,
+    hydratedRef,
+    hydrationGenerationRef,
+    admissionsPendingRef,
+    admissionEpoch,
+    input,
+    images,
+    contextAttachments,
+    captureCurrentDraft,
+    persistDraftSnapshot,
+    persistCurrentDraft,
+  });
 
   useEffect(() => {
     if (!threadId) return;
-    return () => {
-      if (!hydratedRef.current || admissionsPendingRef.current > 0) return;
-      const snapshot = captureCurrentDraft();
-      void enqueueComposerDraftSave(threadId, () => persistDraftSnapshot(snapshot));
-    };
-  }, [captureCurrentDraft, persistDraftSnapshot, threadId]);
-
-  useEffect(() => {
-    if (!threadId || !hydratedRef.current || admissionsPendingRef.current > 0) return;
-    void admissionEpoch;
-    void images;
-    void contextAttachments;
-    void input;
-    const timer = window.setTimeout(() => {
-      void enqueueComposerDraftSave(threadId, persistCurrentDraft);
-    }, 400);
-    return () => window.clearTimeout(timer);
-  }, [admissionEpoch, contextAttachments, images, input, persistCurrentDraft, threadId]);
-
-  useEffect(() => {
-    if (!threadId) return;
-    return registerComposerDraftFlusher(threadId, async () => {
-      const snapshot = captureCurrentDraft();
-      const persisted = await enqueueComposerDraftSave(threadId, () => persistDraftSnapshot(snapshot));
-      return {
-        persisted,
-        snapshot: {
-          text: snapshot.text,
-          contextAttachments: snapshot.contextAttachments,
-          ...(snapshot.replyTo ? { replyToId: snapshot.replyTo } : {}),
-        },
-      };
+    return registerDurableComposerDraftAdmissionFlusher({
+      threadId,
+      hydrationSettledRef,
+      pendingAdmissionDraftRef,
+      canonicalDraftRef,
+      admissionImagesReady,
+      recoveredDraftAwaitingConfirmationRef,
+      revisionRef,
+      captureCurrentDraft,
+      persistDraftSnapshot,
+      enqueueSave: enqueueComposerDraftSave,
     });
-  }, [captureCurrentDraft, persistDraftSnapshot, threadId]);
+  }, [admissionImagesReady, captureCurrentDraft, persistDraftSnapshot, threadId]);
+  useComposerDraftObservation({ threadId, textareaRef, revisionRef, hydratedRef, admissionsPendingRef });
 
   const beginAdmission = useCallback(
-    (snapshot: AdmissionSnapshot) => {
+    (snapshot: ComposerAdmissionSnapshot) => {
+      const generation = hydrationGenerationRef.current;
       const durableSnapshot = { ...snapshot, imageUrls: [...imageUrlsRef.current] };
+      const admittedDraft = durableDraftForAdmission(
+        durableSnapshot,
+        durableSnapshot.imageUrls,
+        preservedBlocksRef.current,
+      );
+      const pendingAdmission = {
+        snapshot: admittedDraft,
+        files: [...durableSnapshot.images],
+        confirmsRecoveredDraft: recoveredDraftAwaitingConfirmationRef.current,
+      };
+      recoveredDraftAwaitingConfirmationRef.current = false;
+      pendingAdmissionDraftRef.current = pendingAdmission;
       admissionsPendingRef.current += 1;
       return (accepted: boolean | undefined) => {
         admissionsPendingRef.current = Math.max(0, admissionsPendingRef.current - 1);
+        if (pendingAdmissionDraftRef.current === pendingAdmission) pendingAdmissionDraftRef.current = null;
         if (accepted === false) {
-          setInput((current) => mergeHydratedDraft(durableSnapshot.text, current));
-          setImages((current) => [...new Set([...durableSnapshot.images, ...current])].slice(0, 5));
-          setContextAttachments((current) => mergeContextAttachments(durableSnapshot.contextAttachments, current));
-          imageUrlsRef.current = [...new Set([...durableSnapshot.imageUrls, ...imageUrlsRef.current])].slice(0, 5);
+          setInput((current) => mergeHydratedDraft(current, durableSnapshot.text));
+          restoreFallbackImages(durableSnapshot.images, durableSnapshot.imageUrls);
+          setContextAttachments((current) => mergeContextAttachments(current, durableSnapshot.contextAttachments));
           if (durableSnapshot.replyTo && !useChatStore.getState().replyToMessage) {
             setReplyTo(durableSnapshot.replyTo);
           }
         } else {
           clearFallbackRef.current = durableSnapshot;
+          persistSettledDraft(generation);
         }
         setAdmissionEpoch((current) => current + 1);
       };
     },
-    [setContextAttachments, setImages, setInput, setReplyTo],
+    [imageUrlsRef, persistSettledDraft, restoreFallbackImages, setContextAttachments, setInput, setReplyTo],
   );
 
   const markOptimisticallyCleared = useCallback(() => {
     inputRef.current = '';
     imageUrlsRef.current = [];
-  }, []);
-
-  const removeImage = useCallback((index: number) => removeDraftImage(index, imageUrlsRef, setImages), [setImages]);
-
-  return { beginAdmission, markOptimisticallyCleared, removeImage };
+    contextAttachmentsRef.current = [];
+    replyToIdRef.current = undefined;
+  }, [imageUrlsRef]);
+  return {
+    beginAdmission,
+    discardUnrestoredImages,
+    markOptimisticallyCleared,
+    removeImage,
+    retryUnrestoredImages,
+    unrestoredImageCount,
+  };
 }

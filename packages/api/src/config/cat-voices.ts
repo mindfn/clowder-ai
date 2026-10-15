@@ -114,7 +114,7 @@ function buildDefaultVoices(): Record<string, VoiceConfig> {
       langCode: 'zh',
       speed: 1.0,
       refAudio: join(base, '班尼特/vo_bennett_dialog_greetingNight.wav'),
-      refText: '晚上好！今天的冒险怎么样？',
+      refText: '要不要陪我去和老爹们聊聊天啊？老冒险家的故事可有意思了！',
       instruct: '用一个超级阳光开心的小男孩语气说话，充满热情和兴奋',
       temperature: 0.3,
     },

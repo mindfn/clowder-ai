@@ -26,6 +26,7 @@ import {
   correctionClaimId,
   parseClaim,
   parseEvent,
+  parseRelationship,
   retirementClaimId,
 } from './person-memory-records.js';
 
@@ -163,8 +164,40 @@ export async function amendPersonInteraction(
   redis: RedisClient,
   input: AmendPersonInteractionInput,
 ): Promise<PersonMemoryAmendmentResult> {
-  const original = parseEvent(await redis.get(PersonMemoryKeys.event(input.ownerUserId, input.expectedEventId)));
-  if (!original) return { outcome: 'not_available' };
+  const amendmentKey = PersonMemoryKeys.amendment(input.ownerUserId, input.requestId);
+  const priorAmendment = await redis.get(amendmentKey);
+  if (priorAmendment) {
+    return { outcome: 'replayed', event: interactionEventSchema.parse(JSON.parse(priorAmendment)) };
+  }
+  const originalKey = PersonMemoryKeys.event(input.ownerUserId, input.expectedEventId);
+  const originalRaw = await redis.get(originalKey);
+  const original = parseEvent(originalRaw);
+  if (!originalRaw || !original || original.status !== 'active') return { outcome: 'not_available' };
+  const relationshipKey = PersonMemoryKeys.relationship(input.ownerUserId, original.relationshipId);
+  const relationshipRaw = await redis.get(relationshipKey);
+  const relationship = parseRelationship(relationshipRaw);
+  if (
+    !relationshipRaw ||
+    !relationship ||
+    relationship.ownerUserId !== input.ownerUserId ||
+    relationship.personId !== input.personId
+  ) {
+    return { outcome: 'not_available' };
+  }
+  const successorKey = PersonMemoryKeys.eventSuccessor(input.ownerUserId, original.eventId);
+  if (await redis.get(successorKey)) return { outcome: 'not_available' };
+  const eventsKey = PersonMemoryKeys.personEvents(input.ownerUserId, input.personId);
+  const eventIds = await redis.zrange(eventsKey, 0, -1);
+  const eventRaws = await Promise.all(
+    eventIds.map((eventId) => redis.get(PersonMemoryKeys.event(input.ownerUserId, eventId))),
+  );
+  const events = eventRaws.map(parseEvent);
+  if (events.some((event) => !event || event.ownerUserId !== input.ownerUserId)) {
+    throw new Error('F276 interaction event index is malformed');
+  }
+  if (events.some((event) => event?.amendsEventId === original.eventId)) {
+    return { outcome: 'not_available' };
+  }
   const eventId = amendmentEventId(input.personId, input.requestId);
   const event: InteractionEvent = {
     eventId,
@@ -182,16 +215,22 @@ export async function amendPersonInteraction(
     amendsEventId: original.eventId,
     status: 'active',
   };
+  const superseded: InteractionEvent = { ...original, status: 'superseded' };
   const raw = await redis.eval(
     AMEND_EVENT_LUA,
-    7,
-    PersonMemoryKeys.event(input.ownerUserId, original.eventId),
+    9,
+    originalKey,
     PersonMemoryKeys.event(input.ownerUserId, eventId),
-    PersonMemoryKeys.personEvents(input.ownerUserId, input.personId),
+    eventsKey,
     PersonMemoryKeys.relationshipEvents(input.ownerUserId, original.relationshipId),
-    PersonMemoryKeys.amendment(input.ownerUserId, input.requestId),
+    amendmentKey,
     PersonMemoryKeys.personArtifacts(input.ownerUserId, input.personId),
     PersonMemoryKeys.forgetFence(input.ownerUserId, input.personId),
+    successorKey,
+    relationshipKey,
+    originalRaw,
+    relationshipRaw,
+    JSON.stringify(superseded),
     JSON.stringify(event),
     String(input.amendedAt),
     eventId,

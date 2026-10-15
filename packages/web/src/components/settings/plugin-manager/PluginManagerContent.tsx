@@ -1,6 +1,7 @@
 'use client';
 
 import { pluginDescriptionVariants } from '@cat-cafe/shared';
+import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { ConnectorPluginInstallButton } from '../../ConnectorPluginInstallButton';
 import { HubIcon } from '../../hub-icons';
@@ -11,6 +12,13 @@ import { PluginListRow, PluginListSection } from './PluginManagerList';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
 
 const DEFAULT_RECOMMENDATION_LIMIT = 3;
+
+function blockedEnableReason(plugin: PluginManagerDesignFixture) {
+  if (plugin.id !== 'official.chatgpt-dot') return '请先完成右侧配置或连接，再启用。';
+  return plugin.auth === 'connected'
+    ? '还在等待 dot 读原文并回帖；两处都完成后才能开启。'
+    : '请先完成订阅和两处往返验证，再启用 dot。';
+}
 
 function PluginManagerError({ message }: { message: string | null | undefined }) {
   if (!message) return null;
@@ -66,14 +74,18 @@ export function PluginManagerContent({
   error,
   busyPluginId = null,
   selectedPluginId,
+  linkedPluginId = null,
   onPluginSelect,
   onSearchChange,
   onInstall,
   onSetEnabled,
+  onRequestEnable,
   onUninstall,
   onConfigure,
   configurationSavedPluginId = null,
+  onStateChanged,
   locale = 'zh-CN',
+  renderCompatibilityDetail,
 }: {
   fixtures: readonly PluginManagerDesignFixture[];
   catalogStatus?: 'fresh' | 'stale' | 'degraded' | 'unavailable';
@@ -82,14 +94,18 @@ export function PluginManagerContent({
   error?: string | null;
   busyPluginId?: string | null;
   selectedPluginId?: string | null;
+  linkedPluginId?: string | null;
   onPluginSelect?: (pluginId: string | null) => void;
   onSearchChange?: (query: string) => void;
   onInstall?: (pluginId: string) => void;
   onSetEnabled?: (pluginId: string, enabled: boolean) => void;
+  onRequestEnable?: (pluginId: string) => void | Promise<void>;
   onUninstall?: (pluginId: string) => void;
   onConfigure?: (pluginId: string, updates: readonly { key: string; value: string | null }[]) => void;
   configurationSavedPluginId?: string | null;
+  onStateChanged?: () => void | Promise<void>;
   locale?: string;
+  renderCompatibilityDetail?: (pluginId: string, plugin: PluginManagerDesignFixture) => ReactNode | undefined;
 }) {
   const [query, setQuery] = useState('');
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
@@ -105,6 +121,9 @@ export function PluginManagerContent({
   const visible = [...installedPlugins, ...attentionPlugins, ...recommendedPlugins, ...otherPlugins];
   const selection = usePluginSelection(visible, selectedPluginId, onPluginSelect);
   const selected = selection.selected;
+  useEffect(() => {
+    if (linkedPluginId && selected?.id === linkedPluginId) setMobileDetailOpen(true);
+  }, [linkedPluginId, selected?.id]);
 
   const renderRows = (plugins: readonly PluginManagerDesignFixture[]) =>
     plugins.map((plugin) => (
@@ -123,14 +142,21 @@ export function PluginManagerContent({
           selection.select(plugin.id);
           setMobileDetailOpen(true);
           setConfigurationValidation((current) => ({ pluginId: plugin.id, request: current.request + 1 }));
+          if (onRequestEnable) void onRequestEnable(plugin.id);
+          else void onStateChanged?.();
         }}
         onUninstall={() => onUninstall?.(plugin.id)}
         busy={busyPluginId === plugin.id}
+        enableBlockedReason={
+          configurationValidation.pluginId === plugin.id && plugin.actions?.setEnabled === false
+            ? blockedEnableReason(plugin)
+            : undefined
+        }
       />
     ));
 
   return (
-    <section data-testid="plugin-manager" className="flex h-full min-h-0 flex-1 flex-col gap-3.5 overflow-hidden">
+    <section data-testid="plugin-manager" className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-hidden">
       <div data-plugin-manager-toolbar className="flex justify-end">
         <ConnectorPluginInstallButton
           endpoint="/api/plugin-manager/plugins/install/upload"
@@ -170,7 +196,11 @@ export function PluginManagerContent({
               />
             </label>
           </div>
-          <div data-plugin-scroll-region="list" className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+          {/* Keep absolute accessibility labels inside this scroll container's containing block. */}
+          <div
+            data-plugin-scroll-region="list"
+            className="relative min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain pr-1"
+          >
             {loading && (
               <div data-testid="plugin-manager-loading" className="space-y-2">
                 {[0, 1, 2].map((item) => (
@@ -223,21 +253,27 @@ export function PluginManagerContent({
             <HubIcon name="arrow-left" className="h-4 w-4" />
             返回插件列表
           </button>
-          <div data-plugin-scroll-region="detail" className="min-h-0 flex-1 overflow-y-auto pr-1">
+          <div
+            data-plugin-scroll-region="detail"
+            className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1"
+          >
             {selected ? (
-              <PluginManagerDetailCard
-                key={selected.id}
-                plugin={selected}
-                locale={locale}
-                busy={busyPluginId === selected.id}
-                configurationValidationRequest={
-                  configurationValidation.pluginId === selected.id ? configurationValidation.request : 0
-                }
-                configurationSaved={configurationSavedPluginId === selected.id}
-                onSaveConfig={
-                  selected.configFields?.length ? (updates) => onConfigure?.(selected.id, updates) : undefined
-                }
-              />
+              (renderCompatibilityDetail?.(selected.id, selected) ?? (
+                <PluginManagerDetailCard
+                  key={selected.id}
+                  plugin={selected}
+                  locale={locale}
+                  busy={busyPluginId === selected.id}
+                  configurationValidationRequest={
+                    configurationValidation.pluginId === selected.id ? configurationValidation.request : 0
+                  }
+                  configurationSaved={configurationSavedPluginId === selected.id}
+                  onStateChanged={onStateChanged}
+                  onSaveConfig={
+                    selected.configFields?.length ? (updates) => onConfigure?.(selected.id, updates) : undefined
+                  }
+                />
+              ))
             ) : loading ? (
               <div className={`${settingsResourceCardClass} min-h-48 animate-pulse`} />
             ) : (

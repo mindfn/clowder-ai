@@ -52,6 +52,13 @@ import { OpsContent } from '../OpsContent';
 Object.assign(globalThis as Record<string, unknown>, { React });
 
 describe('OpsContent URL deep-linking (S-2 P1 fix)', () => {
+  it('opens the migrated index and recall controls from their settings deep link', () => {
+    mockSearchParams = new URLSearchParams('s=ops&ops=memory');
+    const html = renderToStaticMarkup(<OpsContent />);
+    expect(html).toContain('data-testid="memory-settings"');
+    expect(html).toContain('索引与召回');
+    expect(html).not.toContain('data-testid="routing-policy"');
+  });
   it('defaults to usage tab when no URL params', () => {
     mockSearchParams = new URLSearchParams();
     const html = renderToStaticMarkup(<OpsContent />);

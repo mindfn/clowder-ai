@@ -237,6 +237,7 @@ export const terminalRoutes: FastifyPluginAsync<TerminalRouteOpts> = async (app,
       paneId: p.paneId,
       status: p.status,
       startedAt: p.startedAt,
+      catId: p.catId ?? null,
     }));
   });
 

@@ -1,5 +1,8 @@
 'use client';
 
+import { sessionChainCopy } from '@/components/session-chain.shell-copy';
+import { useTrajectoryCopy } from '@/components/workspace/trajectory/use-trajectory-copy';
+
 import { CompactLabel, CriticalText } from '../content-overflow';
 
 export interface HandoffSummary {
@@ -44,6 +47,7 @@ function rawEventType(event: Record<string, unknown>): string {
 }
 
 export function HandoffEventRows({ invocations }: { invocations: HandoffSummary[] }) {
+  const t = useTrajectoryCopy(sessionChainCopy);
   return (
     <div className="space-y-1.5">
       {invocations.map((invocation) => (
@@ -72,7 +76,7 @@ export function HandoffEventRows({ invocations }: { invocations: HandoffSummary[
           </div>
           {(invocation.keyMessages ?? []).length > 0 && (
             <div data-testid="handoff-key-message" className="mt-1 min-w-0">
-              <CriticalText summary="交接关键消息" details={invocation.keyMessages[0]} tone="warning" />
+              <CriticalText summary={t.handoffMessage} details={invocation.keyMessages[0]} tone="warning" />
             </div>
           )}
         </div>

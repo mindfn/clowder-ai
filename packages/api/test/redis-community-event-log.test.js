@@ -36,9 +36,10 @@ describe('CommunityEventLog (Redis)', { skip: redisIsolationSkipReason(REDIS_URL
   let createRedisClient;
   let redis;
   let log;
+  let taskStore;
   let connected = false;
 
-  const KEY_PATTERNS = ['community:events:*'];
+  const KEY_PATTERNS = ['community:events:*', 'task:*', 'tasks:*'];
 
   before(async () => {
     assertRedisIsolationOrThrow(REDIS_URL, 'CommunityEventLog');
@@ -52,6 +53,8 @@ describe('CommunityEventLog (Redis)', { skip: redisIsolationSkipReason(REDIS_URL
     await redis.ping();
     connected = true;
     log = new CommunityEventLog(redis);
+    const { RedisTaskStore } = await import('../dist/domains/cats/services/stores/redis/RedisTaskStore.js');
+    taskStore = new RedisTaskStore(redis);
   });
 
   after(async () => {
@@ -114,6 +117,94 @@ describe('CommunityEventLog (Redis)', { skip: redisIsolationSkipReason(REDIS_URL
       const r1 = await log.append(makeEvent({ sourceEventId: 'x1' }));
       const r2 = await log.append(makeEvent({ sourceEventId: 'x2', kind: 'issue.closed' }));
       assert.ok(r2.sequence > r1.sequence, 'sequence must increase');
+    });
+  });
+
+  describe('conditional authority append', () => {
+    it('Task registration and review authority share one commit fence across Redis clients', async () => {
+      const subjectKey = 'pr:owner/repo#42';
+      const tracker = await taskStore.create({
+        subjectKey,
+        kind: 'pr_tracking',
+        threadId: 'target',
+        ownerCatId: 'codex',
+        userId: 'user-1',
+        title: 'PR',
+        why: 'tracking',
+        createdBy: 'codex',
+      });
+      const e = makeEvent({ subjectKey, sourceEventId: 'task-transfer' });
+      // A real Task-owner writer runs after the service snapshot, immediately before Lua commit.
+      const other = redis.duplicate();
+      try {
+        const { RedisTaskStore } = await import('../dist/domains/cats/services/stores/redis/RedisTaskStore.js');
+        const writer = new RedisTaskStore(other);
+        await writer.replaceAutomationStateIfGeneration(tracker.id, {
+          expectedGeneration: null,
+          automationState: undefined,
+          trackingRegistration: {
+            threadId: 'new-target',
+            ownerCatId: 'codex',
+            userId: 'user-1',
+            title: 'PR',
+            why: 'moved',
+          },
+        });
+        assert.equal(await log.appendIfUnchanged(e, 0, tracker), 'stale_tracker');
+        assert.deepEqual(await log.read(subjectKey), []);
+        // Failure did not consume dedup identity; the fresh target can commit.
+        const current = await taskStore.getBySubject(subjectKey);
+        assert.equal(current.threadId, 'new-target');
+        assert.equal(await log.appendIfUnchanged(e, 0, current), 'appended');
+        assert.equal(await log.appendIfUnchanged(e, 0, current), 'duplicate');
+        assert.equal(await redis.ttl(`task:${tracker.id}`), -1);
+      } finally {
+        await other.quit();
+      }
+    });
+
+    it('same-millisecond wait replacement and subject replacement invalidate the Task fence', async () => {
+      const subjectKey = 'pr:owner/repo#42';
+      const tracker = await taskStore.create({
+        subjectKey,
+        kind: 'pr_tracking',
+        threadId: 'target',
+        ownerCatId: 'codex',
+        userId: 'user-1',
+        title: 'PR',
+        why: 'tracking',
+        createdBy: 'codex',
+      });
+      const e = makeEvent({ subjectKey, sourceEventId: 'task-transfer' });
+      await redis.hset(`task:${tracker.id}`, 'automationState', JSON.stringify({ generation: 2 }));
+      assert.equal(await log.appendIfUnchanged(e, 0, tracker), 'stale_tracker');
+      const current = await taskStore.getBySubject(subjectKey);
+      assert.equal(current.updatedAt, tracker.updatedAt);
+      await redis.set(`tasks:subject:${subjectKey}`, 'other-task');
+      assert.equal(await log.appendIfUnchanged(e, 0, current), 'stale_tracker');
+      assert.deepEqual(await log.read(subjectKey), []);
+    });
+
+    it('rejects stale log length without marking the event seen', async () => {
+      await log.append(makeEvent({ sourceEventId: 'initial' }));
+      const transfer = makeEvent({ sourceEventId: 'transfer' });
+      assert.equal(await log.appendIfUnchanged(transfer, 0), 'conflict');
+      assert.equal((await log.read(transfer.subjectKey)).length, 1);
+      assert.equal(await log.appendIfUnchanged(transfer, 1), 'appended');
+      assert.equal(await log.appendIfUnchanged(transfer, 1), 'duplicate');
+    });
+    it('one competing transfer wins the same canonical revision', async () => {
+      const first = makeEvent({ sourceEventId: 'first' });
+      const second = makeEvent({ sourceEventId: 'second' });
+      const outcomes = await Promise.all([log.appendIfUnchanged(first, 0), log.appendIfUnchanged(second, 0)]);
+      assert.deepEqual(outcomes.sort(), ['appended', 'conflict']);
+      assert.equal((await log.read(first.subjectKey)).length, 1);
+    });
+    it('fences only its subject and leaves TTL at zero', async () => {
+      await log.append(makeEvent({ sourceEventId: 'other', subjectKey: 'pr:other/repo#1' }));
+      const e = makeEvent({ sourceEventId: 'transfer' });
+      assert.equal(await log.appendIfUnchanged(e, 0), 'appended');
+      assert.equal(await redis.ttl(`community:events:log:${e.subjectKey}`), -1);
     });
   });
 

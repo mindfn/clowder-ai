@@ -313,6 +313,37 @@ describe('F222: evaluate — full pipeline', () => {
     };
   }
 
+  for (const signal of [
+    { type: 'text_frustration', matchedKeywords: ['wrong'], matchCount: 100, recentUserMessages: ['wrong', 'wrong'] },
+    { type: 'retry_burst', matchCount: 100, repeatedPrefix: 'please do this' },
+  ]) {
+    it(`does not create an issue, message or broadcast for retired ${signal.type}`, async () => {
+      const effects = [];
+      const result = await evaluate(
+        { signal, threadId: 'thread-retired', userId: 'owner', catId: 'codex61-sol' },
+        {
+          frustrationIssueStore: {
+            create: (data) => {
+              effects.push('issue');
+              return { issueId: 'retired', status: 'draft', ...data };
+            },
+          },
+          messageStore: {
+            getByThread: () => [],
+            append: () => {
+              effects.push('message');
+              return { id: 'retired' };
+            },
+          },
+          socketManager: { broadcastToRoom: () => effects.push('broadcast') },
+        },
+      );
+      assert.equal(result, null);
+      assert.deepEqual(effects, []);
+      assert.equal(shouldTrigger(signal), false);
+    });
+  }
+
   it('creates draft issue on CLI error trigger', async () => {
     const { InMemoryFrustrationIssueStore } = await import(
       '../../dist/domains/cats/services/stores/memory/InMemoryFrustrationIssueStore.js'

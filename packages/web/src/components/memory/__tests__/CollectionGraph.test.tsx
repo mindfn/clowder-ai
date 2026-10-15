@@ -11,6 +11,7 @@ const GRAPH_RESPONSE = {
       sensitivity: 'internal',
       kind: 'spec',
       title: 'Memory Arch',
+      displayType: '设计规范',
       redacted: false,
     },
     {
@@ -111,6 +112,23 @@ describe('CollectionGraph force-directed', () => {
     expect(container.querySelector('[data-testid="graph-node-a1"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="graph-node-a2"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="graph-node-a3"]')).toBeTruthy();
+  });
+
+  it('keeps coordinates private in the title presentation while node clicks use exact native coordinates', async () => {
+    await act(async () => {
+      root.render(<CollectionGraph initialAnchor="a1" initialCollection="project:cafe" presentation="titles" />);
+    });
+    expect(container.textContent).toContain('Memory Arch');
+    expect(container.textContent).toContain('ADR-033');
+    expect(container.textContent).toContain('设计规范');
+    expect(container.textContent).not.toMatch(/\ba[123]\b|project:cafe|world:lexander|Dragon Lore/);
+    expect(container.querySelector('[data-testid="graph-anchor-input"]')).toBeNull();
+    await act(async () => {
+      container
+        .querySelector('[data-testid="graph-node-a3"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(fetch).toHaveBeenLastCalledWith('/api/library/graph?anchor=a3&depth=1&collection=project%3Acafe');
   });
 
   it('shows readable title context for the center anchor', async () => {

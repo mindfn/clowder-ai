@@ -44,7 +44,8 @@ async function persistThreadAttentionPreference(input: {
   anchor: string;
   alias?: string | null;
   open?: boolean | null;
-  memberSort?: ThreadAttentionMemberSort;
+  collapsedPeek?: boolean | null;
+  memberSort?: ThreadAttentionMemberSort | null;
 }): Promise<ThreadAttentionPreferences> {
   const response = await apiFetch('/api/config/thread-attention', {
     method: 'PUT',
@@ -83,6 +84,7 @@ export function useAttentionClusters(
   const [openPreferences, setOpenPreferences] = useState<Record<string, boolean>>(readOpenPreferences);
   const [aliases, setAliases] = useState<Record<string, string>>({});
   const [memberSort, setMemberSort] = useState<Record<string, ThreadAttentionMemberSort>>({});
+  const [collapsedPeek, setCollapsedPeek] = useState<Record<string, boolean>>({});
   const [pendingSort, setPendingSort] = useState<ReadonlySet<string>>(new Set());
   const [savedGroups, setSavedGroups] = useState<ThreadAttentionPreferences['groups']>([]);
   const [preferenceError, setPreferenceError] = useState<string | null>(null);
@@ -91,6 +93,7 @@ export function useAttentionClusters(
   const receivePreferences = useCallback((preferences: ThreadAttentionPreferences) => {
     setAliases(preferences.aliases ?? {});
     setMemberSort(preferences.memberSort ?? {});
+    setCollapsedPeek(preferences.collapsedPeek ?? {});
     setOpenPreferences(preferences.open ?? {});
     setSavedGroups(preferences.groups ?? []);
     cacheOpenPreferences(preferences.open ?? {});
@@ -113,10 +116,11 @@ export function useAttentionClusters(
       anchor: string;
       alias?: string | null;
       open?: boolean | null;
-      memberSort?: ThreadAttentionMemberSort;
+      collapsedPeek?: boolean | null;
+      memberSort?: ThreadAttentionMemberSort | null;
     }) => {
       const intent = typeof input.open === 'boolean' ? beginOpen(input.anchor, input.open) : null;
-      if (input.memberSort) setPendingSort((current) => new Set([...current, input.anchor]));
+      if (input.memberSort !== undefined) setPendingSort((current) => new Set([...current, input.anchor]));
       const mutation = mutationQueue.current.then(async () => {
         setPreferenceError(null);
         const preferences = await persistThreadAttentionPreference(input);
@@ -129,7 +133,7 @@ export function useAttentionClusters(
           setPreferenceError('未能保存这个整理方式，请重试');
         })
         .finally(() => {
-          if (input.memberSort)
+          if (input.memberSort !== undefined)
             setPendingSort((current) => {
               const next = new Set(current);
               next.delete(input.anchor);
@@ -183,13 +187,23 @@ export function useAttentionClusters(
     savedGroups,
     memberSort,
     pendingSort,
-    changeMemberSort: (cluster: AttentionCluster, mode: ThreadAttentionMemberSort) =>
+    changeMemberSort: (cluster: AttentionCluster, mode: ThreadAttentionMemberSort | null) =>
       enqueuePreferenceMutation({ anchor: cluster.anchor, memberSort: mode }),
     groupLoadState,
     groupLoadError,
     reloadGroups,
     openGroup: (groupId: string) => enqueuePreferenceMutation({ anchor: `group:${groupId}`, open: true }),
+    keepGroupCollapsed: (cluster: AttentionCluster) =>
+      openPreferences[cluster.anchor] === false
+        ? mutationQueue.current
+        : enqueuePreferenceMutation({ anchor: cluster.anchor, open: false }),
     isOpen,
+    collapsedPeek,
+    toggleCollapsedPeek: (cluster: AttentionCluster) =>
+      enqueuePreferenceMutation({
+        anchor: cluster.anchor,
+        collapsedPeek: collapsedPeek[cluster.anchor] === false,
+      }),
     toggle,
     titleFor,
     rename,

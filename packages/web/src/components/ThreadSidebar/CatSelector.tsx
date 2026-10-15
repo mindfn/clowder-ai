@@ -5,6 +5,9 @@ import { catColorMix, catColorVar } from '@/lib/cat-slug';
 
 interface CatSelectorProps {
   selectedCats: string[];
+  label?: string;
+  familyLabel?: (name: string) => string;
+  compact?: boolean;
   onSelectionChange: (ids: string[]) => void;
 }
 
@@ -12,7 +15,13 @@ interface CatSelectorProps {
  * F32-b Phase 3: Breed-grouped cat chip selector.
  * Used in thread creation (DirectoryPickerModal) and thread settings.
  */
-export function CatSelector({ selectedCats, onSelectionChange }: CatSelectorProps) {
+export function CatSelector({
+  selectedCats,
+  onSelectionChange,
+  label = '默认猫猫 (可选)',
+  familyLabel = (name) => `${name}家族`,
+  compact = false,
+}: CatSelectorProps) {
   const { getCatsByBreed } = useCatData();
   const groups = getCatsByBreed();
 
@@ -36,13 +45,13 @@ export function CatSelector({ selectedCats, onSelectionChange }: CatSelectorProp
 
   return (
     <div className="space-y-2">
-      <div className="text-xs text-cafe-secondary font-medium">默认猫猫 (可选)</div>
+      <div className="text-xs text-cafe-secondary font-medium">{label}</div>
       {[...groups.entries()].map(([breedId, cats]) => {
         const breedName = cats[0].breedDisplayName ?? cats[0].displayName;
         return (
           <div key={breedId}>
             <div className="text-micro text-cafe-muted mb-1">
-              {breedName}家族 · {clientIdLabel(cats[0].clientId)}
+              {familyLabel(breedName)} · {clientIdLabel(cats[0].clientId)}
             </div>
             <div className="flex flex-wrap gap-1.5">
               {cats.map((cat) => {
@@ -51,8 +60,9 @@ export function CatSelector({ selectedCats, onSelectionChange }: CatSelectorProp
                   <button
                     key={cat.id}
                     type="button"
+                    aria-pressed={isSelected}
                     onClick={() => toggleCat(cat.id)}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-colors border ${
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 ${compact ? 'rounded-lg shell-focusable' : 'rounded-full'} text-xs transition-colors border ${
                       isSelected
                         ? 'font-medium border-current'
                         : 'border-cafe text-cafe-secondary hover:border-[var(--console-border-strong)]'

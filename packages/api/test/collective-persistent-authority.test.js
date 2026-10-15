@@ -7,16 +7,23 @@ import { safeParseExtra } from '../dist/domains/cats/services/stores/redis/redis
 
 const receipt = { v: 1, sourceRef: 'message:source-A', catId: 'codex-astra', ownerAuthProvenance: 'strict' };
 const trigger = { v: 1, taskId: 'work', observedRevision: 1 };
+const delegation = {
+  v: 1,
+  taskId: 'work',
+  observedRevision: 1,
+  ownerCatId: 'codex-astra',
+  targetCatIds: ['codex-sol'],
+};
 const input = {
+  from: { kind: 'user', userId: 'owner' },
   userId: 'owner',
   threadId: 'private',
-  catId: null,
   content: 'Owner receipt',
   mentions: [],
   timestamp: 1,
 };
 
-test('generic Message mutations cannot forge or replace persisted owner admission and Task invocation', async () => {
+test('generic Message mutations cannot forge or replace persisted owner admission, Task invocation, or home delegation', async () => {
   const store = new MessageStore();
   const admitted = store.append({ ...input, extra: { collectiveOwnerAdmissionV1: receipt } });
   await store.updateExtra(admitted.id, {
@@ -26,16 +33,51 @@ test('generic Message mutations cannot forge or replace persisted owner admissio
   assert.deepEqual(store.getById(admitted.id).extra.collectiveOwnerAdmissionV1, receipt);
   assert.equal(store.getById(admitted.id).extra.collectiveAuthorizationInvalid, undefined);
   const plain = store.append({ ...input, timestamp: 2 });
-  await store.updateExtra(plain.id, { collectiveOwnerAdmissionV1: receipt, collectiveWorkInvocationV1: trigger });
+  await store.updateExtra(plain.id, {
+    collectiveOwnerAdmissionV1: receipt,
+    collectiveWorkInvocationV1: trigger,
+    collectiveWorkDelegationV1: delegation,
+  });
   assert.equal(store.getById(plain.id).extra?.collectiveOwnerAdmissionV1, undefined);
   assert.equal(store.getById(plain.id).extra?.collectiveWorkInvocationV1, undefined);
-  for (const extra of [{ collectiveOwnerAdmissionV1: receipt }, { collectiveWorkInvocationV1: trigger }]) {
-    assert.throws(() => store.append({ ...input, catId: 'codex-astra', extra }), /Host-owned/);
+  assert.equal(store.getById(plain.id).extra?.collectiveWorkDelegationV1, undefined);
+  assert.throws(
+    () =>
+      store.append({
+        ...input,
+        from: { kind: 'agent', catId: 'codex-astra' },
+        extra: { collectiveOwnerAdmissionV1: receipt },
+      }),
+    /Host-owned/,
+  );
+  assert.throws(
+    () =>
+      store.append({
+        ...input,
+        from: { kind: 'external', connectorId: 'collective' },
+        source: { connector: 'collective', label: 'external' },
+        extra: { collectiveOwnerAdmissionV1: receipt },
+      }),
+    /Host-owned/,
+  );
+  for (const from of [
+    { kind: 'user', userId: 'owner' },
+    { kind: 'agent', catId: 'codex-astra' },
+    { kind: 'system', service: 'other' },
+  ]) {
     assert.throws(
-      () => store.append({ ...input, source: { connector: 'collective', label: 'external' }, extra }),
-      /Host-owned/,
+      () => store.append({ ...input, from, extra: { collectiveWorkInvocationV1: trigger } }),
+      /canonical system producer/,
     );
   }
+  assert.ok(
+    store.append({
+      ...input,
+      timestamp: 3,
+      from: { kind: 'system', service: 'collective-work' },
+      extra: { collectiveWorkInvocationV1: trigger },
+    }),
+  );
   const redis = new RedisMessageStore({
     options: {},
     eval() {
@@ -43,8 +85,43 @@ test('generic Message mutations cannot forge or replace persisted owner admissio
     },
   });
   await assert.rejects(
-    redis.append({ ...input, catId: 'codex-astra', extra: { collectiveOwnerAdmissionV1: receipt } }),
+    redis.append({
+      ...input,
+      from: { kind: 'agent', catId: 'codex-astra' },
+      extra: { collectiveOwnerAdmissionV1: receipt },
+    }),
     /Host-owned/,
+  );
+
+  const delegated = store.append({
+    ...input,
+    from: { kind: 'agent', catId: 'codex-astra' },
+    origin: 'callback',
+    mentions: ['codex-sol'],
+    extra: { isExplicitPost: true, collectiveWorkDelegationV1: delegation },
+  });
+  assert.deepEqual(store.getById(delegated.id).extra.collectiveWorkDelegationV1, delegation);
+  assert.throws(
+    () =>
+      store.append({
+        ...input,
+        from: { kind: 'agent', catId: 'codex-sol' },
+        origin: 'callback',
+        mentions: ['codex-sol'],
+        extra: { isExplicitPost: true, collectiveWorkDelegationV1: delegation },
+      }),
+    /authenticated owner callback/,
+  );
+  assert.throws(
+    () =>
+      store.append({
+        ...input,
+        from: { kind: 'agent', catId: 'codex-astra' },
+        origin: 'callback',
+        mentions: ['opus'],
+        extra: { isExplicitPost: true, collectiveWorkDelegationV1: delegation },
+      }),
+    /authenticated owner callback/,
   );
 });
 
@@ -53,12 +130,40 @@ test('Redis extra parsing preserves valid authority and marks corrupt carriers s
     collectiveOwnerAdmissionV1: receipt,
   });
   assert.deepEqual(safeParseExtra(JSON.stringify({ collectiveWorkInvocationV1: trigger })), {
-    collectiveWorkInvocationV1: trigger,
+    collectiveWorkInvocationV1: { ...trigger, resultRevision: 1, executionRevision: 1 },
   });
+  assert.deepEqual(safeParseExtra(JSON.stringify({ collectiveWorkDelegationV1: delegation })), {
+    collectiveWorkDelegationV1: { ...delegation, resultRevision: 1, executionRevision: 1 },
+  });
+  assert.deepEqual(safeParseExtra(JSON.stringify({ collectiveWorkInvocationV1: { ...trigger, resultRevision: 2 } })), {
+    collectiveWorkInvocationV1: { ...trigger, resultRevision: 2, executionRevision: 1 },
+  });
+  assert.deepEqual(
+    safeParseExtra(JSON.stringify({ collectiveWorkDelegationV1: { ...delegation, resultRevision: 2 } })),
+    { collectiveWorkDelegationV1: { ...delegation, resultRevision: 2, executionRevision: 1 } },
+  );
+  for (const [key, carrier] of [
+    ['collectiveWorkInvocationV1', trigger],
+    ['collectiveWorkDelegationV1', delegation],
+  ]) {
+    const currentExecution = {
+      ...carrier,
+      resultRevision: 2,
+      executionRevision: 3,
+      executionRef: 'message:execution-A',
+    };
+    assert.deepEqual(safeParseExtra(JSON.stringify({ [key]: currentExecution })), { [key]: currentExecution });
+  }
   for (const value of [
     { collectiveOwnerAdmissionV1: { ...receipt, ownerAuthProvenance: 'unknown' } },
     { collectiveOwnerAdmissionV1: { ...receipt, sourceRef: 'other' } },
     { collectiveWorkInvocationV1: { ...trigger, observedRevision: -1 } },
+    { collectiveWorkInvocationV1: { ...trigger, resultRevision: 0 } },
+    { collectiveWorkInvocationV1: { ...trigger, executionRevision: 0 } },
+    { collectiveWorkInvocationV1: { ...trigger, executionRef: 'other' } },
+    { collectiveWorkDelegationV1: { ...delegation, executionRevision: -1 } },
+    { collectiveWorkDelegationV1: { ...delegation, executionRef: 'other' } },
+    { collectiveWorkDelegationV1: { ...delegation, targetCatIds: ['codex-astra'] } },
   ])
     assert.deepEqual(safeParseExtra(JSON.stringify(value)), { collectiveAuthorizationInvalid: true });
 });

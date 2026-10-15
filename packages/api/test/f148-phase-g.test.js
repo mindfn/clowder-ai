@@ -16,6 +16,17 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 const { buildThreadMemory } = await import('../dist/domains/cats/services/session/buildThreadMemory.js');
+
+// These legacy fixtures describe pure home chains; supply their known home position explicitly.
+function buildHomeMemoryFixture(existing, digest, maxTokens, signals, recentArtifacts) {
+  return buildThreadMemory(
+    existing,
+    digest,
+    { maxTokens, homePosition: { ordinal: digest.seq + 1, count: digest.seq + 1 } },
+    signals,
+    recentArtifacts,
+  );
+}
 const { rankArtifactSources, selectDirectiveSources } = await import(
   '../dist/domains/cats/services/agents/routing/source-ranking.js'
 );
@@ -54,7 +65,7 @@ describe('G1: artifact ledger accumulation', () => {
       },
     ];
 
-    const result = buildThreadMemory(existing, baseDigest, 500, undefined, newArtifacts);
+    const result = buildHomeMemoryFixture(existing, baseDigest, 500, undefined, newArtifacts);
 
     assert.equal(result.recentArtifacts.length, 2, 'should have both old and new artifacts');
     const refs = result.recentArtifacts.map((a) => a.ref);
@@ -84,7 +95,7 @@ describe('G1: artifact ledger accumulation', () => {
       },
     ];
 
-    const result = buildThreadMemory(existing, baseDigest, 500, undefined, newArtifacts);
+    const result = buildHomeMemoryFixture(existing, baseDigest, 500, undefined, newArtifacts);
 
     const sharedEntries = result.recentArtifacts.filter((a) => a.ref === 'src/shared.ts');
     assert.equal(sharedEntries.length, 1, 'dedup: only one entry per ref');
@@ -116,7 +127,7 @@ describe('G1: artifact ledger accumulation', () => {
       ops: ['create'],
     }));
 
-    const result = buildThreadMemory(existing, baseDigest, 500, undefined, newArtifacts);
+    const result = buildHomeMemoryFixture(existing, baseDigest, 500, undefined, newArtifacts);
 
     assert.equal(result.recentArtifacts.length, 20, 'should cap at 20');
     // All 5 new artifacts should be present (they're newest)
@@ -142,7 +153,7 @@ describe('G1: artifact ledger accumulation', () => {
       recentArtifacts: [{ type: 'pr', ref: 'org/repo#100', label: 'PR #100', updatedAt: 1000, updatedBy: 'opus' }],
     };
 
-    const result = buildThreadMemory(existing, baseDigest, 500, undefined, undefined);
+    const result = buildHomeMemoryFixture(existing, baseDigest, 500, undefined, undefined);
 
     assert.equal(result.recentArtifacts.length, 1, 'should carry forward existing');
     assert.equal(result.recentArtifacts[0].ref, 'org/repo#100');
@@ -159,7 +170,7 @@ describe('G1: artifact ledger accumulation', () => {
       { type: 'file', ref: 'src/first.ts', label: 'first.ts', updatedAt: 2000, updatedBy: 'opus', ops: ['create'] },
     ];
 
-    const result = buildThreadMemory(existing, baseDigest, 500, undefined, newArtifacts);
+    const result = buildHomeMemoryFixture(existing, baseDigest, 500, undefined, newArtifacts);
 
     assert.equal(result.recentArtifacts.length, 1);
     assert.equal(result.recentArtifacts[0].ref, 'src/first.ts');
@@ -180,7 +191,7 @@ describe('G1: artifact ledger accumulation', () => {
       { type: 'file', ref: 'src/newest.ts', label: 'newest.ts', updatedAt: 3000, updatedBy: 'codex', ops: ['create'] },
     ];
 
-    const result = buildThreadMemory(existing, baseDigest, 500, undefined, newArtifacts);
+    const result = buildHomeMemoryFixture(existing, baseDigest, 500, undefined, newArtifacts);
 
     assert.equal(result.recentArtifacts[0].ref, 'src/newest.ts', 'newest first');
     assert.equal(result.recentArtifacts[1].ref, 'src/middle.ts', 'middle second');

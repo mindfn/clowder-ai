@@ -5,17 +5,29 @@ import type {
   ConnectorRouteReceipt,
   HostRouteConfig,
 } from '@cat-cafe/collective-connector';
+import { resolveMaterializedParticipation } from '@cat-cafe/collective-connector';
 import {
   type CatId,
   type CollectiveEventEnvelope,
-  type ConnectorSource,
+  type CollectiveSourceIdentity,
   collectiveEventSourceIdentity,
+  participationSourceIsCurrent,
 } from '@cat-cafe/shared';
 
 import type { InvocationQueue } from '../../cats/services/agents/invocation/InvocationQueue.js';
-import { createInitialQueuedMessageCustody } from '../../cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
-import type { QueueProcessor } from '../../cats/services/agents/invocation/QueueProcessor.js';
 import type { IMessageStore, StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
+import { routeCollectiveChannelEvent } from './collective-channel-ingress.js';
+import {
+  attentionSource,
+  collectiveSender,
+  collectiveSource,
+  emitConnectorMessage,
+  ingressError,
+  ingressIdempotencyKey,
+  missingAgentRoute,
+  routeFailure,
+} from './collective-ingress-routing.js';
+import { persistCollectiveWorkNotice } from './collective-work-ingress.js';
 
 interface CollectiveIngressConnectorPort
   extends Pick<
@@ -27,7 +39,9 @@ interface CollectiveIngressConnectorPort
     | 'completeInboxRouting'
     | 'failInboxRouting'
     | 'readParticipationContext'
-  > {}
+  > {
+  readonly readWorkRoutingContext?: CollectiveConnector['readWorkRoutingContext'];
+}
 
 interface CollectiveIngressThread {
   readonly id: string;
@@ -38,13 +52,13 @@ interface CollectiveIngressThread {
 
 export interface CollectiveIngressDispatcherOptions {
   readonly admitStandingWork?: (source: StoredMessage, catId: CatId) => Promise<void>;
+  readonly resumeWorkRevision?: (source: StoredMessage, event: CollectiveEventEnvelope, catId: CatId) => Promise<void>;
   readonly connector: CollectiveIngressConnectorPort;
   readonly threadStore: {
     get(threadId: string): CollectiveIngressThread | null | Promise<CollectiveIngressThread | null>;
   };
-  readonly messageStore: Pick<IMessageStore, 'appendIdempotent'>;
-  readonly invocationQueue: Pick<InvocationQueue, 'enqueue' | 'backfillMessageId' | 'rollbackEnqueue'>;
-  readonly queueProcessor: Pick<QueueProcessor, 'processNext'>;
+  readonly messageStore: IMessageStore;
+  readonly invocationQueue: Pick<InvocationQueue, 'send'>;
   readonly socketManager: {
     broadcastToRoom(room: string, event: string, data: unknown): void;
     emitToUser?(userId: string, event: string, data: unknown): void;
@@ -111,58 +125,87 @@ export class CollectiveIngressDispatcher {
     route: HostRouteConfig,
     event: CollectiveEventEnvelope,
   ): Promise<ConnectorRouteReceipt> {
-    if (event.actor.kind === 'agent' && event.actor.provenance.connectionId === connection.connectionId) {
+    if (
+      event.actor.kind === 'agent' &&
+      event.actor.provenance.connectionId === connection.connectionId &&
+      !event.workAcceptanceNotice &&
+      !event.workExecutionNotice
+    ) {
       return { kind: 'local_echo' };
     }
     const authorizedHumanId = connection.authorizedHumanId;
     if (!authorizedHumanId) throw ingressError('IDENTITY_REBIND_REQUIRED', 'Connection has no bound Human');
 
     if (event.target.kind === 'human') {
-      if (event.target.humanId !== authorizedHumanId) {
-        return { kind: 'not_local' };
-      }
-      return this.persistVisibleEvent(route, event, route.humanNotificationThreadId);
+      return event.target.humanId === authorizedHumanId
+        ? this.persistVisibleEvent(route, event, route.humanNotificationThreadId)
+        : { kind: 'not_local' };
     }
     if (event.target.kind === 'agent') {
-      if (event.target.humanId !== authorizedHumanId) {
-        return { kind: 'not_local' };
-      }
-      const agentRoute = route.agentRoutes[agentRouteKey(event.target.humanId, event.target.agentId)];
-      if (!agentRoute) throw ingressError('ROUTE_AGENT_UNCONFIGURED', 'Agent target has no Host route');
-      const source = collectiveEventSourceIdentity(event);
-      if (source && source.connectionId !== connection.connectionId) return { kind: 'not_local' };
-      if (
-        !source ||
-        source.participationRevision !== route.revision ||
-        agentRoute.catId !== source.catId ||
-        !agentRoute.participation?.channelIds.includes(source.location.channelId)
-      ) {
-        throw ingressError('PARTICIPATION_REVOKED', 'Exact public participation is unavailable for this event');
-      }
-      if (!this.options.isCatAvailable(agentRoute.catId)) {
-        throw ingressError('ROUTE_CAT_UNAVAILABLE', 'Configured Cat is unavailable');
-      }
-      const thread = await this.requireThread(route, agentRoute.threadId);
-      if (!thread.participants?.includes(agentRoute.catId)) {
-        throw ingressError('ROUTE_CAT_NOT_IN_THREAD', 'Configured Cat is not a participant in the destination Thread');
-      }
-      await this.options.connector.readParticipationContext(source, 0, 1);
-      return this.persistAgentEvent(route, event, agentRoute.threadId, agentRoute.catId);
+      return this.routeAgentEvent(connection, route, event, event.target, authorizedHumanId);
     }
-    return this.persistVisibleEvent(route, event, route.defaultIngressThreadId);
+    return this.routeChannelEvent(connection, route, event);
+  }
+
+  private async routeAgentEvent(
+    connection: ConnectorProjection,
+    route: HostRouteConfig,
+    event: CollectiveEventEnvelope,
+    target: Extract<CollectiveEventEnvelope['target'], { kind: 'agent' }>,
+    authorizedHumanId: string,
+  ): Promise<ConnectorRouteReceipt> {
+    if (target.humanId !== authorizedHumanId) return { kind: 'not_local' };
+    const source = collectiveEventSourceIdentity(event);
+    if (source && source.connectionId !== connection.connectionId) return { kind: 'not_local' };
+    if (
+      !source ||
+      !participationSourceIsCurrent(route, source.catId, source.location.channelId, source.participationRevision) ||
+      source.catId !== target.agentId
+    ) {
+      throw ingressError('PARTICIPATION_REVOKED', 'Exact public participation is unavailable for this event');
+    }
+    const agentRoute = resolveMaterializedParticipation(
+      route,
+      authorizedHumanId,
+      target.agentId,
+      source.location.channelId,
+    );
+    if (!agentRoute) throw missingAgentRoute(route, authorizedHumanId, target.agentId);
+    if (!this.options.isCatAvailable(agentRoute.catId)) {
+      throw ingressError('ROUTE_CAT_UNAVAILABLE', 'Configured Cat is unavailable');
+    }
+    const thread = await this.requireThread(route, agentRoute.threadId);
+    if (!thread.participants?.includes(agentRoute.catId)) {
+      throw ingressError('ROUTE_CAT_NOT_IN_THREAD', 'Configured Cat is not a participant in the destination Thread');
+    }
+    await this.options.connector.readParticipationContext(source, 0, 1);
+    return this.persistAgentEvent(route, event, agentRoute.threadId, agentRoute.catId);
+  }
+
+  private routeChannelEvent(connection: ConnectorProjection, route: HostRouteConfig, event: CollectiveEventEnvelope) {
+    return routeCollectiveChannelEvent({
+      connection,
+      route,
+      event,
+      connector: this.options.connector,
+      isCatAvailable: this.options.isCatAvailable,
+      persistVisible: (threadId) => this.persistVisibleEvent(route, event, threadId),
+      persistAgent: (threadId, catId, source) => this.persistAgentEvent(route, event, threadId, catId, source),
+      requireThread: (threadId) => this.requireThread(route, threadId),
+    });
   }
 
   private async persistVisibleEvent(
     route: HostRouteConfig,
     event: CollectiveEventEnvelope,
     threadId: string,
-  ): Promise<ConnectorRouteReceipt> {
+  ): Promise<Extract<ConnectorRouteReceipt, { kind: 'thread_message' }>> {
     await this.requireThread(route, threadId);
     const source = collectiveSource(event);
     const stored = await this.options.messageStore.appendIdempotent({
       threadId,
       userId: route.localOwnerUserId,
-      catId: null,
+      from: collectiveMessageFrom(event),
       content: event.body,
       source,
       mentions: [],
@@ -179,65 +222,77 @@ export class CollectiveIngressDispatcher {
     event: CollectiveEventEnvelope,
     threadId: string,
     catId: string,
-  ): Promise<ConnectorRouteReceipt> {
+    sourceIdentity?: CollectiveSourceIdentity,
+  ): Promise<Extract<ConnectorRouteReceipt, { kind: 'thread_message' }>> {
     const idempotencyKey = ingressIdempotencyKey(event);
-    const enqueue = this.options.invocationQueue.enqueue({
-      threadId,
-      userId: route.localOwnerUserId,
-      ownerAuthProvenance: 'unknown',
-      executionScope: 'collective-participation',
-      idempotencyKey,
-      content: event.body,
-      source: 'connector',
-      targetCats: [catId],
-      intent: 'execute',
-      senderMeta: collectiveSender(event),
-      suggestedSkill: 'collective-participation',
-    });
-    if (enqueue.outcome === 'full' || !enqueue.entry) {
-      throw ingressError('ROUTE_QUEUE_FULL', 'Configured Cat queue is full');
-    }
-    try {
-      const source = collectiveSource(event);
+    if (event.workAcceptanceNotice || event.workExecutionNotice)
+      return persistCollectiveWorkNotice(this.options, route, event, threadId, catId, sourceIdentity);
+    if (event.workRequest === 'revise') {
+      if (!event.workRevisionNotice || !this.options.resumeWorkRevision) {
+        throw ingressError('WORK_REVISION_UNAVAILABLE', 'Host cannot resume this Work revision');
+      }
+      const source = collectiveSource(event, sourceIdentity);
       const stored = await this.options.messageStore.appendIdempotent({
         threadId,
         userId: route.localOwnerUserId,
-        catId: null,
+        from: collectiveMessageFrom(event),
+        content: event.body,
+        source,
+        mentions: [catId as CatId],
+        timestamp: Date.parse(event.acceptedAt),
+        idempotencyKey,
+        extra: { targetCats: [catId] },
+      });
+      await this.options.resumeWorkRevision(stored.message, event, catId as CatId);
+      if (!stored.idempotent)
+        emitConnectorMessage(this.options.socketManager, threadId, stored.message.id, event, source);
+      return { kind: 'thread_message', threadId, messageId: stored.message.id, catId };
+    }
+    const source = collectiveSource(event, sourceIdentity);
+    const from = collectiveMessageFrom(event);
+    const stored = await this.options.invocationQueue.send(
+      this.options.messageStore,
+      {
+        threadId,
+        userId: route.localOwnerUserId,
+        from,
         content: event.body,
         source,
         mentions: [catId as CatId],
         timestamp: Date.parse(event.acceptedAt),
         idempotencyKey,
         deliveryStatus: 'queued',
-        queueCustody: createInitialQueuedMessageCustody(enqueue.entry),
         extra: { targetCats: [catId] },
-      });
-      this.options.invocationQueue.backfillMessageId(
+      },
+      {
         threadId,
-        route.localOwnerUserId,
-        enqueue.entry.id,
-        stored.message.id,
-      );
-      if (event.workRequest === 'entrust') await this.options.admitStandingWork?.(stored.message, catId as CatId);
-      if (!stored.idempotent) {
-        this.options.socketManager.emitToUser?.(route.localOwnerUserId, 'messages_queued', {
-          threadId,
-          messageIds: [stored.message.id],
-          messages: [stored.message],
-        });
-      }
-      try {
-        await this.options.queueProcessor.processNext(threadId, route.localOwnerUserId);
-      } catch {
-        // Durable Queue custody owns execution after admission.
-      }
-      return { kind: 'thread_message', threadId, messageId: stored.message.id, catId };
-    } catch (error) {
-      if (!enqueue.deduped) {
-        this.options.invocationQueue.rollbackEnqueue(threadId, route.localOwnerUserId, enqueue.entry.id);
-      }
-      throw error;
+        userId: route.localOwnerUserId,
+        sourceId: idempotencyKey,
+        kind: 'conversation_input',
+        from,
+        ownerAuthProvenance: 'unknown',
+        executionScope: 'collective-participation',
+        idempotencyKey,
+        content: event.body,
+        targetCats: [catId],
+        intent: 'execute',
+        suggestedSkill: 'collective-participation',
+        onQueueEntriesAdmitted: async (_entries, message) => {
+          if (event.workRequest === 'entrust' && message)
+            await this.options.admitStandingWork?.(message, catId as CatId);
+        },
+      },
+    );
+    if (stored.outcome === 'full') throw ingressError('ROUTE_QUEUE_FULL', 'Configured Cat queue is full');
+    if (!stored.deduped) {
+      this.options.socketManager.emitToUser?.(route.localOwnerUserId, 'messages_queued', {
+        threadId,
+        messageIds: [stored.message.id],
+        messages: [stored.message],
+      });
     }
+
+    return { kind: 'thread_message', threadId, messageId: stored.message.id, catId };
   }
 
   private async requireThread(route: HostRouteConfig, threadId: string): Promise<CollectiveIngressThread> {
@@ -249,72 +304,7 @@ export class CollectiveIngressDispatcher {
   }
 }
 
-function agentRouteKey(humanId: string, agentId: string): string {
-  return `${humanId}:${agentId}`;
-}
-
-function ingressIdempotencyKey(event: CollectiveEventEnvelope): string {
-  return `collective-ingress:${event.serviceInstanceId}:${event.collectiveId}:${event.eventId}`;
-}
-
-function collectiveSender(event: CollectiveEventEnvelope): { id: string; name: string } {
-  if (event.actor.kind === 'human') return { id: event.actor.humanId, name: event.actor.displayName };
-  return {
-    id: `${event.actor.human.humanId}:${event.actor.agent.agentId}`,
-    name: `${event.actor.agent.displayName} · ${event.actor.human.displayName}`,
-  };
-}
-
-function collectiveSource(event: CollectiveEventEnvelope): ConnectorSource {
-  return {
-    connector: 'collective',
-    label: 'Collective',
-    icon: 'collective',
-    sender: collectiveSender(event),
-    meta: {
-      serviceInstanceId: event.serviceInstanceId,
-      collectiveId: event.collectiveId,
-      eventId: event.eventId,
-      sequence: event.sequence,
-      target: event.target,
-      ...(event.location ? { location: event.location } : {}),
-      ...(event.recipient ? { recipient: event.recipient } : {}),
-      actor: event.actor,
-      ...(event.workRequest ? { workRequest: event.workRequest } : {}),
-      ...(collectiveEventSourceIdentity(event) ? { participation: collectiveEventSourceIdentity(event) } : {}),
-    },
-  };
-}
-
-function emitConnectorMessage(
-  socketManager: CollectiveIngressDispatcherOptions['socketManager'],
-  threadId: string,
-  messageId: string,
-  event: CollectiveEventEnvelope,
-  source: ConnectorSource,
-): void {
-  socketManager.broadcastToRoom(`thread:${threadId}`, 'connector_message', {
-    threadId,
-    message: {
-      id: messageId,
-      type: 'connector',
-      content: event.body,
-      source,
-      timestamp: Date.parse(event.acceptedAt),
-    },
-  });
-}
-
-function ingressError(code: string, message: string): Error & { code: string } {
-  return Object.assign(new Error(message), { code });
-}
-
-function routeFailure(error: unknown): { code: string; message: string } {
-  if (error instanceof Error) {
-    const candidate = 'code' in error ? error.code : undefined;
-    const code =
-      typeof candidate === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/.test(candidate) ? candidate : 'ROUTE_DELIVERY_FAILED';
-    return { code, message: error.message.slice(0, 500) || 'Collective ingress routing failed' };
-  }
-  return { code: 'ROUTE_DELIVERY_FAILED', message: 'Collective ingress routing failed' };
+function collectiveMessageFrom(event: CollectiveEventEnvelope) {
+  const sender = collectiveSender(event);
+  return { kind: 'external' as const, connectorId: 'collective', sender };
 }

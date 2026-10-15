@@ -10,8 +10,9 @@ import {
   authenticatedCompactionSequenceFromSession,
   authoritativeCompactionEventFromSession,
   resolveAuthoritativeCompactionSupport,
-} from '../domains/cats/services/session/authoritative-compaction.js';
-import type { ContextEpochOwner } from '../domains/cats/services/session/ContextEpochOwner.js';
+} from '../domains/cats/services/session/context/authoritative-compaction.js';
+import type { ContextEpochOwner } from '../domains/cats/services/session/context/ContextEpochOwner.js';
+import { isHomeSession } from '../domains/cats/services/session/session-scope.js';
 import type { TranscriptReader } from '../domains/cats/services/session/TranscriptReader.js';
 import type { ISessionChainStore } from '../domains/cats/services/stores/ports/SessionChainStore.js';
 import type { AgentContextCapability } from '../domains/cats/services/types.js';
@@ -109,7 +110,7 @@ export function createSessionCompactionSurface(deps: SessionCompactionSurfaceDep
       }
 
       const record = await deps.sessionChainStore.getByCliSessionId(cliSessionId);
-      if (!record) {
+      if (!isHomeSession(record)) {
         reply.status(404);
         return { error: 'No session found for this CLI session ID' };
       }
@@ -137,7 +138,7 @@ export function createSessionCompactionSurface(deps: SessionCompactionSurfaceDep
       const postCompact = hasObservedCompact ? await projectPostCompact(record) : undefined;
       const chain = await deps.sessionChainStore.getChain(record.catId, record.threadId, record.userId);
       const sealedSessions = chain
-        .filter((session) => session.status === 'sealed' && session.sealedAt != null)
+        .filter((session) => isHomeSession(session) && session.status === 'sealed' && session.sealedAt != null)
         .sort((left, right) => (right.sealedAt ?? 0) - (left.sealedAt ?? 0));
       const latest = sealedSessions[0];
 
@@ -204,5 +205,13 @@ export function createSessionCompactionSurface(deps: SessionCompactionSurfaceDep
     });
   }
 
-  return { observeAuthoritativeCompaction, compactContinuityFor, registerLatestDigestRoute };
+  /** F117 K2: the cold context packet an in-process SessionStart(compact) hook hands the model. */
+  async function postCompactContextFor(cliSessionId: string): Promise<string | undefined> {
+    const record = await deps.sessionChainStore.getByCliSessionId(cliSessionId);
+    if (record?.status !== 'active') return undefined;
+    const projection = await projectPostCompact(record);
+    return projection.status === 'projected' ? projection.contextPacket : undefined;
+  }
+
+  return { observeAuthoritativeCompaction, compactContinuityFor, registerLatestDigestRoute, postCompactContextFor };
 }

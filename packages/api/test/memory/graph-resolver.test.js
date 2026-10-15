@@ -12,6 +12,26 @@ describe('GraphResolver', () => {
     await store.initialize();
   });
 
+  it('projects the canonical document displayType on visible graph nodes', async () => {
+    await store.upsert([
+      {
+        anchor: 'design',
+        kind: 'architecture',
+        status: 'active',
+        title: '设计规范',
+        sourcePath: 'design.md',
+        updatedAt: '2026-09-25',
+      },
+    ]);
+    const manifest = { id: 'project:visible', sensitivity: 'internal', kind: 'project' };
+    const resolver = new GraphResolver(
+      { list: () => [manifest], get: () => manifest },
+      new Map([[manifest.id, store]]),
+    );
+    const graph = await resolver.buildSubgraph('design', { centerCollectionId: manifest.id });
+    assert.equal(graph.nodes[0].displayType, '设计规范');
+  });
+
   it('builds subgraph centered on anchor with cross-collection edges', async () => {
     await store.upsert([
       {
@@ -114,6 +134,7 @@ describe('GraphResolver', () => {
     assert.ok(secretNode.anchor.startsWith('[redacted:'), 'redacted node must use opaque anchor');
     assert.ok(!secretNode.anchor.includes('secret'), 'real anchor must not leak');
     assert.equal(secretNode.title, '[redacted — private collection]');
+    assert.equal(secretNode.displayType, undefined, 'private classification must not leak');
   });
 
   it('returns empty graph for unknown anchor', async () => {

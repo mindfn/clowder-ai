@@ -3,7 +3,7 @@
  *
  * Mirrors ReviewFeedbackTaskSpec pattern:
  * Gate: list issue_tracking tasks → fetch comments → filter by cursor → workItems.
- * Execute: IssueCommentRouter → persist pending wake → durable trigger admission → acknowledge wake.
+ * Execute: canonical router/wait admission → settle cursor; Queue drain owes the owner wake.
  * Auto-close: issue closed → task marked done (AC-D4).
  *
  * F168 Phase B Task 4: Dual-cursor semantics when eventLog is injected.
@@ -12,7 +12,7 @@
  *   Notification time (lastNotifiedAt): advances only after the owner wake is accepted.
  *   With no eventLog injected: original single-cursor behaviour is unchanged.
  */
-import type { CatId, CommunityEvent, IssuePendingWake, TaskItem } from '@cat-cafe/shared';
+import type { CommunityEvent, TaskItem } from '@cat-cafe/shared';
 import { parseIssueSubjectKey } from '@cat-cafe/shared';
 import type { ITaskStore } from '../../domains/cats/services/stores/ports/TaskStore.js';
 import type { ICommunityEventLog } from '../../domains/community/CommunityEventLog.js';
@@ -24,7 +24,8 @@ import {
 } from '../../domains/community/issue-analysis/issue-comment-classifier.js';
 import type { GitHubWaitLifecycleService } from '../../domains/github-signals/GitHubWaitLifecycleService.js';
 import type { ExecuteContext, TaskSpec_P1 } from '../../infrastructure/scheduler/types.js';
-import type { ConnectorInvokeTrigger, ConnectorTriggerPolicy } from './ConnectorInvokeTrigger.js';
+import { gitHubAdmissionCanContinue, gitHubObjectSignal } from '../github/admission-budget.js';
+import { GitHubRateLimitError } from '../github/request-budget.js';
 import type { IssueComment, IssueCommentRouter } from './IssueCommentRouter.js';
 
 export interface IssueCommentSignal {
@@ -41,9 +42,7 @@ export interface IssueCommentSignal {
    */
   readonly waitFactComments?: IssueComment[];
   readonly deliveredCursor?: number;
-  readonly retryWake?: IssuePendingWake;
-  readonly commitRoutedWake?: (wake: IssuePendingWake) => Promise<void>;
-  readonly commitWakeAccepted: () => Promise<void>;
+  readonly commitWakeAccepted: (deliveredCursor: number) => Promise<void>;
   readonly issueState?: 'open' | 'closed';
 }
 
@@ -56,11 +55,23 @@ export interface IssueTrackingMetadata {
 export interface IssueCommentTaskSpecOptions {
   readonly taskStore: ITaskStore;
   readonly issueCommentRouter: IssueCommentRouter;
-  readonly fetchComments: (repoFullName: string, issueNumber: number, sinceId?: number) => Promise<IssueComment[]>;
-  readonly fetchIssueState: (repoFullName: string, issueNumber: number) => Promise<'open' | 'closed'>;
+  readonly fetchComments: (
+    repoFullName: string,
+    issueNumber: number,
+    sinceId?: number,
+    signal?: AbortSignal,
+  ) => Promise<IssueComment[]>;
+  readonly fetchIssueState: (
+    repoFullName: string,
+    issueNumber: number,
+    signal?: AbortSignal,
+  ) => Promise<'open' | 'closed'>;
   /** Preferred actor-aware metadata path; fetchIssueState remains for backward-compatible adapters. */
-  readonly fetchIssueMetadata?: (repoFullName: string, issueNumber: number) => Promise<IssueTrackingMetadata>;
-  readonly invokeTrigger?: ConnectorInvokeTrigger;
+  readonly fetchIssueMetadata?: (
+    repoFullName: string,
+    issueNumber: number,
+    signal?: AbortSignal,
+  ) => Promise<IssueTrackingMetadata>;
   /** F280 Phase C canonical one-shot wait lifecycle. Production wiring requires this. */
   readonly waitLifecycle?: Pick<GitHubWaitLifecycleService, 'observe'>;
   readonly log: {
@@ -174,41 +185,40 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
     }
   }
 
-  async function persistRoutedWake(
+  /**
+   * RFC §5.2: routing admits the envelope to the Queue in one transaction, so advancing the cursor
+   * and recording the notification is one settle — not a pending-wake ledger plus a later
+   * acknowledgement. Nothing is stranded between them, because a non-admitted route never gets here.
+   */
+  async function acknowledgeWake(
     taskId: string,
     issueKey: string,
-    wake: IssuePendingWake,
+    deliveredCursor: number,
     advanceCollectionCursor = false,
   ): Promise<void> {
-    // Persist first: this state is the recovery ledger for a connector message that
-    // already exists but whose owner wake has not reached durable admission.
     await opts.taskStore.patchAutomationState(taskId, {
       issue: {
-        ...(advanceCollectionCursor ? { lastCommentCursor: wake.deliveredCursor } : {}),
-        lastDeliveredCursor: wake.deliveredCursor,
-        pendingWake: wake,
-      },
-    });
-    if (advanceCollectionCursor) commentCursors.set(issueKey, wake.deliveredCursor);
-    deliveryCursors.set(issueKey, wake.deliveredCursor);
-  }
-
-  async function acknowledgeWake(taskId: string, issueKey: string): Promise<void> {
-    await opts.taskStore.patchAutomationState(taskId, {
-      issue: {
+        ...(advanceCollectionCursor ? { lastCommentCursor: deliveredCursor } : {}),
+        lastDeliveredCursor: deliveredCursor,
+        // Legacy rows may still carry a pendingWake from the retired two-step; clear it on settle.
         pendingWake: null,
         lastNotifiedAt: Date.now(),
       },
     });
+    if (advanceCollectionCursor) commentCursors.set(issueKey, deliveredCursor);
+    deliveryCursors.set(issueKey, deliveredCursor);
     opts.log.info(`[issue-comment] Issue ${issueKey} routed message wake accepted; tracking remains active`);
   }
 
+  let nextTaskIndex = 0;
   return {
     id: opts.id ?? 'issue-comment',
     profile: 'poller',
     trigger: { type: 'interval', ms: opts.pollIntervalMs ?? 60_000 },
     admission: {
-      async gate() {
+      async gate(ctx) {
+        const gateSignal = ctx?.signal;
+        gateSignal?.throwIfAborted();
         const tasks = (await opts.taskStore.listByKind('issue_tracking')).filter((t) => t.status !== 'done');
         if (tasks.length === 0) {
           return { run: false, reason: 'no tracked issues' };
@@ -216,37 +226,29 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
 
         const workItems: { signal: IssueCommentSignal; subjectKey: string }[] = [];
 
-        for (const task of tasks) {
+        const startIndex = nextTaskIndex % tasks.length;
+        for (let step = 0; step < tasks.length; step++) {
+          gateSignal?.throwIfAborted();
+          if (!gitHubAdmissionCanContinue(ctx)) break;
+          const signal = gitHubObjectSignal(ctx);
+          const index = (startIndex + step) % tasks.length;
+          const task = tasks[index]!;
+          nextTaskIndex = (index + 1) % tasks.length;
           try {
             const parsed = task.subjectKey ? parseIssueSubjectKey(task.subjectKey) : null;
             if (!parsed) continue;
             const { repoFullName, issueNumber } = parsed;
             const issueKey = `${repoFullName}#${issueNumber}`;
 
-            // Recovery takes precedence over collecting more GitHub activity. The
-            // connector message is already persisted, so retry its original idempotency
-            // key instead of routing the same comments into a duplicate thread message.
-            const pendingWake = task.automationState?.issue?.pendingWake;
-            if (pendingWake) {
-              workItems.push({
-                signal: {
-                  task,
-                  repoFullName,
-                  issueNumber,
-                  newComments: [],
-                  retryWake: pendingWake,
-                  commitWakeAccepted: () => acknowledgeWake(task.id, issueKey),
-                },
-                subjectKey: task.subjectKey!,
-              });
-              continue;
-            }
+            // No pending-wake recovery branch: a route either admits the envelope (cursor settles)
+            // or it does not (cursor held), so the next poll simply re-observes and re-admits under
+            // the same idempotency key. The Queue is the retry ledger.
 
             // AC-D4: Check issue state (fetch before comment processing so
             // pending comments are delivered before auto-close — P2-cloud fix)
             const issueMetadata = opts.fetchIssueMetadata
-              ? await opts.fetchIssueMetadata(repoFullName, issueNumber)
-              : { state: await opts.fetchIssueState(repoFullName, issueNumber) };
+              ? await opts.fetchIssueMetadata(repoFullName, issueNumber, signal)
+              : { state: await opts.fetchIssueState(repoFullName, issueNumber, signal) };
             const issueState = issueMetadata.state;
 
             if (opts.eventLog) {
@@ -267,7 +269,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
 
               // Fetch since delivery cursor (may include already-collected comments that weren't delivered)
               const fetchSince = Math.min(collectionCursor, deliveryCursor); // = deliveryCursor always
-              const comments = await opts.fetchComments(repoFullName, issueNumber, fetchSince);
+              const comments = await opts.fetchComments(repoFullName, issueNumber, fetchSince, signal);
               const allPending = comments.filter((c) => c.id > fetchSince);
 
               // ── Collection pass: attempt append for ALL pending-delivery comments ────
@@ -383,8 +385,17 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                 : [];
 
               if (issueState === 'closed') {
-                // Issue closed: deliver final pending batch (if any), then mark done
-                if (pendingDelivery.length > 0 || waitFactComments.length > 0) {
+                if (processedComments.length < allPending.length) {
+                  // Cloud R6 P1-2 / #1392 AC-2: collection failed midway — processedComments is shorter
+                  // than allPending because the loop broke on an append/projector error. Do NOT end
+                  // tracking, not even with the part that was collected: a done task is never polled
+                  // again, so the failed comment would be dropped for good. The delivery cursor is
+                  // still before this batch, so the next poll collects it again and closes with it.
+                  opts.log.info(
+                    `[issue-comment] Issue ${issueKey} closed but collection incomplete (${processedComments.length}/${allPending.length}) — will retry`,
+                  );
+                } else if (pendingDelivery.length > 0 || waitFactComments.length > 0) {
+                  // Issue closed: deliver the final batch, then mark done
                   workItems.push({
                     signal: {
                       task,
@@ -394,19 +405,10 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                       waitFactComments,
                       issueState,
                       deliveredCursor: processedDeliveryBoundary,
-                      commitRoutedWake: (wake) => persistRoutedWake(task.id, issueKey, wake),
-                      commitWakeAccepted: () => acknowledgeWake(task.id, issueKey),
+                      commitWakeAccepted: (cursor) => acknowledgeWake(task.id, issueKey, cursor),
                     },
                     subjectKey: task.subjectKey!,
                   });
-                } else if (processedComments.length < allPending.length) {
-                  // Cloud R6 P1-2: Collection failed midway — processedComments is shorter than
-                  // allPending because the loop broke on an append/projector error. Do NOT mark
-                  // done: the cursor is still before the failed comment so the next poll can retry.
-                  // Marking done here would permanently stop retries on a transient failure.
-                  opts.log.info(
-                    `[issue-comment] Issue ${issueKey} closed but collection incomplete (${processedComments.length}/${allPending.length}) — will retry`,
-                  );
                 } else {
                   // No pending delivery AND all fetched comments were successfully collected
                   // (or no new comments at all) → safe to close the tracking task.
@@ -423,7 +425,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                         newComments: [],
                         issueState,
                         deliveredCursor: processedDeliveryBoundary,
-                        commitWakeAccepted: () => acknowledgeWake(task.id, issueKey),
+                        commitWakeAccepted: (cursor) => acknowledgeWake(task.id, issueKey, cursor),
                       },
                       subjectKey: task.subjectKey!,
                     });
@@ -462,8 +464,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                   waitFactComments,
                   issueState,
                   deliveredCursor: processedDeliveryBoundary,
-                  commitRoutedWake: (wake) => persistRoutedWake(task.id, issueKey, wake),
-                  commitWakeAccepted: () => acknowledgeWake(task.id, issueKey),
+                  commitWakeAccepted: (cursor) => acknowledgeWake(task.id, issueKey, cursor),
                 },
                 subjectKey: task.subjectKey!,
               });
@@ -473,7 +474,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                 commentCursors.get(issueKey),
                 task.automationState?.issue?.lastCommentCursor,
               );
-              const comments = await opts.fetchComments(repoFullName, issueNumber, commentCursor);
+              const comments = await opts.fetchComments(repoFullName, issueNumber, commentCursor, signal);
               const allNewComments = comments.filter((c) => c.id > commentCursor);
 
               // Use the same canonical classifier as dual-cursor collection/delivery so
@@ -508,8 +509,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                       waitFactComments,
                       issueState,
                       deliveredCursor: maxCommentId,
-                      commitRoutedWake: (wake) => persistRoutedWake(task.id, issueKey, wake, true),
-                      commitWakeAccepted: () => acknowledgeWake(task.id, issueKey),
+                      commitWakeAccepted: (cursor) => acknowledgeWake(task.id, issueKey, cursor, true),
                     },
                     subjectKey: task.subjectKey!,
                   });
@@ -524,7 +524,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                         newComments: [],
                         issueState,
                         deliveredCursor: maxCommentId,
-                        commitWakeAccepted: () => acknowledgeWake(task.id, issueKey),
+                        commitWakeAccepted: (cursor) => acknowledgeWake(task.id, issueKey, cursor),
                       },
                       subjectKey: task.subjectKey!,
                     });
@@ -548,13 +548,14 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
                   waitFactComments,
                   issueState,
                   deliveredCursor: maxCommentId,
-                  commitRoutedWake: (wake) => persistRoutedWake(task.id, issueKey, wake, true),
-                  commitWakeAccepted: () => acknowledgeWake(task.id, issueKey),
+                  commitWakeAccepted: (cursor) => acknowledgeWake(task.id, issueKey, cursor, true),
                 },
                 subjectKey: task.subjectKey!,
               });
             }
           } catch (err) {
+            gateSignal?.throwIfAborted();
+            if (err instanceof GitHubRateLimitError) continue;
             opts.log.warn(
               { err, taskId: task.id, subjectKey: task.subjectKey },
               '[issue-comment] fail-open: skipping issue where fetch failed',
@@ -562,6 +563,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
           }
         }
 
+        gateSignal?.throwIfAborted();
         if (workItems.length === 0) {
           return { run: false, reason: 'no new comments' };
         }
@@ -595,7 +597,7 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
             (observedComments.length > 0
               ? Math.max(...observedComments.map((comment) => comment.id))
               : (task.automationState?.issue?.lastCommentCursor ?? 0));
-          const observed = await opts.waitLifecycle.observe({
+          await opts.waitLifecycle.observe({
             taskId: task.id,
             facts: {
               issue: {
@@ -620,132 +622,48 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
             ...(signal.issueState === 'closed' ? { subjectState: 'closed' as const } : {}),
           });
           ctx?.signal?.throwIfAborted();
-          // #1392 AC-6: observe() writes the owner's message; it does not start the owner. Returning
-          // here left every tracked issue comment delivered and unanswered. Mirrors the PR-side
-          // task specs: one best-effort wake for the message that was actually delivered.
-          if (observed.kind === 'notified' && opts.invokeTrigger) {
-            const ownerCatId = observed.task.ownerCatId ?? task.ownerCatId;
-            try {
-              await opts.invokeTrigger.trigger(
-                observed.task.threadId,
-                ownerCatId as CatId,
-                task.userId,
-                observed.content,
-                observed.messageId,
-                undefined,
-                {
-                  priority: 'normal',
-                  reason: 'github_wait_satisfied',
-                  sourceCategory: 'issue',
-                  coalesceKey: `${subjectKey}:wait:${ownerCatId || 'unassigned'}`,
-                },
-              );
-            } catch (err) {
-              opts.log.warn({ err, subjectKey }, '[issue-comment] wake after delivery failed (best-effort)');
-            }
-          }
+          // #1392 AC-6 is now structural: observe() admits the input to the Queue in one transaction,
+          // and Queue drain starts the owner. There is no second best-effort wake to forget or drop.
           return;
         }
 
-        let wake = signal.retryWake;
-        if (!wake) {
-          const routeResult = await opts.issueCommentRouter.route(
-            {
-              repoFullName: signal.repoFullName,
-              issueNumber: signal.issueNumber,
-              newComments: signal.newComments,
-            },
-            {
-              threadId: task.threadId,
-              catId: task.ownerCatId,
-              userId: task.userId,
-            },
-          );
-          ctx?.signal?.throwIfAborted();
+        // RFC §5.2: routing IS admission. A `notified` route means the envelope is durably queued
+        // and Queue drain owes the owner wake; anything else leaves the cursor untouched so the next
+        // poll re-observes and re-admits under the same idempotency key. That removes the whole
+        // "persist a pending wake and retry it later" obligation group — the Queue already is it.
+        const routeResult = await opts.issueCommentRouter.route(
+          {
+            repoFullName: signal.repoFullName,
+            issueNumber: signal.issueNumber,
+            newComments: signal.newComments,
+          },
+          {
+            threadId: task.threadId,
+            catId: task.ownerCatId,
+            userId: task.userId,
+          },
+        );
+        ctx?.signal?.throwIfAborted();
+        if (routeResult.kind !== 'notified') return;
 
-          if (routeResult.kind !== 'notified') return;
-          wake = {
-            threadId: routeResult.threadId,
-            catId: routeResult.catId,
-            content: routeResult.content,
-            messageId: routeResult.messageId,
-            deliveredCursor:
-              signal.deliveredCursor ??
-              (signal.newComments.length > 0 ? Math.max(...signal.newComments.map((comment) => comment.id)) : 0),
-          };
-          // Persisting pendingWake transfers retry ownership to this execute call.
-          // Trigger admission + acknowledgement must settle as one obligation group.
-          await signal.commitRoutedWake?.(wake);
-        }
-
-        let wakeAccepted = false;
         if (opts.holdLifecycle) {
           try {
             await opts.holdLifecycle.retireSatisfiedWait({
-              threadId: wake.threadId,
+              threadId: routeResult.threadId,
               subjectKey,
               expectedSignalKey: 'comment_posted',
               sourceKind: 'issue_comment',
-              sourceMessageId: wake.messageId,
+              sourceMessageId: routeResult.messageId,
             });
           } catch (err) {
             opts.log.warn({ err, subjectKey }, '[issue-comment] hold lifecycle retirement failed (best-effort)');
           }
         }
-        if (opts.invokeTrigger) {
-          try {
-            const coalesceTargetCatId = wake.catId || task.ownerCatId || 'unassigned';
-            const policy: ConnectorTriggerPolicy = {
-              priority: 'normal',
-              reason: 'github_issue_comment',
-              sourceCategory: 'issue',
-              coalesceKey: `${subjectKey}:issue-comment:${coalesceTargetCatId}`,
-            };
-            const outcome = await opts.invokeTrigger.trigger(
-              wake.threadId,
-              wake.catId as CatId,
-              task.userId,
-              wake.content,
-              wake.messageId,
-              undefined,
-              policy,
-            );
-            wakeAccepted = outcome === 'dispatched' || outcome === 'enqueued';
-            if (!wakeAccepted) {
-              opts.log.error(
-                { taskId: task.id, subjectKey, threadId: wake.threadId, catId: wake.catId, outcome },
-                '[issue-comment] wake was not accepted; routed message remains pending for retry',
-              );
-            }
-          } catch (err) {
-            opts.log.error(
-              {
-                err,
-                taskId: task.id,
-                subjectKey,
-                threadId: wake.threadId,
-                catId: wake.catId,
-                outcome: 'error',
-              },
-              '[issue-comment] wake was not accepted; routed message remains pending for retry',
-            );
-          }
-        } else {
-          opts.log.error(
-            {
-              taskId: task.id,
-              subjectKey,
-              threadId: wake.threadId,
-              catId: wake.catId,
-              outcome: 'missing_trigger',
-            },
-            '[issue-comment] wake was not accepted; routed message remains pending for retry',
-          );
-        }
 
-        if (wakeAccepted) {
-          await signal.commitWakeAccepted();
-        }
+        const deliveredCursor =
+          signal.deliveredCursor ??
+          (signal.newComments.length > 0 ? Math.max(...signal.newComments.map((comment) => comment.id)) : 0);
+        await signal.commitWakeAccepted(deliveredCursor);
       },
     },
     state: { runLedger: 'sqlite' },

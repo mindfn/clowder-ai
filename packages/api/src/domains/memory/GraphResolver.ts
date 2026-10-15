@@ -1,5 +1,6 @@
 import type { CollectionSensitivity } from './collection-types.js';
 import { COLLECTION_SENSITIVITY_ORDER } from './collection-types.js';
+import { evidenceDisplayType } from './evidence-display-type.js';
 import { computeEdgeWeight } from './graph-edge-weight.js';
 import type { EvidenceItem } from './interfaces.js';
 import { isGenericRecallEligible, isGenericRecallEligibleAnchor } from './recall-delivery-eligibility.js';
@@ -25,6 +26,7 @@ export interface GraphNode {
   collectionId: string;
   sensitivity: CollectionSensitivity;
   kind: string;
+  displayType?: string;
   title: string;
   redacted: boolean;
 }
@@ -236,6 +238,7 @@ export class GraphResolver {
             kind: isRedacted ? 'redacted' : kind,
             title: isRedacted ? `[redacted — ${sensitivity} collection]` : title,
             redacted: isRedacted,
+            ...(doc && !isRedacted ? { displayType: evidenceDisplayType(doc) } : {}),
           });
         }
 
@@ -321,13 +324,15 @@ export class GraphResolver {
     const finalNodes = Array.from(nodesMap.entries()).map(([realAnchor, node]) => {
       const unresolvedRedaction = unresolvedRedactionMap.get(realAnchor);
       if (!unresolvedRedaction?.redacted) return node;
-      return {
+      const redacted = {
         ...node,
         anchor: opaqueAnchor(realAnchor),
         sensitivity: unresolvedRedaction.sensitivity,
         title: `[redacted — ${unresolvedRedaction.sensitivity} unresolved]`,
         redacted: true,
       };
+      delete redacted.displayType;
+      return redacted;
     });
     const centerRedaction = unresolvedRedactionMap.get(resolvedCenterAnchor);
     const center = nodesMap.has(resolvedCenterAnchor)

@@ -1,20 +1,34 @@
 import type {
+  CatRoutingError,
   CliDiagnostics,
   ContextAttachment,
   CrossThreadCoordination,
   CustodyOfferV1,
-  FreshnessSupplementProjection,
+  LifecycleActiveRun,
+  LifecycleAppendAction,
+  LifecycleStoredMessageMetadata,
   MessageBundleCarrierV1,
   MessageContent,
+  MessageFrom,
+  MessageMediaPublicationSource,
   ProviderSemanticEvent,
   ProviderSubexecutionSemanticEvent,
   PublishedFreshnessAnnotation,
-  QueueMessageReceipt,
+  QueueAuthorIntentReceipt,
   QueueRecoveryAction,
   ReplyPreview,
   SchedulerMessageExtra,
+  ThreadArtifactDTO,
   TurnExecutionMessageProjection,
 } from '@cat-cafe/shared';
+export interface RuntimeConversationAnswerContext {
+  interactionId: string;
+  expectedRevision: number;
+  operationId: string;
+  ownerUserId: string;
+  cardRef: import('@cat-cafe/shared').RuntimeInteractionCardRef;
+}
+
 import type { WorkspaceMode } from '@/lib/workspace-modes';
 import type { EvidenceSourceType } from '@/types/evidence';
 
@@ -24,7 +38,7 @@ export type { A2ARoutingMode, A2ARoutingProjection, CliDiagnostics } from '@cat-
 
 import type { A2ARoutingProjection } from '@cat-cafe/shared';
 
-export type ThreadSystemKind = 'connector_hub' | 'eval_domain' | 'cat_bedroom' | 'memory_ops';
+export type ThreadSystemKind = 'connector_hub' | 'eval_domain' | 'cat_bedroom' | 'memory_ops' | 'collective_channel';
 
 export type { FileContent, ImageContent, MessageContent, TextContent } from '@cat-cafe/shared';
 
@@ -52,9 +66,22 @@ export interface TokenUsage {
 }
 
 export interface ChatMessageMetadata {
+  executionAccount?: import('@cat-cafe/shared').ExecutionAccountSnapshot;
   provider: string;
   model: string;
   sessionId?: string;
+  /** F319: model the upstream actually answered with; absent = not observed. */
+  servedModel?: string;
+  /** F319: upstream response id the served model was read from. */
+  servedResponseId?: string;
+  /** F319: how servedModel was observed. */
+  servedModelSource?: 'sse_response_object' | 'ws_response_object';
+  /** F319 Phase B.2: length of the upstream turn-state token (informational, not a reroute signal). */
+  upstreamTurnStateLength?: number;
+  /** F319 Phase B.2: upstream safety-buffering "faster model" header (account-level, informational). */
+  upstreamSafetyBufferingFasterModel?: string;
+  /** F319 Phase B.2: upstream `response.safety_buffering` flag. */
+  upstreamSafetyBuffering?: boolean;
   usage?: TokenUsage;
   /** Provider-neutral child lifecycle recovered with the owning root message. */
   subexecutionEvents?: readonly ProviderSubexecutionSemanticEvent[];
@@ -79,6 +106,7 @@ export interface EvidenceData {
 
 export interface ToolEvent {
   id: string;
+  executionRef?: string;
   type: 'tool_use' | 'tool_result';
   label: string;
   detail?: string;
@@ -200,6 +228,8 @@ export interface RichInteractiveBlock {
   messageTemplate?: string;
   disabled?: boolean;
   selectedIds?: string[];
+  /** Set false when adjacent blocks belong to separate producer items and must submit independently. */
+  autoGroup?: boolean;
   /** Phase C: blocks sharing the same groupId are submitted together */
   groupId?: string;
 }
@@ -263,15 +293,26 @@ export interface SystemInfoProjection {
   readonly fallbackCatId?: string;
 }
 
+export type MessagePublicationOrigin = Pick<
+  import('@cat-cafe/shared').MessageMediaPublicationSource,
+  'messageId' | 'messageRevision' | 'item'
+>;
+
 export interface ChatMessage {
   id: string;
+  /** RFC #1356 canonical sender identity for persisted messages. */
+  from?: MessageFrom;
   /** Client-only exact persisted records folded into this canonical bubble. */
   projectionSourceMessageIds?: string[];
+  /** Client projection coordinates only; the content owner still verifies each original persisted item. */
+  projectionPublicationOrigins?: Record<string, MessagePublicationOrigin>;
   type: 'user' | 'assistant' | 'system' | 'summary' | 'connector';
   /** Visual variant for system messages */
   variant?: 'error' | 'info' | 'tool' | 'evidence' | 'a2a_followup' | 'governance_blocked';
   catId?: string;
   content: string;
+  /** #1354: canonical Queue → History → Active Run lifecycle projection. */
+  lifecycle?: LifecycleStoredMessageMetadata;
   /** F97: External connector source. Present when type='connector' */
   source?: ConnectorSourceData;
   contentBlocks?: MessageContent[];
@@ -293,11 +334,28 @@ export interface ChatMessage {
   evidence?: EvidenceData;
   /** F22+F52+F098-C1: Rich blocks + cross-thread origin + explicit targets */
   extra?: {
+    runtimeInteractionCard?: {
+      version: 1;
+      interactionId: string;
+      blockId: string;
+      requestKind: 'approval' | 'question' | 'elicitation' | 'conversation_decision';
+    };
+    outputLayout?: import('@cat-cafe/shared').MessageOutputLayoutV1;
+    /** F310 source-owner projection; the card rehydrates canonical state before acting. */
+    custodyOfferV1?: CustodyOfferV1;
     /** F306 durable projection input shared by live, hydration, callback and replay. */
     semanticEvent?: ProviderSemanticEvent;
     rich?: { v: 1; blocks: RichBlock[] };
-    /** F310 source-owner projection; the card rehydrates canonical state before acting. */
-    custodyOfferV1?: CustodyOfferV1;
+    /** #1354 structured routing feedback retained with the exact input message. */
+    routingWarnings?: readonly CatRoutingError[];
+    /** F317: Host-saved identity for this Live turn; never infer old identity from today's config. */
+    liveCompanion?: {
+      modality: 'voice' | 'result';
+      identity?: import('@cat-cafe/shared').CompanionIdentitySnapshotV1;
+    };
+    contentModificationRequestV1?: import('@cat-cafe/shared').ContentModificationSourceMessageV1;
+    /** F309: Host receipt (candidate, rejection, write-back) for a content-modification request. */
+    contentModificationReceiptV1?: import('@cat-cafe/shared').ContentModificationReceiptV1;
     crossPost?: { sourceThreadId: string; sourceInvocationId?: string };
     /** F081: Stream identity for continuity / hydration reconcile.
      *  F194 Phase Z3: dual id —
@@ -305,15 +363,9 @@ export interface ChatMessage {
      *    - `turnInvocationId` is the per-cat-turn invocation id (bubble identity stable key — required
      *      for same-parent multi-turn-same-cat bubbles to NOT merge; see砚砚 catch 2026-05-09 17:32)
      *  Frontend `getBubbleInvocationId` prefers `turnInvocationId` (fallback `invocationId` for legacy).
-     *  F194 Phase Z11: when projection merges a stream record + a post_message callback into one
-     *  canonical bubble (Z8 KD-27), the bubble origin becomes `callback`. ChatMessage then loses the
-     *  CLI Output stdout (it only feeds content to toCliEvents when origin==='stream'). To keep CLI
-     *  Output behavior consistent regardless of post_msg, projection exposes:
-     *    - `cliStdout`: the stream-origin content portion → ChatMessage feeds this to the CLI Output
-     *    - `speechContent`: the callback-origin content portion → ChatMessage renders this as the
-     *      main bubble body (the post_msg speech), instead of the full concat
-     *  Both are set ONLY when a group contains BOTH stream and callback records (the merge case);
-     *  pure-stream / pure-callback groups leave them undefined so existing rendering is unchanged. */
+     *  Legacy persisted records may contain merged stream/callback projections.
+     *  `cliStdout` and `speechContent` preserve their historical rendering; new callback
+     *  messages and final responses have independent identities and are not merged. */
     stream?: {
       invocationId?: string;
       turnInvocationId?: string;
@@ -345,33 +397,10 @@ export interface ChatMessage {
       reasonKind: 'needs_bootstrap' | 'needs_confirmation' | 'files_missing';
       invocationId?: string;
     };
-    /** F254 Phase E: identity-bound catch projection, rebuilt from closure truth. */
-    freshnessClosure?: {
-      closureId: string;
-      status: 'catching_up' | 'blocked';
-      sourceInvocationId?: string;
-      sourceMessageId?: string;
-      turnInvocationId?: string;
-      originTriggerMessageId?: string | null;
-      blockedReason?: string;
-      replayUnsafeToolNames?: string[];
-      updatedAt?: number;
-      /** Shared schema guarantees null origin only for pre-lineage legacy data. */
-      legacy?: boolean;
-    };
     /** ADR-042 exact-boundary fact attached to every glass-box-published answer. */
     freshness?: PublishedFreshnessAnnotation;
-    /** ADR-042 additive reply provenance; separate from recovery provenance. */
-    supplement?: {
-      lineageId: string;
-      supplementId: string;
-      seq: 1 | 2;
-      originalMessageId: string;
-    };
-    /** Durable supplement lifecycle projected onto the published original. */
-    freshnessSupplement?: FreshnessSupplementProjection;
-    /** F264: server-derived durable per-target message receipt. */
-    queueReceipt?: QueueMessageReceipt;
+    /** Fresh source created by an owner-authorized cloud delivery retry. */
+    cloudBridgeRetry?: import('@cat-cafe/shared').CloudBridgeRetryV1;
     /** F264 Gap F: content-free message recall truth projected for the owner timeline. */
     recall?: {
       version: 1;
@@ -390,29 +419,18 @@ export interface ChatMessage {
     /**
      * F173 a2a-handoff bug fix: marker for system messages that must be
      * timestamp-ordered into the message list (not appended at end).
-     * a2a_handoff: routing pill (for example "缅因猫(codex) → 布偶猫(Opus 4.7)")
-     * emitted by route-serial,
+     * a2a_handoff: parallel routing pill (for example "缅因猫(codex) ⇉ 布偶猫(Opus 4.7)")
      * which can arrive after the next cat's stream bubble due to WebSocket
      * pipeline race; without marker it ends up visually after the bubble it
      * should precede.
      */
-    systemKind?: 'a2a_routing' | 'context_briefing' | 'freshness_closure';
+    systemKind?: 'a2a_routing' | 'context_briefing' | 'content_modification_receipt';
     /** Machine-readable A2A route metadata. The visible pill text is human-readable; this survives F5. */
     a2aRouting?: { fromCatId?: string; targetCatId?: string; invocationId?: string; routing?: A2ARoutingProjection };
     /** F254 incident salvage: durable provenance for a message restored at its original time. */
     recovery?: MessageRecoveryExtra;
     /** Original visible system_info payload; content remains the persisted fallback copy. */
     systemInfo?: SystemInfoProjection;
-    /** Rebuildable projection of canonical InvocationRecord truth after the UI wait window expires. */
-    invocationReconciliation?: {
-      v: 1;
-      invocationId: string;
-      catIds: string[];
-      turnInvocationIds: string[];
-      phase: 'running' | 'succeeded' | 'failed' | 'canceled' | 'unknown_running';
-      reason?: 'record_not_found' | 'record_unavailable' | 'record_mismatch';
-      updatedAt: number;
-    };
     /** Invocation-scoped transient provider reconnect lifecycle. Raw attempts stay as evidence. */
     providerRecovery?: {
       v: 1;
@@ -460,6 +478,7 @@ export interface Thread {
   id: string;
   projectPath: string;
   title: string | null;
+  sessionImport?: { sessionId: string; catId: string };
   createdBy: string;
   participants: string[];
   lastActiveAt: number;
@@ -675,6 +694,7 @@ export interface CompactBoundaryTelemetry {
 }
 
 export interface CatInvocationInfo {
+  settlement?: import('@cat-cafe/shared').QueueInvocationSettlement;
   /** Exact concrete provider carrier; absent only for legacy events and fails closed in consumers. */
   freshnessCarrierCapability?: import('@cat-cafe/shared').FreshnessCarrierCapability;
   sessionId?: string;
@@ -685,6 +705,8 @@ export interface CatInvocationInfo {
    *  Stamped into formal/live message `extra.stream.turnInvocationId` so frontend bubble dedup
    *  uses the turn dimension (prevents same-parent multi-turn-same-cat bubble merge). */
   turnInvocationId?: string;
+  /** Exact server-owned working identity. Dynamic UI must fail closed without it. */
+  activeRun?: LifecycleActiveRun;
   durationMs?: number;
   startedAt?: number;
   usage?: TokenUsage;
@@ -792,20 +814,17 @@ export interface QueueEntry {
   content: string;
   messageId: string | null;
   mergedMessageIds: string[];
-  source: 'user' | 'connector' | 'agent';
+  from: MessageFrom;
   targetCats: string[];
+  /** #1354 structured routing feedback retained on the inline Queue payload. */
+  routingWarnings?: readonly CatRoutingError[];
   intent: string;
-  status: 'queued' | 'processing';
-  /** F254 canonical per-target read projection, hydrated from GET /queue after F5. */
-  targetStates?: Record<
-    string,
-    'queued' | 'notified' | 'awakened' | 'seen' | 'failed' | 'steering' | 'withdrawn' | 'handled'
-  >;
+  status: 'queued';
+  /** Pending-target delivery preference. History dispatchRefs own actual delivery. */
+  authorIntentByTarget?: Record<string, QueueAuthorIntentReceipt>;
   createdAt: number;
   /** F122B: auto-execute without waiting for steer */
   autoExecute?: boolean;
-  /** F122B: which cat initiated this entry (for A2A handoff display) */
-  callerCatId?: string;
   /** F175: dequeue priority */
   priority?: 'urgent' | 'normal';
   /** F175: source category for visual grouping */
@@ -814,16 +833,21 @@ export interface QueueEntry {
   continuationKey?: string;
   /** F175: explicit dequeue position from drag-reorder */
   position?: number;
-  /** #706: Server-enriched message preview for QueuePanel display + recall-edit.
-   *  Attached by emitQueueUpdated() at push time via messageStore join. */
+  /** #706: HTTP-enriched History preview for QueuePanel display + recall-edit.
+   *  Mutation SSE publishes pending targets without waiting for this join. */
   messagePreview?: {
     contentBlocks?: ReadonlyArray<MessageContent>;
     replyTo?: string;
+    /** Stored connector identity; lets the row reuse the timeline bubble's summary. */
+    connector?: string;
+    source?: import('@cat-cafe/shared').ConnectorSource;
   };
-  /** F264: same durable receipt projection used by the terminal timeline bubble. */
-  queueReceipt?: QueueMessageReceipt;
   /** Server-owned executable recovery projection; absent only on legacy cached snapshots. */
   recoveryActions?: QueueRecoveryAction[];
+  /** Server-authored explicit lifecycle actions; never inferred from client liveness. */
+  lifecycleActions?: {
+    append?: LifecycleAppendAction;
+  };
 }
 
 /** #706: Typed composer draft for recall-edit and cross-feature insert.
@@ -839,6 +863,11 @@ export interface ComposerDraftInsert {
   removeContextAttachmentIds?: string[];
   /** Server ACK owns the complete editor text; do not append it to a stale local snapshot. */
   authoritative?: boolean;
+  /** Unsent text requests must wait for the target owner's durable draft read. */
+  waitForDraft?: boolean;
+  /** Keep the existing draft's selection and focus when appending unsent text. */
+  preserveSelection?: boolean;
+  draftReadFailure?: { title: string; message: string };
   /** Newly transferred source range in authoritative text; ChatInput focuses and selects it after hydration. */
   selectionRange?: { start: number; end: number };
   /** Durable owner+thread draft revision acknowledged by the server. */
@@ -846,6 +875,7 @@ export interface ComposerDraftInsert {
   /** Local editor snapshot captured immediately before the recall mutation. */
   clientSnapshot?: {
     text: string;
+    imageUrls?: string[];
     contextAttachments: ContextAttachment[];
     replyToId?: string;
   };
@@ -882,9 +912,6 @@ export interface TrueRecallResponse {
   clientSnapshot?: ComposerDraftInsert['clientSnapshot'];
 }
 
-/** F39: Message delivery mode — undefined = smart default, 'queue' = enqueue, 'force' = cancel + execute */
-export type DeliveryMode = 'queue' | 'force' | undefined;
-
 /** F101: Current game state in a thread */
 export type GameState = {
   gameId: string;
@@ -896,17 +923,86 @@ export type GameState = {
 
 export type TeamWorkspaceSubject = { type: 'cat'; id: string } | { type: 'provider'; id: string };
 
+/**
+ * User intent that opened a regular F063 file surface. This is navigation-only:
+ * the F063 owner target remains the source of file identity, bytes, and revision.
+ * It must never be repurposed as the Task-only entrusted-work return edge.
+ */
+export type WorkspaceFileNavigationOrigin =
+  | import('@/components/artifacts/artifact-list-state').ArtifactListOrigin
+  /** `worktreeId` is the tree the person browsed; absent on descriptors persisted before it was recorded. */
+  | { kind: 'file-tree'; worktreeId?: string; repoRoot?: string }
+  | { kind: 'workspace-changes'; worktreeId: string; threadId: string | null }
+  | { kind: 'settings'; href: string; anchorId: string; viewportOffsetPx: number }
+  | {
+      kind: 'workspace-card';
+      threadId: string;
+      destination: 'status' | 'eval';
+      anchorId: string;
+      viewportOffsetPx: number;
+    }
+  | { kind: 'workspace-document'; worktreeId: string; path: string; line: number }
+  | { kind: 'evolution-media'; programId: string; readingState: string; expanded: boolean }
+  | { kind: 'workspace-home-search'; query: string; viewportOffsetPx?: number }
+  | { kind: 'workspace-tools-search'; threadId: string; query: string; viewportOffsetPx: number }
+  | { kind: 'workspace-home-artifact'; threadId: string; artifactId: string; viewportOffsetPx: number }
+  | { kind: 'chat-file-link'; threadId: string; messageId: string }
+  /**
+   * C Release 3480 (F322 voice-meeting): the file came from the stopped result of this same thread's F195 docked
+   * meeting panel; returning restores that panel. The minimal contract promises only the same-thread stopped-result
+   * round trip — no cross-thread navigation or permission rules, and never a borrowed chat-file-link messageId.
+   */
+  | { kind: 'meeting-transcript'; threadId: string };
+
 /** Explicit navigation into an owner-backed F307 surface. This is deliberately
  * transient: durable Workspace selection stays per-thread, while this request
  * only bridges a fresh user action into an already-hydrated Workbench host. */
 export interface WorkspaceOpenRequest {
+  disposition?: 'preview' | 'permanent';
   revision: number;
   threadId: string;
   target:
+    | {
+        kind: 'message-publication';
+        source: MessageMediaPublicationSource;
+        title: string;
+        navigationOrigin?: WorkspaceFileNavigationOrigin;
+      }
+    | {
+        kind: 'publication';
+        contentRef: string;
+        ownerRevision: number;
+        /** The review a Host receipt is committed to: the work is entered in that review, or not at all. */
+        reviewId?: string;
+        title: string;
+        messagePublicationSource?: MessageMediaPublicationSource;
+        navigationOrigin?: WorkspaceFileNavigationOrigin;
+      }
     | { kind: 'mode'; mode: Exclude<WorkspaceMode, 'dev' | 'team'> }
     | { kind: 'evolution-program'; programId: string }
+    | { kind: 'evolution-home' }
+    | { kind: 'artifact'; artifact: ThreadArtifactDTO; navigationOrigin?: WorkspaceFileNavigationOrigin }
+    | {
+        kind: 'file';
+        worktreeId: string;
+        path: string;
+        line?: number | null;
+        navigationOrigin?: WorkspaceFileNavigationOrigin;
+      }
+    /** Show a file or directory in its worktree's file tree without opening it. */
+    | {
+        kind: 'reveal';
+        worktreeId: string;
+        path: string;
+        navigationOrigin?: WorkspaceFileNavigationOrigin;
+        /** The listing coordinate that minted `worktreeId` when it is not the current chat's project (e.g. Settings). */
+        repoRoot?: string;
+      }
     | { kind: 'team'; subject: TeamWorkspaceSubject | null };
 }
+
+/** The workspace-path targets an ordinary entry can ask the Workbench to open. */
+export type WorkspacePathOpenTarget = Extract<WorkspaceOpenRequest['target'], { kind: 'file' | 'reveal' }>;
 
 /** Per-thread state — everything that varies by thread */
 export interface ThreadState {
@@ -933,10 +1029,6 @@ export interface ThreadState {
   lastActivity: number;
   /** F39: Message queue entries for this thread */
   queue: QueueEntry[];
-  /** F39: Whether the queue is paused (e.g. after cancel/failure) */
-  queuePaused: boolean;
-  /** F39: Why the queue is paused */
-  queuePauseReason?: 'canceled' | 'failed';
   /** F39: Whether the queue is full (MAX_QUEUE_DEPTH reached) */
   queueFull: boolean;
   /** F39: Who triggered the full warning */
@@ -953,6 +1045,8 @@ export interface ThreadState {
    * thread switches instead of leaking or vanishing). Optional for fixture
    * compatibility; restore falls back to 'home'. */
   workspaceSurface?: WorkspaceSurface;
+  /** Only the F307 owner reference; descriptors and renderer state stay with F307. */
+  workspaceForegroundSurfaceId?: string | null;
   /** F284 × F120: top-level Workspace renderer per thread. A Browser surface
    * is not visible while another mode (for example Approval history) owns the
    * viewport, so explicit preview delivery must restore both coordinates. */
@@ -986,13 +1080,27 @@ export interface PresentationLockSnapshot {
     filePath: string | null;
     line: number | null;
     tabs: string[];
+    workspaceForegroundSurfaceId?: string | null;
+    workspaceSurface?: WorkspaceSurface;
+    workspaceMode?: WorkspaceMode;
+    workspacePreview?: WorkspacePreviewState;
+    teamWorkspaceSubject?: TeamWorkspaceSubject | null;
+    rightPanelMode?: 'status' | 'workspace' | 'transcript';
+    rightPanelOpen?: boolean;
   };
+  /** Optional for legacy F063 snapshots. */
+  surfaceId?: string | null;
   worktreeId: string | null;
   filePath: string | null;
   line: number | null;
   tabs: string[];
   scrollTop: number | null;
 }
+
+export type PresentationLockView = Pick<
+  PresentationLockSnapshot,
+  'surfaceId' | 'worktreeId' | 'filePath' | 'line' | 'tabs' | 'scrollTop'
+>;
 
 /** F226: Presentation Surface — file/md tear-off floating window for demo mode */
 export interface PresentationSurfaceContent {
@@ -1048,7 +1156,6 @@ export const DEFAULT_THREAD_STATE: ThreadState = {
   lastActivity: 0,
   queue: [],
   activeInvocations: {},
-  queuePaused: false,
   queueFull: false,
   workspaceWorktreeId: null,
   workspaceOpenTabs: [],
@@ -1057,6 +1164,7 @@ export const DEFAULT_THREAD_STATE: ThreadState = {
   workspaceMode: 'dev',
   teamWorkspaceSubject: null,
   workspaceSurface: 'home',
+  workspaceForegroundSurfaceId: null,
   workspacePreview: { port: undefined, path: '/' },
   rightPanelMode: 'status',
   rightPanelOpen: false,

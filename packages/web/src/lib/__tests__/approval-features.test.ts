@@ -12,6 +12,7 @@ describe('Approval Hub feature registry', () => {
       'F260',
       'F266',
       'F221',
+      'F321',
       'F276',
       'F292',
       'F306',
@@ -32,6 +33,15 @@ describe('Approval Hub feature registry', () => {
       label: '品味',
       badgeLabel: 'Taste',
       decisionEndpointBase: '/api/taste-proposals',
+      sourcePolicy: 'message-or-event',
+    });
+  });
+
+  it('routes Event correction decisions through the F321 owner lane', () => {
+    expect(APPROVAL_FEATURES.F321).toMatchObject({
+      label: '记忆更正',
+      badgeLabel: 'Memory correction',
+      decisionEndpointBase: '/api/event-memory-corrections',
       sourcePolicy: 'message-or-event',
     });
   });

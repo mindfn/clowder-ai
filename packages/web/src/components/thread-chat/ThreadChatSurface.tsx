@@ -1,39 +1,66 @@
 'use client';
 
+import type { CapabilityTipContext, LifecycleActiveRun } from '@cat-cafe/shared';
 import type { ReactNode, Ref } from 'react';
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useCatData } from '@/hooks/useCatData';
 import { useChatHistory } from '@/hooks/useChatHistory';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { useConnectionStatus } from '@/hooks/useConnectionStatus';
 import { useSendMessage } from '@/hooks/useSendMessage';
-import { useThreadLiveness, useThreadMessages } from '@/hooks/useThreadScopedSelectors';
+import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
 import { useChatStore } from '@/stores/chatStore';
 import { computeCliDiagnosticsDedup } from '@/utils/cli-diagnostics-dedup';
 import { computeScrollRecomputeSignal } from '@/utils/scrollRecomputeSignal';
 import { ChatInput } from '../ChatInput';
 import { ChatMessageRow } from '../ChatMessageRow';
 import { ConnectionStatusBar } from '../ConnectionStatusBar';
+import { getStreamingTipContexts, selectLifecycleTipMessageId } from '../capability-tip-placement';
 import { buildChatTimelineProjectionKey } from '../chat-timeline-projection-key';
+import { useCompanionConversation } from '../concierge/useCompanionConversation';
 import { HubCatEditor } from '../HubCatEditor';
 import { HubCoCreatorEditor } from '../HubCoCreatorEditor';
 import { PawIcon } from '../icons/PawIcon';
-import { MessageNavigator } from '../MessageNavigator';
 import { MessageSelectionToolbar } from '../MessageSelectionToolbar';
 import { messageMountPolicy } from '../message-mount-policy';
 import { isMessageSelectableForBundle, MAX_SELECTED_MESSAGES } from '../message-selection';
-import { QueuePanel } from '../QueuePanel';
-import { collectExactLiveInvocationIds } from '../queue-receipt-projection';
+import { ImportedSessionNotice } from '../new-conversation/ImportedSessionNotice';
+import { ReplyRecallRuntimeProvider } from '../reply-layers/ReplyRecallRuntimeProvider';
 import type { CardConfirmationEntry } from '../rich/CardBlock';
-import { ScrollToBottomButton } from '../ScrollToBottomButton';
-import { ThreadExecutionBar } from '../ThreadExecutionBar';
+import { useShellPresentation } from '../shell/shell-presentation';
+import { ThreadComposerContext } from '../ThreadComposerContext';
 import { TransferTargetPicker } from '../TransferTargetPicker';
 import { VoteActiveBar } from '../VoteActiveBar';
-import { ThreadChatPendingMembers } from './ThreadChatPendingMembers';
+import { ThreadChatHistoryNavigation } from './ThreadChatHistoryNavigation';
 import { useThreadChatRuntime } from './ThreadChatRuntimeProvider';
+import { ThreadExecutionLayer } from './ThreadExecutionLayer';
+import { type RegisterChatReadingPort, useThreadChatReadingPort } from './useThreadChatReadingPort';
 import { useThreadChatSelection } from './useThreadChatSelection';
 
 export type ThreadChatDensity = 'full' | 'compact';
+export type ThreadChatPresentation = 'conversation' | 'composer-only';
+
+function useThreadChatHistoryPresentation(presentation: ThreadChatPresentation) {
+  const historyHostRef = useRef<HTMLDivElement>(null);
+  const composerOnly = presentation === 'composer-only';
+  useEffect(() => {
+    const historyHost = historyHostRef.current;
+    if (!historyHost) return;
+    if (composerOnly) historyHost.setAttribute('inert', '');
+    else historyHost.removeAttribute('inert');
+  }, [composerOnly]);
+  return { historyHostRef, composerOnly };
+}
+
+function historyHostClassName(composerOnly: boolean): string {
+  return `relative min-h-0 flex-1 overflow-hidden ${composerOnly ? 'invisible pointer-events-none' : ''}`;
+}
+
+function footerClassName(compact: boolean, composerOnly: boolean): string | undefined {
+  return compact || composerOnly
+    ? 'relative z-10 border-t border-cafe-divider bg-cafe-surface pointer-events-auto'
+    : undefined;
+}
 
 export type ThreadChatActivity = {
   threadId: string;
@@ -44,6 +71,7 @@ export type ThreadChatActivity = {
 export interface ThreadChatSurfaceProps {
   threadId: string;
   density: ThreadChatDensity;
+  presentation?: ThreadChatPresentation;
   emptyState?: ReactNode;
   timelineLead?: ReactNode;
   footerLead?: ReactNode;
@@ -56,11 +84,13 @@ export interface ThreadChatSurfaceProps {
   acceptUnscopedInteractiveSend?: boolean;
   onComposerFocusChange?: (focused: boolean) => void;
   onActivity?: (activity: ThreadChatActivity) => void;
+  onReadingPort?: RegisterChatReadingPort;
 }
 
 export function ThreadChatSurface({
   threadId,
   density,
+  presentation = 'conversation',
   emptyState,
   timelineLead,
   footerLead,
@@ -73,13 +103,29 @@ export function ThreadChatSurface({
   acceptUnscopedInteractiveSend = false,
   onComposerFocusChange,
   onActivity,
+  onReadingPort,
 }: ThreadChatSurfaceProps) {
-  const messages = useThreadMessages(threadId);
+  const companion = useCompanionConversation(threadId);
+  // The composer is told it is hosted with the one execution row only in the new shell (see ChatInput `presentation`).
+  const composerPresentation = useShellPresentation();
+  const [pianoReady, setPianoReady] = useState(false);
   const liveness = useThreadLiveness(threadId);
-  const { hasActive: hasActiveInvocation, activeInvocations, catInvocations } = liveness;
+  const { hasActive: hasActiveInvocation, catStatuses, catInvocations, intentMode } = liveness;
   const { socketConnected } = useThreadChatRuntime([threadId]);
-  const { handleScroll, jumpToLatest, scrollContainerRef, messagesEndRef, isLoadingHistory, hasMore } =
-    useChatHistory(threadId);
+  const history = useChatHistory(threadId);
+  const {
+    messages,
+    handleScroll,
+    handleReadingIntent,
+    jumpToLatest,
+    jumpToMessage,
+    beginUserScroll,
+    scrollContainerRef,
+    messagesEndRef,
+    isLoadingHistory,
+    hasMore,
+  } = history;
+  useThreadChatReadingPort(threadId, presentation, onReadingPort, history);
   const { handleSend, uploadStatus, uploadError } = useSendMessage(threadId);
   const interactiveSendContext = `thread-chat-surface:${useId()}`;
   const { getCatById, refresh: refreshCats } = useCatData();
@@ -90,13 +136,23 @@ export function ThreadChatSurface({
   const connectionStatus = useConnectionStatus(socketConnected);
   const uiThinkingExpandedByDefault = useChatStore((state) => state.uiThinkingExpandedByDefault);
   const isOfflineSnapshot = useChatStore((state) => state.isOfflineSnapshot);
+  const { historyHostRef, composerOnly } = useThreadChatHistoryPresentation(presentation);
+  const compact = density === 'compact';
 
-  const activeInvocationIds = useMemo(
-    () => collectExactLiveInvocationIds(activeInvocations, catInvocations),
-    [activeInvocations, catInvocations],
+  const lifecycleActiveRuns = useMemo<readonly LifecycleActiveRun[]>(
+    () => Object.values(catInvocations).flatMap((invocation) => (invocation.activeRun ? [invocation.activeRun] : [])),
+    [catInvocations],
+  );
+  const capabilityTipContexts = useMemo<readonly CapabilityTipContext[]>(
+    () => getStreamingTipContexts(intentMode),
+    [intentMode],
+  );
+  const lifecycleTipMessageId = useMemo(
+    () => selectLifecycleTipMessageId(messages, catStatuses, catInvocations),
+    [messages, catStatuses, catInvocations],
   );
   const cliDedupMap = useMemo(() => computeCliDiagnosticsDedup(messages), [messages]);
-  const timelineProjectionKey = useMemo(() => buildChatTimelineProjectionKey(messages), [messages]);
+  const timelineProjectionKey = useMemo(() => buildChatTimelineProjectionKey(messages, threadId), [messages, threadId]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: projection key captures the cross-message fields consumed by rows.
   const timelineProjectionMessages = useMemo(
     () => messages,
@@ -132,8 +188,6 @@ export function ThreadChatSurface({
     return () => window.removeEventListener('cat-cafe:interactive-send', handleInteractiveSend);
   }, [acceptUnscopedInteractiveSend, handleSend, interactiveSendContext, threadId]);
 
-  const compact = density === 'compact';
-
   return (
     <section
       className="flex min-h-0 flex-1 flex-col"
@@ -141,79 +195,119 @@ export function ThreadChatSurface({
       data-thread-chat-density={density}
       data-thread-id={threadId}
     >
-      <div className="relative min-h-0 flex-1 overflow-hidden">
+      {!composerOnly && companion.header}
+      <div
+        ref={historyHostRef}
+        className={historyHostClassName(composerOnly)}
+        aria-hidden={composerOnly || undefined}
+        data-thread-chat-history
+      >
         <main
           ref={scrollContainerRef}
           onScroll={handleScroll}
-          className={compact ? 'h-full overflow-y-auto px-3 py-3' : 'h-full overflow-y-auto p-4'}
+          onClickCapture={handleReadingIntent}
+          className={
+            composerPresentation === 'v2'
+              ? compact
+                ? 'h-full overflow-y-auto [overflow-anchor:none] pl-3 pr-[42px] py-3'
+                : 'h-full overflow-y-auto [overflow-anchor:none] p-4 pr-10'
+              : compact
+                ? 'h-full overflow-y-auto [overflow-anchor:none] px-3 py-3'
+                : 'h-full overflow-y-auto [overflow-anchor:none] p-4'
+          }
+          tabIndex={composerPresentation === 'v2' ? -1 : undefined}
+          data-message-piano-ready={(composerPresentation === 'v2' && pianoReady) || undefined}
           aria-label="对话内容"
           data-guide-id="bootcamp.preview-result"
           data-bootcamp-host="chat-messages"
           data-chat-container
         >
-          {isLoadingHistory && <div className="py-3 text-center text-sm text-cafe-muted">加载历史消息...</div>}
-          <ConnectionStatusBar
-            api={connectionStatus.api}
-            socket={connectionStatus.socket}
-            upstream={connectionStatus.upstream}
-            isReadonly={connectionStatus.isReadonly}
-            checkedAt={connectionStatus.checkedAt}
-            isOfflineSnapshot={isOfflineSnapshot}
-          />
-          {timelineLead}
-          {!hasMore && messages.length > 0 && (
-            <div className="py-3 text-center text-xs text-cafe-muted">没有更多消息了</div>
-          )}
-          {messages.length === 0 && !isLoadingHistory
-            ? projectedEmptyState
-            : messages.map((message, index) => {
-                const dedupInfo = cliDedupMap.get(message.id);
-                const mountPolicy = messageMountPolicy(index, messages.length);
-                const selected = selection.selectedMessageIds.has(message.id);
-                const selectionEligible =
-                  isMessageSelectableForBundle(message) &&
-                  (!selection.selectionMode || selected || selection.selectedMessageIds.size < MAX_SELECTED_MESSAGES);
-                return (
-                  <ChatMessageRow
-                    key={message.id}
-                    message={message}
-                    threadId={threadId}
-                    timelineMessages={timelineProjectionMessages}
-                    activeInvocationIds={message.extra?.queueReceipt ? activeInvocationIds : undefined}
-                    getCatById={getCatById}
-                    onEditCat={handleEditCat}
-                    onEditCoCreator={handleEditCoCreator}
-                    hideDiagnosticsPanel={dedupInfo?.hideDiagnosticsPanel}
-                    dedupCount={dedupInfo?.dedupCount}
-                    selectionMode={selection.selectionMode}
-                    selected={selected}
-                    selectionEligible={selectionEligible}
-                    onEnterSelection={selection.enterMessageSelection}
-                    onToggleSelection={selection.toggleMessageSelection}
-                    forwardingDisabled={connectionStatus.forwardingBlocked}
-                    eager={mountPolicy.eager}
-                    backgroundMountDelayMs={mountPolicy.backgroundMountDelayMs}
-                    sendContext={interactiveSendContext}
-                    confirmations={messageConfirmations?.get(message.id)}
-                  />
-                );
-              })}
-          <ThreadChatPendingMembers threadId={threadId} messages={messages} liveness={liveness} />
-          <div ref={messagesEndRef} />
+          <div
+            data-thread-chat-reading-column
+            className={composerPresentation === 'v2' && !compact ? 'mx-auto w-full max-w-[720px]' : ''}
+          >
+            {isLoadingHistory && <div className="py-3 text-center text-sm text-cafe-muted">加载历史消息...</div>}
+            <ConnectionStatusBar
+              api={connectionStatus.api}
+              socket={connectionStatus.socket}
+              upstream={connectionStatus.upstream}
+              isReadonly={connectionStatus.isReadonly}
+              checkedAt={connectionStatus.checkedAt}
+              isOfflineSnapshot={isOfflineSnapshot}
+            />
+            {composerPresentation === 'v2' && !compact && <ImportedSessionNotice threadId={threadId} />}
+            {timelineLead}
+            {!hasMore && messages.length > 0 && (
+              <div className="py-3 text-center text-xs text-cafe-muted">没有更多消息了</div>
+            )}
+            <ReplyRecallRuntimeProvider enabled={composerPresentation === 'v2'} threadId={threadId} messages={messages}>
+              {messages.length === 0 && !isLoadingHistory
+                ? projectedEmptyState
+                : messages.map((message, index) => {
+                    const dedupInfo = cliDedupMap.get(message.id);
+                    const mountPolicy = messageMountPolicy(index, messages.length);
+                    const selected = selection.selectedMessageIds.has(message.id);
+                    const selectionEligible =
+                      isMessageSelectableForBundle(message) &&
+                      (!selection.selectionMode ||
+                        selected ||
+                        selection.selectedMessageIds.size < MAX_SELECTED_MESSAGES);
+                    return (
+                      <ChatMessageRow
+                        key={message.id}
+                        message={message}
+                        compact={compact}
+                        threadId={threadId}
+                        timelineMessages={timelineProjectionMessages}
+                        activeRuns={message.lifecycle?.dispatchRefs?.length ? lifecycleActiveRuns : undefined}
+                        getCatById={getCatById}
+                        onEditCat={handleEditCat}
+                        onEditCoCreator={handleEditCoCreator}
+                        hideDiagnosticsPanel={dedupInfo?.hideDiagnosticsPanel}
+                        dedupCount={dedupInfo?.dedupCount}
+                        selectionMode={selection.selectionMode}
+                        selected={selected}
+                        selectionEligible={selectionEligible}
+                        onEnterSelection={selection.enterMessageSelection}
+                        onToggleSelection={selection.toggleMessageSelection}
+                        forwardingDisabled={connectionStatus.forwardingBlocked}
+                        eager={mountPolicy.eager}
+                        backgroundMountDelayMs={mountPolicy.backgroundMountDelayMs}
+                        sendContext={interactiveSendContext}
+                        confirmations={messageConfirmations?.get(message.id)}
+                        showCapabilityTip={message.id === lifecycleTipMessageId}
+                        capabilityTipContexts={capabilityTipContexts}
+                      />
+                    );
+                  })}
+            </ReplyRecallRuntimeProvider>
+            <div ref={messagesEndRef} />
+          </div>
         </main>
-        <ScrollToBottomButton
-          scrollContainerRef={scrollContainerRef}
-          messagesEndRef={messagesEndRef}
-          onJumpToLatest={jumpToLatest}
-          recomputeSignal={computeScrollRecomputeSignal(threadId, messages, uiThinkingExpandedByDefault ? 1 : 0)}
-          observerKey={`${threadId}:${density}`}
+        <ThreadChatHistoryNavigation
+          visible={!composerOnly}
+          bottomProps={{
+            scrollContainerRef,
+            messagesEndRef,
+            onJumpToLatest: jumpToLatest,
+            recomputeSignal: computeScrollRecomputeSignal(threadId, messages, uiThinkingExpandedByDefault ? 1 : 0),
+            observerKey: `${threadId}:${density}`,
+          }}
+          navigatorProps={{
+            messages,
+            scrollContainerRef,
+            onJumpToMessage: jumpToMessage,
+            beginUserScroll,
+            compact,
+            hasMore,
+            observerKey: `${threadId}:${density}`,
+            onTrackReadyChange: setPianoReady,
+          }}
         />
-        {messages.length > 5 && <MessageNavigator messages={messages} scrollContainerRef={scrollContainerRef} />}
       </div>
 
-      <div ref={footerRef} className={compact ? 'border-t border-cafe-divider bg-cafe-surface' : undefined}>
-        <ThreadExecutionBar threadId={threadId} />
-        <QueuePanel threadId={threadId} />
+      <div ref={footerRef} className={footerClassName(compact, composerOnly)} data-thread-chat-footer>
+        <ThreadExecutionLayer threadId={threadId} />
         <VoteActiveBar threadId={threadId} onEnd={() => {}} />
         {footerLead}
         {selection.selectionMode ? (
@@ -229,25 +323,22 @@ export function ThreadChatSurface({
           <div className={composerClassName}>
             <ChatInput
               key={threadId}
+              presentation={composerPresentation}
+              composerContext={
+                composerPresentation === 'v2' ? <ThreadComposerContext threadId={threadId} /> : undefined
+              }
               threadId={threadId}
-              onSend={(content, images, whisper, deliveryMode, replyToId, messageDisposition, contextAttachments) =>
-                handleSend(
-                  content,
-                  images,
-                  undefined,
-                  whisper,
-                  deliveryMode,
-                  replyToId,
-                  messageDisposition,
-                  contextAttachments,
-                )
+              onSend={(content, images, whisper, replyToId, contextAttachments, explicitTargetCats) =>
+                handleSend(content, images, undefined, whisper, replyToId, contextAttachments, explicitTargetCats, {
+                  consumeComposerDraft: true,
+                })
               }
               disabled={connectionStatus.isReadonly}
               hasActiveInvocation={hasActiveInvocation}
               uploadStatus={uploadStatus}
               uploadError={uploadError}
               placeholder={composerPlaceholder}
-              seed={composerSeed}
+              seed={composerSeed ?? companion.composerSeed}
               onFocusChange={onComposerFocusChange}
             />
           </div>

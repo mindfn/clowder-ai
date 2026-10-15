@@ -5,6 +5,8 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { CollectiveServiceStore, startCollectiveServer } from '../../../collective-service/dist/index.js';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
+import { openChannelFromCollectiveHome } from './f290-channel-entry.harness.mjs';
+import { disableMockHostPwa } from './f290-mock-host-context.harness.mjs';
 import {
   availablePort,
   browserSessionToken,
@@ -65,25 +67,33 @@ test(
 
       const ownerPopup = await openAuthPopup(ownerPage, '继续使用 GitHub 验证');
       await ownerPopup.getByRole('link', { name: 'Continue as You' }).click();
-      await ownerPage.getByRole('heading', { name: '# general' }).waitFor();
-      await ownerPage.getByPlaceholder('发消息到 # general').fill('Owner browser message');
+      await openChannelFromCollectiveHome(ownerPage, 'general');
+      await ownerPage.getByPlaceholder('在 #general 里说点什么……').fill('Owner browser message');
       await ownerPage.getByRole('button', { name: '发送', exact: true }).click();
       await ownerPage.getByText('Owner browser message', { exact: true }).waitFor();
+      await ownerPage.locator('details.collective-menu > summary').click();
       await ownerPage.getByRole('button', { name: '邀请成员' }).click();
       const inviteUrl = await ownerPage.locator('.destination-notice').textContent();
       assert.ok(inviteUrl?.startsWith(`${serviceUrl}/#invite=`));
       await ownerPage.screenshot({ path: path.join(evidenceDirectory, 'owner-direct.png'), fullPage: true });
 
-      const memberContext = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+      // This member later opens the PWA Host with mockHostApi route fixtures.
+      const memberContext = await browser.newContext({
+        viewport: { width: 1440, height: 960 },
+        serviceWorkers: 'block',
+      });
+      await disableMockHostPwa(memberContext, hostUrl);
       await fakeGitHub(memberContext, 'member-code', 'Member');
       const memberPage = await memberContext.newPage();
+      const memberErrors = [];
+      memberPage.on('pageerror', (error) => memberErrors.push(error.message));
       await memberPage.goto(inviteUrl, { waitUntil: 'networkidle' });
-      await memberPage.getByRole('heading', { name: '加入同一个共同现场' }).waitFor();
+      await memberPage.getByRole('heading', { name: '加入共同体' }).waitFor();
       const memberPopup = await openAuthPopup(memberPage, '使用 GitHub 验证并加入');
       await memberPopup.getByRole('link', { name: 'Continue as Member' }).click();
-      await memberPage.getByRole('heading', { name: '# general' }).waitFor();
+      await openChannelFromCollectiveHome(memberPage, 'general');
       await memberPage.getByText('Owner browser message', { exact: true }).waitFor();
-      await memberPage.getByPlaceholder('发消息到 # general').fill('Member joined the same Collective');
+      await memberPage.getByPlaceholder('在 #general 里说点什么……').fill('Member joined the same Collective');
       await memberPage.getByRole('button', { name: '发送', exact: true }).click();
       await memberPage.getByText('Member joined the same Collective', { exact: true }).waitFor();
       await ownerPage.getByText('Member joined the same Collective', { exact: true }).waitFor();
@@ -117,8 +127,14 @@ test(
       await ownerPage.getByText('Member joined the same Collective', { exact: true }).waitFor();
       await memberPage.getByText('Owner browser message', { exact: true }).waitFor();
 
-      const hostApi = await mockHostApi(memberContext, serviceUrl, activeStore.serviceInstanceId);
+      const hostApi = await mockHostApi(
+        memberContext,
+        serviceUrl,
+        activeStore.serviceInstanceId,
+        (await activeStore.getHumanProjection(memberSessionToken)).human.humanId,
+      );
       await memberPage.goto(`${hostUrl}/collective`, { waitUntil: 'networkidle' });
+      assert.equal(await memberPage.evaluate(() => 'serviceWorker' in navigator), false);
       const serviceInput = memberPage.getByLabel('Collective Service 地址');
       if (await serviceInput.isVisible().catch(() => false)) {
         await serviceInput.fill(serviceUrl);
@@ -127,15 +143,25 @@ test(
       await memberPage.locator('[data-testid="collective-launch-surface"]').waitFor();
       const frame = memberPage.frames().find((candidate) => candidate.url().startsWith(`${serviceUrl}/?hostOrigin=`));
       assert.ok(frame, 'Clowder AI launch surface must embed the canonical Service Client');
-      await frame.getByRole('heading', { name: '# general' }).waitFor();
+      await openChannelFromCollectiveHome(frame, 'general');
       assert.equal(await frame.locator('[data-spatial-role="global-rail"]').count(), 0);
       assert.equal(await memberPage.getByRole('button', { name: 'Collective', exact: true }).count(), 1);
       assert.equal(await frame.getByRole('button', { name: '邀请成员' }).count(), 0);
       await frame.getByRole('button', { name: '连接此 Café' }).click();
-      await waitFor(() => hostApi.pairRequests.length === 1, 'Host must receive the member pairing intent');
+      const entryReview = memberPage.getByRole('complementary', { name: '带入伙伴前确认' });
+      await entryReview.getByText('先看清要带来的伙伴').waitFor();
+      assert.equal(hostApi.pairRequests.length, 0, 'Host must not pair before the member reviews the roster');
+      const catChoice = entryReview.getByRole('checkbox', { name: '带入 Member Cat' });
+      assert.equal(await catChoice.isChecked(), true);
+      await entryReview.getByRole('button', { name: '确认带入 1 位伙伴' }).click();
+      await waitFor(() => hostApi.pairRequests.length === 1, 'Host must receive the confirmed member pairing intent');
       assert.equal(hostApi.pairRequests[0].serviceUrl, serviceUrl);
       assert.equal(hostApi.pairRequests[0].intent.serviceInstanceId, activeStore.serviceInstanceId);
-      await memberPage.getByText('Café 连接在线').waitFor();
+      assert.equal(hostApi.pairRequests[0].rosterFingerprint, 'a'.repeat(64));
+      assert.deepEqual(hostApi.pairRequests[0].excludedCatIds, []);
+      // Pairing reloads the embedded Client at its canonical Home entry.
+      await openChannelFromCollectiveHome(frame, 'general');
+      await frame.getByRole('button', { name: '我的猫', exact: true }).waitFor();
       await memberPage.screenshot({ path: path.join(evidenceDirectory, 'host-embedded-member.png'), fullPage: true });
 
       const ownerProjection = await activeStore.getHumanProjection(ownerAuth.sessionToken());
@@ -169,6 +195,7 @@ test(
         )}\n`,
       );
 
+      assert.deepEqual(memberErrors, []);
       await memberContext.close();
       await ownerContext.close();
     } finally {
@@ -238,7 +265,7 @@ async function openAuthPopup(page, buttonName) {
   return popup;
 }
 
-async function mockHostApi(context, serviceUrl, serviceInstanceId) {
+async function mockHostApi(context, serviceUrl, serviceInstanceId, authorizedHumanId) {
   const pairRequests = [];
   let connected;
   await context.route('**/api/session', async (route) => {
@@ -246,10 +273,22 @@ async function mockHostApi(context, serviceUrl, serviceInstanceId) {
   });
   await context.route('**/api/plugins/collective-connector**', async (route) => {
     const url = new URL(route.request().url());
+    if (url.pathname === '/api/plugins/collective-connector/entry-roster') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          fingerprint: 'a'.repeat(64),
+          cats: [{ id: 'member-cat', displayName: 'Member Cat', eligible: true }],
+        }),
+      });
+      return;
+    }
     if (url.pathname === '/api/plugins/collective-connector/pair') {
       const request = route.request().postDataJSON();
       pairRequests.push(request);
       connected = {
+        authorizedHumanId,
         serviceUrl,
         canonicalClientAnchor: {
           kind: 'collective-client',
@@ -271,7 +310,11 @@ async function mockHostApi(context, serviceUrl, serviceInstanceId) {
         route: { configured: false },
         inbox: { persisted: 0, pending: 0, routed: 0, failed: 0 },
       };
-      await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ connectionId: 'con_browser_host' }),
+      });
       return;
     }
     if (url.pathname === '/api/plugins/collective-connector') {

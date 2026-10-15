@@ -10,12 +10,14 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { useActualColours } from '@/hooks/useActualColours';
 import { useCafeTheme } from '@/hooks/useCafeTheme';
 import { applyThemeCSS, getActiveTheme, restoreFromServer, useThemeStore } from '@/stores/themeStore';
 
 export function ThemeApplier() {
   const { theme, setTheme } = useCafeTheme();
   const active = useThemeStore((s) => getActiveTheme(s));
+  const actual = useActualColours();
   const recoveryAttempted = useRef(false);
 
   /* On mount: if localStorage was empty, try recovering from server */
@@ -40,10 +42,12 @@ export function ThemeApplier() {
     setTheme(active.base);
   }, [active.base, setTheme, theme]);
 
-  /* Inject CSS overrides for the active theme's OKLCH params */
+  /* Inject CSS overrides for the active theme's OKLCH params. The name role, the plate it sits on and the lineage ring are
+   * resolved against the cats, connectors and human colour that really exist, so the theme is resolved again whenever the
+   * catalogue or a colour changes (F322 B, Opus 5.5 3619). */
   useEffect(() => {
-    applyThemeCSS(active.params);
-  }, [active.params]);
+    applyThemeCSS(active.params, actual);
+  }, [active.params, actual]);
 
   return null;
 }

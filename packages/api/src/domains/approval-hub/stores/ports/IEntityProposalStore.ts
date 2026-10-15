@@ -54,6 +54,9 @@ export interface IEntityProposalStore extends ApprovalPublicationStore {
   /** List pending proposals for a user (for Hub aggregation). */
   listPending(userId: string, limit?: number): EntityProposal[] | Promise<EntityProposal[]>;
 
+  /** Owner-scoped exact entity binding used by the original-memory detail surface. */
+  listByTarget(userId: string, entityId: string, limit?: number): EntityProposal[] | Promise<EntityProposal[]>;
+
   /** Idempotency: cached proposalId for (userId, clientRequestId). */
   getDedupProposalId(userId: string, clientRequestId: string): string | null | Promise<string | null>;
   /** Idempotency: atomically reserve (userId, clientRequestId) → proposalId. */
@@ -122,6 +125,10 @@ export class InMemoryEntityProposalStore implements IEntityProposalStore, Approv
 
   listPending(userId: string, limit: number = DEFAULT_LIST_LIMIT): EntityProposal[] {
     return this.collect((p) => p.ownerUserId === userId && p.status === 'pending', limit);
+  }
+
+  listByTarget(userId: string, entityId: string, limit: number = DEFAULT_LIST_LIMIT): EntityProposal[] {
+    return this.collect((p) => p.ownerUserId === userId && p.entityId === entityId, limit);
   }
 
   listSettledByUser(userId: string, limit: number = DEFAULT_LIST_LIMIT): EntityProposal[] {

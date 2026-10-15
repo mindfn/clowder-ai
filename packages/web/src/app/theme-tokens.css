@@ -26,6 +26,8 @@
   --surface-hue: 80; /* warm beige — 页面底色旋钮，独立于 accent（KD-34） */
   --surface-chroma: 0.01; /* surface 四档共享色度 — Tuner 调一个全变 */
   --brand-cat-cafe-pink: oklch(0.62 var(--accent-chroma) var(--accent-hue)); /* 派生 — logo / splash */
+  /* Text over illustrations keeps its contrast when the surrounding page changes mode. */
+  --cafe-image-foreground: oklch(0.985 0.005 30);
 }
 
 /* ============================================================

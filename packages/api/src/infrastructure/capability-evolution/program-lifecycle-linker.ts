@@ -1,11 +1,14 @@
-import type { OwnerTruthRefV1 } from '@cat-cafe/shared';
+import { type OwnerTruthRefV1, refIdentity } from '@cat-cafe/shared';
 import type { EvolutionProgramServiceResult } from './program-command-contract.js';
 import { guardedAppend } from './program-command-identity.js';
 import {
   EvolutionProgramEvaluationError,
+  type MeasurementConstitutionBinding,
   type ProgramEvaluationDependencies,
   type ProgramEvaluationLinkBase,
+  type ProgramMeasurementConstitutionRebindInput,
 } from './program-evaluation-contract.js';
+import type { EvolutionProgramProjectionV1 } from './read-model/program-projection.js';
 
 /**
  * The two producers a Program needs to leave `constituting` and enter `evaluating`.
@@ -60,6 +63,109 @@ export function linkEvolutionProgramCertificates(
     valueOwnerRef: input.valueOwnerRef,
     measurementRoleRefs: input.measurementRoleRefs,
   }));
+}
+
+const sameRef = (left: OwnerTruthRefV1 | undefined, right: OwnerTruthRefV1): boolean =>
+  left !== undefined && refIdentity(left) === refIdentity(right);
+
+function sameMeasurementRoles(
+  current: {
+    observer?: OwnerTruthRefV1;
+    domainOwner?: OwnerTruthRefV1;
+    consumer?: OwnerTruthRefV1;
+    calibrator?: OwnerTruthRefV1;
+    overlapJustification?: string;
+  },
+  next: ProgramCertificatesLinkInput['measurementRoleRefs'],
+): boolean {
+  return (
+    sameRef(current.observer, next.observer) &&
+    sameRef(current.domainOwner, next.domainOwner) &&
+    sameRef(current.consumer, next.consumer) &&
+    sameRef(current.calibrator, next.calibrator) &&
+    current.overlapJustification === next.overlapJustification
+  );
+}
+
+function assertMeasurementRebindStage(
+  input: ProgramMeasurementConstitutionRebindInput,
+  projection: EvolutionProgramProjectionV1,
+): void {
+  if (projection.program.lifecycle !== 'active' || projection.program.stage !== 'instrumenting') {
+    throw new EvolutionProgramEvaluationError(
+      'invalid_request',
+      'measurement constitution rebind requires an active/instrumenting Program',
+    );
+  }
+  const valueOwner = projection.program.valueOwnerRef;
+  if (valueOwner?.ownerFeatureId !== 'F311' || valueOwner.ownerStateRef !== `user:${input.ownerUserId}`) {
+    throw new EvolutionProgramEvaluationError('invalid_request', 'Program value owner mismatch');
+  }
+}
+
+function assertMeasurementBindingOwners(
+  input: ProgramMeasurementConstitutionRebindInput,
+  projection: EvolutionProgramProjectionV1,
+  binding: MeasurementConstitutionBinding,
+): void {
+  const wrongRoleOwner = Object.values(binding.measurementRoleRefs)
+    .filter((value): value is OwnerTruthRefV1 => typeof value === 'object')
+    .some((value) => value.ownerFeatureId !== 'F267');
+  if (
+    input.evidenceProofRef.ownerFeatureId !== 'F267' ||
+    binding.measurementCertificateRef.ownerFeatureId !== 'F267' ||
+    wrongRoleOwner ||
+    binding.sourceRef.ownerFeatureId !== projection.program.objectRef.ownerFeatureId
+  ) {
+    throw new EvolutionProgramEvaluationError('invalid_request', 'measurement constitution owner identity mismatch');
+  }
+}
+
+async function measurementRebindEvent(
+  input: ProgramMeasurementConstitutionRebindInput,
+  deps: ProgramEvaluationDependencies,
+  projection: EvolutionProgramProjectionV1,
+) {
+  assertMeasurementRebindStage(input, projection);
+  if (!deps.measurementConstitutionResolver) {
+    throw new EvolutionProgramEvaluationError(
+      'owner_evidence_unavailable',
+      'F267 measurement constitution owner contract is not available',
+    );
+  }
+  const resolution = await deps.measurementConstitutionResolver.resolveMeasurementConstitution({
+    ownerUserId: input.ownerUserId,
+    program: projection,
+    evidenceProofRef: input.evidenceProofRef,
+  });
+  if (resolution.status !== 'ready') {
+    throw new EvolutionProgramEvaluationError(
+      'owner_evidence_unavailable',
+      `owner measurement constitution unavailable: ${resolution.reason}`,
+    );
+  }
+  const binding = resolution.binding;
+  assertMeasurementBindingOwners(input, projection, binding);
+  if (
+    sameRef(projection.program.certificates.measurement, binding.measurementCertificateRef) &&
+    sameMeasurementRoles(projection.program.measurementRoleRefs, binding.measurementRoleRefs)
+  ) {
+    throw new EvolutionProgramEvaluationError('invalid_request', 'measurement constitution is already current');
+  }
+  return {
+    type: 'measurement_constitution_rebound' as const,
+    sourceRef: binding.sourceRef,
+    decisionProofRef: input.evidenceProofRef,
+    measurementCertificateRef: binding.measurementCertificateRef,
+    measurementRoleRefs: binding.measurementRoleRefs,
+  };
+}
+
+export function rebindEvolutionProgramMeasurementConstitution(
+  input: ProgramMeasurementConstitutionRebindInput,
+  deps: ProgramEvaluationDependencies,
+): Promise<EvolutionProgramServiceResult> {
+  return guardedAppend(input, deps, (_events, projection) => measurementRebindEvent(input, deps, projection));
 }
 
 /**

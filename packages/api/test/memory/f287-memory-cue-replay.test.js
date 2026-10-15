@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { RECALL_OPPORTUNITY_CATALOG_VERSION } from '@cat-cafe/shared';
 import { runF287MemoryCueReplay } from '../../dist/scripts/f287-memory-cue-replay.js';
 
 const EXPECTED_FAMILIES = ['person_entity', 'operational_precedent', 'taste'];
+// Catalog V6 changes the rendered cue IDs and their exact token counts, not the budget limits.
 const EXPECTED_BUDGET_CANDIDATE_TOKENS = {
-  person_entity: 752,
-  operational_precedent: 751,
-  taste: 2512,
+  person_entity: 754,
+  operational_precedent: 747,
+  taste: 2515,
 };
 
 function containsForbiddenScore(value) {
@@ -24,7 +26,7 @@ describe('F287 memory cue utility replay', () => {
 
     assert.equal(JSON.stringify(first), JSON.stringify(second));
     assert.equal(first.fixtureRevision, 'f287-memory-cue-eval-v1');
-    assert.equal(first.catalogVersion, 5);
+    assert.equal(first.catalogVersion, RECALL_OPPORTUNITY_CATALOG_VERSION);
     assert.deepEqual(
       first.families.map(({ family }) => family),
       EXPECTED_FAMILIES,

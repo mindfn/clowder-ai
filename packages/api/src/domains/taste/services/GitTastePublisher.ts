@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { retainPublishedTasteSnapshot } from './PublishedTasteSnapshot.js';
 
 export interface GitTastePublicationAttempt {
   attempt: number;
@@ -183,10 +184,10 @@ export async function publishTasteProjection(
       const baseSha = await prepareCheckout(input.sourceRoot, checkoutRoot, branchName);
       const materialized = input.materialize(checkoutRoot);
       if (materialized === 'already-published') {
-        return {
+        return await retainResult(input.sourceRoot, checkoutRoot, {
           commitSha: await findExistingProjectionCommit(checkoutRoot, input.filesToCommit[0]),
           alreadyPublished: true,
-        };
+        });
       }
 
       await runGit(checkoutRoot, ['add', '--', ...input.filesToCommit]);
@@ -203,9 +204,9 @@ export async function publishTasteProjection(
       } catch (pushError) {
         const resolution = await resolveFailedPush(pushError, checkoutRoot, baseSha, attempt, input);
         if (resolution === 'retry') continue;
-        return resolution;
+        return await retainResult(input.sourceRoot, checkoutRoot, resolution);
       }
-      return { commitSha, alreadyPublished: false };
+      return await retainResult(input.sourceRoot, checkoutRoot, { commitSha, alreadyPublished: false });
     } catch (error) {
       if (isTastePublicationIndeterminateError(error)) throw error;
       throw new Error(`Taste publication failed: ${errorMessage(error)}`);
@@ -215,4 +216,15 @@ export async function publishTasteProjection(
   }
 
   throw new Error(`Taste publication failed after ${PUBLICATION_ATTEMPTS} attempts`);
+}
+
+async function retainResult(sourceRoot: string, checkoutRoot: string, result: GitTastePublicationResult) {
+  try {
+    await retainPublishedTasteSnapshot(sourceRoot, checkoutRoot);
+    return result;
+  } catch (error) {
+    throw new TastePublicationIndeterminateError(
+      `Taste reached origin/main but its canonical read snapshot could not be retained: ${errorMessage(error)}`,
+    );
+  }
 }

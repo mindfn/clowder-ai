@@ -278,6 +278,18 @@ export const constitutionSchema = z
   .strict();
 
 /**
+ * Rebinding an active Program accepts only the F267 proof identity. The certificate and all four
+ * role refs are reopened from the owner's trusted-main publication, never copied from the caller.
+ */
+export const measurementConstitutionRebindSchema = z
+  .object({
+    expectedSequence: z.number().int().nonnegative(),
+    clientMessageId: clientMessageIdSchema,
+    evidenceProofRef: ownerRef,
+  })
+  .strict();
+
+/**
  * Opening a round takes nothing but identities. The trigger receipt comes from F192's own dispatch
  * and the exposure proof from F267's projection — a caller that could state either could open a
  * round at will and discard the previous round's diagnosis.

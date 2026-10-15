@@ -30,9 +30,9 @@ test('redis-restore script restarts with AOF enabled and quarantines old appendo
   const mockRedisCli = `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$MOCK_REDIS_CLI_ARGS_FILE"
-if [[ "\${1:-}" == "-p" ]]; then
-  shift 2
-fi
+while [[ "\${1:-}" == "-p" || "\${1:-}" == "-h" || "\${1:-}" == "--raw" ]]; do
+  if [[ "\${1:-}" == "--raw" ]]; then shift; else shift 2; fi
+done
 cmd="\${1:-}"
 case "$cmd" in
   ping)
@@ -158,9 +158,9 @@ test('redis-restore script tolerates Redis 6 without appenddirname config', () =
   const mockRedisCli = `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$MOCK_REDIS_CLI_ARGS_FILE"
-if [[ "\${1:-}" == "-p" ]]; then
-  shift 2
-fi
+while [[ "\${1:-}" == "-p" || "\${1:-}" == "-h" || "\${1:-}" == "--raw" ]]; do
+  if [[ "\${1:-}" == "--raw" ]]; then shift; else shift 2; fi
+done
 cmd="\${1:-}"
 case "$cmd" in
   ping)

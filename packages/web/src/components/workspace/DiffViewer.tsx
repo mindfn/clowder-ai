@@ -26,10 +26,12 @@ function parseUnifiedDiff(diff: string): FileDiff[] {
 
   const files: FileDiff[] = [];
   const lines = diff.split('\n');
+  if (lines.at(-1) === '') lines.pop();
   let current: FileDiff | null = null;
   let hunk: DiffHunk | null = null;
   let oldLine = 0;
   let newLine = 0;
+  let oldPath: string | null = null;
 
   for (const line of lines) {
     // Primary path source: diff --git a/... b/...
@@ -38,16 +40,26 @@ function parseUnifiedDiff(diff: string): FileDiff[] {
       current = { path: gitHeaderMatch[2], hunks: [] };
       files.push(current);
       hunk = null;
+      oldPath = null;
       continue;
     }
 
-    if (line.startsWith('+++ b/') && current) {
+    if (line.startsWith('--- a/') && current && !hunk) {
+      oldPath = line.slice(6);
+      continue;
+    }
+    if (line === '+++ /dev/null' && current && !hunk && oldPath !== null) {
+      // Deletion's old-file header is unambiguous even when a path contains " b/".
+      current.path = oldPath;
+      continue;
+    }
+    if (line.startsWith('+++ b/') && current && !hunk) {
       // Override with +++ path (handles renames: diff --git has old, +++ has new)
       current.path = line.slice(6);
       continue;
     }
     // Skip --- and +++ lines (including +++ /dev/null for deleted files)
-    if (line.startsWith('--- ') || line.startsWith('+++ ')) continue;
+    if (!hunk && (line.startsWith('--- ') || line.startsWith('+++ '))) continue;
     if (line.startsWith('index ') || line.startsWith('new file') || line.startsWith('deleted file')) continue;
 
     const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)/);
@@ -201,6 +213,12 @@ function SideBySideView({ hunks }: { hunks: DiffHunk[] }) {
 
 /* ── Exported DiffViewer ─────────────────────────────── */
 
+interface DiffViewerLabels {
+  unified?: string;
+  sideBySide?: string;
+  filesChanged?: (count: number) => string;
+}
+
 interface DiffViewerProps {
   /** Raw unified diff text */
   diff: string;
@@ -208,9 +226,15 @@ interface DiffViewerProps {
   filePath?: string;
   /** Compact mode for rich blocks (no file header, no mode toggle) */
   compact?: boolean;
+  /** F322 v2: localized labels for the mode toggle and count summary. */
+  labels?: DiffViewerLabels;
+  /** F322 × C seam (coord-e6d806a7): per-file "open" action. Hidden unless provided. */
+  onOpenFile?: (path: string) => void;
+  /** Localized label for the open-file action. */
+  openFileLabel?: string;
 }
 
-export function DiffViewer({ diff, filePath, compact }: DiffViewerProps) {
+export function DiffViewer({ diff, filePath, compact, labels, onOpenFile, openFileLabel }: DiffViewerProps) {
   const [mode, setMode] = useState<'unified' | 'split'>('unified');
   const files = useMemo(() => parseUnifiedDiff(diff), [diff]);
 
@@ -237,7 +261,7 @@ export function DiffViewer({ diff, filePath, compact }: DiffViewerProps) {
                 : 'text-cafe-secondary hover:text-cafe-muted hover:bg-cafe-surface/10'
             }`}
           >
-            Unified
+            {labels?.unified ?? 'Unified'}
           </button>
           <button
             type="button"
@@ -248,20 +272,34 @@ export function DiffViewer({ diff, filePath, compact }: DiffViewerProps) {
                 : 'text-cafe-secondary hover:text-cafe-muted hover:bg-cafe-surface/10'
             }`}
           >
-            Side-by-side
+            {labels?.sideBySide ?? 'Side-by-side'}
           </button>
           <span className="ml-auto text-micro text-cafe-secondary">
-            {filtered.length} file{filtered.length !== 1 ? 's' : ''} changed
+            {labels?.filesChanged
+              ? labels.filesChanged(filtered.length)
+              : `${filtered.length} file${filtered.length !== 1 ? 's' : ''} changed`}
           </span>
         </div>
       )}
       {filtered.map((file) => (
         <div key={file.path} className="rounded border border-[var(--console-border-soft)] overflow-hidden">
-          {!compact && (
-            <div className="bg-[var(--ws-editor-bg)] px-3 py-1.5 text-xs font-mono text-cafe-muted console-divider-b truncate">
-              {file.path}
-            </div>
-          )}
+          {!compact &&
+            (onOpenFile ? (
+              <div className="bg-[var(--ws-editor-bg)] px-3 py-1.5 text-xs font-mono text-cafe-muted console-divider-b flex items-center gap-2">
+                <span className="truncate">{file.path}</span>
+                <button
+                  type="button"
+                  onClick={() => onOpenFile(file.path)}
+                  className="ml-auto shrink-0 font-sans text-micro text-cafe-interactive/60 hover:text-cafe-interactive transition-colors"
+                >
+                  {openFileLabel ?? 'Open file'}
+                </button>
+              </div>
+            ) : (
+              <div className="bg-[var(--ws-editor-bg)] px-3 py-1.5 text-xs font-mono text-cafe-muted console-divider-b truncate">
+                {file.path}
+              </div>
+            ))}
           <div className="overflow-x-auto bg-[var(--ws-editor-deep)]">
             {mode === 'unified' ? <UnifiedView hunks={file.hunks} /> : <SideBySideView hunks={file.hunks} />}
           </div>

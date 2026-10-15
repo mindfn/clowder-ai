@@ -10,10 +10,56 @@ import { fetchPrCiStatuses } from '../dist/infrastructure/email/ci-status-batch-
 import {
   classifyGitHubExecutionFailure,
   computeAggregateBucket,
+  enrichPrCiFailure,
   fetchPrCiStatus,
   normalizeBucket,
   normalizePrState,
 } from '../dist/infrastructure/email/ci-status-fetcher.js';
+
+describe('deferred CI detail freshness', () => {
+  it('rejects valid JSON without PR identity as missing facts', async () => {
+    const result = await fetchPrCiStatus(
+      'owner/repo',
+      7,
+      { warn() {} },
+      {
+        execFileAsync: async () => ({ stdout: '{}' }),
+      },
+    );
+    assert.equal(result, null);
+  });
+
+  it('does not attach a newer GitHub HEAD to a buffered failure', async () => {
+    await assert.rejects(
+      enrichPrCiFailure(
+        {
+          repoFullName: 'owner/repo',
+          prNumber: 7,
+          headSha: 'head-old',
+          prState: 'open',
+          aggregateBucket: 'fail',
+          checks: [],
+        },
+        { warn() {} },
+        {
+          execFileAsync: async (_file, args) => {
+            if (args[1] === 'view')
+              return {
+                stdout: JSON.stringify({
+                  headRefOid: 'head-new',
+                  state: 'OPEN',
+                  mergedAt: null,
+                  statusCheckRollup: [],
+                }),
+              };
+            throw new Error('no details expected for a pending new HEAD');
+          },
+        },
+      ),
+      /Stale CI snapshot/,
+    );
+  });
+});
 
 describe('fetchPrCiStatuses', () => {
   it('loads many tracked PR rollups with one GraphQL process', async () => {
@@ -193,7 +239,7 @@ describe('classifyGitHubExecutionFailure', () => {
     assert.ok(fixture.commands.some((args) => args[0] === 'api' && args[1].includes('/annotations?')));
   });
 
-  it('marks an empty GitHub rollup without prematurely classifying it as pass', async () => {
+  it('marks an empty GitHub rollup as pending, never as pass', async () => {
     const commands = [];
     const result = await fetchPrCiStatus(
       'zts212653/clowder-ai',
@@ -281,9 +327,10 @@ describe('normalizeBucket', () => {
 });
 
 describe('computeAggregateBucket', () => {
-  it('keeps an empty rollup pending until the poller proves it is stable', () => {
-    // A single empty statusCheckRollup is ambiguous: the repository may have no
-    // checks, or GitHub may not have created the check runs yet for a fresh HEAD.
+  it('keeps an empty rollup pending however long it stays empty', () => {
+    // An empty statusCheckRollup is ambiguous: the repository may have no checks,
+    // or GitHub may not have created the check runs yet for a fresh HEAD. Neither
+    // is evidence that CI passed, so it stays pending no matter how many polls see it.
     assert.strictEqual(computeAggregateBucket([]), 'pending');
   });
 

@@ -1,7 +1,8 @@
 'use client';
 
 import DOMPurify from 'dompurify';
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { readShellPresentation, useShellPresentation } from './shell/shell-presentation';
 
 type RenderState =
   | { status: 'loading'; svg?: undefined; error?: undefined }
@@ -21,20 +22,34 @@ function toMermaidId(id: string, source: string): string {
   return `mermaid-${safeId}-${hashSource(source)}`;
 }
 
+function removeOwnedMermaidScratch(renderId: string): void {
+  document.getElementById(`d${renderId}`)?.remove();
+  document.getElementById(`i${renderId}`)?.remove();
+}
+
 export function MermaidDiagram({ source }: { source: string }) {
+  const presentation = useShellPresentation();
   const reactId = useId();
+  const renderGeneration = useRef(0);
   const normalizedSource = source.trim();
   const diagramId = useMemo(() => toMermaidId(reactId, normalizedSource), [reactId, normalizedSource]);
   const [renderState, setRenderState] = useState<RenderState>({ status: 'loading' });
 
   useEffect(() => {
     let cancelled = false;
+    // A cancelled classic render can finish after v2 has started. Its cleanup
+    // must never target the new render's scratch, even with identical source.
+    const renderId = presentation === 'v2' ? `${diagramId}-v2-${++renderGeneration.current}` : diagramId;
+    const cleanV2Scratch = () => {
+      if (presentation === 'v2' || readShellPresentation() === 'v2') removeOwnedMermaidScratch(renderId);
+    };
 
     async function renderDiagram() {
       setRenderState({ status: 'loading' });
 
       try {
         const mermaid = (await import('mermaid')).default;
+        if (cancelled) return;
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: 'strict',
@@ -45,9 +60,13 @@ export function MermaidDiagram({ source }: { source: string }) {
           // sandbox forces HTML labels back on. Top-level wins.
           // See: clowder-ai#1444
           htmlLabels: false,
+          // Mermaid otherwise leaves its error SVG in document.body before rejecting.
+          // V2 owns error presentation here; suppress the global fallback so Mermaid
+          // cleans its temporary DOM and cannot scroll the whole document.
+          suppressErrorRendering: presentation === 'v2',
         });
 
-        const { svg } = await mermaid.render(diagramId, normalizedSource);
+        const { svg } = await mermaid.render(renderId, normalizedSource);
         const safeSvg = DOMPurify.sanitize(svg, {
           USE_PROFILES: { svg: true, svgFilters: true },
         });
@@ -60,14 +79,17 @@ export function MermaidDiagram({ source }: { source: string }) {
             error: error instanceof Error ? error.message : '无法渲染 Mermaid 图表',
           });
         }
+      } finally {
+        if (cancelled) cleanV2Scratch();
       }
     }
 
     void renderDiagram();
     return () => {
       cancelled = true;
+      cleanV2Scratch();
     };
-  }, [diagramId, normalizedSource]);
+  }, [diagramId, normalizedSource, presentation]);
 
   return (
     <div

@@ -7,6 +7,7 @@ export function OnboardingScene({
   phase,
   mode,
   providers,
+  hasAuthenticatedHuman = false,
   error,
   onBootstrap,
   onAuthenticate,
@@ -16,6 +17,7 @@ export function OnboardingScene({
   readonly phase: ClientPhase;
   readonly mode: EntryMode;
   readonly providers: readonly HumanAuthProviderStatus[];
+  readonly hasAuthenticatedHuman?: boolean;
   readonly error?: string;
   readonly onBootstrap: (displayName: string) => Promise<void>;
   readonly onAuthenticate: () => Promise<void>;
@@ -37,7 +39,7 @@ export function OnboardingScene({
     return (
       <div className="state-scene state-scene-error" role="alert">
         <h2>现在还进不去</h2>
-        <p>共同现场暂时不可达。数据仍留在原处，恢复连接后可以继续。</p>
+        <p>暂时连不上这个共同体。恢复后可以接着用。</p>
         {error && <small>{error}</small>}
       </div>
     );
@@ -84,9 +86,13 @@ export function OnboardingScene({
   if (phase === 'create-collective') {
     return (
       <EntryCard
-        eyebrow="第一次建立 Collective"
-        title="给共同家园起个名字"
-        description="你会成为第一位管理者。首启完成后还需绑定 Human 身份，才能邀请成员、连接 Café 或进入日常协作。"
+        eyebrow={hasAuthenticatedHuman ? '选择下一步' : '第一次建立 Collective'}
+        title={hasAuthenticatedHuman ? '建立新的共同家园' : '给共同家园起个名字'}
+        description={
+          hasAuthenticatedHuman
+            ? '你已离开原共同家园。可以在这里新建，也可以从新的邀请链接加入；原公开历史与署名仍会保留。'
+            : '你会成为第一位管理者。首启完成后还需绑定 Human 身份，才能邀请成员、连接 Café 或进入日常协作。'
+        }
         label="Collective 名称"
         defaultValue="Clowder AI Collective"
         button="建立 Collective"
@@ -131,7 +137,7 @@ export function OnboardingScene({
     return (
       <AuthCard
         eyebrow="Collective 邀请"
-        title="加入同一个共同现场"
+        title="加入共同体"
         description="先验证你的 Human 身份，再接受这次邀请。Clowder AI endpoint 的连接与撤销仍独立管理。"
         button="使用 GitHub 验证并加入"
         providerReady={github?.ready === true}

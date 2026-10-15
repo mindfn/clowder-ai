@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { flushSync } from 'react-dom';
 import { MESSAGE_VIEWPORT_MOUNTED_EVENT, MOUNT_DEFERRED_MESSAGE_EVENT } from '@/utils/scrollToMessage';
+import { useShellPresentation } from './shell/shell-presentation';
 
 const OFFSCREEN_MESSAGE_STYLE: CSSProperties = {
   containIntrinsicSize: 'auto 240px',
@@ -18,8 +19,24 @@ const OFFSCREEN_MESSAGE_STYLE: CSSProperties = {
 
 // `content-visibility: auto` also paint-contains descendants. The message toolbar floats above
 // its row, so lift that containment only while the real row is interactive.
+// `flow-root` keeps the row's height the same in both states: the containment of `auto` holds the
+// bubble's bottom margin inside the row, and without a block formatting context of its own the
+// hovered `visible` state let that margin collapse out, so each row under the pointer lost 16px.
+// With native scroll anchoring off in the chat container, that showed as the view jumping.
 const CONTENT_VISIBILITY_CLASS =
   '[content-visibility:auto] hover:[content-visibility:visible] focus-within:[content-visibility:visible]';
+
+// F322 B §1.16: the cat's 32px face hangs 4px above its nameplate, with a 2px ring around it. `content-visibility:auto`
+// paint-contains the row, so extend that paint clip by 6px without changing layout. Padding plus a cancelling negative
+// margin looks equivalent for mounted rows, but shortens each border-box deferred placeholder from 240px to 234px and
+// accumulates scroll-height error through long history. Classic never gets the extended clip.
+const FACE_OVERFLOW_CLASS = '[overflow-clip-margin:6px]';
+
+// Message roots in both shells own outer margins. Without a stable formatting context, moving focus between adjacent records changes
+// whether that margin collapses while `content-visibility` flips between auto and visible. The next row can then move between a
+// native pointer's down/up events and lose the click. `flow-root` contains the margin in both paint states without padding or a
+// compensating negative margin, so disclosure and deferred-row geometry share one coordinate system.
+const STABLE_MESSAGE_FLOW_CLASS = 'flow-root';
 
 /**
  * Keep the message DOM available for anchors/search while letting Chromium skip
@@ -30,6 +47,8 @@ interface MessageViewportBoundaryProps {
   messageId?: string;
   eager?: boolean;
   backgroundMountDelayMs?: number;
+  /** Readonly message-owner signal; independent of whether the body is mounted. */
+  navigationError?: boolean;
 }
 
 export function MessageViewportBoundary({
@@ -37,8 +56,10 @@ export function MessageViewportBoundary({
   messageId,
   eager = false,
   backgroundMountDelayMs,
+  navigationError,
 }: MessageViewportBoundaryProps) {
   const boundaryRef = useRef<HTMLDivElement>(null);
+  const shellPresentation = useShellPresentation();
   const [mounted, setMounted] = useState(eager || !messageId);
   const transitionPendingRef = useRef(!mounted);
 
@@ -97,7 +118,12 @@ export function MessageViewportBoundary({
       ref={boundaryRef}
       data-message-viewport-boundary
       data-message-viewport-id={messageId}
-      className={CONTENT_VISIBILITY_CLASS}
+      data-message-navigation-error={navigationError || undefined}
+      className={
+        shellPresentation === 'v2'
+          ? `${CONTENT_VISIBILITY_CLASS} ${FACE_OVERFLOW_CLASS} ${STABLE_MESSAGE_FLOW_CLASS}`
+          : `${CONTENT_VISIBILITY_CLASS} ${STABLE_MESSAGE_FLOW_CLASS}`
+      }
       {...(!mounted && messageId ? { 'data-deferred-message-id': messageId } : {})}
       style={mounted ? OFFSCREEN_MESSAGE_STYLE : { ...OFFSCREEN_MESSAGE_STYLE, minHeight: '240px' }}
     >

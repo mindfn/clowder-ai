@@ -1,7 +1,6 @@
 'use client';
 
 import type { InvocationTrajectoryStatus } from '@cat-cafe/shared';
-import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
 import type { ChatMessage } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { captureMessageScrollAnchorForMessage } from '@/utils/scrollToMessage';
@@ -20,19 +19,40 @@ function hasTimeoutEvidence(message: ChatMessage): boolean {
   return typeof reasonCode === 'string' && reasonCode.toLowerCase().includes('timeout');
 }
 
+function responseLifecycleTrajectoryStatus(message: ChatMessage): InvocationTrajectoryStatus | undefined {
+  const lifecycle = message.lifecycle;
+  if (lifecycle?.kind !== 'response') return undefined;
+  switch (lifecycle.status) {
+    case 'processing':
+      return 'running';
+    case 'completed':
+      return 'done';
+    case 'failed':
+      return hasTimeoutEvidence(message) ? 'timeout' : 'error';
+    case 'canceled':
+    case 'interrupted':
+      return 'cancelled';
+  }
+}
+
+/** The turn a streamed message came from; a post_message stands alone and names no trajectory. */
+function streamInvocationId(message: ChatMessage): string | undefined {
+  if (message.extra?.isExplicitPost) return undefined;
+  return message.extra?.stream?.turnInvocationId ?? message.extra?.stream?.invocationId;
+}
+
 export function describeMessageInvocationTrajectory(
   message: ChatMessage,
 ): MessageInvocationTrajectoryDescriptor | undefined {
   const invocationId =
-    getBubbleInvocationId(message) ??
+    streamInvocationId(message) ??
     message.extra?.timeoutDiagnostics?.invocationId ??
     message.extra?.cliDiagnostics?.debugRef.invocationId;
   if (!invocationId || !message.catId) return undefined;
-  const phase = message.extra?.invocationReconciliation?.phase;
+  const responseLifecycleStatus = responseLifecycleTrajectoryStatus(message);
   let status: InvocationTrajectoryStatus;
-  if (phase === 'failed') status = hasTimeoutEvidence(message) ? 'timeout' : 'error';
-  else if (phase === 'canceled') status = 'cancelled';
-  else if (phase === 'running' || phase === 'unknown_running' || message.isStreaming) status = 'running';
+  if (responseLifecycleStatus) status = responseLifecycleStatus;
+  else if (message.isStreaming) status = 'running';
   else if (hasTimeoutEvidence(message)) status = 'timeout';
   else if (message.variant === 'error' || message.content.trimStart().startsWith('Error:')) status = 'error';
   else status = 'done';
@@ -54,6 +74,30 @@ export function openMessageInvocationTrajectory(message: ChatMessage, threadId: 
       viewportOffsetPx: anchor?.viewportOffsetPx ?? 0,
     },
   });
+}
+
+/**
+ * The default open of a message's trajectory: the run's surface in the Workspace right panel. Shared by the classic anchor on the
+ * name row and by the new shell's last line of a reply, so both land on the same place.
+ */
+export function openMessageTrajectoryInWorkspace(
+  message: ChatMessage,
+  threadId: string,
+  descriptor: MessageInvocationTrajectoryDescriptor,
+): void {
+  useF307ExperienceWorkbenchStore.getState().dispatch({
+    type: 'open-surface',
+    surface: createAgentRunSurface({
+      invocationId: descriptor.invocationId,
+      threadId,
+      catId: message.catId ?? undefined,
+      sourceMessageId: message.id,
+    }),
+    entitlement: { kind: 'user', reason: 'open-from-chat' },
+  });
+  const store = useChatStore.getState();
+  store.setRightPanelMode('workspace');
+  store.setRightPanelOpen(true);
 }
 
 const STATUS_LABEL: Record<InvocationTrajectoryStatus, string> = {
@@ -94,19 +138,7 @@ export function InvocationTrajectoryAnchor({
         if (onOpen) {
           onOpen(descriptor);
         } else {
-          useF307ExperienceWorkbenchStore.getState().dispatch({
-            type: 'open-surface',
-            surface: createAgentRunSurface({
-              invocationId: descriptor.invocationId,
-              threadId,
-              catId: message.catId ?? undefined,
-              sourceMessageId: message.id,
-            }),
-            entitlement: { kind: 'user', reason: 'open-from-chat' },
-          });
-          const store = useChatStore.getState();
-          store.setRightPanelMode('workspace');
-          store.setRightPanelOpen(true);
+          openMessageTrajectoryInWorkspace(message, threadId, descriptor);
         }
       }}
       className={`inline-flex h-5 shrink-0 items-center gap-1 rounded-full border px-1.5 text-micro font-semibold transition-[opacity,color,background-color] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cafe-accent ${

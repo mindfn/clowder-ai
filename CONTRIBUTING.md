@@ -231,9 +231,14 @@ Every contribution should respect these:
 - **TypeScript** with strict mode
 - **Biome** for formatting and linting (`pnpm check` / `pnpm check:fix`)
 - **pnpm** for package management
-- Files under 350 lines (warning at 200)
+- Review responsibilities and coupling at 200 lines; split at 350 by default or explain the structural reason to keep the unit together. Do not add per-file line-count unit tests.
 - No `any` types
 - Run `pnpm lint` before submitting
+
+For test changes, explain the real failure, the lowest sufficient layer, the gap in existing coverage, and added cost.
+Reuse precise existing checks; do not copy production logic into a test or treat decorative source strings as product behavior.
+Collect cleanup candidates and edit a batch before running affected checks. A full gate needs a concrete uncovered risk,
+not another small deletion; record failed attempts as well as the final successful run.
 
 ---
 
@@ -393,6 +398,10 @@ Review PR 时的优先级：
 - **TypeScript** 严格模式
 - **Biome** 格式化和 lint（`pnpm check` / `pnpm check:fix`）
 - **pnpm** 包管理
-- 文件不超过 350 行（200 行开始警告）
+- 200 行审查职责与耦合，350 行默认拆分，保留须说明结构理由；不为单个文件另写数行 UT。
 - 禁止 `any` 类型
 - 提交前跑 `pnpm lint`
+
+测试增量说明真实失败、最低足够层级、已有覆盖缺口与新增成本。已有精准检查足够就复用，
+不复制生产逻辑来测自己，也不把装饰源码字串当产品行为。清理先收齐候选、成批修改，再集中跑受影响检查；
+全量门禁须有具体未覆盖风险，不因又删几条测试而重跑。失败尝试与最后一次成功都计入总账。

@@ -170,7 +170,6 @@ describe('F290 asset collaboration true frontend', () => {
   it('keeps the current artifact central and states the browser-local boundary', () => {
     expect(container.querySelector('[data-testid="asset-document"]')).not.toBeNull();
     expect(container.textContent).toContain('本次体验数据保存在此浏览器');
-    expect(container.querySelector('[data-concierge-safe-edge="right"]')).not.toBeNull();
   });
 
   it('embeds a fixture-external artifact through an isolated storage adapter', async () => {

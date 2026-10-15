@@ -40,10 +40,49 @@ export interface AuthenticatedCompressionObservation {
   observedAt: number;
 }
 
+/** Host-verified Native launch identity; persisted with the canonical session, never the private L0 body. */
+export interface NativeSessionBinding {
+  readonly v: 1;
+  readonly carrier: 'agy_stream_json';
+  readonly cliSessionId: string;
+  readonly l0Hash: string;
+  readonly workspaceRoot: string;
+  readonly profileHome: string;
+  readonly model: string;
+  readonly permissionMode: 'request-review' | 'always-proceed';
+  readonly agentName: string;
+}
+
 export interface SessionRecord {
   readonly id: string;
+  /** A one-shot scoped execution is traceable history, never a home resume candidate. */
+  readonly scopedInvocation?:
+    | {
+        readonly invocationId: string;
+        readonly executionScope: 'collective-participation';
+        readonly originMessageId: string;
+      }
+    | {
+        readonly invocationId: string;
+        readonly executionScope: 'collective-work';
+        readonly originMessageId: string;
+        readonly taskId: string;
+        readonly executionRef: string;
+        readonly executionRevision: number;
+        readonly authorityRef: string;
+      };
   /** CLI-reported session ID (from session_init event) */
   cliSessionId?: string;
+  nativeSessionBinding?: NativeSessionBinding;
+  /** User-requested adoption of an existing native history; persisted across reloads. */
+  externalImport?: {
+    cliSessionId: string;
+    clientId: 'openai' | 'anthropic';
+    firstPrompt: string;
+    projectPath: string;
+    lastActivityAt: number;
+    importedAt: number;
+  };
   /** Canonical workspace path associated with this CLI session, when provider-scoped. */
   workingDirectory?: string;
   /** Stable workspace identity used to decide whether a CLI session can be resumed. */

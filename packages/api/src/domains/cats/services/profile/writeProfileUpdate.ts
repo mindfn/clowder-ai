@@ -177,7 +177,7 @@ function renderProvenance(proposal: WritableProfileUpdate): string {
   ].join('\n');
 }
 
-function atomicWriteUtf8(path: string, content: string, fileOps: ProfileWriteFileOps): void {
+export function atomicWriteUtf8(path: string, content: string, fileOps: ProfileWriteFileOps = DEFAULT_FILE_OPS): void {
   const tmpPath = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
   try {
     fileOps.writeFileSync(tmpPath, content, { encoding: 'utf8', flag: 'wx' });

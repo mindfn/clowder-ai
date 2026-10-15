@@ -20,7 +20,7 @@ const SENSITIVE_ENV_KEYS = [
   'CAT_CAFE_AGENT_KEY_FILES',
 ];
 
-function readProcessIdentity(pid) {
+export function readProcessIdentity(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   const started = spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8' });
   const command = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' });
@@ -69,7 +69,17 @@ export function ownsLaunchdJob(config, record) {
 export function ownsLaunchdProcess(config, record) {
   if (!matchesLaunchdRecord(config, record)) return false;
   const job = readLaunchdJob(config);
-  return Boolean(job?.pid && job.pid === record.pid);
+  return Boolean(job?.pid && job.pid === record.pid && ownsProcess(record));
+}
+
+export function hasRunningLaunchdJob(config, record) {
+  return matchesLaunchdRecord(config, record) && Boolean(readLaunchdJob(config)?.pid);
+}
+
+export function hasConflictingLaunchdProcess(config, record) {
+  if (!matchesLaunchdRecord(config, record)) return false;
+  const job = readLaunchdJob(config);
+  return Boolean(job?.pid && job.pid !== record.pid);
 }
 
 function cleanChildEnv() {
@@ -169,10 +179,12 @@ export function removeLaunchdJob(config) {
   });
 }
 
-async function captureIdentity(pid) {
+export async function captureLaunchdIdentity(pid, launchdLabel, readIdentity = readProcessIdentity) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    const identity = readProcessIdentity(pid);
-    if (identity) return identity;
+    const identity = readIdentity(pid);
+    // launchctl can publish a PID before xpcproxy execs the owned lease runner.
+    // Recording that transient argv makes the existing exact identity fence kill a healthy startup.
+    if (identity && identity.processCommand !== `xpcproxy ${launchdLabel}`) return identity;
     await new Promise((resolveWait) => setTimeout(resolveWait, 25));
   }
   return null;
@@ -206,7 +218,12 @@ export async function launchWithLaunchd(config) {
     rmSync(config.plistPath, { force: true });
     throw new Error(`launchd preview exited before publishing a PID; see ${config.logPath}`);
   }
-  const identity = await captureIdentity(pid);
+  const identity = await captureLaunchdIdentity(pid, config.launchdLabel);
+  if (!identity) {
+    removeLaunchdJob(config);
+    rmSync(config.plistPath, { force: true });
+    throw new Error(`launchd preview did not publish its final process identity; see ${config.logPath}`);
+  }
   return {
     origin: 'launchd',
     launchdLabel: config.launchdLabel,

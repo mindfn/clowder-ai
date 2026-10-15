@@ -1,19 +1,30 @@
-import { DELETE_PROGRAMS, findArgvDeletes } from './native-effect-find-classifier.mjs';
+import { executedInvocations } from './lib/shell-invocation.mjs';
+import { shellSegments } from './lib/shell-lexical.mjs';
+import { SUBSTITUTION } from './lib/shell-text.mjs';
+import { DELETE_PROGRAMS, findArgvDeletes, findExecutedCommands } from './native-effect-find-classifier.mjs';
+import { constrainedGhApiOperation } from './native-effect-github-classifier.mjs';
+import { classifyHttpOperation } from './native-effect-http-classifier.mjs';
+import { FOREIGN_INTERPRETERS } from './native-effect-interpreter-source.mjs';
 import { isConstrainedLocalMediaObservation } from './native-effect-media-classifier.mjs';
 import {
   constrainedGhPullRequestOperation,
   gitArgvRewritesRepository,
+  gitSubcommandArgs,
   isConstrainedGhPullRequestRead,
   isGitRepositoryObservation,
   isGitWriteOperation,
   isRepositoryRefresh,
-  isRepositoryRewrite,
 } from './native-effect-repository-classifier.mjs';
 import {
   commandName,
+  shellInvocation,
   stripHarmlessRedirections,
+  stripShellComments,
   tokenizeSimpleShellCommand,
+  unquotedShellText,
 } from './native-effect-shell-tokenizer.mjs';
+import { isConstrainedSqliteRead, isUnconstrainedSqliteOperation } from './native-effect-sqlite-classifier.mjs';
+import { fileProgramAnalysis, fileProgramEffect, redisEffect } from './native-effect-write-effects.mjs';
 
 export {
   constrainedGhPullRequestOperation,
@@ -33,17 +44,28 @@ export const SHELL_EFFECT_PRIORITY = new Map([
 ]);
 
 export function classifyShellSegment(raw) {
-  const command = stripHarmlessRedirections(raw);
-  if (isRedisMutation(command)) return 'service_mutation';
-  if (isUnsafeDateOperation(command) || isUnconstrainedHttpOperation(command)) return 'service_mutation';
-  if (/\b(kill|pkill|killall)\b/i.test(command)) return 'process_control';
+  const command = stripHarmlessRedirections(stripShellComments(raw));
+  if (redisEffect(command) === 'service_mutation') return 'service_mutation';
+  if (isUnsafeDateOperation(command)) return 'service_mutation';
+  const httpEffect = classifyHttpOperation(command);
+  if (httpEffect) return httpEffect;
+  const execution = executedInvocations(command);
+  const invocations = execution.pipelines.flat();
+  const signals = invocations.filter(({ name }) => ['kill', 'pkill', 'killall'].includes(name));
+  if (signals.some((invocation) => !isLivenessProbe(invocation))) return 'process_control';
   if (isRepositoryRefresh(command)) return 'repository_refresh';
-  if (constrainedGhPullRequestOperation(command)?.effect === 'remote_mutation') return 'remote_mutation';
-  if (isRepositoryRewrite(command)) return 'repository_rewrite';
+  if ((constrainedGhApiOperation(command) ?? constrainedGhPullRequestOperation(command))?.effect === 'remote_mutation')
+    return 'remote_mutation';
+  if (invocations.some(({ name, operands }) => name === 'git' && gitArgvRewritesRepository(operands)))
+    return 'repository_rewrite';
+  if (invocations.some(({ name }) => DELETE_PROGRAMS.has(name))) return 'delete';
   if (isDeleteOperation(command)) return 'delete';
   if (isUnconstrainedSqliteOperation(command)) return 'write';
+  if (invocations.some(({ name }) => ['touch', 'mkdir', 'cp', 'mv', 'tee', 'install'].includes(name))) return 'write';
   if (isWriteOperation(command)) return 'write';
-  if (isReadOperation(command)) return 'read';
+  if (invocations.some(({ name, operands }) => name === 'find' && findExecutedCommands(operands).length))
+    return 'unknown';
+  if (execution.complete && isReadOperation(command)) return 'read';
   return 'unknown';
 }
 
@@ -70,13 +92,120 @@ export function destructiveInvocationEffect({ name, operands = [] } = {}) {
   return undefined;
 }
 
+const DATA_PROGRAMS = new Set(
+  `base64 bat cat column curl cut diff echo envsubst fmt fold gh grep head jq less md5 md5sum more nl od
+   paste pbcopy printf pv redis-cli rev rg sed shasum sort sqlite3 tac tail tee tr uniq wc wl-copy xclip xxd`
+    .trim()
+    .split(/\s+/),
+);
+const TMUX_CODE_COMMANDS = new Set([
+  'new-session',
+  'new-window',
+  'split-window',
+  'respawn-pane',
+  'respawn-window',
+  'run-shell',
+]);
+const GIT_PROTECTED_CONTROL_COMMANDS = new Set(['branch', 'fetch', 'push', 'update-ref']);
+
+function unprovedExecutionCarrier(call) {
+  if (call.name?.includes(' ')) return true;
+  if (call.name === 'watch' || (call.name === 'su' && call.operands.includes('-c'))) return true;
+  if (call.name === 'tmux') {
+    if (call.operands[0] === 'send-keys')
+      return call.operands.slice(1).some((word) => /^(?:Enter|C-[mj])$/i.test(word) || /[\r\n]/.test(word));
+    return TMUX_CODE_COMMANDS.has(call.operands[0]);
+  }
+  if (call.name === 'gh' && call.operands[0] === 'alias' && call.operands[1] === 'set')
+    return call.operands.some((word) => word.startsWith('!'));
+  if (call.name === 'sed')
+    return call.operands.some((word) =>
+      /(?:^|[;{}\n/])\s*e(?:\s|$)|(?:^|[;{}\n])\s*s([^A-Za-z0-9\\\s]).*\1.*\1[A-Za-z]*e[A-Za-z]*(?:$|[;{}\n])/s.test(
+        word,
+      ),
+    );
+  if (['docker', 'kubectl'].includes(call.name) && call.operands.includes('exec')) return true;
+  return call.name === 'awk' && call.operands.some((word) => /\bsystem\s*\(|\|&?\s*(?:["']|getline\b)/.test(word));
+}
+
+/** A data-classified call does not prove executable Git selectors or generated control argv. */
+function unprovedGitEvidence(call) {
+  if (call.name !== 'git') return [];
+  const args = gitSubcommandArgs(call.operands);
+  if (!args) return [];
+  const options = call.operands.slice(0, call.operands.length - args.length);
+  const evidence = options.some((word) => /^-c|^--(?:config-env|exec-path)(?:=|$)/.test(word))
+    ? [options.join(' ')]
+    : [];
+  if (GIT_PROTECTED_CONTROL_COMMANDS.has(args[0]) && call.argumentEvidence?.length) evidence.push(call.text);
+  return evidence;
+}
+
+function namedDataCall(call) {
+  if (DATA_PROGRAMS.has(call.name))
+    return (
+      !unprovedExecutionCarrier(call) &&
+      (call.name !== 'rg' || !call.operands.some((word) => /^(?:--pre|--hostname-bin)(?:=|$)/.test(word)))
+    );
+  if (call.name === 'awk') return !unprovedExecutionCarrier(call);
+  if (call.name === 'tmux' && call.operands[0] === 'send-keys') return !unprovedExecutionCarrier(call);
+  if (['pnpm', 'npm'].includes(call.name) && call.operands[0] === 'test') return true;
+  if (FOREIGN_INTERPRETERS.test(call.interpreter ?? call.name ?? ''))
+    return call.interpreter !== undefined || (call.operands.length > 0 && !call.operands.includes('-'));
+  return false;
+}
+
+function provenGitData(call) {
+  if (call.name !== 'git') return false;
+  const args = gitSubcommandArgs(call.operands);
+  if (!args) return false;
+  if (['commit', 'tag', 'notes', 'stash', 'merge'].includes(args[0])) return true;
+  if (['log', 'diff', 'show'].includes(args[0])) return true;
+  const normalized = ['git', ...args].map((word) => `'${word.replaceAll("'", "'\\''")}'`).join(' ');
+  return (
+    isGitRepositoryObservation(normalized, (word) => !word.includes(SUBSTITUTION)) || isRepositoryRefresh(normalized)
+  );
+}
+
+function provenDataCall(call) {
+  if (call.unprovedCodeEvidence?.length) return false;
+  return call.delegated || namedDataCall(call) || provenGitData(call);
+}
+
+/** Evidence that may still be executed; classified data roles never become shell source. */
+export function shellExecutionEvidence(call, fallbackCwd) {
+  const effect = destructiveInvocationEffect(call);
+  const texts =
+    !effect && provenDataCall(call)
+      ? unprovedGitEvidence(call)
+      : [
+          ...(effect ? [call.argvEvidence] : []),
+          ...(call.codeEvidence ?? []),
+          ...(call.unprovedCodeEvidence ?? []),
+          ...(call.argumentEvidence ?? []),
+          ...(call.inputEvidence ?? []),
+          call.text,
+          call.argvEvidence,
+        ];
+  return [...new Set(texts.filter(Boolean))].map((text) => ({
+    text,
+    cwd: call.cwd ?? fallbackCwd,
+    effect: effect ?? 'unknown',
+  }));
+}
+
 /** Split real pipelines and command lines without mistaking quoted or escaped separators for execution. */
 export function splitShellExecutionSegments(raw) {
+  return splitShellSegments(raw, true).map((segment) => segment.text);
+}
+
+/** The same split, keeping the separator in front of each segment (`&&`, `||`, `;`, `&`, `|`, newline). */
+export function splitShellExecutionSegmentsWithSeparators(raw) {
   return splitShellSegments(raw, true);
 }
 
 export function splitPipelineSegments(raw) {
-  return splitShellSegments(raw, false);
+  return splitShellSegments(raw, false).map((segment) => segment.text);
 }
 
 export function isDataDrivenPipelineConsumer(raw) {
@@ -86,60 +215,7 @@ export function isDataDrivenPipelineConsumer(raw) {
 }
 
 function splitShellSegments(raw, includeLineBoundaries) {
-  const segments = [];
-  let start = 0;
-  let quote = null;
-  let escaped = false;
-  for (let index = 0; index < raw.length; index += 1) {
-    const scanned = scanShellCharacter(raw, index, quote, escaped, includeLineBoundaries);
-    quote = scanned.quote;
-    escaped = scanned.escaped;
-    if (scanned.boundaryLength === 0) continue;
-    if (scanned.boundaryKind === 'line' && !includeLineBoundaries) continue;
-    segments.push(raw.slice(start, index));
-    start = index + scanned.boundaryLength;
-    index += scanned.boundaryLength - 1;
-  }
-  segments.push(raw.slice(start));
-  return segments.map((segment) => segment.trim()).filter(Boolean);
-}
-
-function scanShellCharacter(raw, index, quote, escaped, includeExecutionBoundaries) {
-  const char = raw[index];
-  if (escaped) return { quote, escaped: false, boundaryLength: 0 };
-  if (char === '\\' && quote !== "'") return { quote, escaped: true, boundaryLength: 0 };
-  if (quote) return { quote: char === quote ? null : quote, escaped: false, boundaryLength: 0 };
-  if (char === "'" || char === '"') return { quote: char, escaped: false, boundaryLength: 0 };
-  const boundary = shellBoundaryAt(raw, index, includeExecutionBoundaries);
-  return {
-    quote: null,
-    escaped: false,
-    boundaryKind: boundary.kind,
-    boundaryLength: boundary.length,
-  };
-}
-
-function shellBoundaryAt(raw, index, includeExecutionBoundaries) {
-  const char = raw[index];
-  if (includeExecutionBoundaries && char === ';') return { kind: 'execution', length: 1 };
-  if (includeExecutionBoundaries && char === '&' && raw[index + 1] === '&') {
-    return { kind: 'execution', length: 2 };
-  }
-  if (includeExecutionBoundaries && char === '&' && raw[index - 1] !== '>') {
-    return { kind: 'execution', length: 1 };
-  }
-  if (includeExecutionBoundaries && char === '|' && raw[index + 1] === '|') {
-    return { kind: 'execution', length: 2 };
-  }
-  if (char === '|' && raw[index - 1] !== '|' && raw[index + 1] !== '|') {
-    return { kind: 'pipeline', length: raw[index + 1] === '&' ? 2 : 1 };
-  }
-  if (char === '\n' || char === '\r') return { kind: 'line', length: crlfLength(raw, index) };
-  return { kind: null, length: 0 };
-}
-
-function crlfLength(raw, index) {
-  return raw[index] === '\r' && raw[index + 1] === '\n' ? 2 : 1;
+  return shellSegments(raw, { lines: includeLineBoundaries, execution: includeLineBoundaries }).segments;
 }
 
 function isDeleteOperation(raw) {
@@ -149,48 +225,84 @@ function isDeleteOperation(raw) {
   return /\s-(?:exec|execdir|ok|okdir)\b[^;&|\n]*(?:^|\s)(?:sudo\s+)?(?:rm|trash|unlink|rmdir)\b/i.test(raw);
 }
 
-function isRedisMutation(raw) {
-  return /\bredis-cli\b[^\n;&|]*\b(shutdown|flushall|flushdb|set|del|unlink|rename|restore|migrate|save|bgsave)\b/i.test(
-    raw,
-  );
-}
-
 function isWriteOperation(raw) {
   return (
+    fileProgramEffect(raw) === 'write' ||
     /(?:^|[;&|]\s*)\s*(?:touch|mkdir|cp|mv|tee|install)\b/i.test(raw) ||
-    /(?:^|[^<])>{1,2}(?!=)/.test(raw) ||
+    // Quoted `>` is text (`stat -f '%N -> %Y'`, `rg 'a > b'`), not a redirection.
+    /(?:^|[^<])>{1,2}(?!=)|<>/.test(unquotedShellText(raw)) ||
     isGitWriteOperation(raw)
   );
 }
 
 function isReadOperation(raw) {
+  const files = fileProgramAnalysis(raw);
+  if (files.handled && files.effect !== 'read') return false;
   return (
     isConstrainedDateRead(raw) ||
     isStatRead(raw) ||
     isConstrainedLocalMediaObservation(raw) ||
     isGitRepositoryObservation(raw) ||
     isConstrainedGhPullRequestRead(raw) ||
+    constrainedGhApiOperation(raw)?.effect === 'read' ||
     isConstrainedSqliteRead(raw) ||
-    isConstrainedHttpRead(raw) ||
     isLocalObservation(raw) ||
     /^\s*cd\b[^;&|]*$/i.test(raw) ||
-    /^\s*redis-cli\b[^\n;&|]*\b(?:ping|info|get|scan|keys|exists|ttl|pttl|type|dbsize|role)\b/i.test(raw) ||
+    redisEffect(raw) === 'read' ||
     /^\s*cd\b[^;&|]*&&\s*git\s+(?:status|log|diff|show|branch(?:\s+--show-current)?)\b/i.test(raw) ||
-    /^\s*(?:cat|ls|pwd|rg|grep|find|head|tail|sed\b(?![^\n]*\s-i\b)|echo|printf|git\s+(?:status|log|diff|show|branch))\b/i.test(
-      raw,
-    ) ||
+    /^\s*(?:cat|ls|pwd|rg|grep|find|head|tail|echo|printf|git\s+(?:status|log|diff|show|branch))\b/i.test(raw) ||
     /^\s*(?:wc|uniq|cut|tr|column|jq)\b/i.test(raw) ||
-    /^\s*sort\b(?![^\n]*(?:\s-o\b|\s--output(?:=|\s)))/i.test(raw)
+    (!files.handled && files.effect === 'read')
   );
 }
 
 function isLocalObservation(raw) {
+  if (isDiffRead(raw)) return true;
   const tokens = tokenizeSimpleShellCommand(raw);
   if (!tokens) return false;
   const executable = tokens[0];
+  if (['du', 'sleep'].includes(executable)) return true;
+  if (executable === 'shasum') return !tokens.slice(1).some((token) => ['-c', '--check', '--status'].includes(token));
+  if (isLivenessProbe({ name: executable, operands: tokens.slice(1) })) return true;
   if (['ps', '/bin/ps', '/usr/bin/ps', 'lsof', '/usr/bin/lsof', '/usr/sbin/lsof'].includes(executable)) return true;
   if (['test', '/bin/test', '/usr/bin/test'].includes(executable)) return tokens.length > 1;
   return ['[', '/bin/[', '/usr/bin/['].includes(executable) && tokens.at(-1) === ']';
+}
+
+function isDiffRead(raw) {
+  const invocation = shellInvocation(raw);
+  if (!invocation.complete || invocation.words.some((word) => !word.literal)) return false;
+  const [program, ...args] = invocation.words.map((word) => word.value);
+  if (program !== 'diff') return false;
+  let operands = 0;
+  let options = true;
+  for (const token of args) {
+    if (options && token === '--') options = false;
+    else if (!options || !token.startsWith('-') || token === '-') operands++;
+    else if (
+      !/^-[abBcdiNpqrstTuwyZ]+$/.test(token) &&
+      ![
+        '--text',
+        '--brief',
+        '--recursive',
+        '--unified',
+        '--context',
+        '--ignore-case',
+        '--report-identical-files',
+      ].includes(token)
+    )
+      return false;
+  }
+  return operands === 2;
+}
+
+function isLivenessProbe({ name, operands }) {
+  return (
+    name === 'kill' &&
+    operands?.length >= 2 &&
+    operands[0] === '-0' &&
+    operands.slice(1).every((value) => /^\d+$/.test(value))
+  );
 }
 
 function isConstrainedDateRead(raw) {
@@ -225,95 +337,4 @@ function isUnsafeDateOperation(raw) {
 function isStatRead(raw) {
   const tokens = tokenizeSimpleShellCommand(raw);
   return Boolean(tokens && commandName(tokens[0]) === 'stat');
-}
-
-function isConstrainedSqliteRead(raw) {
-  const tokens = tokenizeSimpleShellCommand(raw);
-  if (!tokens || commandName(tokens[0]) !== 'sqlite3') return false;
-  let index = 1;
-  let readonly = false;
-  while (index < tokens.length && tokens[index].startsWith('-')) {
-    const option = tokens[index];
-    if (option === '-readonly') readonly = true;
-    else if (!['-batch', '-noheader', '-header', '-json', '-csv', '-list', '-line'].includes(option)) return false;
-    index += 1;
-  }
-  if (!readonly || index + 2 !== tokens.length) return false;
-  const database = tokens[index];
-  const query = tokens[index + 1].trim();
-  if (!database || database.startsWith('-') || query.includes(';')) return false;
-  if (!/^(?:select\b|with\b|explain\s+query\s+plan\s+select\b)/i.test(query)) return false;
-  return !/\b(?:insert|update|delete|replace|create|drop|alter|attach|detach|vacuum|reindex|analyze|pragma|writefile|load_extension|eval)\b/i.test(
-    query,
-  );
-}
-
-function isUnconstrainedSqliteOperation(raw) {
-  const tokens = tokenizeSimpleShellCommand(raw);
-  return Boolean(tokens && commandName(tokens[0]) === 'sqlite3' && !isConstrainedSqliteRead(raw));
-}
-
-function isConstrainedHttpRead(raw) {
-  const tokens = tokenizeSimpleShellCommand(raw);
-  if (!tokens || commandName(tokens[0]) !== 'curl') return false;
-  const parsed = parseCurlArguments(tokens);
-  return Boolean(parsed && parsed.urls.length > 0 && parsed.urls.every(isLoopbackHttpUrl));
-}
-
-function parseCurlArguments(tokens) {
-  const parsed = { method: 'GET', urls: [] };
-  for (let index = 1; index < tokens.length; index += 1) {
-    const option = parseCurlOption(tokens, index);
-    if (!option) {
-      parsed.urls.push(tokens[index]);
-      continue;
-    }
-    if (!option.valid) return null;
-    if (option.method) parsed.method = option.method;
-    if (option.url) parsed.urls.push(option.url);
-    index += option.consumed;
-  }
-  return ['GET', 'HEAD'].includes(parsed.method) ? parsed : null;
-}
-
-function parseCurlOption(tokens, index) {
-  const token = tokens[index];
-  if (!token.startsWith('-')) return null;
-  if (/^-[fsSiI]+$/.test(token)) {
-    return { valid: true, consumed: 0, ...(token.includes('I') ? { method: 'HEAD' } : {}) };
-  }
-  if (['--fail', '--silent', '--show-error', '--include', '--compressed'].includes(token)) {
-    return { valid: true, consumed: 0 };
-  }
-  if (token === '--head') return { valid: true, consumed: 0, method: 'HEAD' };
-  if (['-m', '--max-time', '--connect-timeout', '--retry', '--retry-delay', '-b', '--cookie'].includes(token)) {
-    return tokens[index + 1] === undefined ? { valid: false, consumed: 0 } : { valid: true, consumed: 1 };
-  }
-  if (token === '-X' || token === '--request') return parseCurlMethodValue(tokens[index + 1]);
-  if (/^-X/i.test(token)) return parseCurlMethodValue(token.slice(2), 0);
-  if (token === '--url') {
-    return tokens[index + 1] === undefined
-      ? { valid: false, consumed: 0 }
-      : { valid: true, consumed: 1, url: tokens[index + 1] };
-  }
-  return { valid: false, consumed: 0 };
-}
-
-function parseCurlMethodValue(raw, consumed = 1) {
-  const method = raw?.toUpperCase();
-  return ['GET', 'HEAD'].includes(method) ? { valid: true, consumed, method } : { valid: false, consumed: 0 };
-}
-
-function isUnconstrainedHttpOperation(raw) {
-  const tokens = tokenizeSimpleShellCommand(raw);
-  return Boolean(tokens && commandName(tokens[0]) === 'curl' && !isConstrainedHttpRead(raw));
-}
-
-function isLoopbackHttpUrl(raw) {
-  try {
-    const url = new URL(raw);
-    return ['http:', 'https:'].includes(url.protocol) && ['localhost', '127.0.0.1', '::1'].includes(url.hostname);
-  } catch {
-    return false;
-  }
 }

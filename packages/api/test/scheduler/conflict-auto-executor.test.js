@@ -38,7 +38,7 @@ const conflictMatchedOutcome = {
   ownerFence: { kind: 'containing_task', generation: 1 },
   reason: 'matched',
   at: 1000,
-  delivery: 'delivered',
+  delivery: 'pending',
   matched: [{ kind: 'pr_became_conflicting', delta: 'mergeState MERGEABLE → CONFLICTING' }],
 };
 
@@ -46,9 +46,8 @@ describe('ConflictAutoExecutor', () => {
   it('skips when PR branch is not feat/*', async () => {
     const { ConflictAutoExecutor } = await import('../../dist/infrastructure/email/ConflictAutoExecutor.js');
     const executor = new ConflictAutoExecutor({ log: noopLog });
-    // Mock getPrBranch to return a non-feat branch
-    executor.getPrBranch = async () => 'main';
-    const result = await executor.resolve('a/b', 1);
+    executor.getPrHead = async () => ({ branch: 'main', headSha: 'sha1' });
+    const result = await executor.resolve('a/b', 1, 'sha1');
     assert.equal(result.kind, 'skipped');
     assert.ok(result.reason.includes('not feat/*'));
   });
@@ -56,9 +55,9 @@ describe('ConflictAutoExecutor', () => {
   it('skips when no worktree found for branch', async () => {
     const { ConflictAutoExecutor } = await import('../../dist/infrastructure/email/ConflictAutoExecutor.js');
     const executor = new ConflictAutoExecutor({ log: noopLog });
-    executor.getPrBranch = async () => 'feat/some-feature';
+    executor.getPrHead = async () => ({ branch: 'feat/some-feature', headSha: 'sha1' });
     executor.findWorktree = async () => null;
-    const result = await executor.resolve('a/b', 1);
+    const result = await executor.resolve('a/b', 1, 'sha1');
     assert.equal(result.kind, 'skipped');
     assert.ok(result.reason.includes('no local worktree'));
   });
@@ -66,9 +65,9 @@ describe('ConflictAutoExecutor', () => {
   it('skips when worktree path contains -runtime', async () => {
     const { ConflictAutoExecutor } = await import('../../dist/infrastructure/email/ConflictAutoExecutor.js');
     const executor = new ConflictAutoExecutor({ log: noopLog });
-    executor.getPrBranch = async () => 'feat/test';
+    executor.getPrHead = async () => ({ branch: 'feat/test', headSha: 'sha1' });
     executor.findWorktree = async () => '/projects/cat-cafe-runtime';
-    const result = await executor.resolve('a/b', 1);
+    const result = await executor.resolve('a/b', 1, 'sha1');
     assert.equal(result.kind, 'skipped');
     assert.ok(result.reason.includes('runtime'));
   });
@@ -76,10 +75,47 @@ describe('ConflictAutoExecutor', () => {
   it('skips when PR branch cannot be determined', async () => {
     const { ConflictAutoExecutor } = await import('../../dist/infrastructure/email/ConflictAutoExecutor.js');
     const executor = new ConflictAutoExecutor({ log: noopLog });
-    executor.getPrBranch = async () => null;
-    const result = await executor.resolve('a/b', 1);
+    executor.getPrHead = async () => null;
+    const result = await executor.resolve('a/b', 1, 'sha1');
     assert.equal(result.kind, 'skipped');
-    assert.ok(result.reason.includes('cannot determine'));
+    assert.ok(result.reason.includes('cannot determine PR head'));
+  });
+
+  it('rejects a stale conflict observation before touching a worktree', async () => {
+    const { ConflictAutoExecutor } = await import('../../dist/infrastructure/email/ConflictAutoExecutor.js');
+    const executor = new ConflictAutoExecutor({ log: noopLog });
+    let worktreeLookups = 0;
+    executor.getPrHead = async () => ({ branch: 'feat/test', headSha: 'sha-new' });
+    executor.findWorktree = async () => {
+      worktreeLookups += 1;
+      return '/tmp/unused';
+    };
+
+    const result = await executor.resolve('a/b', 1, 'sha-observed');
+    assert.equal(result.kind, 'skipped');
+    assert.match(result.reason, /HEAD changed.*refusing stale auto-rebase/);
+    assert.equal(worktreeLookups, 0);
+  });
+
+  it('pins the force-with-lease to the observed PR HEAD', async () => {
+    const { ConflictAutoExecutor } = await import('../../dist/infrastructure/email/ConflictAutoExecutor.js');
+    const commands = [];
+    const executor = new ConflictAutoExecutor({ log: noopLog });
+    executor.getPrHead = async () => ({ branch: 'feat/test', headSha: 'sha-observed' });
+    executor.findWorktree = async () => '/tmp/cat-cafe-conflict-lease-test';
+    executor.git = async (_cwd, args) => {
+      commands.push(args);
+      return { stdout: args[0] === 'rev-parse' ? 'sha-observed\n' : '' };
+    };
+
+    const result = await executor.resolve('a/b', 1, 'sha-observed');
+    assert.equal(result.kind, 'resolved');
+    assert.deepEqual(commands, [
+      ['rev-parse', 'HEAD'],
+      ['fetch', 'origin', 'main'],
+      ['rebase', 'origin/main'],
+      ['push', '--force-with-lease=refs/heads/feat/test:sha-observed', 'origin', 'HEAD:refs/heads/feat/test'],
+    ]);
   });
 
   it('exports correct result types', async () => {
@@ -94,10 +130,11 @@ describe('ConflictAutoExecutor', () => {
     const controller = new AbortController();
     const commands = [];
     const executor = new ConflictAutoExecutor({ log: noopLog });
-    executor.getPrBranch = async () => 'feat/cancelled-rebase';
+    executor.getPrHead = async () => ({ branch: 'feat/cancelled-rebase', headSha: 'sha1' });
     executor.findWorktree = async () => '/tmp/cat-cafe-cancelled-rebase-test';
     executor.git = async (_cwd, args, signal) => {
       commands.push({ args, signal });
+      if (args[0] === 'rev-parse') return { stdout: 'sha1\n' };
       if (args[0] === 'fetch') {
         controller.abort(new Error('scheduler timeout'));
         throw controller.signal.reason;
@@ -105,15 +142,16 @@ describe('ConflictAutoExecutor', () => {
       return { stdout: '' };
     };
 
-    await assert.rejects(() => executor.resolve('a/b', 1, controller.signal), /scheduler timeout/);
+    await assert.rejects(() => executor.resolve('a/b', 1, 'sha1', controller.signal), /scheduler timeout/);
     assert.deepEqual(
       commands.map((command) => command.args),
       [
+        ['rev-parse', 'HEAD'],
         ['fetch', 'origin', 'main'],
         ['rebase', '--abort'],
       ],
     );
-    assert.equal(commands[1].signal, undefined, 'cleanup keeps its own bounded process timeout');
+    assert.equal(commands[2].signal, undefined, 'cleanup keeps its own bounded process timeout');
   });
 
   it('warns when cancellation cleanup cannot abort the rebase', async () => {
@@ -123,9 +161,10 @@ describe('ConflictAutoExecutor', () => {
     const executor = new ConflictAutoExecutor({
       log: { info() {}, error() {}, warn: (...args) => warnings.push(args) },
     });
-    executor.getPrBranch = async () => 'feat/cancelled-rebase';
+    executor.getPrHead = async () => ({ branch: 'feat/cancelled-rebase', headSha: 'sha1' });
     executor.findWorktree = async () => '/tmp/cat-cafe-cancelled-rebase-test';
     executor.git = async (_cwd, args) => {
+      if (args[0] === 'rev-parse') return { stdout: 'sha1\n' };
       if (args[0] === 'fetch') {
         controller.abort(new Error('scheduler timeout'));
         throw controller.signal.reason;
@@ -133,7 +172,7 @@ describe('ConflictAutoExecutor', () => {
       throw new Error('rebase abort failed');
     };
 
-    await assert.rejects(() => executor.resolve('a/b', 1, controller.signal), /scheduler timeout/);
+    await assert.rejects(() => executor.resolve('a/b', 1, 'sha1', controller.signal), /scheduler timeout/);
     assert.equal(warnings.length, 1);
     assert.match(String(warnings[0][1]), /abort rebase cleanup/i);
   });
@@ -143,6 +182,9 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
   it('passes the scheduler cancellation signal to the git/gh auto-executor chain', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
     const controller = new AbortController();
+    const wakes = [];
+    const settled = [];
+    let receivedExpectedHeadSha;
     let receivedSignal;
     const spec = createConflictCheckTaskSpec({
       taskStore: mockTaskStore([
@@ -151,18 +193,28 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'sha1' }),
       conflictRouter: {
         async route() {
+          // Terminalized and durable, but deliberately not announced yet: the repair gets its turn
+          // first, and only then does anyone decide whether the owner hears about this at all.
           return {
-            kind: 'notified',
+            kind: 'matched_pending',
+            taskId: 'task-1',
             threadId: 't1',
             catId: 'opus',
-            messageId: 'm1',
-            content: 'conflict!',
             outcome: conflictMatchedOutcome,
           };
         },
+        async publish() {
+          wakes.push('wake');
+          return { kind: 'notified' };
+        },
+        async settleWithoutWake(_taskId, _outcome, reason) {
+          settled.push(reason);
+          return true;
+        },
       },
       autoExecutor: {
-        async resolve(_repo, _pr, signal) {
+        async resolve(_repo, _pr, expectedHeadSha, signal) {
+          receivedExpectedHeadSha = expectedHeadSha;
           receivedSignal = signal;
           return { kind: 'resolved', method: 'clean-rebase', branch: 'feat/test' };
         },
@@ -174,14 +226,18 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
       assignedCatId: null,
       signal: controller.signal,
     });
+    assert.equal(receivedExpectedHeadSha, 'sha1');
     assert.equal(receivedSignal, controller.signal);
   });
 
-  it('auto-resolved conflict does NOT trigger cat (Phase C AC-C1)', async () => {
+  it('auto-resolved conflict does NOT wake its owner (Phase C AC-C1)', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
-    const triggered = [];
+    const wakes = [];
+    const settled = [];
+    const repairs = [];
     const autoExecutor = {
       async resolve() {
+        repairs.push('resolve');
         return { kind: 'resolved', method: 'clean-rebase', branch: 'feat/test' };
       },
     };
@@ -191,20 +247,23 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'sha1' }),
       conflictRouter: {
         async route() {
+          // Terminalized and durable, but deliberately not announced yet: the repair gets its turn
+          // first, and only then does anyone decide whether the owner hears about this at all.
           return {
-            kind: 'notified',
+            kind: 'matched_pending',
+            taskId: 'task-1',
             threadId: 't1',
             catId: 'opus',
-            messageId: 'm1',
-            content: 'conflict!',
             outcome: conflictMatchedOutcome,
           };
         },
-      },
-      invokeTrigger: {
-        trigger: (...args) => {
-          triggered.push(args);
-          return Promise.resolve();
+        async publish() {
+          wakes.push('wake');
+          return { kind: 'notified' };
+        },
+        async settleWithoutWake(_taskId, _outcome, reason) {
+          settled.push(reason);
+          return true;
         },
       },
       autoExecutor,
@@ -213,12 +272,15 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
     const gateResult = await spec.admission.gate({ taskId: spec.id, lastRunAt: null, tickCount: 1 });
     assert.equal(gateResult.run, true);
     await spec.run.execute(gateResult.workItems[0].signal, 'pr:a/b#1', {});
-    assert.equal(triggered.length, 0, 'cat should NOT be triggered when auto-resolve succeeds');
+    assert.equal(wakes.length, 0, 'a conflict that was repaired must not disturb the owner');
+    assert.equal(repairs.length, 1, 'the repair ran under the matched outcome that authorised it');
+    assert.equal(settled.length, 1, 'and the wait is closed exactly once, quietly');
   });
 
-  it('escalated conflict DOES trigger cat (Phase C AC-C2)', async () => {
+  it('escalated conflict wakes its owner exactly once (Phase C AC-C2)', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
-    const triggered = [];
+    const wakes = [];
+    const settled = [];
     const autoExecutor = {
       async resolve() {
         return { kind: 'escalated', files: ['src/index.ts', 'docs/README.md'], branch: 'feat/test' };
@@ -230,20 +292,23 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'sha1' }),
       conflictRouter: {
         async route() {
+          // Terminalized and durable, but deliberately not announced yet: the repair gets its turn
+          // first, and only then does anyone decide whether the owner hears about this at all.
           return {
-            kind: 'notified',
+            kind: 'matched_pending',
+            taskId: 'task-1',
             threadId: 't1',
             catId: 'opus',
-            messageId: 'm1',
-            content: 'conflict!',
             outcome: conflictMatchedOutcome,
           };
         },
-      },
-      invokeTrigger: {
-        trigger: (...args) => {
-          triggered.push(args);
-          return Promise.resolve();
+        async publish() {
+          wakes.push('wake');
+          return { kind: 'notified' };
+        },
+        async settleWithoutWake(_taskId, _outcome, reason) {
+          settled.push(reason);
+          return true;
         },
       },
       autoExecutor,
@@ -251,12 +316,14 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
     });
     const gateResult = await spec.admission.gate({ taskId: spec.id, lastRunAt: null, tickCount: 1 });
     await spec.run.execute(gateResult.workItems[0].signal, 'pr:a/b#1', {});
-    assert.equal(triggered.length, 1, 'cat SHOULD be triggered when auto-resolve escalates');
+    assert.equal(wakes.length, 1, 'an escalated conflict wakes its owner exactly once');
+    assert.equal(settled.length, 0, 'and is never closed quietly');
   });
 
   it('cloud-P1: mergeState uses mergeable vocabulary (CONFLICTING not DIRTY)', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
-    const triggered = [];
+    const wakes = [];
+    const settled = [];
     const autoExecutor = {
       async resolve() {
         return { kind: 'resolved', method: 'clean-rebase', branch: 'feat/test' };
@@ -269,20 +336,23 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'sha1' }),
       conflictRouter: {
         async route() {
+          // Terminalized and durable, but deliberately not announced yet: the repair gets its turn
+          // first, and only then does anyone decide whether the owner hears about this at all.
           return {
-            kind: 'notified',
+            kind: 'matched_pending',
+            taskId: 'task-1',
             threadId: 't1',
             catId: 'opus',
-            messageId: 'm1',
-            content: 'conflict!',
             outcome: conflictMatchedOutcome,
           };
         },
-      },
-      invokeTrigger: {
-        trigger: (...args) => {
-          triggered.push(args);
-          return Promise.resolve();
+        async publish() {
+          wakes.push('wake');
+          return { kind: 'notified' };
+        },
+        async settleWithoutWake(_taskId, _outcome, reason) {
+          settled.push(reason);
+          return true;
         },
       },
       autoExecutor,
@@ -295,28 +365,38 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
     const signal = gateResult.workItems[0].signal;
     assert.equal(signal.signal.mergeState, 'CONFLICTING', 'mergeState must use mergeable vocabulary');
     await spec.run.execute(signal, 'pr:a/b#1', {});
-    assert.equal(triggered.length, 0, 'auto-resolved conflict should not trigger cat');
+    assert.equal(wakes.length, 0, 'a repaired conflict is closed quietly, not announced');
   });
 
   it('P1-3 regression: checkMergeable returning object provides mergeState to workItems', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
+    const wakes = [];
+    const settled = [];
     const tasks = [mockTask({ repoFullName: 'a/b', prNumber: 1, threadId: 't1', catId: 'opus', userId: 'u1' })];
     const spec = createConflictCheckTaskSpec({
       taskStore: mockTaskStore(tasks),
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'abc123' }),
       conflictRouter: {
         async route() {
+          // Terminalized and durable, but deliberately not announced yet: the repair gets its turn
+          // first, and only then does anyone decide whether the owner hears about this at all.
           return {
-            kind: 'notified',
+            kind: 'matched_pending',
+            taskId: 'task-1',
             threadId: 't1',
             catId: 'opus',
-            messageId: 'm1',
-            content: 'conflict!',
             outcome: conflictMatchedOutcome,
           };
         },
+        async publish() {
+          wakes.push('wake');
+          return { kind: 'notified' };
+        },
+        async settleWithoutWake(_taskId, _outcome, reason) {
+          settled.push(reason);
+          return true;
+        },
       },
-      invokeTrigger: { trigger: () => Promise.resolve() },
       log: noopLog,
     });
     const gateResult = await spec.admission.gate({ taskId: spec.id, lastRunAt: null, tickCount: 1 });
@@ -326,29 +406,33 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
     assert.equal(signal.signal.headSha, 'abc123', 'headSha must not be undefined (P1-3)');
   });
 
-  it('no autoExecutor → always triggers cat (backward compat)', async () => {
+  it('no autoExecutor → the admission is still the wake (backward compat)', async () => {
     const { createConflictCheckTaskSpec } = await import('../../dist/infrastructure/email/ConflictCheckTaskSpec.js');
-    const triggered = [];
+    const wakes = [];
+    const settled = [];
     const tasks = [mockTask({ repoFullName: 'a/b', prNumber: 1, threadId: 't1', catId: 'opus', userId: 'u1' })];
     const spec = createConflictCheckTaskSpec({
       taskStore: mockTaskStore(tasks),
       checkMergeable: async () => ({ mergeState: 'CONFLICTING', headSha: 'sha1' }),
       conflictRouter: {
         async route() {
+          // Terminalized and durable, but deliberately not announced yet: the repair gets its turn
+          // first, and only then does anyone decide whether the owner hears about this at all.
           return {
-            kind: 'notified',
+            kind: 'matched_pending',
+            taskId: 'task-1',
             threadId: 't1',
             catId: 'opus',
-            messageId: 'm1',
-            content: 'conflict!',
             outcome: conflictMatchedOutcome,
           };
         },
-      },
-      invokeTrigger: {
-        trigger: (...args) => {
-          triggered.push(args);
-          return Promise.resolve();
+        async publish() {
+          wakes.push('wake');
+          return { kind: 'notified' };
+        },
+        async settleWithoutWake(_taskId, _outcome, reason) {
+          settled.push(reason);
+          return true;
         },
       },
       // no autoExecutor
@@ -356,6 +440,6 @@ describe('ConflictCheckTaskSpec + AutoExecutor integration', () => {
     });
     const gateResult = await spec.admission.gate({ taskId: spec.id, lastRunAt: null, tickCount: 1 });
     await spec.run.execute(gateResult.workItems[0].signal, 'pr:a/b#1', {});
-    assert.equal(triggered.length, 1, 'without autoExecutor, cat should always be triggered');
+    assert.equal(wakes.length, 1, 'with nothing able to repair it, the conflict reaches its owner');
   });
 });
