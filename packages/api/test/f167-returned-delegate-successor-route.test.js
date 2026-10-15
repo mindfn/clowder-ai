@@ -99,7 +99,11 @@ async function createRouteHarness(t) {
   const source = await threadStore.create(TENANT, 'Task owner');
   const child = await threadStore.create(TENANT, 'Approved execution', process.cwd(), source.id);
   const auth = await registry.create(TENANT, OWNER_CAT, source.id);
-  const proposal = makeProposal({ sourceThreadId: source.id, createdThreadId: child.id });
+  const proposal = makeProposal({
+    sourceThreadId: source.id,
+    parentThreadId: source.id,
+    createdThreadId: child.id,
+  });
   const delegateEvidenceRef = `proposal:${proposal.proposalId}:approved:thread:${child.id}:cat:${CHILD_CAT}`;
   const task = makeTask({ threadId: source.id });
   let lease = returnedLease(source.id, child.id, delegateEvidenceRef);
@@ -133,7 +137,12 @@ async function createRouteHarness(t) {
     makeProposalStore(proposal),
     new ThreadDelegateBindingProvider(
       makeProposalLister([
-        makeProposalListItem({ sourceThreadId: source.id, createdThreadId: child.id, subjectTaskId: task.id }),
+        makeProposalListItem({
+          sourceThreadId: source.id,
+          parentThreadId: source.id,
+          createdThreadId: child.id,
+          subjectTaskId: task.id,
+        }),
       ]),
     ),
   );

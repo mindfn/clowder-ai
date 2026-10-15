@@ -25,9 +25,9 @@ import type { RuntimeProviderProfile } from '../../../config/account-resolver.js
 import type { CodexAccountLaunchDescriptor } from '../../../config/codex-account-launch.js';
 import type { CliDiagnostics } from '../../../utils/cli-diagnostics.js';
 import type { CliSpawnOptions } from '../../../utils/cli-types.js';
-import type { AntigravitySessionLifecycle } from './agents/providers/antigravity/antigravity-runtime-lifecycle.js';
 import type { ClaudeCompactionLaunchPlanResult } from './agents/providers/claude-compaction-launch-plan.js';
 import type { CodexSessionReplacementProvenance } from './runtime-session/CodexSessionReplacementProvenance.js';
+import type { AntigravitySessionLifecycle } from './runtime-session/LegacyAntigravityLifecycle.js';
 import type { TurnExecutionMessageProjection } from './stores/ports/TurnExecutionStore.js';
 
 /** F8: Unified token usage type across all three cats.
@@ -311,7 +311,7 @@ export interface AgentMessage {
         readonly preTokens?: number;
       }
     | {
-        readonly eventSource: 'codex_app_server_context_compaction';
+        readonly eventSource: 'codex_app_server_context_compaction' | 'agy_native_checkpoint';
         readonly event: ProviderCompactionObservation;
       };
   /** Which cat (agent) produced this message */
@@ -340,6 +340,8 @@ export interface AgentMessage {
   hostOutput?: import('@cat-cafe/shared').HostSignatureOutput;
   /** Session ID (for 'session_init' type) */
   sessionId?: string;
+  /** Verified native launch identity; the host commits this before advancing the stream. */
+  nativeSessionBinding?: import('@cat-cafe/shared').NativeSessionBinding;
   /** ACP transport: sessionId is per-invocation, not a persistent CLI session.
    *  When true, a different sessionId does NOT mean "session replaced" — skip seal. */
   ephemeralSession?: boolean;
@@ -543,7 +545,7 @@ export type ProviderCarrier =
       readonly carrier: 'print_sdk' | 'agent_sdk' | 'bg_daemon' | 'interactive_pty' | 'api_key';
     }
   | { readonly provider: 'codex'; readonly carrier: 'exec_json' | 'app_server' }
-  | { readonly provider: 'gemini'; readonly carrier: 'gemini_cli' | 'antigravity_adapter' }
+  | { readonly provider: 'gemini'; readonly carrier: 'gemini_cli' | 'antigravity_adapter' | 'agy_stream_json' }
   | { readonly provider: 'antigravity'; readonly carrier: 'cdp_bridge' }
   | { readonly provider: 'kimi'; readonly carrier: 'stream_json' }
   | { readonly provider: 'opencode'; readonly carrier: 'run_json' | 'server' }
@@ -1028,6 +1030,8 @@ export interface LocalSessionReadInput {
 }
 
 export interface AgentServiceOptions {
+  /** Binding restored from the canonical SessionRecord, including across API restarts. */
+  nativeSessionBinding?: import('@cat-cafe/shared').NativeSessionBinding;
   /** Imported histories must never be silently replaced by a fresh native session. */
   requireExactResume?: boolean;
   executionAccount?: import('@cat-cafe/shared').ExecutionAccountSnapshot;
@@ -1077,6 +1081,8 @@ export interface AgentServiceOptions {
   /** F171: User-defined env vars from account config.
    *  Applied LAST to subprocess env — overrides provider-injected values. */
   accountEnv?: Record<string, string>;
+  /** Selected token must win after alternate auth and user env merging. */
+  claudeTokenAccount?: boolean;
   /** F320: immutable selected account launch snapshot; independent of displayName/token refresh. */
   codexAccountLaunch?: CodexAccountLaunchDescriptor;
   /** Rich content blocks (e.g. images) to pass to the CLI agent */
@@ -1125,14 +1131,6 @@ export interface AgentServiceOptions {
   parentSpan?: Span;
   /** ADR-042 hard execution boundary for automatic supplement checks. */
   toolExecutionPolicy?: ToolExecutionPolicy;
-  /** F325: host-authored, per-turn AGY native grants. Never derive from model text or member CLI args. */
-  agyNativeScope?: {
-    readonly workspaceRoot?: string;
-    readonly taskId?: string;
-    readonly testFile?: string;
-    readonly writableFiles: readonly string[];
-    readonly mcpTools: readonly string[];
-  };
   /**
    * F299 Phase D: fail-closed recorder invoked by the concrete adapter after
    * its final message/native channels are immutable and immediately before
@@ -1234,6 +1232,10 @@ export interface AgentService {
 
   /** Request provider-native compaction on an already bound, idle runtime. */
   requestNativeCompaction?(input: {
+    readonly nativeSessionBinding?: import('@cat-cafe/shared').NativeSessionBinding;
+    readonly userId?: string;
+    /** Preserve a proven boundary even if the later control transport fails. */
+    readonly onObserved?: (event: ProviderCompactionObservation) => Promise<void>;
     readonly sessionId: string;
     readonly invocationId: string;
     readonly timeoutMs: number;

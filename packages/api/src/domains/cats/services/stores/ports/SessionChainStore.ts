@@ -88,6 +88,7 @@ export type SessionRecordPatch = Partial<
   Pick<
     SessionRecord,
     | 'cliSessionId'
+    | 'nativeSessionBinding'
     | 'externalImport'
     | 'workingDirectory'
     | 'workspaceFingerprint'
@@ -575,6 +576,7 @@ export class SessionChainStore implements ISessionChainStore {
     }
     if (patch.continuityCapsule !== undefined) record.continuityCapsule = patch.continuityCapsule;
     if (patch.externalImport !== undefined) record.externalImport = patch.externalImport;
+    if (patch.nativeSessionBinding !== undefined) record.nativeSessionBinding = patch.nativeSessionBinding;
     if (patch.consecutiveRestoreFailures !== undefined)
       record.consecutiveRestoreFailures = patch.consecutiveRestoreFailures;
     if (patch.latestResumeSessionId !== undefined) record.latestResumeSessionId = patch.latestResumeSessionId;

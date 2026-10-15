@@ -520,7 +520,11 @@ export function AccountSection({
         <SelectField
           label="Client"
           value={form.clientId}
-          options={CLIENT_OPTIONS}
+          options={
+            form.clientId === 'antigravity'
+              ? [...CLIENT_OPTIONS, { value: 'antigravity', label: 'Antigravity IDE（已退役）' }]
+              : CLIENT_OPTIONS
+          }
           onChange={(value) => {
             const nextClient = value as HubCatEditorFormState['clientId'];
             const nextCarrier = carrierOptionsForClient(nextClient)[0]?.value ?? 'cli';
@@ -529,7 +533,10 @@ export function AccountSection({
               provider: '',
               cliEffort: '',
               carrier: nextCarrier,
-              agyNativeEnabled: false,
+              agyNativeEnabled: nextClient === 'google',
+              ...(nextClient === 'google'
+                ? { agyProfileEnabled: true, agyProfileId: form.agyProfileId || form.catId }
+                : {}),
               ...acpDefaultsForClientSwitch(form, nextClient),
             });
           }}
@@ -539,10 +546,14 @@ export function AccountSection({
         {carrierOptionsForClient(form.clientId).length > 1 || form.clientId === 'acp' || form.clientId === 'google' ? (
           <SelectField
             label="接入方式"
-            ariaLabel="接入方式"
-            value={native ? 'agy-native' : form.carrier}
+            ariaLabel={page ? 'Transport' : '接入方式'}
+            value={form.clientId === 'google' ? (native ? 'agy-native' : 'retired') : form.carrier}
             options={[
-              ...carrierOptionsForClient(form.clientId),
+              ...(form.clientId === 'google'
+                ? !native
+                  ? [{ value: 'retired', label: '旧入口已退役，请配置 Native' }]
+                  : []
+                : carrierOptionsForClient(form.clientId)),
               ...(form.clientId === 'google' ? [{ value: 'agy-native', label: 'AGY Native' }] : []),
             ]}
             onChange={(value) => {
@@ -572,22 +583,9 @@ export function AccountSection({
         })()}
 
         {form.clientId === 'antigravity' ? (
-          <>
-            <TextField
-              label="CLI Command"
-              value={form.commandArgs}
-              onChange={(value) => onChange({ commandArgs: value })}
-              required
-              placeholder="启动命令参数"
-            />
-            <TextField
-              label="Model"
-              value={form.defaultModel}
-              onChange={(value) => onChange({ defaultModel: value })}
-              required
-              placeholder="模型标识符"
-            />
-          </>
+          <p className="text-sm text-cafe-secondary">
+            IDE 执行入口已退役。选择 Google / AGY Native 并保存隔离 Profile 后可继续使用；成员身份与历史消息保留。
+          </p>
         ) : (
           <>
             <SelectField

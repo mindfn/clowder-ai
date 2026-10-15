@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { after, before, test } from 'node:test';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
 import { ensureWorkspaceOpen } from './f307-workspace-open.mjs';
+import { verifyV2EvolutionJourney } from './f311-v2-journey.mjs';
 import { CONTRACT_THREAD_ID, startEvolutionWorkspaceBrowserFixture } from './f311-workspace-browser.harness.mjs';
 import {
   createMicroduckProgramFixture,
@@ -114,6 +115,14 @@ async function assertContained(locator) {
   const sizes = await locator.evaluate((element) => ({ client: element.clientWidth, scroll: element.scrollWidth }));
   assert(sizes.scroll <= sizes.client + 1, `horizontal overflow: ${JSON.stringify(sizes)}`);
 }
+test(
+  'v2 Settings opens the F314 and duck projects, summary and exact main reading',
+  { timeout: 120_000, skip: liveAlpha },
+  async () => {
+    await verifyV2EvolutionJourney({ fixture, browser, capture });
+  },
+);
+
 test('journey navigation and an explicit progress request work in the real shell', { timeout: 90_000 }, async () => {
   const { page, context } = await authenticatedPage();
   try {

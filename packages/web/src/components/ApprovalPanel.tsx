@@ -8,6 +8,9 @@ import { useApprovalHubStore } from '@/stores/approvalHubStore';
 import { type ApprovalHistoryOutcomeFilter, ApprovalHistoryPane } from './ApprovalHistoryPane';
 import { type ApprovalPendingConsumer, ApprovalPendingPane, type ApprovalStatusFilter } from './ApprovalPendingPane';
 
+import { approvalHistoryCopy } from './approval-history.shell-copy';
+import { useShellCopy } from './shell/shell-copy';
+
 type ActiveTab = 'pending' | 'history';
 
 export function ApprovalPanel({
@@ -23,6 +26,7 @@ export function ApprovalPanel({
   consumer?: ApprovalPendingConsumer;
   historyOwnerUserId?: string;
 }) {
+  const t = useShellCopy(approvalHistoryCopy);
   const [activeTab, setActiveTab] = useState<ActiveTab>(initialTab);
   const [featureFilters, setFeatureFilters] = useState<Set<ApprovalFeatureId>>(() => new Set());
   const [statusFilter, setStatusFilter] = useState<ApprovalStatusFilter>('all');
@@ -56,7 +60,7 @@ export function ApprovalPanel({
       <div className="flex items-center justify-between border-b border-cafe-subtle/40 px-3 py-2">
         <div className="flex items-center gap-0.5" data-testid="approval-tab-bar">
           <TabButton active={activeTab === 'pending'} onClick={() => setActiveTab('pending')} testId="pending">
-            待我处理
+            {t.pending}
             {showPendingCount && count > 0 && (
               <span
                 className="flex h-5 min-w-[18px] items-center justify-center rounded-full px-1 text-micro font-bold"
@@ -67,7 +71,7 @@ export function ApprovalPanel({
             )}
           </TabButton>
           <TabButton active={activeTab === 'history'} onClick={() => setActiveTab('history')} testId="history">
-            历史
+            {t.history}
           </TabButton>
         </div>
 
@@ -75,11 +79,11 @@ export function ApprovalPanel({
           type="button"
           onClick={() => (activeTab === 'pending' ? fetchPending?.() : fetchSettled?.())}
           className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-[var(--cafe-muted)]"
-          title="刷新"
+          title={t.refresh}
           data-testid="approval-panel-refresh"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5">
-            <title>刷新</title>
+            <title>{t.refresh}</title>
             <path
               d="M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9H3m0 0a9 9 0 0 1 9-9m-9 9a9 9 0 0 0 9 9"
               strokeLinecap="round"
@@ -131,6 +135,7 @@ function TabButton({
       className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm font-medium transition-all ${
         active ? 'bg-cafe-surface text-cafe-interactive' : 'text-cafe-interactive/50 hover:text-cafe-interactive/70'
       }`}
+      aria-pressed={active}
       data-testid={`approval-tab-${testId}`}
     >
       {children}

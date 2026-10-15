@@ -1,12 +1,12 @@
 ---
 name: anime-forge
-tips_exempt: "2026-10-07 settings-first change: character, scene, prop and voice settings are confirmed before any frame is drawn, and storyboard frames are drawn once in final style (no grey sketches, no separate final-art pass); earlier the same day: one-line story and minimal sample before the full animatic. No new user-facing command or operation."
+tips_exempt: "2026-10-14: pointers updated after the promo director skill was removed and the continuity reference moved here; no process change. Earlier, 2026-10-07 settings-first change: character, scene, prop and voice settings are confirmed before any frame is drawn, and storyboard frames are drawn once in final style (no grey sketches, no separate final-art pass); earlier the same day: one-line story and minimal sample before the full animatic. No new user-facing command or operation."
 description: >
   讲角色自己故事的动画短片：先把故事验明白（考证真事、一句话、剧本、冷读），再为最危险那一段定设定、做最小样张；样张过了出全片正式风格的分镜图，拼成动态分镜，最后后期；
   只有少数几格要「活起来」时才走图生视频。
   Use when: 做目的就是讲角色自己故事的动画短剧、角色 IP 短片、醋醋喵这类猫咖新集；把家里的真事改编成动画；
   给已有剧本做设定、声音稿、分镜、动态分镜、精绘或后期。
-  Not for: 推产品、讲功能的片子，哪怕主角是猫、片里有剧情（走 agent-product-promo-director → video-forge）；
+  Not for: 推产品、讲功能的片子，哪怕主角是猫、片里有剧情（用 video-forge）；
   录屏剪辑（用 video-forge）；单张图或单页漫画（用 image-generation）；PPT（用 ppt-forge）。
   Output: 带真事对照的剧本 md、设定图、声音稿、分镜表、分镜图、动态分镜粗片，以及 Console 里能直接播的成片。
 ---
@@ -56,7 +56,7 @@ EP0 第一次是剧本写完就出精细插画、拼成片，前 55 秒每张都
 | 9 动态分镜 | 分镜图按声音稿的时间拼成粗片（推、拉、摇，角色分层呼吸）；渲染前跑 `../video-forge/scripts/timeline-check.py` | **主审关**，他报时间码 | Remotion 粗片 |
 | 10 后期 | 角色和背景分层，做视差、眨眼、耳朵尾巴差分、盖章震动、转场；换真音效；配乐、混音。少数几格要「活起来」，再走 `refs/i2v-route.md` | 成片 | Console 内联播放的成片 |
 
-声音稿、Whisper 回听、时间轴、音效底线、10MB 交片上限，三个视频技能共用一份：`../.cat-cafe-shared-refs/video-voice-and-timeline.md`。
+声音稿、Whisper 回听、时间轴、音效底线、10MB 交片上限，video-forge 和本 skill 共用一份：`../.cat-cafe-shared-refs/video-voice-and-timeline.md`。
 
 **分工**：导演一只猫（剧本定稿、分镜表、声音稿、剪辑、配乐）；画师一只能生图的猫（派之前看 dossier 常驻席位）；考证交子代理；You 拍板。冷读人数按理解风险定：先找一只没看过剧本的常规池猫；片子重要或第一位读者没看懂，再加一位。不叫醒稀缺席位。
 
@@ -98,8 +98,7 @@ EP0 第一次是剧本写完就出精细插画、拼成片，前 55 秒每张都
 
 ## 和其他 skill 的区别
 
-- **video-forge**：按片子的目的分：推产品、讲功能的片子（宣传片、讲解片、demo），哪怕主角是家里的猫、片里有剧情，也走 `agent-product-promo-director` 定方向、`video-forge` 生产；目的就是讲角色自己故事的（醋醋喵这类连载、家里真事改编）才走 本 skill。宣传片里要画的猫角色段落，流程留在 video-forge，画稿照本 skill 的 `assets/art-brief-header.md` 写。两边共用声音和时间轴那份参考。
-- **agent-product-promo-director**：宣传片的创意导演层，想清楚讲什么以后交给 video-forge。
+- **video-forge**：按片子的目的分：推产品、讲功能的片子（宣传片、讲解片、demo），哪怕主角是家里的猫、片里有剧情，也走 `video-forge`；目的就是讲角色自己故事的（醋醋喵这类连载、家里真事改编）才走 本 skill。宣传片里要画的猫角色段落，流程留在 video-forge，画稿照本 skill 的 `assets/art-brief-header.md` 写。两边共用声音和时间轴那份参考。
 - **image-generation**：单张图。本 skill 在设定、最小样张、分镜图几步用它，管的是整部片子。
 - **co-creation-storytelling**：改编真事前的考证和原话分层，本 skill 的「考证」「剧本」两步可以直接用它的方法。
 - **ppt-forge**：静态页面，没有时间轴。

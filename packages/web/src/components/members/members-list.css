@@ -15,17 +15,13 @@
   border-radius: 12px;
   margin: 20px 0 12px;
 }
-.member-defaults > label,
+.member-default-control,
 .member-preferences {
   align-items: center;
   display: flex;
   justify-content: space-between;
   gap: 16px;
   padding: 12px 16px;
-}
-.member-defaults > label > span {
-  display: flex;
-  flex-direction: column;
 }
 .member-preferences {
   border-top: 1px solid var(--shell-hairline);
@@ -59,9 +55,6 @@
 .member-filters .member-button[aria-pressed="true"] {
   background: var(--shell-paper);
   box-shadow: 0 0 0 1px var(--shell-hairline);
-}
-.member-filters > small {
-  margin-left: auto;
 }
 .member-table-scroll {
   background: var(--shell-paper);
@@ -101,6 +94,14 @@
   overflow-wrap: anywhere;
   min-width: 130px;
   max-width: 180px;
+}
+.member-table td:nth-child(4) {
+  min-width: 140px;
+  max-width: 200px;
+  overflow-wrap: anywhere;
+}
+.member-table td:nth-child(4) small {
+  display: block;
 }
 .member-name {
   display: inline-flex;
@@ -200,7 +201,7 @@
   overflow-wrap: anywhere;
 }
 @media (max-width: 700px) {
-  .member-defaults > label,
+  .member-default-control,
   .member-preferences {
     align-items: flex-start;
     flex-direction: column;
@@ -211,9 +212,6 @@
   .member-table th,
   .member-table td {
     padding: 8px;
-  }
-  .member-filters > small {
-    display: none;
   }
   .member-sort-touch {
     display: flex;

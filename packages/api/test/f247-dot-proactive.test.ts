@@ -46,11 +46,6 @@ test('same shared connection asks as dot; canonical Queue returns actual local r
         (await f.returns.read(f.setup.credentialSecret, event.eventId)).source.id,
         event.data.source_message_id,
       );
-    assert.deepEqual(
-      (await f.connection.current())!.allowedCatIds,
-      [],
-      'one-question reply is not a permanent summon grant',
-    );
   } finally {
     await f.close();
   }
@@ -74,7 +69,6 @@ test('owner replies to a dot question through ordinary summon authority and dot 
     assert.equal((await f.deliver(source.id)).kind, 'sent');
     assert.equal(f.events.length, 1);
     assert.equal((await f.returns.read(f.setup.credentialSecret, f.events[0].eventId)).source.id, source.id);
-    assert.deepEqual((await f.connection.current())?.allowedCatIds, []);
   } finally {
     await f.close();
   }

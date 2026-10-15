@@ -1,4 +1,3 @@
-import type { TaskItem } from '@cat-cafe/shared';
 import type { ActionSuccessorLease } from '../ball-custody/action-successor-state-machine.js';
 import type { IInvocationRecordStore, InvocationRecord } from '../cats/services/stores/ports/InvocationRecordStore.js';
 import type { ITurnExecutionStore, TurnExecutionRecord } from '../cats/services/stores/ports/TurnExecutionStore.js';
@@ -20,7 +19,6 @@ export type TaskExecutionCandidateResult =
   | { readonly kind: 'failed'; readonly reason: CandidateFailure };
 
 function addParentCandidates(
-  task: TaskItem,
   userId: string,
   lease: ActionSuccessorLease,
   runningParents: readonly InvocationRecord[],
@@ -34,7 +32,7 @@ function addParentCandidates(
     if (!catId) return 'binding_task_mismatch';
     candidates.set(`${record.id}\u0000${catId}`, {
       parentInvocationId: record.id,
-      threadId: task.threadId,
+      threadId: lease.holderThreadId,
       userId,
       catId,
       reason: 'exact_parent_running',
@@ -45,7 +43,6 @@ function addParentCandidates(
 }
 
 async function addChildCandidates(
-  task: TaskItem,
   userId: string,
   lease: ActionSuccessorLease,
   runningChildren: readonly TurnExecutionRecord[],
@@ -53,7 +50,7 @@ async function addChildCandidates(
   candidates: Map<string, TaskExecutionCandidate>,
 ): Promise<CandidateFailure | null> {
   const sameThreadChildren = runningChildren.filter(
-    (child) => child.threadId === task.threadId && child.userId === userId && child.status === 'running',
+    (child) => child.threadId === lease.holderThreadId && child.userId === userId && child.status === 'running',
   );
   const parentIds = [...new Set(sameThreadChildren.map((child) => child.parentInvocationId))];
   let parentRecords: Array<InvocationRecord | null>;
@@ -74,13 +71,18 @@ async function addChildCandidates(
     if (!carrier) continue;
     if (carrier.generation !== lease.generation) return 'carrier_generation_mismatch';
     const parentCatId = exactParentCat(parent, lease);
-    if (parent.threadId !== task.threadId || parent.userId !== userId || !parentCatId || child.catId !== parentCatId) {
+    if (
+      parent.threadId !== lease.holderThreadId ||
+      parent.userId !== userId ||
+      !parentCatId ||
+      child.catId !== parentCatId
+    ) {
       return 'binding_task_mismatch';
     }
     candidates.set(`${parent.id}\u0000${child.catId}`, {
       parentInvocationId: parent.id,
       childInvocationId: child.invocationId,
-      threadId: task.threadId,
+      threadId: lease.holderThreadId,
       userId,
       catId: child.catId,
       reason: 'exact_child_running',
@@ -91,7 +93,6 @@ async function addChildCandidates(
 }
 
 export async function collectTaskExecutionCandidates(input: {
-  readonly task: TaskItem;
   readonly userId: string;
   readonly lease: ActionSuccessorLease;
   readonly invocationRecords: Pick<IInvocationRecordStore, 'listRunningByThread' | 'get'>;
@@ -101,7 +102,7 @@ export async function collectTaskExecutionCandidates(input: {
   let runningChildren: TurnExecutionRecord[];
   try {
     [runningParents, runningChildren] = await Promise.all([
-      input.invocationRecords.listRunningByThread(input.task.threadId, input.userId),
+      input.invocationRecords.listRunningByThread(input.lease.holderThreadId, input.userId),
       input.turnExecutions.listRunningByUser(input.userId),
     ]);
   } catch {
@@ -109,10 +110,9 @@ export async function collectTaskExecutionCandidates(input: {
   }
 
   const candidates = new Map<string, TaskExecutionCandidate>();
-  const parentFailure = addParentCandidates(input.task, input.userId, input.lease, runningParents, candidates);
+  const parentFailure = addParentCandidates(input.userId, input.lease, runningParents, candidates);
   if (parentFailure) return { kind: 'failed', reason: parentFailure };
   const childFailure = await addChildCandidates(
-    input.task,
     input.userId,
     input.lease,
     runningChildren,

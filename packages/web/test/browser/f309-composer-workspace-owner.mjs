@@ -5,7 +5,7 @@ import { startRealWorkspaceOwner } from './f309-ordinary-workspace-real-owner.mj
 /** Canonical owner draft routes and CAS, independent of the browser/session mirror. No model or Redis. */
 export function startComposerWorkspaceOwner(dataDir, { configure } = {}) {
   return startRealWorkspaceOwner(dataDir, {
-    configure: async ({ app }) => {
+    configure: async ({ app, content }) => {
       const { MessageStore } = await import('../../../api/dist/domains/cats/services/stores/ports/MessageStore.js');
       const { composerDraftRecallRoutes } = await import('../../../api/dist/routes/composer-draft-recall.js');
       const draftStore = new MessageStore();
@@ -24,7 +24,7 @@ export function startComposerWorkspaceOwner(dataDir, { configure } = {}) {
             at: Date.now(),
           });
       });
-      const extra = await configure?.({ app, draftStore });
+      const extra = await configure?.({ app, content, draftStore });
       await app.register(composerDraftRecallRoutes, {
         messageStore: draftStore,
         socketManager: { broadcastAgentMessage() {}, broadcastToRoom() {}, emitToUser() {} },

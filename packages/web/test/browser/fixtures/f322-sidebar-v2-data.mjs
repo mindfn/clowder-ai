@@ -151,6 +151,7 @@ export function setupSidebarProof(api) {
     api.threads.push({
       ...api.threads[3],
       id: `composer-proof-${i}`,
+      lastActiveAt: api.threads[3].lastActiveAt - (i - 3) * 60_000,
       title: `第 ${i} 个长标题 ${'需要两行才能完整读懂的对话。'.repeat(5)}`,
     });
   api.threads.forEach((row, i) => {

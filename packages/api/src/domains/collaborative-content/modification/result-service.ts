@@ -38,6 +38,7 @@ export class ContentModificationResultService {
       writer: WorkspaceWritebackService;
       fileLineage: ModificationFileLineage;
       receipts?: Pick<ContentModificationChatProjection, 'projectRejection' | 'projectWriteback'>;
+      onTextWriteback?: (record: ContentModificationRecord, writebackReceiptRef: string) => Promise<void>;
     },
   ) {}
 
@@ -153,6 +154,7 @@ export class ContentModificationResultService {
         if (receipt?.state === 'applied') {
           const visible = publicWritebackReceipt(receipt);
           await this.deps.receipts?.projectWriteback(record, prior, visible);
+          if (record.progress.prepared?.kind === 'text') await this.deps.onTextWriteback?.(record, visible.receiptRef);
           return { acceptance: prior, receipt: visible };
         }
       }
@@ -191,6 +193,8 @@ export class ContentModificationResultService {
     );
     const visible = publicWritebackReceipt(receipt);
     await this.deps.receipts?.projectWriteback(record, acceptance, visible);
+    if (visible.state === 'applied' && record.progress.prepared?.kind === 'text')
+      await this.deps.onTextWriteback?.(record, visible.receiptRef);
     return { acceptance, receipt: visible };
   }
 

@@ -17,6 +17,8 @@ export interface WorkspaceReviewMediaProps {
   /** An unsaved comment text is present (e.g. restored on return), so its composer should be showing. */
   readonly restoreComment?: boolean;
   readonly composer: ReactNode;
+  readonly imageChatPrimary?: boolean;
+  readonly wholeWorkAction?: ReactNode;
   readonly onOpenDiscussion: () => void;
   readonly reviewId: string;
   readonly sourceRevision: string;

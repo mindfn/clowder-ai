@@ -17,6 +17,7 @@ import { scrollToMessage } from '@/utils/scrollToMessage';
 import { kickTeleportResolve, planTeleport } from '@/utils/teleport';
 import { type GroupingMode, groupArtifacts } from './artifact-grouping';
 import type { ArtifactListOrigin, ArtifactListView } from './artifact-list-state';
+import { useWorksViewportReturn } from './useWorksViewportReturn';
 import { worksPanelCopy } from './works-panel.shell-copy';
 import '../workspace-home/workspace-v3.css';
 
@@ -48,6 +49,7 @@ export function ThreadWorksPanelV2({ threadId, width, onClose, onSelectArtifact,
   const [selected, setSelected] = useState<Work | null>(null);
   const [notice, setNotice] = useState<string | undefined>();
   const previewOrigin = useRef<HTMLButtonElement | null>(null);
+  const scroll = useRef<HTMLDivElement>(null);
   const thread = useThreadArtifacts(threadId, 'works');
   const global = useGlobalArtifacts(scope === 'global', { view: 'works' });
   const active = scope === 'global' ? global : thread;
@@ -74,6 +76,7 @@ export function ThreadWorksPanelV2({ threadId, width, onClose, onSelectArtifact,
     scope === 'global'
       ? groupArtifacts(visible as GlobalArtifactDTO[], grouping, (id) => author(id))
       : [{ id: '__flat', label: '', count: visible.length, items: visible }];
+  useWorksViewportReturn(scroll, initialView?.viewport, !active.loading && !active.error);
   const close = useCallback(() => {
     const ownsFocus = document.activeElement?.closest('.home-lightbox');
     setSelected(null);
@@ -84,10 +87,38 @@ export function ThreadWorksPanelV2({ threadId, width, onClose, onSelectArtifact,
     setNotice(undefined);
   }, [threadId, scope]);
   const open = (artifact: Work) => {
+    const list = scroll.current;
+    const card =
+      list &&
+      [...list.querySelectorAll<HTMLElement>('[data-work-anchor]')].find(
+        (node) => node.dataset.workAnchor === workKey(artifact),
+      );
     const origin: ArtifactListOrigin = {
       kind: 'artifact-list',
       threadId,
-      view: { scope, filter, query, grouping, catFilter, collapsed: [...collapsed] },
+      view: {
+        scope,
+        filter,
+        query,
+        grouping,
+        catFilter,
+        collapsed: [...collapsed],
+        ...(list
+          ? {
+              viewport: {
+                scrollTop: Math.max(0, list.scrollTop),
+                ...(card
+                  ? {
+                      anchor: {
+                        key: workKey(artifact),
+                        offset: card.getBoundingClientRect().top - list.getBoundingClientRect().top,
+                      },
+                    }
+                  : {}),
+              },
+            }
+          : {}),
+      },
     };
     if (onSelectArtifact) onSelectArtifact(artifact, origin);
     else useChatStore.getState().openPublishedArtifact(threadId, artifact, origin);
@@ -212,7 +243,7 @@ export function ThreadWorksPanelV2({ threadId, width, onClose, onSelectArtifact,
         )}
         {notice && <output className="text-xs">{notice}</output>}
       </header>
-      <div className="v2-works-scroll">
+      <div ref={scroll} className="v2-works-scroll">
         {!active.loading && !active.error && complete && !visible.length && <p className="text-xs">{t.empty}</p>}
         {!active.loading &&
           !active.error &&
@@ -238,7 +269,7 @@ export function ThreadWorksPanelV2({ threadId, width, onClose, onSelectArtifact,
               {!collapsed.has(group.id) && (
                 <div className="v2-works-grid">
                   {group.items.map((artifact) => (
-                    <div key={workKey(artifact)}>
+                    <div key={workKey(artifact)} data-work-anchor={workKey(artifact)}>
                       <WorkCard
                         artifact={artifact}
                         summary={false}

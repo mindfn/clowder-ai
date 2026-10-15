@@ -214,6 +214,7 @@ export function EvolutionPreparationSection({
   focusedGtSourceKey,
   onJumpGtSource,
   historicalCurrent = false,
+  showActivity = true,
 }: {
   programId: string;
   section: EvolutionPreparationSectionProjection;
@@ -221,6 +222,7 @@ export function EvolutionPreparationSection({
   focusedGtSourceKey?: string;
   onJumpGtSource: (sourceKey: string, criterionId: string, revision: string) => void;
   historicalCurrent?: boolean;
+  showActivity?: boolean;
 }) {
   const current = section.current;
   const sectionActivity = section.activities.find(
@@ -228,7 +230,7 @@ export function EvolutionPreparationSection({
   );
   return (
     <section className="evolution-preparation-section" aria-label="当前准备内容">
-      {sectionActivity && (
+      {showActivity && sectionActivity && (
         <div className="evolution-preparation-section-activity" data-activity-state={sectionActivity.state}>
           {sectionActivity.spinning && <span aria-hidden="true" data-preparation-spinner="true" />}
           <strong>

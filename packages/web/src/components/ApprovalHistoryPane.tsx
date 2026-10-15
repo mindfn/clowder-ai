@@ -7,6 +7,9 @@ import { useApprovalHubStore } from '@/stores/approvalHubStore';
 import { ApprovalFeatureFilter } from './ApprovalFeatureFilter';
 import { ApprovalHistoryList } from './ApprovalHistoryList';
 
+import { approvalHistoryCopy } from './approval-history.shell-copy';
+import { useShellCopy } from './shell/shell-copy';
+
 export type ApprovalHistoryOutcomeFilter = 'all' | 'accepted' | 'rejected' | 'closed_without_decision';
 
 interface ApprovalHistoryPaneProps {
@@ -24,6 +27,7 @@ export function ApprovalHistoryPane({
   outcomeFilter,
   onOutcomeFilterChange,
 }: ApprovalHistoryPaneProps) {
+  const t = useShellCopy(approvalHistoryCopy);
   const rawSettledItems = useApprovalHubStore((state) => state.settledItems);
   const settledItems = useMemo(
     () =>
@@ -77,35 +81,35 @@ export function ApprovalHistoryPane({
             className="rounded-full px-2 py-0.5 text-micro text-cafe-interactive/40 hover:text-cafe-interactive/60"
             data-testid="approval-history-filter-clear"
           >
-            清除
+            {t.clear}
           </button>
         )}
       </div>
 
       <div className="flex-1 overflow-y-auto" data-testid="approval-history-content">
-        {isLoading && settledItems.length === 0 && <HistoryMessage>加载中...</HistoryMessage>}
+        {isLoading && settledItems.length === 0 && <HistoryMessage>{t.loading}</HistoryMessage>}
         {error && (
           <div
             className="m-3 rounded-lg border border-[var(--semantic-critical)] p-3"
             data-testid="approval-history-error"
           >
             <p className="text-sm text-[var(--semantic-critical)]">
-              {settledItems.length > 0 ? '暂时无法刷新，正在显示最近一次成功读取的内容。' : '暂时无法读取审批记录。'}
+              {settledItems.length > 0 ? t.cached : t.unreadable}
             </p>
             <button type="button" className="mt-2 text-xs underline" onClick={() => void fetchSettled()}>
-              重试
+              {t.retry}
             </button>
             <details className="mt-2 text-xs text-cafe-muted">
-              <summary className="cursor-pointer">错误详情</summary>
+              <summary className="cursor-pointer">{t.errorDetails}</summary>
               <p className="mt-1 break-words">{error}</p>
             </details>
           </div>
         )}
         {!isLoading && !error && settledItems.length === 0 && (
-          <HistoryMessage testId="approval-history-empty">还没有审批记录</HistoryMessage>
+          <HistoryMessage testId="approval-history-empty">{t.empty}</HistoryMessage>
         )}
         {!isLoading && !error && settledItems.length > 0 && filteredItems.length === 0 && (
-          <HistoryMessage>没有符合筛选条件的记录</HistoryMessage>
+          <HistoryMessage>{t.filteredEmpty}</HistoryMessage>
         )}
         {!isLoading && filteredItems.length > 0 && <ApprovalHistoryList items={filteredItems} />}
       </div>
@@ -122,6 +126,7 @@ function OutcomeButton({
   onClick: () => void;
   status: 'accepted' | 'rejected';
 }) {
+  const t = useShellCopy(approvalHistoryCopy);
   const accepted = status === 'accepted';
   return (
     <button
@@ -134,7 +139,7 @@ function OutcomeButton({
       }`}
       data-testid={`approval-history-filter-${status}`}
     >
-      {accepted ? '接受' : '拒绝'}
+      {accepted ? t.accepted : t.rejected}
     </button>
   );
 }

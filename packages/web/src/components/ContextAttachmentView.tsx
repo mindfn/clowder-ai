@@ -4,6 +4,7 @@ import type { ContextAttachment, WorkspaceFileQuoteSource } from '@cat-cafe/shar
 import { useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
+import { ComposerFileQuoteTags } from './ComposerFileQuoteTags';
 import { ContextMediaSelections } from './ContextMediaSelections';
 import { useContextAttachmentPresentation } from './context-attachment-presentation';
 import { replyBodyCopy } from './reply-body.shell-copy';
@@ -152,6 +153,28 @@ function OrdinaryContextAttachmentView({
     </>
   );
 
+  if (isV2 && compact && onRemove && attachment.kind === 'media' && attachment.selections.length)
+    return (
+      <div
+        data-testid={`context-attachment-${attachment.id}`}
+        data-context-kind="media"
+        className="flex min-w-0 items-center gap-2 px-2 py-1 text-xs"
+      >
+        <span className="max-w-32 truncate" title={attachment.title}>
+          {attachment.title}
+        </span>
+        <ContextMediaSelections attachment={attachment} compact removable />
+        <button
+          type="button"
+          aria-label={presentation.removeLabel}
+          onClick={onRemove}
+          className="shrink-0 rounded px-1 text-cafe-muted hover:bg-cafe-surface-sunken"
+        >
+          ×
+        </button>
+      </div>
+    );
+
   return (
     <div
       data-testid={`context-attachment-${attachment.id}`}
@@ -195,10 +218,18 @@ export function ContextAttachmentList({
   compact?: boolean;
   onRemove?: (id: string) => void;
 }) {
+  const v2FileTags = useShellPresentation() === 'v2' && compact && Boolean(onRemove);
   if (attachments.length === 0) return null;
+  const fileQuotes = v2FileTags
+    ? attachments.filter(
+        (attachment): attachment is Extract<ContextAttachment, { kind: 'quote' }> =>
+          attachment.kind === 'quote' && attachment.source.kind === 'workspace_file',
+      )
+    : [];
+  const fileQuoteIds = new Set(fileQuotes.map((quote) => quote.id));
   const annotations = attachments.filter(
     (attachment): attachment is Extract<ContextAttachment, { kind: 'quote' }> =>
-      attachment.kind === 'quote' && Boolean(attachment.comment),
+      attachment.kind === 'quote' && Boolean(attachment.comment) && !fileQuoteIds.has(attachment.id),
   );
   const annotationIds = new Set(annotations.map((attachment) => attachment.id));
   const quoteNumbers = new Map(
@@ -207,12 +238,25 @@ export function ContextAttachmentList({
       .map((attachment, index) => [attachment.id, index + 1]),
   );
   let annotationSummaryRendered = false;
+  let fileTagsRendered = false;
   return (
     <div
       data-testid="context-attachment-list"
       className={compact ? 'relative flex flex-wrap gap-2 px-4 pt-2' : undefined}
     >
       {attachments.map((attachment) => {
+        if (fileQuoteIds.has(attachment.id) && onRemove) {
+          if (fileTagsRendered) return null;
+          fileTagsRendered = true;
+          return (
+            <ComposerFileQuoteTags
+              key="file-quote-tags"
+              quotes={fileQuotes}
+              numbers={quoteNumbers}
+              onRemove={onRemove}
+            />
+          );
+        }
         if (annotationIds.has(attachment.id)) {
           if (annotationSummaryRendered) return null;
           annotationSummaryRendered = true;

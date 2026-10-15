@@ -209,6 +209,7 @@ export function PluginManagerDetailCard({
           <DotConnectionDetail
             installed={installed}
             activationRequest={configurationValidationRequest}
+            activationAllowed={plugin.intent === 'enabled' || plugin.actions?.setEnabled === true}
             onStateChanged={onStateChanged}
           />
         ) : (

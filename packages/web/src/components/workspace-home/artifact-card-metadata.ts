@@ -15,5 +15,7 @@ export function artifactCardMetadata(
     version && typeof current === 'number' && Number.isSafeInteger(current) && current > (revision ?? 0);
   const date = new Date(artifact.createdAt);
   const time = `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-  return [author, version, historical ? t.historicalVersion : null, time].filter(Boolean).join(' · ');
+  // Missing author coordinates are not a person. Keep true version/time instead of presenting a placeholder as a name.
+  const namedAuthor = artifact.catId && author !== artifact.catId && author !== t.unknownAuthor ? author : null;
+  return [namedAuthor, version, historical ? t.historicalVersion : null, time].filter(Boolean).join(' · ');
 }

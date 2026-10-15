@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { test } from 'node:test';
+import { ensureWorkspaceOpen } from './f307-workspace-open.mjs';
 import { openChatPage } from './f309-ordinary-workspace-journey-chat-progress.mjs';
 import { createReviewState, IMAGE_FIXTURE, reviewView, THREAD_ID } from './f309-ordinary-workspace-journey-fixture.mjs';
 import { routeThroughRealOwner, startRealWorkspaceOwner } from './f309-ordinary-workspace-real-owner.mjs';
@@ -60,11 +61,33 @@ export function registerArtworkEntryJourneys(suite) {
         messages,
         dark: true,
         handleApi: async (_request, url) => {
+          if (url.pathname === `/api/threads/${THREAD_ID}/artifacts` || url.pathname === '/api/artifacts') {
+            const item = {
+              type: 'image',
+              name: '原上传图',
+              catId: null,
+              createdAt: 3,
+              sourceMessageId: 'upload',
+              url: uploadedUrl,
+              publicationItem: { kind: 'content-block', index: 0 },
+            };
+            return {
+              body: {
+                threadId: THREAD_ID,
+                artifacts: [{ ...item, threadId: THREAD_ID, threadTitle: '原对话' }],
+                workLineage: 'resolved',
+              },
+            };
+          }
           if (url.pathname === '/api/content-publications/resolve')
             return { body: { status: 'resolved', ownerUserId: 'operator', asset } };
           if (url.pathname === '/api/content-reviews/resolve')
             return { body: { ownerUserId: 'operator', contexts: [] } };
-          if (url.pathname === '/api/content-reviews/prepare') return { body: view };
+          if (
+            url.pathname === '/api/content-reviews/prepare' ||
+            url.pathname === `/api/content-reviews/${view.review.reviewId}`
+          )
+            return { body: view };
           if (url.pathname.startsWith('/api/content-publications/'))
             return url.pathname.includes('/media/')
               ? { raw: IMAGE_FIXTURE.bytes, contentType: 'image/png' }
@@ -92,6 +115,24 @@ export function registerArtworkEntryJourneys(suite) {
         await page.screenshot({ path: `${evidence}/v2-external-preview-dark.png` });
         await page.keyboard.press('Escape');
         assert.equal(await preview.count(), 0);
+        // The ordinary Works card keeps its full source DTO through the existing enlarged-image/Annotate callback.
+        await ensureWorkspaceOpen(page);
+        await page.getByTestId('v2-workspace-home').click();
+        const home = page.getByTestId('f307-workspace-home-page');
+        await home.waitFor();
+        const card = home.getByTestId('workspace-home-artifact-card').filter({ hasText: '原上传图' });
+        await card.click();
+        const enlarged = page.getByRole('dialog', { name: '原上传图', exact: true });
+        await enlarged.waitFor();
+        assert.equal(await enlarged.getByRole('button', { name: '批注', exact: true }).count(), 1);
+        await enlarged.getByRole('button', { name: '批注', exact: true }).click();
+        await surface.getByTestId('workspace-content-review-media').waitFor();
+        assert.equal(await surface.locator('textarea').count(), 0);
+        await page.screenshot({ path: `${evidence}/studio297-card-1440-dark.png` });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.screenshot({ path: `${evidence}/studio297-card-390-dark.png` });
+        await surface.getByRole('button', { name: /‹.*(首页|Home)/ }).click();
+        await card.waitFor();
         assert.deepEqual(errors, []);
       } finally {
         await context.close();
@@ -246,17 +287,26 @@ export function registerArtworkEntryJourneys(suite) {
         const workBox = await surface.boundingBox();
         assert.ok(chatBox && workBox && chatBox.x < workBox.x, 'the running chat stays left of the work');
         assert.ok(chatBox.width / (chatBox.width + workBox.width) < 0.4, 'raw artwork uses the existing 30/70 split');
-        const circling = page.getByRole('button', { name: '圈选区域', exact: true });
-        if (await circling.count()) await circling.click();
+        const imageBox = await surface.getByTestId('review-media-stage').boundingBox();
+        const dock = await surface.getByRole('region', { name: '作品画布工具', exact: true }).boundingBox();
+        assert.ok(imageBox && dock && imageBox.x >= workBox.x && imageBox.y >= workBox.y);
+        assert.ok(imageBox.x + imageBox.width <= workBox.x + workBox.width + 1);
+        assert.ok(
+          imageBox.y + imageBox.height <= dock.y + 1,
+          'the default full image stays clear of its nearby tool dock',
+        );
+        assert.ok(dock.y - imageBox.y - imageBox.height <= 24, 'the two image actions stay near the image itself');
+        await page.screenshot({ path: `${evidence}/studio297-first-page-1440.png` });
+        assert.equal(await surface.locator('textarea').count(), 0, 'the image has no second composer');
+        await page.getByRole('button', { name: '圈选', exact: true }).click();
         const box = await page.getByTestId('review-media-stage').boundingBox();
         assert.ok(box);
         await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
         await page.mouse.down();
         await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.55);
         await page.mouse.up();
-        await page.getByPlaceholder('写下这条批注…').fill('把圈中的地方改一下');
-        await page.getByTestId('workspace-content-review-media-add-to-chat').click();
         await page.locator('[data-testid="context-attachment-list"] [data-context-kind="media"]').waitFor();
+        assert.equal(await surface.locator('textarea').count(), 0, 'a native region directly joins the existing Chat');
         await page.screenshot({ path: `${evidence}/v2-workspace-circle-chat.png` });
         await surface.getByRole('button', { name: '返回来源', exact: true }).click();
         assert.equal(await composer.inputValue(), '这份未发送的草稿留在这里');
@@ -269,7 +319,8 @@ export function registerArtworkEntryJourneys(suite) {
         await page.waitForFunction(() => !document.querySelector('[data-testid="context-attachment-list"]'));
         assert.equal(sent.length, 1);
         assert.equal(sent[0].contextAttachments[0].source.locator.path, relative('cover.png'));
-        assert.equal(sent[0].contextAttachments[0].selections[0].instruction, '把圈中的地方改一下');
+        assert.equal(sent[0].content, '请修改圈中的地方');
+        assert.equal(sent[0].contextAttachments[0].selections.length, 1);
         await page.getByRole('button', { name: '打开作品', exact: false }).filter({ hasText: '片段.mp4' }).click();
         await surface.locator('video').waitFor();
         await page.screenshot({ path: `${evidence}/v2-workspace-video.png` });

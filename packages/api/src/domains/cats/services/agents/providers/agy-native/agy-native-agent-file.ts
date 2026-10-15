@@ -2,12 +2,14 @@ import { createHash } from 'node:crypto';
 import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { AGY_NATIVE_FILE_TOOLS } from './agy-native-policy.js';
+import { AGY_NATIVE_READ_TOOLS, AGY_NATIVE_TOOLS } from './agy-native-tools.js';
 
 export interface AgyNativeAgentFileInput {
   readonly profileHome: string;
   readonly catId: string;
   readonly systemPrompt: string;
+  readonly autoApprove?: boolean;
+  readonly tools?: readonly string[];
 }
 
 function lstatIfPresent(path: string) {
@@ -65,7 +67,11 @@ export function materializeAgyNativeAgentFile(input: AgyNativeAgentFileInput): {
   assertL0SafeForAgyMarkdown(input.systemPrompt);
 
   const l0Hash = createHash('sha256').update(input.systemPrompt).digest('hex');
-  const agentName = `cat-cafe-${input.catId}-${l0Hash.slice(0, 16)}`;
+  const autoApprove = input.autoApprove === true;
+  const toolHash = input.tools
+    ? `-${createHash('sha256').update(input.tools.join('\n')).digest('hex').slice(0, 8)}`
+    : '';
+  const agentName = `cat-cafe-${input.catId}-${l0Hash.slice(0, 16)}${autoApprove ? '-auto' : ''}${toolHash}`;
   let dir = home;
   for (const segment of ['.gemini', 'config', 'agents', agentName]) {
     dir = join(dir, segment);
@@ -78,10 +84,10 @@ export function materializeAgyNativeAgentFile(input: AgyNativeAgentFileInput): {
     'description: Clowder AI native identity',
     'mainAgent: true',
     'subagent: false',
-    'commandExecutionPolicy: off',
+    ...(autoApprove || input.tools?.includes('run_command') ? [] : ['commandExecutionPolicy: off']),
     'inheritMcp: true',
     'tools:',
-    ...AGY_NATIVE_FILE_TOOLS.map((tool) => `  - ${tool}`),
+    ...(input.tools ?? (autoApprove ? AGY_NATIVE_TOOLS : AGY_NATIVE_READ_TOOLS)).map((tool) => `  - ${tool}`),
     '---',
     input.systemPrompt,
   ].join('\n');

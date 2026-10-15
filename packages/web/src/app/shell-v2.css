@@ -68,15 +68,44 @@ html[data-shell="v2"] {
   .shell-chat-header-layout {
     height: auto;
     min-height: 52px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     padding: 8px 12px;
     gap: 4px;
   }
 
-  .shell-chat-header-navigation,
-  .shell-chat-header-actions {
-    flex: 1 1 100%;
+  .shell-chat-header-navigation {
+    flex: 1 1 0;
     min-width: 0;
+    gap: 2px;
+  }
+  /* The menu already truncates its label; let its wrapper yield space to the
+   * fixed controls instead of painting over search in a narrow English pane. */
+  .shell-chat-header-navigation [data-testid="conversation-view-control"] {
+    flex: 0 1 auto;
+    min-width: 28px;
+  }
+  .shell-chat-header-navigation [data-testid="conversation-view-menu-toggle"] {
+    max-width: 100%;
+    padding-inline: 4px;
+    gap: 2px;
+  }
+  .shell-chat-header-navigation [data-testid="conversation-view-menu-toggle"] > span[aria-hidden="true"] {
+    display: none;
+  }
+  .shell-chat-header-actions {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 2px;
+  }
+  .shell-chat-header-actions button {
+    min-width: 28px;
+    padding-inline: 6px;
+    gap: 3px;
+  }
+  /* Accessible names and real counts remain on the existing controls. */
+  .shell-chat-header-actions [data-testid="header-works"] > span:nth-child(2),
+  .shell-chat-header-actions [data-testid="header-tasks"] > span:nth-child(2) {
+    display: none;
   }
 }
 

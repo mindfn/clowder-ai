@@ -858,6 +858,7 @@ export const crossPostMessageInputSchema = {
         'Requires explicit clientMessageId and targetCats. mode=single allows exactly one target; ' +
         'mode=parallel requires at least two targets plus parallelIntent. A duplicate active action returns safe_wait. ' +
         'Use claimOrigin=existing_standing plus groundingEvidenceRef for a verified self-claim. ' +
+        'For a canonical Task-owner replacement of an initial terminal delegate in the same approved child, groundingEvidenceRef may name the exact direct-human message:<id>; server-derived identity/revision evidence is required and prose is not parsed as authority. ' +
         'New claims require terminalPredicate typed parameters; server catalog owns completion semantics and exact revision freshness. ' +
         'Use returnToPredecessor for rejected custody: single mode returns the generation to the persisted predecessor; parallel mode records only the rejecting holder terminal and does not enqueue a whole-lease return. ' +
         EXECUTABLE_ACTION_SUCCESSOR_CONTRACT_DESCRIPTION +
@@ -1823,6 +1824,51 @@ export const createRichBlockInputSchema = {
     .min(1)
     .optional()
     .describe('Target thread ID. Required for agent-key auth because persistent MCP has no invocation thread.'),
+  awaitResponseV1: z
+    .object({
+      mode: z.literal('once').describe('Create exactly one durable decision lifecycle for this block.'),
+      allowTextResponse: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('Allow a deliberately bound text answer in addition to the rendered options.'),
+      deadlineAt: z.number().int().positive().optional().describe('Optional absolute epoch-ms deadline.'),
+      defaultResponse: z
+        .discriminatedUnion('kind', [
+          z
+            .object({
+              kind: z.literal('selection').describe('Apply one declared option selection at the deadline.'),
+              selectedIds: z
+                .array(z.string().min(1))
+                .min(1)
+                .describe('One or more option IDs from the published interactive block.'),
+              customInput: z
+                .string()
+                .trim()
+                .min(1)
+                .max(100_000)
+                .optional()
+                .describe('Optional declared custom-input value for the selected option.'),
+            })
+            .strict(),
+          z
+            .object({
+              kind: z.literal('text').describe('Apply one declared free-text response at the deadline.'),
+              text: z
+                .string()
+                .trim()
+                .min(1)
+                .max(100_000)
+                .describe('Declared deadline response text, up to 100,000 characters.'),
+            })
+            .strict(),
+        ])
+        .optional()
+        .describe('Optional declared response applied by Host at deadline; requires deadlineAt.'),
+    })
+    .strict()
+    .optional()
+    .describe('Explicitly create one durable conversation decision. Never inferred from block shape or prose.'),
 };
 
 /**
@@ -1837,6 +1883,15 @@ export async function handleCreateRichBlock(input: {
   block: string;
   threadId?: string | undefined;
   agentKeyCatId?: string | undefined;
+  awaitResponseV1?: {
+    mode: 'once';
+    allowTextResponse?: boolean | undefined;
+    deadlineAt?: number | undefined;
+    defaultResponse?:
+      | { kind: 'selection'; selectedIds: string[]; customInput?: string }
+      | { kind: 'text'; text: string }
+      | undefined;
+  };
 }): Promise<ToolResult> {
   let parsed: unknown;
   try {
@@ -1857,6 +1912,21 @@ export async function handleCreateRichBlock(input: {
   const block = parsed;
   const hasInvocationCreds = getInvocationAuthSignal().hasFullCredentials;
   const hasAgentKeyCreds = hasUsableAgentKeyCredentials(process.env);
+
+  if (input.awaitResponseV1) {
+    if (!hasInvocationCreds) {
+      return errorResult('awaitResponseV1 requires the current authenticated invocation; no text fallback is allowed.');
+    }
+    return callbackPost(
+      '/api/callbacks/create-rich-block',
+      {
+        block,
+        awaitResponseV1: input.awaitResponseV1,
+        ...(input.threadId ? { threadId: input.threadId } : {}),
+      },
+      { enableOutbox: true, agentKeyCatId: input.agentKeyCatId },
+    );
+  }
 
   const ccRichText = `\`\`\`cc_rich\n${JSON.stringify({ v: 1, blocks: [block] })}\n\`\`\``;
   // Inline TTS is a long-running, non-idempotent server operation. The voice
@@ -3508,6 +3578,7 @@ export async function handleHoldBall(input: {
     cwd?: string;
     timeoutMs?: number;
     executionSlaMs?: number;
+    idempotencyKey?: string;
     executionPolicy?: 'read_only';
   };
   agentKeyCatId?: string | undefined;
@@ -3567,9 +3638,21 @@ export async function handleHoldBall(input: {
   );
 }
 
-/** Read the current invocation-bound hold without requiring its internal task ID. */
-export async function handleGetHoldStatus(): Promise<ToolResult> {
-  return callbackGet('/api/callbacks/hold-ball/current');
+/**
+ * F167 #1449 Slice 1 — Task-ID-independent hold observability.
+ * No input required; threadId + catId come from invocation auth.
+ */
+export async function handleGetHoldStatus(input: { taskId?: string; tailBytes?: number } = {}): Promise<ToolResult> {
+  if (input.tailBytes !== undefined && !input.taskId)
+    return errorResult(
+      'tailBytes requires taskId; pass the hold_ball taskId, for example {"taskId":"hold-ball-...","tailBytes":16384}.',
+    );
+  return callbackGet(
+    input.taskId
+      ? `/api/callbacks/hold-ball/${encodeURIComponent(input.taskId)}/status`
+      : '/api/callbacks/hold-ball/current',
+    input.tailBytes === undefined ? undefined : { tailBytes: String(input.tailBytes) },
+  );
 }
 
 /**
@@ -3997,6 +4080,7 @@ export const callbackTools = [
       'GOTCHA: For a direct named external action, pass action + explicit clientMessageId + targetCats. For operator-gated new responsibility, pass proposedAction with effectClass=assign_work instead; action and assign_work remain mutually exclusive. ' +
       'Output: direct action admission posts and queues one fenced carrier; assign_work publishes one pending approval card and posts nothing to the target until approval atomically acquires the fence. ' +
       'Existing standing reuses the same CAS via claimOrigin="existing_standing" + groundingEvidenceRef. returnToPredecessor sends a rejected single generation to the server-persisted predecessor; parallel mode records only the rejecting holder terminal. ' +
+      'For a canonical Task-owner replacement of an initial terminal delegate in the same approved child, groundingEvidenceRef must be the exact direct-human message:<id>; server validation binds user, child, revision, and timing, and never turns prose alone into a grant. ' +
       'Structured action metadata currently requires invocation-token auth; agent-key callers fail closed with the non-retryable action_agent_key_unsupported status and never send an unfenced fallback. ' +
       'F247: gpt-pro agent-key returns carry only the exact replyTo from the runtime delta; authorization stays in server custody. ' +
       'Fallback must use replace with the active leaseId/generation after server-recorded terminal evidence. Use mode=parallel + parallelIntent only for deliberate independent review, #ideate, or explicit operator fan-out. ' +
@@ -4258,7 +4342,7 @@ export const callbackTools = [
       runtimeProfiles: ['full'],
     },
   }),
-  defineTool({
+  defineCanonicalTool({
     name: 'cat_cafe_create_rich_block',
     description:
       'Create a rich block (card, diff, checklist, file, media_gallery, audio, interactive, or html_widget) attached to the current message. ' +
@@ -4272,7 +4356,8 @@ export const callbackTools = [
       'GOTCHA: The block JSON must use "kind" (NOT "type") and include "v": 1 and a unique "id". ' +
       "GOTCHA: Call get_rich_block_rules first if you haven't loaded the full schema yet in this session. " +
       'GOTCHA: checklist kind is ephemeral inline content — for persistent cross-session work items, use create_task (毛线球) instead. ' +
-      'If callback auth fails, falls back to cc_rich text encoding automatically.',
+      'In an ordinary conversation, when the requester explicitly needs one later owner decision, pass awaitResponseV1={mode:"once"}; the Host publishes a durable RuntimeInteraction and returns immediately. Scoped work/read-only invocations cannot use this mode. This is never inferred from interactiveType or prose, and callback/guide/action options are rejected. ' +
+      'Ordinary rich blocks fall back to cc_rich text encoding when callback auth is unavailable. awaitResponseV1 always fails closed because a text fallback cannot create the durable decision lifecycle.',
     inputSchema: createRichBlockInputSchema,
     handler: handleCreateRichBlock,
     governance: {
@@ -4848,7 +4933,7 @@ export const callbackTools = [
       'need review/approval → @ reviewer or @co-creator; need another cat to act → @ that cat; ' +
       '"let me think" / "I\'ll hold for now" → hesitation not hold, pick 接/退/升; ' +
       'review/analysis done → MUST @ author, conclusion ≠ endpoint; status updates → use post_message. ' +
-      'Output: system schedules a one-shot wake-up after wakeAfterMs; you get re-invoked with reason + nextStep as trigger context. ' +
+      'Output: a timed wake, or a persistent command job with taskId/jobId, visible progress, bounded logs and one terminal wake. Ordinary command jobs survive API restart and new chat messages; use get_hold_status(taskId, tailBytes) to inspect. Explicit cancellation stops the job; a replaced hold only retires its wake carrier. ' +
       'GOTCHA: max 3 holds per (thread, cat) within a true sliding 1h window — each hold has its own expiry. 4th call returns 429 with retryAt/retryAfterMs, you MUST pass (@ another cat or @co-creator). ' +
       'GOTCHA: the counter is durable (SQLite-backed, per-node) — it survives API restarts. Admission is atomic (check+insert in a single transaction). Treat the 429 as a real governance boundary. ' +
       'GOTCHA: hold is an EXCEPTION state, not a default exit. Most turns should end with @ someone, not hold. ' +
@@ -4900,9 +4985,25 @@ export const callbackTools = [
             .max(3 * 60 * 60_000)
             .optional()
             .describe(
-              'Canonical durable full gates only: cumulative admitted execution budget in ms (1s–3h), excluding resource queue time. Overrides timeoutMs as the execution budget; the separate 3h total wall limit remains. Use 7200000 for an explicit 2h budget. Other commands reject this field.',
+              'Command execution deadline in ms (1s–3h), overriding timeoutMs. Full gates count admitted execution time, excluding their resource queue, with a separate 3h wall limit. Ordinary commands count elapsed worker time. Read-only commands reject this field.',
+            ),
+          idempotencyKey: z
+            .string()
+            .min(1)
+            .max(256)
+            .optional()
+            .describe(
+              'Stable key for retries of the same command (1–256 characters). Default deduplicates identical command/cwd within this invocation. Use a new key for an intentional repeat. Conflicting reuse is refused.',
+            ),
+          retryOfJobId: z
+            .string()
+            .regex(/^managed-job-[a-f0-9]{40}$/u)
+            .optional()
+            .describe(
+              'Explicitly retry a terminal job owned by this principal. Supply a new idempotencyKey; the new job records its parent and incremented retry epoch. The original result stays immutable. No automatic retry; not available for read_only execution.',
             ),
         })
+        .strict()
         .optional()
         .describe(
           'Run a shell command and wake when it completes. Mutually exclusive with wakeAfterMs. ' +
@@ -4958,10 +5059,26 @@ export const callbackTools = [
       'Covers: pending holds, retired carriers with running managed commands. ' +
       'Use when: you need to check if a prior hold is still pending before deciding whether to hold again, ' +
       'or to observe your own hold state for diagnostic/reporting purposes. ' +
-      'No input required — threadId and catId are derived from your invocation auth. ' +
+      'Output: hold state and, for a managed command, persistent job state and an optional bounded output tail. ' +
+      'NOT for: starting or replaying commands; use hold_ball with wakeWhen for a new authorized job. ' +
+      'No input required for the current hold; pass a previous taskId to inspect a completed job after restart. Thread and principal authorization still apply. ' +
       'Auth: enforces hold-access policy (same gate as GET /:taskId/status); ' +
       'lifecycle visibility is projected per access role.',
-    inputSchema: {},
+    inputSchema: {
+      taskId: z
+        .string()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe('Exact taskId returned by hold_ball; omit for your current hold.'),
+      tailBytes: z
+        .number()
+        .int()
+        .min(1)
+        .max(65536)
+        .optional()
+        .describe('Read at most this many bytes from the end of the job log (1–65536); requires taskId.'),
+    },
     handler: handleGetHoldStatus,
     governance: {
       implementationExport: 'handleGetHoldStatus',

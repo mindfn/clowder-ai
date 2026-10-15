@@ -11,6 +11,38 @@ import {
 } from '../dist/infrastructure/scheduler/templates/alpha-browser.js';
 import { fixture } from './helpers/alpha-browser-template-fixture.js';
 
+for (const ownership of ['owner', 'guardian']) {
+  test(`Alpha ${ownership} notification remains readable by its invoked owner and rejects a foreign owner`, async () => {
+    const f = fixture();
+    const store = new MessageStore();
+    if (ownership === 'guardian') {
+      const drafts = f.runtime.alphaBrowserFailureTasks;
+      f.runtime.alphaBrowserFailureTasks = async () =>
+        (await drafts()).map((draft) => ({ ...draft, ownerCatId: null, ownership: 'unresolved' }));
+    }
+    const queue = new InvocationQueue();
+    f.context.deliver = createDeliverFn({
+      messageStore: store,
+      socketManager: { broadcastToRoom() {}, emitToUser() {} },
+      persistedQueueDelivery: new PersistedQueueDelivery({
+        messages: store,
+        queue,
+        progress: async () => ({ kind: 'queued' }),
+      }),
+    });
+    const spec = createAlphaBrowserTemplate(f.options).createSpec('alpha-subscription', f.params);
+    await spec.run.execute('alpha', 'alpha', f.context);
+    const entries = queue.list('gate-owner', f.options.ownerUserId);
+    assert.equal(entries.length, 1);
+    const message = store.getById(entries[0].payload.messageId);
+    assert.equal(message.userId, f.options.ownerUserId);
+    assert.equal(message.content, entries[0].payload.content);
+    assert.deepEqual(message.from, { kind: 'system', service: 'scheduler' });
+    assert.deepEqual(queue.list('gate-owner', 'foreign-owner'), []);
+    assert.equal(f.triggered.length, 0, 'the common Queue owns delivery');
+  });
+}
+
 for (const restriction of ['scarce', 'unavailable', 'unregistered']) {
   test(`historical ${restriction} owner is preserved but only the subscription guardian is awakened`, async () => {
     const f = fixture();

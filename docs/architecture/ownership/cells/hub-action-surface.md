@@ -2,7 +2,7 @@
 cell_id: hub-action-surface
 title: Hub Action Surface
 summary: First-party Hub user-visible actions that let cats surface files, previews, rich blocks, workflow state, and other in-context artifacts to the user.
-canonical_features: [F022, F063, F096, F120, F131, F223, F232, F284, F290, F299, F307, F310]
+canonical_features: [F022, F063, F096, F120, F131, F223, F232, F284, F290, F299, F307, F310, F322]
 code_anchors:
   - packages/shared/src/types/context-attachment.ts
   - packages/shared/src/schemas/context-attachment.schema.ts
@@ -26,6 +26,10 @@ code_anchors:
   - packages/api/src/domains/cats/services/agents/routing/thread-artifacts-aggregator.ts
   - packages/web/src/components/ArtifactsPanel.tsx
   - packages/web/src/components/rich/RuntimeInteractionCard.tsx
+  - packages/api/src/domains/runtime-interaction/RuntimeConversationDecisionService.ts
+  - packages/api/src/domains/runtime-interaction/RuntimeInteractionCardPublisher.ts
+  - packages/api/src/routes/companion-decision-read-service.ts
+  - packages/api/src/routes/companion-structured-choices.ts
   - packages/api/src/routes/runtime-interaction-routes.ts
   - packages/api/src/routes/user-mention-todo-projection.ts
   - packages/shared/src/types/unified-attention.ts
@@ -58,11 +62,13 @@ cited_by:
   - {feature: F307, date: 2026-10-02, delta: update — generation-fenced Artifact split/full-window presentation and owner-scoped opaque return references remain transient inside the single F307 store}
   - {feature: F306, date: 2026-08-27, delta: "Phase B in-context runtime interaction card — approval/question/elicitation share one canonical thread surface; Approval Hub is navigation-only and stale controls are inert."}
   - {feature: F310, date: 2026-08-31, delta: "Phase A boundary — global Needs Me and product Schedule are sibling read projections over producer-owned truth; this cell owns projection/dedupe/exact-return only, never custody lifecycle, business eligibility, or a second store."}
+  - {feature: F310, date: 2026-10-14, delta: "Mention lifecycle consumes F069/F072 durable visibility reads and records viewed/replied handling provenance; F322 retains personal Ignore/UI custody."}
+  - {feature: F322, date: 2026-10-14, delta: "J3 conversation decisions keep the exact live InteractiveBlock in Chat and Needs Me; the F310 wire exposes explicit conversation source/presentation proof plus the monotonic CAS revision while preserving provider witness compatibility. One F306 record owns liveness and return; no F096 pending store or second decision endpoint."}
 ---
 
 # Hub Action Surface
 
-F322 的显式 `@你` 请求通过现有小信箱的统一读取进入「需要我处理」。请求、回复关闭和已处理的事实属于 MessageStore；小信箱只读其最新消息引用并原样展示，不推断类别或紧急程度，不创建第二份 Task/待办。每个 owner/thread 一件，用户回复或精确版本的「已处理」关闭；后来的 @ 更新或重开。旧 Live 插件契约保留，只有小信箱显式采用这项来源。
+F322 的显式 `@你` 请求通过现有小信箱的统一读取进入「需要我处理」。请求、回复关闭、看过关闭和已处理的事实属于 MessageStore；小信箱只读其最新消息引用并原样展示，不推断类别或紧急程度，不创建第二份 Task/待办。每个 owner/thread 一件：用户回复、F069/F072 已确认追到该消息或之后的 durable visibility read、或精确版本的「已处理」关闭；后来的 @ 更新或重开。处理历史保留 `viewed | replied | ignored` provenance。F322 的 owner-private Ignore 仍是独立 presentation partition，不伪装成 canonical read。旧 Live 插件契约保留，只有小信箱显式采用这项来源。
 
 ## Canonical Owner
 
@@ -73,6 +79,8 @@ This cell is separate from `action-plane`: action-plane owns external/vendor res
 F307 owns the application-level Composable Workbench contract: working-set identity, typed tabs, active/split state, sidecar promotion, order, pin and restore validation. Its Artifact work presentation is a generation-fenced transient projection in the same F307 store: default split and explicit full-window geometry carry only owner-scoped return references, never copied Host, Chat-reading or Client state. F284 owns the existing contextual right-side Workspace v1—stable entry, launcher, current focus, Activity and deterministic reveal—and is a migration source/consumer of F307, not a second layout owner. F290 supplies descriptors for Collective-owned Channel, Artifact, Topic, Roadmap and Review objects, including lineage, permission projection, Collective-scoped result targets and provenance. Invocation and Agent Run records/lifecycle remain owned by runtime/F299 and enter F307 through their own descriptors. Product records do not leak into the generic Workbench reducer, while product adapters do not persist a second tab/split truth.
 
 F306 adds one in-context `RuntimeInteractionCard` to the existing thread rich-block surface. The card renders approval, question, and elicitation from a provider-neutral canonical record, resolves actions through a strictly owner-authenticated route, and becomes inert when the record is stale or terminal. Long descriptions and provider paths preserve line breaks and wrap inside narrow cards; URL elicitations render links only for `http|https`. Approval Hub may recall and navigate to an approval-kind card, but neither F223/F284 nor the Hub owns interaction lifecycle or a second decision endpoint.
+
+F322 J3 extends that same F306 lifecycle with an explicitly declared `conversation_decision` source. Its canonical presentation is the original single `InteractiveBlock`, plus server-only message binding metadata; Chat and Needs Me consume that one presentation and submit to the same revision-CAS writer. F310 emits the conversation `sourceKind`, exact presentation, full card digest/publication coordinate and monotonic record revision only after re-reading the live canonical Message; a deleted, changed or foreign card invalidates that source and withholds exact counts. Existing provider approval/question/elicitation projections retain their `updatedAt` witness and legacy question coordinate, so this migration does not reinterpret already-published receipts. A button or bound composer answer creates one authenticated conversation return, while a requester may settle an already-written owner message by exact reference. Ordinary rich blocks, action/guide cards, and unbound text do not enter this lifecycle, and F096 owns no parallel pending record.
 
 F310 adds the product-wide `Needs Me` and product `Schedule` projection contract inside the existing Workspace home. F310 composes producer-returned eligibility receipts, deduplicates their presentation and provides exact return; each producer still owns business eligibility, salience, time, Artifact, judgment, re-evaluation and action truth. The projection layer persists no custody lifecycle or second attention/schedule payload, and the existing F139 scheduler-management `SchedulePanel` remains a different administrative surface.
 

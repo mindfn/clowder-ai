@@ -38,6 +38,48 @@ async function buildApp(options = {}) {
   return app;
 }
 
+describe('install preview display language', () => {
+  it('rejects an invalid locale before environment detection while retaining identity checks', async () => {
+    const app = await buildApp();
+    try {
+      const url = '/api/services/whisper-stt/install-preview?locale=fr';
+      assert.equal((await app.inject({ method: 'GET', url })).statusCode, 401);
+      const invalid = await app.inject({ method: 'GET', url, headers: SESSION_HEADERS });
+      assert.equal(invalid.statusCode, 400);
+      assert.equal(invalid.json().error, 'locale must be zh or en');
+    } finally {
+      await app.close();
+    }
+  });
+  it('serves the same cached environment and original port in both display languages', async () => {
+    const app = await buildApp({ findPidsByPort: async () => [] });
+    try {
+      const read = async (suffix) => {
+        const response = await app.inject({
+          method: 'GET',
+          url: `/api/services/whisper-stt/install-preview${suffix}`,
+          headers: SESSION_HEADERS,
+        });
+        assert.equal(response.statusCode, 200);
+        return response.json();
+      };
+      const legacy = await read(''),
+        zh = await read('?locale=zh'),
+        en = await read('?locale=en');
+      assert.deepEqual(legacy, zh);
+      assert.deepEqual(en.profile, zh.profile);
+      assert.equal(en.suggestedPort, zh.suggestedPort);
+      assert.deepEqual(
+        en.recommendation.models.map(({ description, performance, ...m }) => m),
+        zh.recommendation.models.map(({ description, performance, ...m }) => m),
+      );
+      assert.doesNotMatch(JSON.stringify(en.recommendation.models), /[\p{Script=Han}]/u);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
 describe('services routes', () => {
   it('requires identity for all service manifest reads', async () => {
     const app = await buildApp();

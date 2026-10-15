@@ -47,6 +47,13 @@ export function buildSelectionMessage(
   return title ? `${base}（${title}）` : base;
 }
 
+export interface InteractiveControlCopy {
+  submit: string;
+  submitMany: (count: number) => string;
+  customPlaceholder: string;
+  random: string;
+}
+
 // ── Helpers ─────────────────────────────────────────────────
 
 function patchBlockState(messageId: string, blockId: string, patch: { disabled?: boolean; selectedIds?: string[] }) {
@@ -72,6 +79,7 @@ function OptionIcon({ opt, className = 'w-5 h-5' }: { opt: InteractiveOption; cl
 
 function SelectInteraction({
   options,
+  copy,
   disabled,
   selectedIds,
   onSelect,
@@ -79,6 +87,7 @@ function SelectInteraction({
   onCustomText,
 }: {
   options: InteractiveOption[];
+  copy?: InteractiveControlCopy;
   disabled: boolean;
   selectedIds: string[];
   onSelect: (ids: string[]) => void;
@@ -160,7 +169,7 @@ function SelectInteraction({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !ime.isComposing() && customText.trim()) handleSubmit();
             }}
-            placeholder={pendingOpt?.customInputPlaceholder ?? '输入你的想法...'}
+            placeholder={pendingOpt?.customInputPlaceholder ?? copy?.customPlaceholder ?? '输入你的想法...'}
             className="w-full px-4 py-2.5 rounded-xl border-[1.5px] border-conn-amber-ring bg-cafe-surface text-sm focus:outline-none focus:border-conn-amber-ring focus:ring-1 focus:ring-conn-amber-ring/30 placeholder:text-cafe-muted"
           />
         </div>
@@ -170,7 +179,7 @@ function SelectInteraction({
           type="button"
           disabled={showCustomInput && !customText.trim()}
           onClick={handleSubmit}
-          className={`mt-2 w-full py-2.5 rounded-full text-sm font-semibold transition-colors flex items-center justify-center gap-1.5
+          className={`${copy ? 'console-button-primary' : ''} mt-2 w-full py-2.5 rounded-full text-sm font-semibold transition-colors flex items-center justify-center gap-1.5
             ${
               showCustomInput && !customText.trim()
                 ? 'bg-cafe-surface-elevated -elevated text-cafe-muted cursor-not-allowed'
@@ -180,7 +189,7 @@ function SelectInteraction({
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
           </svg>
-          确认选择
+          {copy?.submit ?? '确认选择'}
         </button>
       )}
     </div>
@@ -189,6 +198,7 @@ function SelectInteraction({
 
 function MultiSelectInteraction({
   options,
+  copy,
   disabled,
   selectedIds,
   maxSelect,
@@ -196,6 +206,7 @@ function MultiSelectInteraction({
   hideSubmit,
 }: {
   options: InteractiveOption[];
+  copy?: InteractiveControlCopy;
   disabled: boolean;
   selectedIds: string[];
   maxSelect?: number;
@@ -259,12 +270,12 @@ function MultiSelectInteraction({
         <button
           type="button"
           onClick={() => onSelect([...checked])}
-          className="mt-2 w-full py-2.5 bg-[var(--semantic-warning)] text-[var(--cafe-surface)] rounded-full text-sm font-semibold hover:opacity-90 transition-colors flex items-center justify-center gap-1.5"
+          className={`${copy ? 'console-button-primary' : ''} mt-2 w-full py-2.5 bg-[var(--semantic-warning)] text-[var(--cafe-surface)] rounded-full text-sm font-semibold hover:opacity-90 transition-colors flex items-center justify-center gap-1.5`}
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
           </svg>
-          确认选择 ({checked.size})
+          {copy ? copy.submitMany(checked.size) : `确认选择 (${checked.size})`}
         </button>
       )}
     </div>
@@ -273,6 +284,7 @@ function MultiSelectInteraction({
 
 function CardGridInteraction({
   options,
+  copy,
   disabled,
   selectedIds,
   allowRandom,
@@ -280,6 +292,7 @@ function CardGridInteraction({
   pendingMode,
 }: {
   options: InteractiveOption[];
+  copy?: InteractiveControlCopy;
   disabled: boolean;
   selectedIds: string[];
   allowRandom?: boolean;
@@ -390,7 +403,7 @@ function CardGridInteraction({
               onClick={handleRandom}
               className="px-4 py-1.5 bg-gradient-to-r from-[var(--semantic-warning)] to-[var(--semantic-warning)] text-[var(--cafe-surface)] rounded-lg text-sm hover:from-[var(--semantic-warning)] hover:to-[var(--semantic-warning)] transition-all"
             >
-              <CafeIcon name="shuffle" className="w-4 h-4 inline-block" /> 随机抽
+              <CafeIcon name="shuffle" className="w-4 h-4 inline-block" /> {copy?.random ?? '随机抽'}
             </button>
           )}
           {!disabled && !pendingMode && pendingId && (
@@ -402,7 +415,7 @@ function CardGridInteraction({
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
-              确认选择
+              {copy?.submit ?? '确认选择'}
             </button>
           )}
         </div>
@@ -413,12 +426,14 @@ function CardGridInteraction({
 
 function ConfirmInteraction({
   options,
+  canonicalOptionsOnly,
   disabled,
   selectedIds,
   onSelect,
   pendingMode,
 }: {
   options: InteractiveOption[];
+  canonicalOptionsOnly?: boolean;
   disabled: boolean;
   selectedIds: string[];
   onSelect: (ids: string[]) => void;
@@ -448,11 +463,12 @@ function ConfirmInteraction({
 
   return (
     <div className="flex gap-3">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => handleClick(cancelOpt.id)}
-        className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all border-[1.5px] flex items-center justify-center gap-1.5
+      {!canonicalOptionsOnly || options.some((option) => option.id === cancelOpt.id) ? (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => handleClick(cancelOpt.id)}
+          className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all border-[1.5px] flex items-center justify-center gap-1.5
           ${
             selectedId === cancelOpt.id
               ? 'bg-conn-red-bg border-conn-red-ring text-conn-red-text -text'
@@ -462,14 +478,15 @@ function ConfirmInteraction({
                   ? 'bg-cafe-surface-elevated border-cafe text-cafe-muted cursor-not-allowed'
                   : 'bg-conn-red-bg/50 border-conn-red-ring text-conn-red-text hover:bg-conn-red-bg hover:border-conn-red-ring cursor-pointer'
           }`}
-      >
-        {selectedId !== cancelOpt.id && (
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        )}
-        {cancelOpt.label}
-      </button>
+        >
+          {selectedId !== cancelOpt.id && (
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          )}
+          {cancelOpt.label}
+        </button>
+      ) : null}
       <button
         type="button"
         disabled={disabled}
@@ -514,6 +531,13 @@ export interface InteractiveBlockProps {
   /** F229 Bug 2 fix: context tag for cat-cafe:interactive-send events.
    *  Listeners can filter on this to avoid cross-panel message leaks. */
   sendContext?: string;
+  /** A server-bound once-only conversation uses its canonical writer, without ordinary chat or block-state writes. */
+  controller?: {
+    disabled: boolean;
+    selectedIds: string[];
+    submit: (selectedIds: string[], customInput?: string) => void;
+    copy?: InteractiveControlCopy;
+  };
 }
 
 export function InteractiveBlock({
@@ -525,12 +549,13 @@ export function InteractiveBlock({
   groupDisabled,
   groupSelectedIds,
   sendContext,
+  controller,
 }: InteractiveBlockProps) {
   const [localDisabled, setLocalDisabled] = useState(block.disabled ?? false);
   const [localSelectedIds, setLocalSelectedIds] = useState<string[]>(block.selectedIds ?? []);
   const customTextRef = useRef('');
-  const isDisabled = groupDisabled ?? localDisabled;
-  const displaySelectedIds = groupSelectedIds ?? localSelectedIds;
+  const isDisabled = controller?.disabled ?? groupDisabled ?? localDisabled;
+  const displaySelectedIds = controller?.selectedIds ?? groupSelectedIds ?? localSelectedIds;
 
   const handleCustomText = useCallback(
     (text: string) => {
@@ -543,6 +568,10 @@ export function InteractiveBlock({
   const handleSelect = useCallback(
     async (optionIds: string[]) => {
       if (isDisabled) return;
+      if (controller) {
+        controller.submit(optionIds, customTextRef.current.trim() || undefined);
+        return;
+      }
 
       // Phase C: in pending mode, just notify parent — don't submit or disable
       if (pendingMode && onPendingChange) {
@@ -626,7 +655,7 @@ export function InteractiveBlock({
         });
       }
     },
-    [isDisabled, block, messageId, pendingMode, onPendingChange],
+    [isDisabled, block, messageId, pendingMode, onPendingChange, controller],
   );
 
   return (
@@ -638,6 +667,7 @@ export function InteractiveBlock({
       {block.description && <div className="text-xs text-cafe-secondary mb-3">{block.description}</div>}
       {block.interactiveType === 'select' && (
         <SelectInteraction
+          copy={controller?.copy}
           options={block.options}
           disabled={isDisabled}
           selectedIds={displaySelectedIds}
@@ -648,6 +678,7 @@ export function InteractiveBlock({
       )}
       {block.interactiveType === 'multi-select' && (
         <MultiSelectInteraction
+          copy={controller?.copy}
           options={block.options}
           disabled={isDisabled}
           selectedIds={displaySelectedIds}
@@ -658,6 +689,7 @@ export function InteractiveBlock({
       )}
       {block.interactiveType === 'card-grid' && (
         <CardGridInteraction
+          copy={controller?.copy}
           options={block.options}
           disabled={isDisabled}
           selectedIds={displaySelectedIds}
@@ -668,6 +700,7 @@ export function InteractiveBlock({
       )}
       {block.interactiveType === 'confirm' && (
         <ConfirmInteraction
+          canonicalOptionsOnly={controller !== undefined}
           options={block.options}
           disabled={isDisabled}
           selectedIds={displaySelectedIds}

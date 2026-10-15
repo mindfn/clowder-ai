@@ -75,7 +75,7 @@ import {
   type ThreadGroup,
 } from './thread-utils';
 import { useAttentionClusters } from './use-attention-clusters';
-import { useAttentionListOrder } from './use-attention-list-order';
+import { sidebarReadingRowKey, useAttentionListOrder, useSidebarReadingSession } from './use-attention-list-order';
 import { useAttentionPreview } from './use-attention-preview';
 import { useCollapseState } from './use-collapse-state';
 import { useGroupDecisions } from './use-group-decisions';
@@ -1044,14 +1044,16 @@ export function ThreadSidebar({ onClose, className, routeThreadId, activeDestina
     }
     return lists;
   }, [activeTab, attentionClusters, flatAttentionItems, isCollapsed, projectThreadGroups]);
+  const readingScope = JSON.stringify([activeTab, normalizedQuery, labelFilter, attentionArrangeMode]);
+  const readingSession = useSidebarReadingSession(scrollContainerRef, isV2 && !attentionArrangeMode, readingScope);
   const orderedAttentionRows = useAttentionListOrder(
     attentionLists,
     isAttentionClusterOpen,
     attentionMemberSort,
-    JSON.stringify([activeTab, normalizedQuery, labelFilter, attentionArrangeMode]),
+    readingScope,
     normalizedQuery,
     attentionArrangeMode,
-    scrollContainerRef,
+    readingSession.held,
   );
   const peekByAnchor = useMemo(() => {
     const peeks = new Map<string, ReturnType<typeof collapsedGroupPeek>>();
@@ -1097,6 +1099,8 @@ export function ThreadSidebar({ onClose, className, routeThreadId, activeDestina
   const attentionRowHeight = useCallback(
     (row: AttentionListRow) => {
       if (!isV2) return 80;
+      const heldHeight = readingSession.heights[sidebarReadingRowKey(row)];
+      if (heldHeight !== undefined) return heldHeight;
       // Include the Group's 4px outer spacing and 1px top/bottom border in initial virtual slots.
       if (row.kind === 'cluster-header') {
         const peek = peekByAnchor.get(row.cluster.anchor);
@@ -1113,7 +1117,7 @@ export function ThreadSidebar({ onClose, className, routeThreadId, activeDestina
         (row.kind === 'cluster-member' && row.isLast ? 5 : 0)
       );
     },
-    [isV2, threadRowHeight, peekByAnchor, attentionCollapsedPeek],
+    [isV2, threadRowHeight, peekByAnchor, attentionCollapsedPeek, readingSession.heights],
   );
 
   const filterKey =
@@ -1219,7 +1223,13 @@ export function ThreadSidebar({ onClose, className, routeThreadId, activeDestina
   );
 
   // F095 Phase E: Scroll anchor — keeps visible content in place when threads reorder
-  const { onScroll: handleScrollAnchor } = useScrollAnchor(scrollContainerRef, activeTabContent.threads, {
+  const renderedSidebarRows = useMemo(
+    () =>
+      flatAttentionRows ??
+      (activeTabContent.kind === 'project' ? Object.values(attentionListRows).flat() : activeTabContent.threads),
+    [flatAttentionRows, attentionListRows, activeTabContent],
+  );
+  const { onScroll: handleScrollAnchor } = useScrollAnchor(scrollContainerRef, renderedSidebarRows, {
     selectedThread: selectedThreadInActiveTab
       ? {
           threadId: selectedThreadInActiveTab.id,
@@ -1479,7 +1489,7 @@ export function ThreadSidebar({ onClose, className, routeThreadId, activeDestina
     ],
   );
 
-  const renderAttentionRow = useCallback(
+  const renderAttentionRowContent = useCallback(
     (row: AttentionListRow) => {
       if (row.kind === 'thread') {
         return (
@@ -1610,6 +1620,22 @@ export function ThreadSidebar({ onClose, className, routeThreadId, activeDestina
       toggleAttentionCollapsedPeek,
       keepAttentionGroupCollapsed,
     ],
+  );
+
+  const renderAttentionRow = useCallback(
+    (row: AttentionListRow) =>
+      isV2 ? (
+        <div
+          key={row.key}
+          data-sidebar-row-key={sidebarReadingRowKey(row)}
+          style={{ minHeight: readingSession.heights[sidebarReadingRowKey(row)] }}
+        >
+          {renderAttentionRowContent(row)}
+        </div>
+      ) : (
+        renderAttentionRowContent(row)
+      ),
+    [isV2, readingSession.heights, renderAttentionRowContent],
   );
 
   const renderProjectSection = useCallback(

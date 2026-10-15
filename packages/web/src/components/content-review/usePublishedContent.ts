@@ -47,6 +47,7 @@ export function messagePublicationSource(
 export function usePublishedContent() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [openedVersion, setOpenedVersion] = useState<{ source: string; revision: number } | null>(null);
   const generation = useRef(0);
   const pending = useRef(false);
   useEffect(
@@ -98,6 +99,8 @@ export function usePublishedContent() {
         hostThreadId,
       );
       if (!applied) setError('对话已切换。回到来源后可以继续打开这件作品。');
+      if (applied && landing.status === 'resolved')
+        setOpenedVersion({ source: JSON.stringify(source), revision: landing.asset.ownerRevision });
       return { status: applied ? 'opened' : 'blocked' };
     } catch (failure) {
       if (ticket !== generation.current || useChatStore.getState().currentThreadId !== hostThreadId)
@@ -112,5 +115,12 @@ export function usePublishedContent() {
       if (ticket === generation.current) setBusy(false);
     }
   }, []);
-  return { busy, error, open, clearError: () => setError(null) };
+  return {
+    busy,
+    error,
+    open,
+    clearError: () => setError(null),
+    versionFor: (source: MessageMediaPublicationSource) =>
+      openedVersion?.source === JSON.stringify(source) ? openedVersion.revision : undefined,
+  };
 }

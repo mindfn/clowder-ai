@@ -1,5 +1,5 @@
 ---
-feature_ids: [F118, F212]
+feature_ids: [F118, F212, F325]
 topics: [architecture, cli, integration]
 doc_kind: note
 created: 2026-02-26
@@ -9,17 +9,18 @@ tips_exempt: Automatic CLI process-ownership repair with no new user action or d
 # CLI 集成架构：Claude Code / Codex / Google CLI
 
 > Clowder AI 项目如何对接三个不同厂商的 AI CLI / adapter 工具
-> 作者：Ragdoll | 最后更新：2026-07-13
+> 原作者：Ragdoll | Google/AGY 接线更新：2026-10-14（Astra）
 
 ## 概述
 
 Clowder AI 需要调用三个不同厂商的 AI Agent：
 - **Ragdoll** → Claude Code CLI (`claude`)
 - **Maine Coon** → OpenAI Codex CLI (`codex`)
-- **Siamese** → Google Antigravity CLI (`agy`，Gemini 模型默认) / Gemini CLI (`gemini`，显式 fallback)
-- **Bengal** → Antigravity IDE Bridge；AGY CLI 上的 Claude Opus 变体也归Bengal
+- **Google/AGY 成员** → 官方 Antigravity CLI (`agy`)，显式 Native profile、个人 OAuth、原生 agent 指令与 stream-json。身份由成员目录决定；旧 Gemini CLI / IDE 执行入口已退役。
 
-这些 CLI 有不同的调用方式、输出格式和 Session 管理机制。Claude / Codex / `gemini-cli` 走 NDJSON 流；`antigravity-cli` 走 `agy --print` plain text，并在 `GeminiAgentService` 内独立分类。AGY carrier 不等于猫族：Google 工具 + Gemini 模型归Siamese；Google/AGY 工具 + Claude Opus 模型归Bengal。本文档记录我们的集成方案和踩过的坑。
+这些载体有不同的调用方式、输出格式和会话机制。Google/AGY 当前由 `AgyNativeAgentService` 接入；普通 MCP、技能发现和宿主保护沿用共享真相源。历史错误保留作诊断，不再用旧 plain-text/SQLite 轮询兜底。下面 Claude/Codex 的旧命令示例保留其原时点，当前 app-server 细节以对应实现与 ownership cell 为准。
+
+Native 在官方 CLI `init` 确认实际会话后才经 F296 组装正文、经 F299 记录并写入 stdin；错误会话不能先拿到正文。`/compact` 的已完成 checkpoint 进入现有 context epoch owner，不新建会话状态源。
 
 ---
 
@@ -33,7 +34,7 @@ Clowder AI 需要调用三个不同厂商的 AI Agent：
                 │                 │                 │
                 ▼                 ▼                 ▼
 ┌───────────────────┐ ┌───────────────────┐ ┌───────────────────┐
-│ ClaudeAgentService│ │ CodexAgentService │ │ GeminiAgentService│
+│ ClaudeAgentService│ │ CodexAgentService │ │ AgyNativeService  │
 │  (Ragdoll Opus)     │ │  (Maine Coon Codex)    │ │  (Google/AGY CLI) │
 └─────────┬─────────┘ └─────────┬─────────┘ └─────────┬─────────┘
           │                     │                     │
@@ -300,89 +301,20 @@ function transformCodexEvent(event, catId): AgentMessage | null {
 
 ---
 
-### Google adapters (`agy` / `gemini` / Antigravity Desktop)
+### Google / AGY Native (`agy`)
 
-**三 Adapter 架构：**
+`AgyNativeAgentService` 每回合启动一个受监督的官方 CLI。独立 HOME 绑定当前成员 profile；`--agent` 指向 canonical L0 compiler 生成的原生 agent，`--model` 使用已选择型号，`--input-format stream-json --output-format stream-json` 通过 stdin 传递消息，`--conversation` 只接续已有且核验一致的绑定。权限模式来自用户显式设置，Native hook 复用共享目标保护。
 
-| Adapter | 命令 | 场景 |
-|---------|------|------|
-| `antigravity-cli` (默认，非 ACP) | `agy --model <selector> --print "..."` | Google/AGY 非 ACP headless carrier；Gemini 模型归Siamese，Claude Opus 模型归Bengal |
-| `gemini-cli` (fallback / ACP) | `gemini -p "..." -o stream-json -y` / `gemini --acp` | enterprise / API-key fallback；catalog 配置 ACP 时的主路径 |
-| `antigravity` | `open -a Antigravity` | IDE 模式，MCP 回传 |
+- `init` 先核对 agent、cwd、model、permission 与请求 session，再立即对宿主可见；`step_update` 增量转换文字和工具进度。进程清理完成后发一次终态。
+- 普通工具错误保留给模型处理；未知工具在执行前拒绝。后续解释和成功回复不会被一次找不到文件或测试失败抹掉。
+- `result.usage` 是会话累计值。账单与当前上下文来自唯一 model step 的 usage，缓存计入输入，thinking 不重复加到输出。
+- 当前固定 CLI 1.3.5 可能保留上轮 `result.error`。只有本轮完成事件、最终文字匹配及干净退出等证据齐全，才把它识别为历史错误；新失败仍失败。
+- canonical SessionChainStore 保存 Native binding。L0/模型/权限/工作区变化必须有可见边界和历史重建；部分输出或 exact resume 不能静默 fresh。
+- 已验证 `/compact` 通过官方 headless 协议产生 checkpoint。沿现有 `requestNativeCompaction` / F296 epoch owner 路径接入，空回复只有明确控制请求及当前 checkpoint 证据才有效。普通空回复仍为异常。
+- 图片、PDF、音频/视频等上传文件通过受约束的真实文件引用与 native `view_file` 读取；不谎称 stream-json 接受任意原生 image input block。
+- 长任务经 `ManagedJobService` 与既有 `hold_ball` 暴露，独立于本轮 CLI；普通插话不会取消 job。日志、终态、取消及显式重试有持久证据。
 
-**F210 default switch（2026-05-23）**：Google consumer Gemini CLI / Gemini Code Assist individual requests 在 2026-06-18 停止服务，所以 `GeminiAgentService` 的非 ACP 默认 headless carrier 切到 `antigravity-cli`。但 runtime catalog 若有 `acp` section，`index.ts` 仍优先实例化 `GeminiAcpAdapter` / `gemini --acp`；`agy 1.0.1` 当前没有受支持的 ACP server mode，不能直接替换 ACP path。Enterprise/API-key 仍作为 `GEMINI_ADAPTER=gemini-cli` fallback 保留，legacy `GEMINI_ADAPTER=antigravity` 仍是 Desktop/MCP callback。
-
-**antigravity-cli 调用方式：**
-```bash
-agy \
-  --model "Gemini 3.1 Pro (High)" \
-  --conversation agy-<uuid> \
-  --add-dir "$WORKDIR" \
-  --dangerously-skip-permissions \
-  --print-timeout 120 \
-  --print "prompt"
-```
-
-**antigravity-cli 关键边界：**
-- `agy` 2026-06-28 local refresh exposes a top-level `--model` flag. Clowder AI owns that flag and strips user-supplied `--model` from freeform args.
-- Model identity is not the same as carrier identity: AGY + Gemini selector routes to Siamese; AGY + `Claude Opus 4.6 (Thinking)` routes to Bengal.
-- resume stdout 可能回放旧回复 + 新回复，因此 resumed text 事件使用 `textMode: "replace"`。
-- timeout / missing selected model 可能以 exit code 0 + stdout error 文本出现，必须由 plain-text parser 分类。
-- fresh conversation 的 `Warning: conversation "agy-..." not found.` 是可清理噪音，只能锚定 Clowder AI 生成的 `agy-*` session id。
-
-**gemini-cli 调用方式：**
-```bash
-gemini -p "prompt" -o stream-json -y [-i image.png]
-```
-
-**NDJSON 事件格式 (v0.27.2)：**
-```jsonc
-// Session 初始化
-{"type": "init", "session_id": "abc123"}
-
-// 文本输出
-{"type": "message", "role": "assistant", "content": "..."}
-
-// 工具调用
-{"type": "tool_use", "tool_name": "Read", "parameters": {...}}
-
-// 工具结果 (跳过)
-{"type": "tool_result", ...}
-
-// 成功 (跳过)
-{"type": "result", "status": "success"}
-
-// 错误
-{"type": "result", "status": "error", "error": "..."}
-```
-
-**特殊处理：**
-- **Session 恢复（F053，2026-03-03）**：在当前环境（Gemini CLI 0.31.0）支持 `gemini --resume <sessionId>`（UUID），provider 已启用 resume；prompt prepend 继续用于跨猫历史补全
-- **图片支持**：通过 `-i` flag 传递
-- **Antigravity Desktop fallback**：IDE 模式不输出 NDJSON，需要通过 MCP 回传
-
-**事件转换：**
-```typescript
-function transformGeminiEvent(event, catId): AgentMessage | null {
-  // init → session_init
-  if (e['type'] === 'init') {
-    return { type: 'session_init', catId, sessionId: e['session_id'], ... };
-  }
-  // message + assistant → text
-  if (e['type'] === 'message' && e['role'] === 'assistant') {
-    return { type: 'text', catId, content: e['content'], ... };
-  }
-  // tool_use → tool_use
-  if (e['type'] === 'tool_use') {
-    return { type: 'tool_use', catId, toolName: e['tool_name'], toolInput: e['parameters'], ... };
-  }
-  // result + error → error
-  if (e['type'] === 'result' && e['status'] !== 'success') {
-    return { type: 'error', catId, error: e['error'], ... };
-  }
-  return null;
-}
-```
+旧 `GeminiAgentService`、IDE Bridge、plain-text 执行 parser 和 Task 专属测试工具已删除。旧历史 import/lifecycle reader、通用 ACP transport 与独立 MCP consumer 保留。迁移、版本边界和实测范围见 F325 证据 (internal)。
 
 ---
 
@@ -429,7 +361,7 @@ const args = options?.sessionId
 
 **背景**：2026-02 阶段我们曾按“index/latest only”实现降级路径。
 
-**当前结论（2026-03-03）**：Gemini CLI 0.31.0 已支持 UUID `--resume <sessionId>`，`GeminiAgentService` 已接入；prompt prepend 保留为跨猫上下文补充，不再作为 resume 的替代策略。
+**历史结论（2026-03-03）**：Gemini CLI 0.31.0 当时已支持 UUID resume。F325 已退役该执行 consumer；当前使用上述 Native conversation binding，不复用旧载体 ID。
 
 ### 5. stderr 不能暴露给用户
 
@@ -472,30 +404,9 @@ yield { __cliError: true, message: humanizedMessage, cliDiagnostics };
 
 ## 测试策略
 
-通过依赖注入 mock spawn 函数进行单元测试：
+Native 单元测试通过 `spawnCliFn` / `spawnCliOverride` 输入原始事件，覆盖拒绝、工具恢复、断流、计费及绑定变化。固定官方 CLI 回环探针证明真正的工具、hooks、skills、压缩与系统指令接线；真实 OAuth、普通 Chat、用户停止和后台任务证据另记，不用 scripted provider 冒充真实模型行为。
 
-```typescript
-// 测试用的 mock spawn
-function mockSpawn(command, args, options) {
-  const child = new EventEmitter();
-  child.stdout = new PassThrough();
-  child.stderr = new PassThrough();
-  child.kill = jest.fn();
-
-  // 模拟 NDJSON 输出
-  setTimeout(() => {
-    child.stdout.write('{"type": "init", "session_id": "test-session"}\n');
-    child.stdout.write('{"type": "message", "role": "assistant", "content": "Hello!"}\n');
-    child.stdout.end();
-    child.emit('exit', 0, null);
-  }, 10);
-
-  return child;
-}
-
-// 注入 mock
-const service = new GeminiAgentService({ spawnFn: mockSpawn });
-```
+脚本：`scripts/probes/f325-agy-native-{mcp-wire,outcome-wire,compaction-wire}.mjs`。测试入口和实测版本见 F325 证据 (internal)。
 
 ---
 
@@ -504,7 +415,7 @@ const service = new GeminiAgentService({ spawnFn: mockSpawn });
 1. **进程池**：避免每次 spawn 的 500ms-2s 启动开销
 2. **CLI 版本检测**：不同版本 NDJSON 格式可能变化，需要版本锁定或适配
 3. **Provider capability negotiation**：Codex stall 已支持 SIGINT-first；若其他 CLI 也提供稳定 cooperative cancel，再按 provider 显式 opt in，不扩大全局默认
-4. **MCP 双向通信**：让非 Claude 猫也能通过 MCP 回传（目前用 HTTP callback 模拟）
+4. **MCP 接线**：Native 已消费 canonical discovery 与真实 callback auth；新载体继续复用该边界。
 
 ---
 
@@ -525,5 +436,5 @@ packages/api/src/
 └── domains/cats/services/
     ├── ClaudeAgentService.ts # Ragdoll
     ├── CodexAgentService.ts  # Maine Coon
-    └── GeminiAgentService.ts # Google/AGY CLI carrier（暹罗 Gemini + 孟加拉 AGY Opus）
+    └── agents/providers/agy-native/AgyNativeAgentService.ts # Google/AGY Native
 ```

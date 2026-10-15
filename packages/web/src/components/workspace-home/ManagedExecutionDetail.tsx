@@ -7,6 +7,7 @@ import { useShellLanguage } from '@/components/shell/shell-language';
 import { ThreadChatLink } from '@/components/workspace/ThreadChatLink';
 import { useActiveExecutionStore } from '@/stores/activeExecutionStore';
 import { apiFetch } from '@/utils/api-client';
+import { ManagedJobCard } from '../managed-job/ManagedJobCard';
 import { executionDetailCopy } from './execution-detail.shell-copy';
 import { clearExecutionDetailRequest, useExecutionDetailRequest } from './execution-detail-request';
 import { ManagedExecutionStopControl } from './ManagedExecutionStopControl';
@@ -19,6 +20,7 @@ function record(value: unknown): Record<string, unknown> | undefined {
 interface CommandDetail {
   command: string;
   startedAt: number;
+  jobId?: string;
 }
 /** Consume the original hold owner projection, including its visibility boundary and exact task generation. */
 function commandDetail(
@@ -29,18 +31,29 @@ function commandDetail(
   const access = record(body?.access);
   const lifecycle = record(body?.lifecycle);
   const command = record(lifecycle?.managedCommand);
+  const job = record(body?.job);
+  const durable =
+    job?.originTaskId === execution.executionId &&
+    typeof job.jobId === 'string' &&
+    job.createdAt === execution.startedAt &&
+    ['queued', 'running', 'cancelling'].includes(String(job.state));
   if (
     body?.taskId !== execution.executionId ||
     body.catId !== execution.catId ||
     access?.lifecycleVisibility !== 'full' ||
     lifecycle?.mode !== 'wake_when' ||
-    command?.state !== 'command_running' ||
+    !command ||
+    (!durable && command?.state !== 'command_running') ||
     command.startedAt !== execution.startedAt ||
     typeof command.command !== 'string' ||
     command.command.length === 0
   )
     return null;
-  return { command: command.command, startedAt: execution.startedAt };
+  return {
+    command: command.command,
+    startedAt: execution.startedAt,
+    ...(durable ? { jobId: String(job?.jobId) } : {}),
+  };
 }
 
 export function ManagedExecutionDetail({ threadId }: { threadId?: string }) {
@@ -125,33 +138,42 @@ export function ManagedExecutionDetail({ threadId }: { threadId?: string }) {
       {loading ? (
         <output className="text-xs text-cafe-muted">{words.loading}</output>
       ) : value && execution ? (
-        <>
-          <dl className="space-y-2 text-xs text-cafe-secondary">
-            <div>
-              <dt className="text-cafe-muted">{words.command}</dt>
-              <dd>
-                <pre className="whitespace-pre-wrap break-all">{value.command}</pre>
-              </dd>
-            </div>
-            <div>
-              <dt className="text-cafe-muted">{words.started}</dt>
-              <dd>
-                <time dateTime={new Date(value.startedAt).toISOString()}>
-                  {new Date(value.startedAt).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })}
-                </time>
-              </dd>
-            </div>
-            <div>
-              <dt className="text-cafe-muted">{words.source}</dt>
-              <dd>
-                <ThreadChatLink threadId={execution.threadId} className="shell-focusable underline">
-                  {execution.threadTitle ?? execution.threadId}
-                </ThreadChatLink>
-              </dd>
-            </div>
-          </dl>
-          <ManagedExecutionStopControl key={key} execution={execution} returnFocusRef={ref} />
-        </>
+        value.jobId ? (
+          <ManagedJobCard
+            taskId={execution.executionId}
+            jobId={value.jobId}
+            threadId={execution.threadId}
+            catId={execution.catId}
+          />
+        ) : (
+          <>
+            <dl className="space-y-2 text-xs text-cafe-secondary">
+              <div>
+                <dt className="text-cafe-muted">{words.command}</dt>
+                <dd>
+                  <pre className="whitespace-pre-wrap break-all">{value.command}</pre>
+                </dd>
+              </div>
+              <div>
+                <dt className="text-cafe-muted">{words.started}</dt>
+                <dd>
+                  <time dateTime={new Date(value.startedAt).toISOString()}>
+                    {new Date(value.startedAt).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })}
+                  </time>
+                </dd>
+              </div>
+              <div>
+                <dt className="text-cafe-muted">{words.source}</dt>
+                <dd>
+                  <ThreadChatLink threadId={execution.threadId} className="shell-focusable underline">
+                    {execution.threadTitle ?? execution.threadId}
+                  </ThreadChatLink>
+                </dd>
+              </div>
+            </dl>
+            <ManagedExecutionStopControl key={key} execution={execution} returnFocusRef={ref} />
+          </>
+        )
       ) : (
         <div className="text-xs text-cafe-secondary">
           <output>{words.unavailable}</output>

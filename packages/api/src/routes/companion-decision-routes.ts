@@ -1,5 +1,7 @@
+import type { IgnoredItemSnapshot } from '@cat-cafe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { RuntimeInteractionPendingReadSource } from '../domains/runtime-interaction/ports/RuntimeInteractionStore.js';
 import { companionDecisionWireResponse, readCompanionDecisionProjection } from './companion-decision-read-service.js';
 import { requirePluginOwnerLocalAccess } from './plugin-access-guards.js';
@@ -13,17 +15,19 @@ const pageSchema = z
     view: z.literal('unified').optional(),
     includeUserMentions: z.literal('true').optional(),
     mentionPeriod: z.enum(['recent', 'today', 'week', 'earlier', 'handled']).default('week'),
+    personalView: z.enum(['visible', 'ignored']).optional(),
   })
   .strict();
 
 /** Owner-local decision read and exact-source mention acknowledgement, independent of Live configuration. */
 export const companionDecisionRoutes: FastifyPluginAsync<{
   ownerUserId: string;
-  messageStore?: UserMentionInboxStore;
+  messageStore?: UserMentionInboxStore & Pick<IMessageStore, 'getById'>;
   now?: () => number;
   threadStore?: MentionReadOptions['threads'];
   runtimeInteractionStore?: RuntimeInteractionPendingReadSource;
   onResolved?: (userId: string) => void;
+  readIgnoredItemPreferences?: (ownerUserId: string) => IgnoredItemSnapshot | Promise<IgnoredItemSnapshot>;
 }> = async (app, options) => {
   const cutover = options.messageStore
     ? await options.messageStore.initializeUserMentionInbox((options.now ?? Date.now)())
@@ -36,7 +40,9 @@ export const companionDecisionRoutes: FastifyPluginAsync<{
     if (access.operator !== options.ownerUserId) return reply.code(403).send({ error: 'Host owner required' });
     const page = pageSchema.safeParse(request.query);
     if (!page.success) return reply.code(400).send({ error: 'Invalid decision page' });
-    const { offset, limit, view, includeUserMentions, mentionPeriod } = page.data;
+    const { offset, limit, view, includeUserMentions, mentionPeriod, personalView } = page.data;
+    if (personalView && view !== 'unified')
+      return reply.code(400).send({ error: 'Personal view requires unified read' });
     const result = await readCompanionDecisionProjection(
       app,
       access.operator,
@@ -44,6 +50,8 @@ export const companionDecisionRoutes: FastifyPluginAsync<{
       view === 'unified' && includeUserMentions === 'true' ? options.messageStore : undefined,
       { cutover, now: (options.now ?? Date.now)(), period: mentionPeriod, threads: options.threadStore },
       options.runtimeInteractionStore,
+      personalView ? { mode: personalView, read: options.readIgnoredItemPreferences } : undefined,
+      options.messageStore,
     );
     const response = companionDecisionWireResponse(result, view);
     return reply.code(response.statusCode).send(response.body);

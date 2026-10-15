@@ -223,6 +223,8 @@ export type AccountProtocol = 'anthropic' | 'openai' | 'openai-responses' | 'goo
  * Maps an accountRef to its LLM endpoint metadata (no secrets).
  */
 export interface AccountConfig {
+  /** Official CLI inference token, private in CredentialEntry.accessToken; no identity claim. */
+  readonly claude?: { readonly kind: 'long_lived_token' };
   readonly codex?: CodexManagedAccount;
   readonly quota?: AccountQuotaObservation;
   readonly authType: 'oauth' | 'api_key';

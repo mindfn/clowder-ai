@@ -1,5 +1,14 @@
 import { z } from 'zod';
 import { entrustedWorkTaskRefV1Schema } from './growing.js';
+import {
+  parseRuntimeConversationResponse,
+  type RuntimeConversationDecisionRequest,
+  type RuntimeConversationRedactedResponse,
+  redactRuntimeConversationResponse,
+  runtimeConversationDecisionRequestSchema,
+  runtimeConversationSelectionResponseSchema,
+  runtimeConversationTextResponseSchema,
+} from './runtime-conversation-decision.js';
 
 const nonBlank = z.string().trim().min(1);
 const optionalProviderCoordinate = z.string().nullable().optional();
@@ -160,7 +169,7 @@ const urlElicitationRequestSchema = baseRequestSchema
   })
   .strict();
 
-export const runtimeInteractionRequestSchema = z
+export const runtimeProviderInteractionRequestSchema = z
   .union([approvalRequestSchema, questionRequestSchema, formElicitationRequestSchema, urlElicitationRequestSchema])
   .superRefine((request, context) => {
     if (request.kind === 'question') {
@@ -177,6 +186,11 @@ export const runtimeInteractionRequestSchema = z
       context,
     );
   });
+
+export const runtimeInteractionRequestSchema = z.union([
+  runtimeProviderInteractionRequestSchema,
+  runtimeConversationDecisionRequestSchema,
+]);
 
 const decisionResponseSchema = z
   .object({
@@ -196,12 +210,15 @@ const answersResponseSchema = z
 export const runtimeInteractionResponseSchema = z.discriminatedUnion('kind', [
   decisionResponseSchema,
   answersResponseSchema,
+  runtimeConversationSelectionResponseSchema,
+  runtimeConversationTextResponseSchema,
 ]);
 
 export type RuntimeInteractionOwner = z.infer<typeof runtimeInteractionOwnerSchema>;
 export type RuntimeInteractionProviderRef = z.infer<typeof runtimeInteractionProviderRefSchema>;
 export type RuntimeInteractionDecision = z.infer<typeof runtimeInteractionDecisionSchema>;
 export type RuntimeInteractionObjectSchema = z.infer<typeof runtimeInteractionObjectSchema>;
+export type RuntimeProviderInteractionRequest = z.infer<typeof runtimeProviderInteractionRequestSchema>;
 export type RuntimeInteractionRequest = z.infer<typeof runtimeInteractionRequestSchema>;
 export type RuntimeInteractionResponse = z.infer<typeof runtimeInteractionResponseSchema>;
 
@@ -215,16 +232,38 @@ export type RuntimeInteractionTerminalReasonCode =
   | 'host_restarted'
   | 'transport_lost'
   | 'provider_cancelled'
-  | 'surface_publication_failed';
+  | 'surface_publication_failed'
+  | 'withdrawn'
+  | 'superseded'
+  | 'defaulted'
+  | 'expired';
 
 export type RuntimeInteractionRedactedResponse =
   | { kind: 'decision'; decisionId: string; submittedFieldIds?: string[] }
-  | { kind: 'answers'; answeredQuestionIds: string[]; secretQuestionIds: string[] };
+  | { kind: 'answers'; answeredQuestionIds: string[]; secretQuestionIds: string[] }
+  | RuntimeConversationRedactedResponse;
+
+export type RuntimeInteractionSource =
+  | { kind: 'provider_request'; provider: RuntimeInteractionProviderRef }
+  | {
+      kind: 'conversation_decision';
+      requesterCatId: string;
+      requesterThreadId: string;
+      requesterInvocationId: string;
+    };
+
+export type RuntimeInteractionReturnBinding =
+  | { kind: 'provider_waiter' }
+  | { kind: 'conversation_turn'; requesterCatId: string; requesterThreadId: string };
 
 export interface RuntimeInteractionCardRef {
   readonly threadId: string;
   readonly messageId: string;
   readonly blockId: string;
+  /** Exact canonical rich-block digest. Legacy provider cards may omit it. */
+  readonly blockDigest?: string;
+  /** Canonical publication time used to reject pre-card message references. */
+  readonly publishedAt?: number;
 }
 
 export interface RuntimeInteractionTerminal {
@@ -232,17 +271,41 @@ export interface RuntimeInteractionTerminal {
   readonly reasonCode: RuntimeInteractionTerminalReasonCode;
   readonly settledAt: number;
   readonly response?: RuntimeInteractionRedactedResponse;
+  readonly operationId?: string;
+  readonly responseDigest?: string;
+  readonly responseMessageId?: string;
+  readonly supersededByInteractionId?: string;
+}
+
+export interface RuntimeInteractionSubmission {
+  readonly operationId: string;
+  readonly responseDigest: string;
+  readonly author: 'owner' | 'host';
+  readonly response?: RuntimeInteractionResponse;
+  readonly terminal: RuntimeInteractionTerminal;
+  readonly claimedAt: number;
 }
 
 export interface RuntimeInteractionRecord {
   readonly request: RuntimeInteractionRequest;
+  readonly source: RuntimeInteractionSource;
+  readonly returnBinding: RuntimeInteractionReturnBinding;
   readonly status: RuntimeInteractionStatus;
   readonly hostEpoch: string;
+  readonly revision: number;
   readonly cardRef?: RuntimeInteractionCardRef;
+  readonly submission?: RuntimeInteractionSubmission;
   readonly terminal?: RuntimeInteractionTerminal;
   readonly updatedAt: number;
 }
 
+export function parseRuntimeInteractionRequest(
+  input: RuntimeProviderInteractionRequest,
+): RuntimeProviderInteractionRequest;
+export function parseRuntimeInteractionRequest(
+  input: RuntimeConversationDecisionRequest,
+): RuntimeConversationDecisionRequest;
+export function parseRuntimeInteractionRequest(input: unknown): RuntimeInteractionRequest;
 export function parseRuntimeInteractionRequest(input: unknown): RuntimeInteractionRequest {
   return runtimeInteractionRequestSchema.parse(input);
 }
@@ -251,6 +314,7 @@ export function parseRuntimeInteractionResponse(
   request: RuntimeInteractionRequest,
   input: unknown,
 ): RuntimeInteractionResponse {
+  if (request.kind === 'conversation_decision') return parseRuntimeConversationResponse(request, input);
   const response = runtimeInteractionResponseSchema.parse(input);
   if (request.kind === 'question') return parseQuestionResponse(request, response);
   return parseDecisionResponse(request, response);
@@ -270,7 +334,7 @@ function parseQuestionResponse(
 }
 
 function parseDecisionResponse(
-  request: Exclude<RuntimeInteractionRequest, { kind: 'question' }>,
+  request: Exclude<RuntimeProviderInteractionRequest, { kind: 'question' }>,
   response: RuntimeInteractionResponse,
 ): RuntimeInteractionResponse {
   if (response.kind !== 'decision') throw new Error('decision interaction requires a decision response');
@@ -304,10 +368,17 @@ export function redactRuntimeInteractionResponse(
   request: RuntimeInteractionRequest,
   response: RuntimeInteractionResponse,
 ): RuntimeInteractionRedactedResponse {
+  if (request.kind === 'conversation_decision') {
+    if (response.kind !== 'selection' && response.kind !== 'text') {
+      throw new Error('conversation decision requires a conversation response');
+    }
+    return redactRuntimeConversationResponse(response);
+  }
   if (response.kind === 'decision') {
     const submittedFieldIds = response.content ? Object.keys(response.content) : undefined;
     return { kind: 'decision', decisionId: response.decisionId, ...(submittedFieldIds ? { submittedFieldIds } : {}) };
   }
+  if (response.kind !== 'answers') throw new Error('provider interaction requires a provider response');
   const secretQuestionIds =
     request.kind === 'question'
       ? request.questions.filter((question) => question.isSecret).map((question) => question.id)

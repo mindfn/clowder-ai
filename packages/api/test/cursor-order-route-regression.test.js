@@ -571,7 +571,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
       const body = JSON.parse(res.body);
 
       assert.equal(res.statusCode, 200);
-      assert.deepEqual(body, { advanced: true, caughtUp: true });
+      assert.deepEqual(body, { advanced: true, caughtUp: true, handledMention: false });
       assert.ok(readStateStore._raw('alice', thread.id)?.includes(ownerVisible.id));
       assert.ok(!readStateStore._raw('alice', thread.id)?.includes(foreign.id));
     } finally {
@@ -604,7 +604,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
       const body = JSON.parse(res.body);
 
       assert.equal(res.statusCode, 200);
-      assert.deepEqual(body, { advanced: true, caughtUp: true });
+      assert.deepEqual(body, { advanced: true, caughtUp: true, handledMention: false });
       assert.equal(readStateStore._raw('alice', thread.id), ownerVisible.id);
       const afterState = readStateStore.get('alice', thread.id);
       assert.ok(afterState.lastReadVisibilityCursor?.includes(ownerVisible.id));
@@ -639,7 +639,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
       const body = JSON.parse(res.body);
 
       assert.equal(res.statusCode, 200);
-      assert.deepEqual(body, { advanced: true, caughtUp: true });
+      assert.deepEqual(body, { advanced: true, caughtUp: true, handledMention: false });
       assert.ok(readStateStore._raw('alice', thread.id)?.includes(ownerVisible.id));
       assert.ok(!readStateStore._raw('alice', thread.id)?.includes(foreign.id));
     } finally {
@@ -670,7 +670,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
       payload: { upToMessageId: stream.id },
     });
     assert.equal(beforeFinal.statusCode, 200);
-    assert.deepEqual(JSON.parse(beforeFinal.body), { advanced: false, caughtUp: false });
+    assert.deepEqual(JSON.parse(beforeFinal.body), { advanced: false, caughtUp: false, handledMention: false });
     assert.equal(readStateStore._raw('alice', thread.id), undefined, 'partial stream must not advance read state');
 
     messageStore.markDelivered(stream.id, Date.now() + 1);
@@ -682,7 +682,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
       payload: { upToMessageId: stream.id },
     });
     assert.equal(afterFinal.statusCode, 200);
-    assert.deepEqual(JSON.parse(afterFinal.body), { advanced: true, caughtUp: true });
+    assert.deepEqual(JSON.parse(afterFinal.body), { advanced: true, caughtUp: true, handledMention: false });
     assert.ok(readStateStore._raw('alice', thread.id)?.includes(stream.id));
   });
 
@@ -701,7 +701,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
     });
 
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(JSON.parse(res.body), { advanced: false, caughtUp: false });
+    assert.deepEqual(JSON.parse(res.body), { advanced: false, caughtUp: false, handledMention: false });
     assert.equal(readStateStore._raw('alice', thread.id), undefined);
   });
 
@@ -721,7 +721,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
     });
 
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(JSON.parse(res.body), { advanced: false, caughtUp: false });
+    assert.deepEqual(JSON.parse(res.body), { advanced: false, caughtUp: false, handledMention: false });
     assert.equal(readStateStore._raw('alice', thread.id), undefined);
   });
 
@@ -740,7 +740,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
     });
 
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(JSON.parse(res.body), { advanced: false, caughtUp: false });
+    assert.deepEqual(JSON.parse(res.body), { advanced: false, caughtUp: false, handledMention: false });
     assert.equal(readStateStore._raw('alice', thread.id), undefined);
   });
 
@@ -759,7 +759,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
     });
 
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(JSON.parse(res.body), { advanced: true, caughtUp: true });
+    assert.deepEqual(JSON.parse(res.body), { advanced: true, caughtUp: true, handledMention: false });
     assert.ok(readStateStore._raw('alice', thread.id)?.includes(ownerVisible.id));
   });
 

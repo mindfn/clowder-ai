@@ -1,5 +1,5 @@
 import type { ThreadArtifactDTO } from '@cat-cafe/shared';
-import { act } from 'react';
+import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { writeShellLanguage } from '@/components/shell/shell-language';
@@ -48,6 +48,7 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 it('uses the named source read and opens a complete document DTO with the original list view', async () => {
   await act(async () => root.render(<ThreadWorksPanelV2 threadId="work-source" onSelectArtifact={open} />));
@@ -60,7 +61,15 @@ it('uses the named source read and opens a complete document DTO with the origin
   expect(open).toHaveBeenCalledExactlyOnceWith(items[0], {
     kind: 'artifact-list',
     threadId: 'work-source',
-    view: { scope: 'thread', filter: 'all', query: '', grouping: 'time', catFilter: null, collapsed: [] },
+    view: {
+      scope: 'thread',
+      filter: 'all',
+      query: '',
+      grouping: 'time',
+      catFilter: null,
+      collapsed: [],
+      viewport: { scrollTop: 0, anchor: { key: expect.any(String), offset: 0 } },
+    },
   });
 });
 it('incomplete source reads show neither a precise count nor a false empty state', async () => {
@@ -71,6 +80,92 @@ it('incomplete source reads show neither a precise count nor a false empty state
   expect(host.textContent).toContain('the count is not confirmed');
   expect(host.textContent).not.toContain('0 works');
   expect(host.textContent).not.toContain('No works match');
+});
+
+it('returns the actual Works scroll position with its selected card after remount', async () => {
+  await act(async () => root.render(<ThreadWorksPanelV2 threadId="work-source" onSelectArtifact={open} />));
+  const list = host.querySelector<HTMLElement>('.v2-works-scroll')!;
+  list.scrollTop = 231;
+  await act(async () => host.querySelector<HTMLButtonElement>('[data-testid="workspace-home-artifact-card"]')?.click());
+  expect(open.mock.calls[0][1].view.viewport).toMatchObject({ scrollTop: 231 });
+  const view = open.mock.calls[0][1].view;
+  await act(async () =>
+    root.render(
+      <ThreadWorksPanelV2 key="returned-list" threadId="work-source" initialView={view} onSelectArtifact={open} />,
+    ),
+  );
+  expect(host.querySelector<HTMLElement>('.v2-works-scroll')?.scrollTop).toBe(231);
+});
+
+it.each([
+  false,
+  true,
+])('restores a new same-position return on the retained list once: StrictMode %s', async (strict) => {
+  const view = {
+    scope: 'thread' as const,
+    filter: 'all' as const,
+    query: '',
+    grouping: 'time' as const,
+    catFilter: null,
+    collapsed: [],
+    viewport: { scrollTop: 200 },
+  };
+  const render = (initialView = view) => {
+    const panel = <ThreadWorksPanelV2 threadId="work-source" initialView={initialView} />;
+    root.render(strict ? <StrictMode>{panel}</StrictMode> : panel);
+  };
+  await act(async () => render());
+  const list = host.querySelector<HTMLElement>('.v2-works-scroll')!;
+  expect(list.scrollTop).toBe(200);
+  // The host retains this DOM when the return's serialized view/key is unchanged.
+  list.scrollTop = 0;
+  const nextReturn = { ...view, viewport: { ...view.viewport } };
+  await act(async () => render(nextReturn));
+  expect(host.querySelector('.v2-works-scroll')).toBe(list);
+  expect(list.scrollTop).toBe(200);
+  list.scrollTop = 123;
+  await act(async () => render(nextReturn));
+  expect(list.scrollTop).toBe(123);
+});
+
+it.each([
+  false,
+  true,
+])('settles a returned card after an earlier preview loads, unless the person scrolls: %s', async (interact) => {
+  const image = {
+    ...items[0],
+    type: 'image',
+    name: 'Earlier.png',
+    sourceMessageId: 'earlier-image',
+    url: '/uploads/earlier.png',
+  };
+  data.fetch.mockImplementation(async () =>
+    Response.json({ artifacts: [image, ...items], view: 'works', workLineage: 'resolved', complete: true, total: 3 }),
+  );
+  await act(async () => root.render(<ThreadWorksPanelV2 threadId="work-source" onSelectArtifact={open} />));
+  const key = host.querySelectorAll<HTMLElement>('[data-work-anchor]')[1].dataset.workAnchor!;
+  let top = 10;
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    return new DOMRect(0, this.dataset.workAnchor === key ? top : 0, 100, 100);
+  });
+  const initialView = {
+    scope: 'thread' as const,
+    filter: 'all' as const,
+    query: '',
+    grouping: 'time' as const,
+    catFilter: null,
+    collapsed: [],
+    viewport: { scrollTop: 200, anchor: { key, offset: 10 } },
+  };
+  await act(async () =>
+    root.render(<ThreadWorksPanelV2 key="returned" threadId="work-source" initialView={initialView} />),
+  );
+  const list = host.querySelector<HTMLElement>('.v2-works-scroll')!;
+  expect(list.scrollTop).toBe(200);
+  if (interact) list.dispatchEvent(new Event('wheel'));
+  top = 60;
+  await act(async () => list.querySelector('img')!.dispatchEvent(new Event('load')));
+  await vi.waitFor(() => expect(list.scrollTop).toBe(interact ? 200 : 250));
 });
 
 it('a mounted Works list rereads delivered materials and owner versions without token polling', async () => {
@@ -106,6 +201,49 @@ it('a mounted Works list rereads delivered materials and owner versions without 
   );
   expect(catalogueReads()).toBe(reads + 1);
   expect(host.textContent).toContain('3 works');
+});
+
+it('keeps the pending return when a source refresh replaces previews before they settle', async () => {
+  const image = {
+    ...items[0],
+    type: 'image',
+    name: 'Earlier.png',
+    sourceMessageId: 'earlier-image',
+    url: '/uploads/earlier.png',
+  };
+  const body = { artifacts: [image, ...items], view: 'works', workLineage: 'resolved', complete: true, total: 3 };
+  data.fetch.mockImplementation(async () => Response.json(body));
+  await act(async () => root.render(<ThreadWorksPanelV2 threadId="work-source" onSelectArtifact={open} />));
+  const key = host.querySelectorAll<HTMLElement>('[data-work-anchor]')[1].dataset.workAnchor!;
+  let top = 10;
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    return new DOMRect(0, this.dataset.workAnchor === key ? top : 0, 100, 100);
+  });
+  const initialView = {
+    scope: 'thread' as const,
+    filter: 'all' as const,
+    query: '',
+    grouping: 'time' as const,
+    catFilter: null,
+    collapsed: [],
+    viewport: { scrollTop: 200, anchor: { key, offset: 10 } },
+  };
+  await act(async () =>
+    root.render(<ThreadWorksPanelV2 key="returned" threadId="work-source" initialView={initialView} />),
+  );
+  let finish: (response: Response) => void = () => {};
+  data.fetch.mockImplementation(
+    () =>
+      new Promise<Response>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await act(async () => window.dispatchEvent(new Event('cat-cafe:entrusted-work-projection-invalidated')));
+  expect(host.querySelector('[data-work-anchor]')).toBeNull();
+  await act(async () => finish(Response.json(body)));
+  top = 60;
+  await act(async () => host.querySelector('img')!.dispatchEvent(new Event('load')));
+  await vi.waitFor(() => expect(host.querySelector<HTMLElement>('.v2-works-scroll')?.scrollTop).toBe(250));
 });
 
 it('standalone global Works opens another conversation artifact through the current host owner', async () => {

@@ -5,6 +5,9 @@ import type { AccountSelection, AccountsResponse, ProfileItem } from '../hub-acc
 
 export function useAccountDirectory() {
   const [data, setData] = useState<AccountsResponse>();
+  const [claudeSelection, setClaudeSelection] = useState<AccountSelection>();
+  const [claudeMemberError, setClaudeMemberError] = useState('');
+  const claudeSequence = useRef(0);
   const [selection, setSelection] = useState<AccountSelection>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -30,6 +33,20 @@ export function useAccountDirectory() {
       }
     };
     void fetchMembers();
+    const claudeRead = ++claudeSequence.current;
+    void apiFetch('/api/accounts/claude/members', undefined, { afterCurrentGet: true })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('selection_unavailable');
+        const body = (await response.json()) as { selection?: AccountSelection };
+        if (claudeRead !== claudeSequence.current) return;
+        setClaudeSelection(body.selection);
+        setClaudeMemberError(body.selection ? '' : 'selection_unavailable');
+      })
+      .catch(() => {
+        if (claudeRead !== claudeSequence.current) return;
+        setClaudeSelection(undefined);
+        setClaudeMemberError('selection_unavailable');
+      });
     try {
       const response = await apiFetch('/api/accounts', undefined, { afterCurrentGet: true });
       const body = (await response.json()) as AccountsResponse & { error?: string };
@@ -59,7 +76,13 @@ export function useAccountDirectory() {
     setError('');
     setLoading(false);
   }, []);
-  const applyBinding = useCallback((next: AccountSelection) => {
+  const applyBinding = useCallback((next: AccountSelection, client = 'openai') => {
+    if (client === 'anthropic') {
+      claudeSequence.current++;
+      setClaudeSelection(next);
+      setClaudeMemberError('');
+      return;
+    }
     membersSequence.current++;
     setSelection(next);
     setMemberError('');
@@ -88,5 +111,16 @@ export function useAccountDirectory() {
       window.removeEventListener('cat-config-changed', reconcile);
     };
   }, [refresh]);
-  return { data, selection, loading, error, memberError, refresh, update, applyBinding };
+  return {
+    data,
+    claudeSelection,
+    claudeMemberError,
+    selection,
+    loading,
+    error,
+    memberError,
+    refresh,
+    update,
+    applyBinding,
+  };
 }

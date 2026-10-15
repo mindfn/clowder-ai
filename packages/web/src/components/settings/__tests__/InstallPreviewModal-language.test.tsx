@@ -96,6 +96,111 @@ describe('InstallPreviewModal shell language boundary', () => {
     await vi.waitFor(() => expect(host.textContent).not.toMatch(/检测环境中…|Checking environment…/u));
   }
 
+  it('uses the structured service identity and requests owner-localized display words in v2', async () => {
+    writeShellPresentation('v2');
+    writeShellLanguage('en');
+    apiFetch.mockResolvedValue(response(recommendation));
+    await renderModal({ serviceId: 'whisper-stt', serviceName: '语音识别 (Whisper)', mode: 'reconfigure' });
+    expect(host.querySelector('h3')?.textContent).toBe('Reconfigure Speech recognition (Whisper)');
+    expect(apiFetch).toHaveBeenCalledWith('/api/services/whisper-stt/install-preview?locale=en');
+    expect(host.textContent).toContain('Balanced local model');
+    expect(host.textContent).toContain('Existing installs stay available');
+  });
+
+  it.each([
+    undefined,
+    'owner/whisper-small',
+    'owner/custom-initial',
+  ])('initializes model and port when language changes before the first response (%s)', async (initialModel) => {
+    writeShellPresentation('v2');
+    writeShellLanguage('en');
+    let releaseFirst!: (value: ReturnType<typeof response>) => void;
+    apiFetch.mockReturnValueOnce(
+      new Promise((resolve) => {
+        releaseFirst = resolve;
+      }),
+    );
+    apiFetch.mockResolvedValue(
+      response({
+        ...recommendation,
+        recommendation: { ...recommendation.recommendation, notes: ['Current preview response'] },
+      }),
+    );
+    await act(async () =>
+      root.render(
+        <InstallPreviewModal
+          open
+          serviceId="whisper"
+          serviceName="Whisper"
+          initialModel={initialModel}
+          initialPort={19876}
+          onConfirm={onConfirm}
+          onCancel={onCancel}
+        />,
+      ),
+    );
+    expect(host.textContent).toContain('Checking environment…');
+    await act(async () => writeShellLanguage('zh'));
+    await vi.waitFor(() => expect(host.textContent).toContain('Current preview response'));
+    const confirm = host.querySelector<HTMLButtonElement>('button.console-button-primary');
+    expect(confirm?.disabled).toBe(false);
+    expect(
+      host.querySelector<HTMLInputElement>('input[type="radio"]:checked')?.closest('label')?.querySelector('p')
+        ?.textContent,
+    ).toBe(initialModel === 'owner/custom-initial' ? '自定义模型' : 'whisper-small');
+    expect(Array.from(host.querySelectorAll<HTMLInputElement>('input')).map((input) => input.value)).toContain('19876');
+    await act(async () =>
+      releaseFirst(
+        response({
+          ...recommendation,
+          recommendation: { ...recommendation.recommendation, notes: ['Withdrawn first response'] },
+        }),
+      ),
+    );
+    expect(host.textContent).not.toContain('Withdrawn first response');
+    expect(confirm?.disabled).toBe(false);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it('preserves a custom model and port when a language read arrives, and ignores an older response', async () => {
+    writeShellPresentation('v2');
+    writeShellLanguage('en');
+    apiFetch.mockResolvedValue(response(recommendation));
+    await renderModal({ initialModel: 'owner/custom-draft', initialPort: 19876 });
+    let resolveChinese: (value: ReturnType<typeof response>) => void = () => {
+      throw Error('Chinese request missing');
+    };
+    apiFetch.mockImplementationOnce(
+      () =>
+        new Promise<ReturnType<typeof response>>((resolve) => {
+          resolveChinese = resolve;
+        }),
+    );
+    await act(async () => writeShellLanguage('zh'));
+    apiFetch.mockResolvedValueOnce(
+      response({
+        ...recommendation,
+        recommendation: { ...recommendation.recommendation, notes: ['Latest English owner notes'] },
+      }),
+    );
+    await act(async () => writeShellLanguage('en'));
+    await vi.waitFor(() => expect(host.textContent).toContain('Latest English owner notes'));
+    await act(async () =>
+      resolveChinese(
+        response({
+          ...recommendation,
+          recommendation: { ...recommendation.recommendation, notes: ['Older Chinese response'] },
+        }),
+      ),
+    );
+    expect(host.textContent).not.toContain('Older Chinese response');
+    expect(Array.from(host.querySelectorAll<HTMLInputElement>('input')).map((input) => input.value)).toContain(
+      'owner/custom-draft',
+    );
+    expect(Array.from(host.querySelectorAll<HTMLInputElement>('input')).map((input) => input.value)).toContain('19876');
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
   it('renders every generated control word in English in v2 while leaving service data untouched', async () => {
     writeShellPresentation('v2');
     writeShellLanguage('en');

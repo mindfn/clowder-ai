@@ -1,4 +1,9 @@
-import { normalizeModificationSelections, respondContentTextSchema } from '@cat-cafe/shared';
+import {
+  type ContentModificationDetailView,
+  type ContentModificationRecord,
+  normalizeModificationSelections,
+  respondContentTextSchema,
+} from '@cat-cafe/shared';
 import type { IMessageStore } from '../../../cats/services/stores/ports/MessageStore.js';
 import type {
   MediaReviewPrincipal,
@@ -13,6 +18,13 @@ import { applyContentTextEdits, ModificationTextError } from './text-store.js';
 
 export class ContentTextModificationService {
   private readonly execution: ModificationTextExecution;
+  private acceptanceReader?: (
+    record: ContentModificationRecord,
+    principal: MediaReviewPrincipal,
+  ) => Promise<ContentModificationDetailView['acceptances']>;
+  setAcceptanceReader(read: NonNullable<ContentTextModificationService['acceptanceReader']>): void {
+    this.acceptanceReader = read;
+  }
   constructor(
     private readonly deps: {
       store: ArtifactReviewStore;
@@ -29,11 +41,13 @@ export class ContentTextModificationService {
     const { record, source, task, current } = await this.authorize(requestId, principal, true);
     const proposals = this.deps.store.text.proposals(requestId);
     const execution = principal.actor.kind === 'cat' ? await this.execution.prepare(source) : undefined;
+    const acceptances = (await this.acceptanceReader?.(record, principal)) ?? [];
     return {
       record,
       source,
       proposals,
       rejections: this.deps.store.acceptances.rejections(requestId, principal.userId),
+      acceptances,
       taskRevision: task.entrustedWork?.revision,
       currentRevision: current.revision,
       ...(execution ? { execution } : {}),

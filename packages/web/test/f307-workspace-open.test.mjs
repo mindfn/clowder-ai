@@ -28,6 +28,22 @@ function createPage({ toggle, workbench }) {
   };
 }
 
+test('an already open work composer needs no hidden conversation header toggle', async () => {
+  const page = createPage({
+    workbench: {
+      async isVisible() {
+        return true;
+      },
+    },
+    toggle: {
+      async waitFor() {
+        throw new Error('conversation header is hidden');
+      },
+    },
+  });
+  await ensureWorkspaceOpen(page);
+});
+
 test('a visibility acknowledgement at the wait boundary never triggers a closing toggle', async () => {
   let state = 'closed';
   let clicks = 0;

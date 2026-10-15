@@ -20,7 +20,6 @@ import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 ensureFakeCliOnPath('claude');
 ensureFakeCliOnPath('codex');
-ensureFakeCliOnPath('gemini');
 
 describe('saveUploadedImages', () => {
   let uploadDir;
@@ -222,38 +221,6 @@ describe('Codex CLI image text fallback', () => {
     const imageIdx = args.indexOf('--image');
     assert.ok(imageIdx >= 0, 'should pass --image for codex exec');
     assert.ok(String(args[imageIdx + 1]).includes('screenshot.png'));
-  });
-});
-
-describe('Gemini CLI image fallback', () => {
-  it('does not use -i interactive flag, includes image dir, and appends local path hints', async () => {
-    const spawnArgs = [];
-    const mockSpawnFn = (cmd, args, opts) => {
-      spawnArgs.push({ cmd, args: [...args], opts });
-      return createMockProcess([]);
-    };
-
-    const { GeminiAgentService } = await import('../dist/domains/cats/services/agents/providers/GeminiAgentService.js');
-    const service = new GeminiAgentService({
-      adapter: 'gemini-cli',
-      spawnFn: mockSpawnFn,
-    });
-
-    for await (const _ of service.invoke('describe this', {
-      contentBlocks: [{ type: 'image', url: '/uploads/cat-photo.jpg' }],
-    })) {
-      // consume
-    }
-
-    assert.equal(spawnArgs.length, 1);
-    const args = spawnArgs[0].args;
-    const imgIdx = args.indexOf('-i');
-    assert.equal(imgIdx, -1, 'should not pass -i (interactive prompt) for images');
-    const includeDirIdx = args.indexOf('--include-directories');
-    assert.ok(includeDirIdx >= 0, 'should include image directory for tool access');
-    const prompt = args.find((a) => typeof a === 'string' && a.includes('[Local image path:'));
-    assert.ok(prompt, 'prompt should include local image path hint');
-    assert.ok(prompt.includes('cat-photo.jpg'));
   });
 });
 

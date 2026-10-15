@@ -93,7 +93,14 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
           connector: 'hold-ball',
           label: '持球结果',
           icon: '🏓',
-          meta: { taskId: `task-${suffix}`, threadId, catId: 'opus5', wakeWhen: true },
+          meta: {
+            managedHold: true,
+            phase: 'wake',
+            taskId: `task-${suffix}`,
+            threadId,
+            catId: 'opus5',
+            wakeWhen: true,
+          },
         },
       }),
     );
@@ -512,7 +519,7 @@ describe('Redis unread summary visibility cursor contract', { skip: redisIsolati
       const response = await invokeReadProducer('patch', fixture);
 
       assert.equal(response.statusCode, 200);
-      assert.deepEqual(response.json(), { advanced: true, caughtUp: true });
+      assert.deepEqual(response.json(), { advanced: true, caughtUp: true, handledMention: false });
       assert.equal(replaceCalls, 2, 'anchor-only race must reject stale CAS and revalidate once');
       const repaired = await readStateStore.get(fixture.userId, fixture.thread.id);
       assert.ok(repaired.lastReadMessageId.includes(fixture.incoming.id));

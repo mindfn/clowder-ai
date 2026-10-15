@@ -4,7 +4,7 @@ related_features: [F178, F061, F174, F236, F237, F172, F202, F309, F310, F317, F
 topics: [cloud-cat, chatgpt-pro, mcp, multi-provider, custom-instructions, github-connector, chrome-extension, native-messaging]
 doc_kind: spec
 description: Productized cloud-cat platform for connecting ChatGPT Pro and future cloud LLM providers into Clowder AI as first-class collaborators.
-tips_exempt: "Renewed 2026-10-10: Phase G and the related-feature update record the in-progress independent dot entry; where that entry ships it has its own implementation-anchored tip, so this architecture record adds no separate discovery action. Earlier transport retirement and in-place Settings repair flows are unchanged."
+tips_exempt: "Renewed 2026-10-14: remove the rejected per-cat dot permission step; no new configuration or discovery action to teach. Existing plugin setup and lifecycle tips remain the entry; this change removes redundant work."
 description_source: model
 description_author: codex
 description_updated_at: 2026-07-06T11:45:00Z
@@ -666,7 +666,7 @@ Alpha 交付与完整 G1 的真实 provider 验收仍分别按实物留痕，阶
 
 **G1-6 主动询问回程已合入**：[#5397](https://github.com/zts212653/clowder-ai/pull/5397) 的 landed revision 为 `05343af4bb24b1df6336bfdb68f5178a24f1371f`。
 同一 MCP 增加有界 `cat_cafe_dot_ask`，Host 固定 dot 作者，家猫正式 callback/stream 按真实执行来源自动回送原订阅；
-一次受询回信不扩大永久召唤白名单。多猫部分失败如实可重试，保留原消息与幂等 key；本人回复 dot 提问保留普通召唤权限。
+受询回信依赖真实 root、实际接收者和执行来源；逐猫永久召唤名单按上述 2026-10-14 校准退役。多猫部分失败如实可重试，保留原消息与幂等 key；本人回复 dot 提问保留普通召唤权限。
 Sonnet 已对最终 `c6d3f953` 给出 typed approved（本 thread `private-source-id`），独立接受第四轮假阳性 pushback；
 作者最后选择 21/21 与 API build/types 通过，独立最终选择 42/42、隔离 Redis 1/1 通过。原生 browser merge plan 17 条 backend/MCP/shared unmapped 仍为 blocked，未声称 full 或 browser 绿。
 
@@ -704,6 +704,24 @@ Sonnet独立审查最终HEAD `7f0012f358` 放行（来源235），包含真实�
 Alpha实际HEAD/build stamp `007ebaf646` 包含合入修复，健康检查ok，合入后回归7/7；正式runtime仍boot24/`8f98aed76a`，尚未加载新补丁。
 系统DNS的fake-IP与正式公网地址校验冲突已独立复现，但真实callback hostname及16:26唯一失败原因未知；没有放行保留网段、改网络/凭据或创建新订阅。
 原936已登记包含`65cdb541`的正式部署单次续办；加载后的真实订阅、双向原处回复及PNG仍待验，不据此关闭G1。
+
+**2026-10-13 协议兼容修复已合入/Alpha验证，正式加载与真实订阅仍待验**：[#5489](https://github.com/zts212653/clowder-ai/pull/5489) 合入 `93af0f2742854494adaeaafd8f4f6f0f8452af02`。
+正式 boot27/`1a13a3f79e` 已加载此前Host修复；真实13:59/14:00的req-3mu/req-3ug已到Host，但返回invalid_parameters且未进入订阅服务/挑战。原payload未保留，不能认定具体被拒字段。
+本轮独立复现严格子集拒绝合法`_meta`/`maxAgeMs`，修正订阅、退订和工具调用的命名协议字段及完整`resultType`外壳；业务参数、owner/作者、来源权限与安全回调仍严格验证。
+新增局部诊断只保留静态phase、白名单path/code/expected及有界计数，不记录值或秘密；内部schema错误另记phase。
+Sonnet最终typed approved覆盖`e6db98bd22`（来源169），独立52/52；标准Alpha boot132的API/MCP构建stamp与合入SHA一致，合入后19/19、健康检查通过。
+15:16 UTC正式仍boot27，未包含这次补丁；当前record revision6未配对、无订阅/来源读取/回信/图片回执，attempt已于14:28过期，不能倒推为请求时失败原因。
+原936已登记generation8等待冻结合入SHA加载；正式停止/重启仍受本人原生source120边界约束，未自行改服务/网络/凭据或创建新订阅。
+客户端操作缺少合法Needs Me入口如实记入原progress，不伪造approval；下一轮先核云端最终任务状态，再在有效本人授权下验真实订阅、双线程自动召唤、原处回信与PNG。
+
+**2026-10-13 23:52 UTC 正式补丁已加载，剩余为真实客户端订阅**：boot28 / `237a5a9de17e5e311f67a6b8e6ad2475e85db813` 健康；API/MCP stamp一致、Git祖先包含`93af0f2742`，实际编译文件包含新协议字段、完整外壳和白名单诊断。
+原936 generation8已matched，加载/重启阻塞解除，不再要求另一次重启。当前Host仍record revision6、未配对、无订阅及读源/回信/图片回执，上次attempt已过期。
+云端最终任务状态仍unknown；本invocation没有目标dot任务查询能力，下一步先由原dot主会话合法只读列任务确认无重复，再由本人在同一插件详情原处准备有效说明供原dot订阅。
+不自行重备、重试真实订阅或改连接/口令；客户端操作缺少合法Needs Me producer继续如实保留。真实自动召唤、原处回复、正式询问回程与PNG仍待原936验收。
+
+**2026-10-14 01:42 UTC 新订阅已过参数解析，失败于回调DNS地址校验**：boot28真实`req-lrr`在01:42:38.855Z记received，随后报`callback_non_public_address`；实际hostname为`connectors.api.openai.com`，HTTPS挑战发送前即被拒。
+01:45只读系统DNS返回保留`198.18.0.0/15`答案，实际编译resolver再次拒绝；不是昨日invalid_parameters，原请求地址值未留而不补造。新attempt在请求时有效，Host record revision8仍未配对/无订阅；目标dot报告随后完整list仅4项旧任务且无新订阅、未重试。
+下一步需本人授权仅这个精确hostname的真实DNS例外并保持既有代理路由，先核全公网解析再继续有效授权的真实订阅；本轮未改网络/服务/凭据或创建callback，不要求再次Refresh或立即重配。真实G1仍未验。
 
 ## Acceptance Criteria
 

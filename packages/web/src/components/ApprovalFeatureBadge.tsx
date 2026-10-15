@@ -1,7 +1,10 @@
 import type { ApprovalProducerId } from '@cat-cafe/shared';
 import { approvalFeatureMeta } from '@/lib/approval-features';
 
+import { useShellLanguage } from './shell/shell-language';
+
 export function ApprovalFeatureBadge({ featureId, testId }: { featureId: ApprovalProducerId; testId?: string }) {
+  const language = useShellLanguage();
   const featureMeta = approvalFeatureMeta(featureId);
   return (
     <span
@@ -9,7 +12,7 @@ export function ApprovalFeatureBadge({ featureId, testId }: { featureId: Approva
       style={{ backgroundColor: featureMeta.color, color: 'var(--cafe-accent-foreground)' }}
       data-testid={testId}
     >
-      {featureMeta.label}
+      {language === 'en' ? featureMeta.badgeLabel : featureMeta.label}
     </span>
   );
 }

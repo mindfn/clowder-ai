@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import Fastify from 'fastify';
 import { MessageStore } from '../../src/domains/cats/services/stores/ports/MessageStore.js';
 import { companionDecisionRoutes } from '../../src/routes/companion-decision-routes.js';
-import { adaptMessageStore } from '../helpers/message-from-fixtures.js';
+import { adaptMessageStore, canonicalTestMessageInput } from '../helpers/message-from-fixtures.js';
 
 const source = {
   userId: 'owner',
@@ -104,8 +104,65 @@ test('a late-delivered human reply fences older requests when the newer queued m
   assert.equal((await read()).totalCount, 0);
 });
 
+for (const [scenario, readBeforeLaterCommit] of [
+  ['read before later commit', true],
+  ['older boundary after both commits', false],
+] as const) {
+  test(`durable reads preserve later-visible lower-id @you requests — ${scenario}`, () => {
+    const messages = new MessageStore();
+    const firstCommitted = messages.append(
+      canonicalTestMessageInput({
+        ...source,
+        catId: 'codex61-sol',
+        content: '@co-creator first committed',
+        timestamp: 200,
+      }),
+    );
+    let laterVisible: ReturnType<MessageStore['append']>;
+    let handled: boolean;
+    if (readBeforeLaterCommit) {
+      handled = messages.resolveUserMentionRequestFromRead('owner', source.threadId, firstCommitted.id, 1_000);
+      laterVisible = messages.append(
+        canonicalTestMessageInput({
+          ...source,
+          catId: 'codex61-sol',
+          content: '@co-creator later visible',
+          timestamp: 100,
+        }),
+      );
+      assert.equal(handled, true);
+      assert.deepEqual(
+        messages.listHandledUserMentions('owner').map((message) => message.id),
+        [firstCommitted.id],
+      );
+    } else {
+      laterVisible = messages.append(
+        canonicalTestMessageInput({
+          ...source,
+          catId: 'codex61-sol',
+          content: '@co-creator later visible',
+          timestamp: 100,
+        }),
+      );
+      handled = messages.resolveUserMentionRequestFromRead('owner', source.threadId, firstCommitted.id, 1_000);
+      assert.equal(handled, false);
+      assert.deepEqual(messages.listHandledUserMentions('owner'), []);
+    }
+
+    assert.ok(laterVisible.id < firstCommitted.id, 'fixture requires message-id order to oppose commit order');
+    assert.ok(
+      (messages.getVisibilitySeq(laterVisible.id) ?? 0) > (messages.getVisibilitySeq(firstCommitted.id) ?? 0),
+      'fixture requires the later commit to have the later visibility position',
+    );
+    assert.deepEqual(
+      messages.listUserMentionRequests('owner').map((message) => message.id),
+      [laterVisible.id],
+    );
+  });
+}
+
 test('F320 explicit mention enters the existing mailbox once, updates, and closes on human reply', async (t) => {
-  const { messages, read } = await fixture(t);
+  const { app, messages, read } = await fixture(t);
   messages.append({ ...source, mentionsUser: false });
   assert.equal((await read()).totalCount, 0);
   const first = messages.append(source);
@@ -119,8 +176,23 @@ test('F320 explicit mention enters the existing mailbox once, updates, and close
   assert.equal(updated.totalCount, 1);
   assert.equal(updated.items[0].decisionRef, initial.items[0].decisionRef);
   assert.equal(updated.items[0].userMention.messageId, next.id);
-  messages.append({ ...source, catId: null, mentionsUser: false, content: '可以，稍后重启', timestamp: 102 });
+  messages.append({
+    ...source,
+    catId: null,
+    mentionsUser: false,
+    content: '可以，稍后重启',
+    timestamp: 102,
+  });
   assert.equal((await read()).totalCount, 0);
+  const history = (
+    await app.inject({
+      url: '/api/concierge/work/decisions?view=unified&includeUserMentions=true&mentionPeriod=handled',
+      headers: { 'x-test-session': 'owner' },
+    })
+  ).json();
+  assert.equal(history.items[0]?.userMention.messageId, next.id);
+  assert.equal(history.items[0]?.userMention.handledReason, 'replied');
+  assert.equal(history.items[0]?.userMention.handledAt, 102);
 });
 
 test('handled action is owner fenced and cannot close a newer request; a new mention reopens it', async (t) => {
@@ -139,6 +211,13 @@ test('handled action is owner fenced and cannot close a newer request; a new men
   assert.equal((await read()).totalCount, 1);
   assert.equal((await resolve(next.id)).statusCode, 200);
   assert.equal((await read()).totalCount, 0);
+  const history = (
+    await app.inject({
+      url: '/api/concierge/work/decisions?view=unified&includeUserMentions=true&mentionPeriod=handled',
+      headers: { 'x-test-session': 'owner' },
+    })
+  ).json();
+  assert.equal(history.items[0]?.userMention.handledReason, 'ignored');
   messages.append({ ...source, timestamp: 103 });
   assert.equal((await read()).totalCount, 1);
 });

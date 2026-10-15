@@ -42,6 +42,7 @@ export function spawnDurableManagedGateAttempt(input: {
   readonly frozenIdentity: DurableGateFrozenIdentity | null;
   readonly reconcileFrom: number | null;
   readonly capture: (chunk: Buffer) => void;
+  readonly beforeSpawn?: (attemptToken: string) => void;
 }): DurableManagedGateAttemptProcess {
   const attempt = createDurableManagedGateAttempt(
     input.job,
@@ -49,6 +50,7 @@ export function spawnDurableManagedGateAttempt(input: {
     input.frozenIdentity,
     input.reconcileFrom,
   );
+  input.beforeSpawn?.(attempt.attemptToken);
   const child = spawn(input.command, {
     shell: true,
     cwd: input.cwd,

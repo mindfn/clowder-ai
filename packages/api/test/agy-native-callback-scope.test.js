@@ -9,7 +9,39 @@ import {
 } from '../dist/domains/cats/services/agents/invocation/tool-execution-policy.js';
 import { registerCallbackAuthHook } from '../dist/routes/callback-auth-prehandler.js';
 
-test('AGY native callback policy persists only exact callback paths', () => {
+test('ordinary Native callbacks share owner authentication without a provider tool shortlist', async () => {
+  const registry = new InvocationRegistry();
+  const auth = await registry.create('owner', 'gemini38', 'thread');
+  const headers = { 'x-invocation-id': auth.invocationId, 'x-callback-token': auth.callbackToken };
+  const app = Fastify();
+  registerCallbackAuthHook(app, registry);
+  const routes = [
+    ['GET', '/api/callbacks/thread-context'],
+    ['GET', '/api/callbacks/search-evidence'],
+    ['POST', '/api/callbacks/post-message'],
+  ];
+  for (const [method, url] of routes)
+    app.route({
+      method,
+      url,
+      handler: async (request) => ({ catId: request.callbackAuth.catId, threadId: request.callbackAuth.threadId }),
+    });
+  try {
+    for (const [method, url] of routes) {
+      const response = await app.inject({ method, url, headers });
+      assert.equal(response.statusCode, 200, url);
+      assert.deepEqual(response.json(), { catId: 'gemini38', threadId: 'thread' });
+      assert.notEqual(
+        (await app.inject({ method, url, headers: { ...headers, 'x-callback-token': 'foreign-token' } })).statusCode,
+        200,
+      );
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+test('explicit callback policy persists only exact callback paths', () => {
   const policy = { mode: 'callback_allowlist', allowedCallbackRoutes: ['GET /api/callbacks/thread-context'] };
   assert.deepEqual(normalizeToolExecutionPolicy(policy), policy);
   assert.deepEqual(parseToolExecutionPolicy(JSON.stringify(policy)), policy);

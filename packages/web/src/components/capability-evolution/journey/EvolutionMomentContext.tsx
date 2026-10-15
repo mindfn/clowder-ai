@@ -1,11 +1,12 @@
 import type { ExactAssetVersionRefV1 } from '@cat-cafe/shared';
 import type { ReactNode } from 'react';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import {
   blockerLabel,
   type EvolutionProgramPresentationProjection,
   productStatus,
 } from '../capability-evolution-presentation';
-import { type JourneyMoment, journeyMoment, MOMENTS } from '../EvolutionJourney';
+import { type JourneyMoment, journeyMoment, journeyStageLabel, MOMENTS } from '../EvolutionJourney';
 import { JourneyFace, LifecycleStatusFace, SetupFace } from '../EvolutionProgramContext';
 import { EvolutionSource } from '../EvolutionVersionEvidence';
 import { useEvolutionPreparationReview } from '../evolution-preparation-resource';
@@ -152,12 +153,17 @@ export function EvolutionMomentContext({
   explorationMode?: 'summary' | 'workspace';
 }) {
   const current = journeyMoment(projection);
+  const v2 = useShellPresentation() === 'v2';
   return (
     <section data-journey-panel={moment} aria-label={MOMENTS[moment]} className="space-y-4">
       {productStatus(projection).face === 'lifecycle' && <LifecycleStatusFace projection={projection} />}
       {projection.program.lifecycle === 'terminal' && <JourneyFace projection={projection} />}
       {moment > current && moment !== 2 && projection.program.lifecycle !== 'terminal' && (
-        <p className="evolution-empty">项目目前在{productStatus(projection).label}，这里展示后续需要完成的内容。</p>
+        <p className="evolution-empty">
+          {v2
+            ? `项目目前在${journeyStageLabel(projection)}。`
+            : `项目目前在${productStatus(projection).label}，这里展示后续需要完成的内容。`}
+        </p>
       )}
       {moment === 0 ? (
         <Goal projection={projection} />

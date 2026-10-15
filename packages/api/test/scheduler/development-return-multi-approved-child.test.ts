@@ -99,7 +99,9 @@ async function createMultiApprovedChildScenario(t: TestContext, laterSuccessor: 
   };
   const delegates = new ProposalStoreDelegateProvider(
     { get: async (id) => f.proposals.get(id) },
-    new ThreadDelegateBindingProvider({ listAllByThread: async (id) => f.proposals.listAllByThread(id) }),
+    new ThreadDelegateBindingProvider({
+      listAllByTaskThread: async (id) => f.proposals.listAllByThread(id),
+    }),
   );
   const resolver = new ActionSubjectTruthResolver(
     {
@@ -191,7 +193,7 @@ for (const laterSuccessor of [false, true]) {
 
     const report = scenario.f.messages.append({
       userId: scenario.f.actor.userId,
-      catId: reporter,
+      from: { kind: 'agent', catId: reporter },
       threadId: scenario.child.id,
       content: 'Child B actual result',
       mentions: [],

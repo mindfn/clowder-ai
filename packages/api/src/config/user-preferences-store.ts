@@ -34,9 +34,21 @@ export function readUserPreferences(projectRoot: string): UserPreferences {
   }
 }
 
+/** New durable lanes fail visibly on unreadable data rather than overwriting sibling preferences. */
+export function readUserPreferencesStrict(projectRoot: string): UserPreferences {
+  const path = preferencesPath(projectRoot);
+  if (!existsSync(path)) return {};
+  const parsed: unknown = JSON.parse(readFileSync(path, 'utf-8'));
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('Preference file must contain an object');
+  }
+  return parsed as UserPreferences;
+}
+
 export function updateUserPreferences(
   projectRoot: string,
   update: (current: UserPreferences) => UserPreferences,
+  options: { strictRead?: boolean } = {},
 ): UserPreferences {
   // The single API owner cannot yield between read and atomic rename, so same-process
   // writers cannot interleave. Cross-process writers are outside runtime ownership.
@@ -44,7 +56,7 @@ export function updateUserPreferences(
   const path = preferencesPath(projectRoot);
   const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
   mkdirSync(directory, { recursive: true });
-  const next = update(readUserPreferences(projectRoot));
+  const next = update(options.strictRead ? readUserPreferencesStrict(projectRoot) : readUserPreferences(projectRoot));
   try {
     writeFileSync(tempPath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
     renameSync(tempPath, path);

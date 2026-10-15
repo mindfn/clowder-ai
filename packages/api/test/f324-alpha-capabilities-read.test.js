@@ -133,7 +133,7 @@ test('F324 Alpha missing canonical config stays absent rather than bootstrapping
   });
 });
 
-test('F324 runtime capabilities GET still heals and generates persistent configuration', async () => {
+test('F324 runtime GET heals canonical discovery without rewriting retired provider configs', async () => {
   await fixture('runtime', async ({ app, main, paths }) => {
     const files = paths(main);
     const before = await bytes(files);
@@ -142,9 +142,9 @@ test('F324 runtime capabilities GET still heals and generates persistent configu
     const after = await bytes(files);
     assert.deepEqual(
       after.map((value, index) => value.equals(before[index])),
-      [false, false, false],
+      [false, true, true],
     );
-    assert.ok(JSON.parse(after[1]).mcpServers['cat-cafe-memory']);
+    assert.ok(JSON.parse(after[0]).capabilities.some((cap) => cap.id === 'cat-cafe-memory'));
   });
 });
 

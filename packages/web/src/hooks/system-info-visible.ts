@@ -148,6 +148,43 @@ function formatCloudBridgeStatus(parsed: Record<string, unknown>): VisibleSystem
   return { content: message, variant: 'info' };
 }
 
+export function formatSessionSealRequested(
+  parsed: Record<string, unknown>,
+  resolveCatName: ResolveCatName = identityCatName,
+): VisibleSystemInfoResult | null {
+  if (parsed?.type !== 'session_seal_requested') return null;
+
+  const catId = typeof parsed.catId === 'string' ? parsed.catId : 'unknown';
+  const sessionSeq = typeof parsed.sessionSeq === 'number' ? parsed.sessionSeq : '?';
+  if (parsed.reason === 'native_binding_changed') {
+    return {
+      content: `${resolveCatName(catId)} 的原生配置已更新，会话 #${sessionSeq} 已封存；正在带上历史继续`,
+      variant: 'info',
+    };
+  }
+  const continuityDiagnostics =
+    typeof parsed.continuityDiagnostics === 'object' && parsed.continuityDiagnostics !== null
+      ? (parsed.continuityDiagnostics as Record<string, unknown>)
+      : undefined;
+  if (continuityDiagnostics?.source === 'runtime_replacement') {
+    return {
+      content: `${resolveCatName(catId)} 的会话 #${sessionSeq} 已自动接力；新会话已在本轮继续运行`,
+      variant: 'info',
+    };
+  }
+  const healthSnapshot =
+    typeof parsed.healthSnapshot === 'object' && parsed.healthSnapshot !== null
+      ? (parsed.healthSnapshot as Record<string, unknown>)
+      : undefined;
+  const fillRatio = healthSnapshot?.fillRatio;
+  const pct = typeof fillRatio === 'number' ? Math.round(fillRatio * 100) : '?';
+
+  return {
+    content: `${resolveCatName(catId)} 的会话 #${sessionSeq} 已封存（上下文 ${pct}%），下次调用将自动创建新会话`,
+    variant: 'info',
+  };
+}
+
 export function formatGovernanceBlocked(parsed: Record<string, unknown>): VisibleSystemInfoResult | null {
   if (parsed?.type !== 'governance_blocked') return null;
 

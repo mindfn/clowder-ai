@@ -4,18 +4,18 @@ import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { MailboxPanel } from './MailboxPanel';
+import { mailboxEntryCopy } from './mailbox/mailbox-entry.shell-copy';
 import { MAILBOX_NAVIGATE_EVENT, type MailboxNavigation, type MailboxSection } from './mailbox/mailbox-navigation';
 import { openExactPlace } from './mailbox/open-exact-place';
 import type { OriginalPlace } from './mailbox/original-place';
 import { useApprovalSessions } from './mailbox/use-approval-sessions';
 import { type RailBadge, RailButton } from './RailButton';
 import { ShellGlyph } from './ShellIcons';
+import { useShellCopy } from './shell-copy';
 import {
   deriveMailboxPanelState,
   deriveMailboxState,
-  MAILBOX_NAME,
   type MailboxState,
-  mailboxAccessibleName,
   mailboxStateText,
 } from './unified-mailbox-state';
 import { useOpenInChat } from './use-open-in-chat';
@@ -44,6 +44,7 @@ function badgeFor(state: MailboxState): RailBadge {
  * original place (审批 or 等你判断/需要修复); this entry never approves, admits or dispatches anything itself.
  */
 export function MailboxButton() {
+  const t = useShellCopy(mailboxEntryCopy);
   const pathname = usePathname() ?? '/';
   const view = useUnifiedAttention();
   // Decisions made on an approval's original card are followed here, not in the panel: the panel closes, the decision goes on.
@@ -61,17 +62,28 @@ export function MailboxButton() {
     setOpen(false);
   }, [pathname]);
 
+  const changeSection = useCallback(
+    (next: MailboxSection) => {
+      setSection(next);
+      const previous = view.result.kind === 'ok' ? view.result.read.mentionPeriod : undefined;
+      const period = next === 'history' ? 'handled' : previous && previous !== 'handled' ? previous : 'week';
+      if (view.setPersonalView) view.setPersonalView(next === 'ignored' ? 'ignored' : 'visible', period);
+      else view.setMentionPeriod?.(period);
+    },
+    [view.setPersonalView, view.setMentionPeriod, view.result],
+  );
+
   useEffect(() => {
     const navigate = (event: Event) => {
       const input = (event as CustomEvent<MailboxNavigation>).detail;
-      if (!input || !['pending', 'history', 'tools'].includes(input.section)) return;
-      setSection(input.section);
+      if (!input || !['pending', 'history', 'tools', 'records', 'ignored'].includes(input.section)) return;
+      changeSection(input.section);
       setSelectedProposalId(input.proposalId ?? null);
       setOpen(true);
     };
     window.addEventListener(MAILBOX_NAVIGATE_EVENT, navigate);
     return () => window.removeEventListener(MAILBOX_NAVIGATE_EVENT, navigate);
-  }, []);
+  }, [changeSection]);
 
   const close = useCallback((restoreFocus: boolean) => {
     setOpen(false);
@@ -100,13 +112,13 @@ export function MailboxButton() {
     [openInChat, setWorkspaceMode, pathname],
   );
 
-  const stateText = mailboxStateText(state);
+  const stateText = mailboxStateText(state, t);
   return (
     <>
       <RailButton
         ref={buttonRef}
-        ariaLabel={mailboxAccessibleName(state)}
-        tip={MAILBOX_NAME}
+        ariaLabel={t.accessibleName(mailboxStateText(state, t))}
+        tip={t.title}
         tipDetail={stateText}
         badge={badgeFor(state)}
         dimmed={state.kind === 'login-required'}
@@ -117,7 +129,7 @@ export function MailboxButton() {
         onClick={() => {
           setSection('pending');
           setSelectedProposalId(null);
-          if (!open) view.setMentionPeriod?.('week');
+          if (!open) changeSection('pending');
           setOpen((wasOpen) => !wasOpen);
         }}
         testId="mailbox-button"
@@ -132,10 +144,7 @@ export function MailboxButton() {
           view={view}
           sessions={sessions}
           section={section}
-          onSectionChange={(next) => {
-            setSection(next);
-            view.setMentionPeriod?.(next === 'history' ? 'handled' : 'week');
-          }}
+          onSectionChange={changeSection}
           selectedProposalId={selectedProposalId}
           onOpenPlace={openPlace}
           onOpenSchedule={() => {

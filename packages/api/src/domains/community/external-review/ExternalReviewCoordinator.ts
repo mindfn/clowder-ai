@@ -22,6 +22,10 @@ interface ExternalReviewProjectorPort {
   rebuild(subjectKey: string): Promise<void>;
 }
 
+function isTerminalPrState(state: CommunityObjectProjection['state'] | undefined): boolean {
+  return state === 'fixed' || state === 'closed' || state === 'declined';
+}
+
 export interface ExternalReviewTrackingTarget {
   readonly threadId: string;
   readonly catId: string;
@@ -84,7 +88,11 @@ export class ExternalReviewCoordinator {
     const config = await this.opts.repoConfigStore.getByRepo(repoFullName);
     if (config?.reviewMode !== 'maintainer_review') return false;
     const projection = await this.opts.objectStore.get(prSubjectKey(repoFullName, prNumber));
-    return projection?.externalReview?.lifecycle !== 'terminal';
+    if (!projection?.externalReview) return false;
+    // Historical projections can contain a completed PR and a stale review
+    // aggregate. The PR terminal fact wins over that collector's lifecycle.
+    if (isTerminalPrState(projection.state)) return false;
+    return projection.externalReview.lifecycle !== 'terminal';
   }
 
   async recordCi(poll: CiPollResult, tracking: ExternalReviewTrackingTarget): Promise<ExternalReviewCoordinatorResult> {
@@ -155,6 +163,8 @@ export class ExternalReviewCoordinator {
     const config = await this.opts.repoConfigStore.getByRepo(repoFullName);
     if (!config) return null;
     const subjectKey = prSubjectKey(repoFullName, prNumber);
+    const projection = await this.opts.objectStore.get(subjectKey);
+    if (isTerminalPrState(projection?.state)) return null;
     const existing = await this.readAggregate(subjectKey);
     const assignmentRevision = existing?.reviewerAssignmentRevision ?? 0;
     const assignmentSuffix = assignmentRevision > 0 ? `:r${assignmentRevision}` : '';

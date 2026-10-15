@@ -1,17 +1,10 @@
 'use client';
 import type { ArtifactReviewAction, ArtifactReviewRound } from '@cat-cafe/shared';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import { ReviewActor } from './ReviewActor';
 import { useReviewDraft } from './useReviewDraft';
 
-export function ReviewRoundDecision({
-  round,
-  ownerUserId,
-  canWrite,
-  saving,
-  draftKey,
-  act,
-  compact = false,
-}: {
+type DecisionProps = {
   round: ArtifactReviewRound;
   ownerUserId: string;
   canWrite: boolean;
@@ -19,7 +12,62 @@ export function ReviewRoundDecision({
   draftKey: string;
   act: (action: ArtifactReviewAction, round: number) => Promise<boolean>;
   compact?: boolean;
-}) {
+  onDiscuss?: (body?: string) => boolean;
+};
+
+export function ReviewRoundDecision(props: DecisionProps) {
+  return useShellPresentation() === 'v2' ? <ChatRoundDecision {...props} /> : <ClassicRoundDecision {...props} />;
+}
+
+function ChatRoundDecision({ round, canWrite, saving, act, onDiscuss, draftKey }: DecisionProps) {
+  const saved = useReviewDraft(draftKey);
+  const needed = round.state === 'awaiting_human' && !round.attentionRetiredReason;
+  return (
+    <section aria-label="这一轮的结论" className="flex flex-wrap items-center justify-end gap-2 text-xs">
+      {saved.draft.body ? (
+        <div className="w-full text-cafe-secondary">
+          <p className="line-clamp-3 whitespace-pre-wrap">之前未发出的说明：{saved.draft.body}</p>
+          {onDiscuss ? (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => {
+                if (onDiscuss(saved.draft.body)) saved.clear();
+              }}
+            >
+              放到聊天
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {round.decision ? <span>{round.decision.outcome === 'approved' ? '这版通过' : '需要修改'}</span> : null}
+      {round.decision?.explanation ? <p>{round.decision.explanation}</p> : null}
+      {onDiscuss ? (
+        <button
+          type="button"
+          disabled={saving}
+          className="rounded-lg border border-cafe-subtle px-3 py-2 font-semibold hover:bg-cafe-surface"
+          title={canWrite ? '在原聊天中说明需要怎样修改' : '在原聊天中讨论这一版'}
+          onClick={() => onDiscuss()}
+        >
+          {canWrite ? '要求修改' : '讨论此版本'}
+        </button>
+      ) : null}
+      {canWrite && needed ? (
+        <button
+          type="button"
+          disabled={saving}
+          className="rounded-lg bg-cafe-accent px-3 py-2 font-semibold text-[var(--cafe-accent-foreground)] disabled:opacity-40"
+          onClick={() => void act({ kind: 'decide', outcome: 'approved', explanation: '' }, round.number)}
+        >
+          通过此版本
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+function ClassicRoundDecision({ round, ownerUserId, canWrite, saving, draftKey, act, compact = false }: DecisionProps) {
   const { draft, update, clear, storageError } = useReviewDraft(draftKey);
   const decided = round.state === 'approved' || round.state === 'changes_requested';
   const needed = round.state === 'awaiting_human' && !round.attentionRetiredReason;

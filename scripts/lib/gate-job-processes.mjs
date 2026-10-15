@@ -1,6 +1,8 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
+import { constants } from 'node:os';
 import { normalizedGateEnvironment } from './gate-environment.mjs';
+import { proveLinuxExecutionExited, readLinuxExitIdentity } from './gate-linux-process-exit.mjs';
 
 export const GATE_JOB_TOKEN_ENV = 'CAT_CAFE_GATE_JOB_TOKEN';
 export const GATE_STAGE_ROOT_TOKEN_ENV = 'CAT_CAFE_GATE_STAGE_ROOT_TOKEN';
@@ -15,6 +17,20 @@ const SCANNABLE_TOKEN_ENV_KEYS = new Set([
   REDIS_TEST_ROOT_TOKEN_ENV,
 ]);
 const OUTPUT_TAIL_BYTES = 64 * 1024;
+const SAFE_SCAN_ERROR_CODES = new Set([...Object.keys(constants.errno), 'CAT_CAFE_PUBLIC_TEST_EXTERNAL_RESOURCE']);
+
+function scanOperation(operation, run, pid) {
+  try {
+    return run();
+  } catch (error) {
+    // Never propagate command stderr, arguments, environment bytes or arbitrary
+    // exception messages into cleanup evidence. These can contain credentials.
+    const failure = { operation, code: SAFE_SCAN_ERROR_CODES.has(error?.code) ? error.code : 'UNKNOWN' };
+    if (Number.isSafeInteger(pid) && pid > 0) failure.pid = pid;
+    if (operation === 'ps' && Number.isSafeInteger(error?.status)) failure.exitStatus = error.status;
+    throw Object.assign(new Error(`Process scan failed: ${operation} (${failure.code})`), { failure });
+  }
+}
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
@@ -32,11 +48,13 @@ export function parseMacGateJobProcesses(snapshot, jobToken, tokenEnvironmentKey
 }
 
 function scanMac(jobToken, tokenEnvironmentKey, execFileSyncImpl) {
-  const snapshot = execFileSyncImpl('ps', ['eww', '-axo', 'pid=,ppid=,command='], {
-    encoding: 'utf8',
-    maxBuffer: 32 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const snapshot = scanOperation('ps', () =>
+    execFileSyncImpl('ps', ['eww', '-axo', 'pid=,ppid=,command='], {
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }),
+  );
   return parseMacGateJobProcesses(snapshot, jobToken, tokenEnvironmentKey);
 }
 
@@ -44,20 +62,41 @@ function decodeEnvironment(buffer) {
   return buffer.toString('utf8').split('\0').filter(Boolean);
 }
 
-function scanLinux(jobToken, tokenEnvironmentKey, { execFileSyncImpl, readFileSyncImpl }) {
+function scanLinux(jobToken, tokenEnvironmentKey, { execFileSyncImpl, readFileSyncImpl, readdirSyncImpl }) {
   const uid = process.getuid?.();
   if (!Number.isSafeInteger(uid)) throw new Error('current uid unavailable');
-  const pids = execFileSyncImpl('ps', ['-u', String(uid), '-o', 'pid='], { encoding: 'utf8' })
+  const pids = scanOperation('ps', () =>
+    execFileSyncImpl('ps', ['-u', String(uid), '-o', 'pid='], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }),
+  )
     .split('\n')
     .map((value) => Number(value.trim()))
     .filter((pid) => Number.isSafeInteger(pid) && pid > 0 && pid !== process.pid);
   const processes = [];
   for (const pid of pids) {
+    const before = readLinuxExitIdentity(pid, readFileSyncImpl);
     try {
       const environment = decodeEnvironment(readFileSyncImpl(`/proc/${pid}/environ`));
       if (environment.includes(`${tokenEnvironmentKey}=${jobToken}`)) processes.push({ pid, parentPid: null });
     } catch (error) {
-      if (error?.code !== 'ENOENT' && error?.code !== 'ESRCH') throw error;
+      if (error?.code !== 'ENOENT' && error?.code !== 'ESRCH') {
+        const proof = proveLinuxExecutionExited(pid, before, { readFileSyncImpl, readdirSyncImpl });
+        if ((error?.code === 'EACCES' || error?.code === 'EPERM') && proof.proven) continue;
+        try {
+          scanOperation(
+            'proc-environ',
+            () => {
+              throw error;
+            },
+            pid,
+          );
+        } catch (failure) {
+          if (proof.evidence.before || proof.evidence.after) failure.failure.exitEvidence = proof.evidence;
+          throw failure;
+        }
+      }
     }
   }
   return processes;
@@ -83,11 +122,11 @@ export function scanGateJobProcesses(
     if (platform === 'linux') {
       // Touch procfs first so a missing or hidden mount is reported as unknown,
       // not silently treated as an empty process set.
-      readdirSyncImpl('/proc');
+      scanOperation('proc-list', () => readdirSyncImpl('/proc'));
       return {
         status: 'ok',
         scanner: 'procfs-env',
-        processes: scanLinux(jobToken, tokenEnvironmentKey, { execFileSyncImpl, readFileSyncImpl }),
+        processes: scanLinux(jobToken, tokenEnvironmentKey, { execFileSyncImpl, readFileSyncImpl, readdirSyncImpl }),
       };
     }
     return { status: 'unknown', scanner: 'unsupported', processes: [] };
@@ -96,7 +135,8 @@ export function scanGateJobProcesses(
       status: 'unknown',
       scanner: platform,
       processes: [],
-      error: error instanceof Error ? error.message : String(error),
+      error: error?.failure ? error.message : 'Process scan failed',
+      failure: error?.failure ?? { operation: 'scan', code: 'UNKNOWN' },
     };
   }
 }
@@ -175,6 +215,7 @@ export async function cleanupGateJobProcesses({
         tokenZeroMatches: false,
         scanner: snapshot.scanner,
         status: 'unknown',
+        ...(snapshot.failure ? { failure: snapshot.failure } : {}),
         cleanupDurationMs: observedAt - startedAt,
         killedPids: [...killedPids].sort((a, b) => a - b),
       };

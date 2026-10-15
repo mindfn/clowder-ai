@@ -2,12 +2,15 @@
 cell_id: bubble-pipeline
 title: Bubble Pipeline
 summary: Provider-normalized semantic event 到用户可见 bubble 的单一投影边界；覆盖服务器 message identity、named-message writer、live/hydration convergence 与 typed execution projection，以及 MessageStore dispatchRefs 驱动的实际投递头像与响应终态。
-canonical_features: [F177, F183, F254, F264]
+canonical_features: [F177, F183, F254, F264, F322]
 code_anchors:
   - packages/web/src/lib/provider-semantic-registry.ts
   - packages/web/src/hooks/agent-messages/system-projections.ts
   - packages/web/src/hooks/named-message-writer.ts
   - packages/api/src/domains/cats/services/types.ts
+  - packages/api/src/domains/runtime-interaction/RuntimeInteractionCardPublisher.ts
+  - packages/api/src/domains/runtime-interaction/MessageQueueRuntimeConversationReturnGateway.ts
+  - packages/api/src/domains/cats/services/stores/ports/MessageStore.ts
   - packages/shared/src/types/bubble-pipeline.ts
   - packages/shared/src/types/turn-execution.ts
   - packages/api/src/domains/cats/services/stores/ports/MessageStore.ts
@@ -56,6 +59,7 @@ cited_by:
   - {feature: F264-terminal-consumption, date: 2026-07-31, delta: the original cross-thread message renders delivered, exact-child awakened, body-read, unsettled, and typed terminal-silent per-target states; an empty final stays system receipt only and never creates a cat bubble}
   - {feature: F264-author-disposition, date: 2026-08-04, delta: composer exposes inherited current-work/next-work intent only while a live target makes the choice meaningful; the original message receipt distinguishes requested current work, durable fallback, exact exposure, and outcome without moving or copying bodies}
   - {feature: F280-Gate-6, date: 2026-08-13, delta: the existing queue_updated store transition consumes dispatch-owned messageReceipts beside the Queue snapshot, so an exact authored bubble reaches terminal withdrawn truth immediately even when no actionable row survives; history hydration remains the same canonical DTO}
+  - {feature: F322, date: 2026-10-14, delta: "J3 persists the original InteractiveBlock as ordinary MessageStore truth with a server-only runtimeInteractionCard binding; the winning answer/default returns through one ordinary Message/Queue carrier, while the lifecycle record stores only a redacted terminal receipt."}
 ---
 
 # Bubble Pipeline
@@ -96,6 +100,8 @@ A bodyless processing response renders a lifecycle tip; once content streams, th
 becomes the bubble. Empty terminal responses use their typed lifecycle notice and remain available to peer
 context. Dispatch navigation follows exact persisted identities without moving the original message or
 copying handled replies beneath it.
+
+F322 J3 keeps a conversation decision's exact `InteractiveBlock` inside that ordinary MessageStore/hydration path. `extra.runtimeInteractionCard` binds the message and block to the F306 record without rewriting the block, and the exact block digest/liveness check fences every mutation. The single CAS winner returns through an idempotent Message/Queue carrier: owner answers retain strict owner authorship; deadline defaults and expiry notices use Host/connector authorship. Free text lives only in the returned message, while the lifecycle record retains a redacted response and exact message reference. This metadata does not create a new bubble identity or let rendered prose settle a decision.
 
 ## Use This When
 

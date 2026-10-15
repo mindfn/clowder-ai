@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { useChatStore } from '@/stores/chatStore';
 import { applyContextAttachmentDelta } from '../../durable-composer-draft-merge';
 import { getContextAttachmentDraft, syncContextAttachmentDraftToStorage } from '../../thread-drafts';
-import { addMediaSelectionToChat, removeMediaSelectionFromChat } from '../media-chat-composer';
+import { addMediaSelectionToChat, addMediaWorkToChat, removeMediaSelectionFromChat } from '../media-chat-composer';
 import type { MediaChatTarget } from '../media-chat-selection';
 
 const THREAD = 'thread-media-chat';
@@ -61,7 +61,194 @@ beforeEach(() => {
   useChatStore.getState().setPendingChatInsert(null);
 });
 
+it('refreshes a same-version whole-work display name without changing its identity or ordering', () => {
+  addMediaWorkToChat(THREAD, TARGET);
+  const original = media(consumeLikeTheComposer())[0];
+  const renamed = { ...TARGET, title: '发布入口实看' };
+  expect(addMediaWorkToChat(THREAD, renamed, true).kind).toBe('added');
+  expect(media(consumeLikeTheComposer())[0]).toEqual({ ...original, title: renamed.title });
+});
+
+it('refreshes only an empty reference when its same content has a newer owner review', () => {
+  addMediaWorkToChat(THREAD, TARGET);
+  const original = media(consumeLikeTheComposer())[0];
+  const next = { ...TARGET, source: { ...SOURCE, expectedReviewRevision: 4 } };
+  expect(addMediaWorkToChat(THREAD, next).kind).toBe('refused');
+  useChatStore.getState().setPendingChatInsert({ threadId: THREAD, text: '保留这两行\n原话' });
+  expect(addMediaWorkToChat(THREAD, next, true).kind).toBe('added');
+  expect(useChatStore.getState().pendingChatInsert?.text).toBe('保留这两行\n原话');
+  const refreshed = media(consumeLikeTheComposer())[0];
+  expect(refreshed?.id).toBe(original?.id);
+  expect(refreshed?.source).toEqual(next.source);
+  expect(addMediaSelectionToChat(THREAD, next, REGION, undefined, true).kind).toBe('added');
+  expect(media(consumeLikeTheComposer())[0]?.selections).toEqual([{ id: '1', selection: REGION }]);
+});
+
+it('lets a native circle use the freshly read review before the auto-reference effect has run', () => {
+  addMediaWorkToChat(THREAD, TARGET);
+  const original = media(consumeLikeTheComposer())[0];
+  const next = { ...TARGET, source: { ...SOURCE, expectedReviewRevision: 4 } };
+  expect(addMediaSelectionToChat(THREAD, next, REGION, undefined, true).kind).toBe('added');
+  const selected = media(consumeLikeTheComposer())[0];
+  expect(selected?.id).toBe(original?.id);
+  expect(selected?.source).toEqual(next.source);
+  expect(selected?.selections).toEqual([{ id: '1', selection: REGION }]);
+});
+
+it('cannot refresh chosen places, a different content version/root, or an older owner review', () => {
+  for (const source of [
+    { ...SOURCE, expectedReviewRevision: 2 },
+    { ...SOURCE, expectedReviewRevision: 4, expectedSourceRevision: `sha256:${'b'.repeat(64)}` },
+    { ...SOURCE, expectedReviewRevision: 4, locator: { ...SOURCE.locator, worktreeId: 'other-root' } },
+  ]) {
+    syncContextAttachmentDraftToStorage(THREAD, []);
+    addMediaWorkToChat(THREAD, TARGET);
+    const before = consumeLikeTheComposer();
+    expect(addMediaWorkToChat(THREAD, { ...TARGET, source }, true).kind).toBe('refused');
+    expect(useChatStore.getState().pendingChatInsert).toBeNull();
+    expect(getContextAttachmentDraft(THREAD)).toEqual(before);
+  }
+  syncContextAttachmentDraftToStorage(THREAD, []);
+  addMediaSelectionToChat(THREAD, TARGET, REGION);
+  const before = consumeLikeTheComposer();
+  expect(addMediaWorkToChat(THREAD, { ...TARGET, source: { ...SOURCE, expectedReviewRevision: 4 } }, true).kind).toBe(
+    'refused',
+  );
+  expect(getContextAttachmentDraft(THREAD)).toEqual(before);
+});
+
+it('refreshes an empty publication ledger only at the same immutable publication version', () => {
+  const target = {
+    ...TARGET,
+    source: {
+      kind: 'publication',
+      contentRef: `prepared-media:${'c'.repeat(64)}`,
+      ownerRevision: 1,
+      ledgerRef: 'published-review',
+      expectedLedgerRevision: 3,
+    } as const,
+  } satisfies MediaChatTarget;
+  expect(addMediaWorkToChat(THREAD, target).kind).toBe('added');
+  const before = media(consumeLikeTheComposer())[0];
+  const next = { ...target, source: { ...target.source, expectedLedgerRevision: 4 } };
+  expect(addMediaWorkToChat(THREAD, next, true).kind).toBe('added');
+  expect(media(consumeLikeTheComposer())[0]?.id).toBe(before?.id);
+  const other = { ...target, source: { ...target.source, ownerRevision: 2 } };
+  expect(addMediaWorkToChat(THREAD, other, true).kind).toBe('refused');
+});
+
+it('refreshes a published Task whole work across ledger and review advancement, keeping its ID and draft', () => {
+  const target = {
+    ...TARGET,
+    source: {
+      kind: 'publication',
+      contentRef: `prepared-media:${'c'.repeat(64)}`,
+      ownerRevision: 4,
+      ledgerRef: 'published-review',
+      expectedLedgerRevision: 3,
+    },
+    taskContext: {
+      kind: 'media',
+      taskId: 'task-original',
+      expectedTaskRevision: 7,
+      reviewId: 'review-9',
+      expectedReviewRevision: 5,
+      round: 2,
+    },
+  } as const satisfies MediaChatTarget;
+  expect(addMediaWorkToChat(THREAD, target).kind).toBe('added');
+  const original = media(consumeLikeTheComposer())[0];
+  const next = {
+    ...target,
+    source: { ...target.source, expectedLedgerRevision: 4 },
+    taskContext: { ...target.taskContext, expectedReviewRevision: 6 },
+  };
+  const before = getContextAttachmentDraft(THREAD);
+  for (const other of [
+    { ...next, taskContext: { ...next.taskContext, taskId: 'other-task' } },
+    { ...next, taskContext: { ...next.taskContext, expectedTaskRevision: 8 } },
+    { ...next, taskContext: { ...next.taskContext, reviewId: 'other-review' } },
+    { ...next, taskContext: { ...next.taskContext, round: 3 } },
+    { ...next, taskContext: { ...next.taskContext, expectedReviewRevision: 4 } },
+    { ...next, source: { ...next.source, contentRef: 'other-content' } },
+    { ...next, source: { ...next.source, ownerRevision: 5 } },
+    { ...next, source: { ...next.source, ledgerRef: 'other-ledger' } },
+    { ...next, source: { ...next.source, expectedLedgerRevision: 2 } },
+  ]) {
+    expect(addMediaWorkToChat(THREAD, other, true).kind).toBe('refused');
+    expect(useChatStore.getState().pendingChatInsert).toBeNull();
+    expect(getContextAttachmentDraft(THREAD)).toEqual(before);
+  }
+  useChatStore.getState().setPendingChatInsert({ threadId: THREAD, text: '保留原来的两行\n说明' });
+  expect(addMediaWorkToChat(THREAD, next, true).kind).toBe('added');
+  expect(useChatStore.getState().pendingChatInsert?.text).toBe('保留原来的两行\n说明');
+  const refreshed = media(consumeLikeTheComposer())[0];
+  expect(refreshed?.id).toBe(original?.id);
+  expect(refreshed?.source).toEqual(next.source);
+  expect(refreshed?.taskContext).toEqual(next.taskContext);
+});
+
+it('keeps the same Task round while refreshing its coupled review, refusing a changed Task or round', () => {
+  const target = {
+    ...TARGET,
+    source: { kind: 'artifact-review', reviewId: 'task-review', round: 1, expectedReviewRevision: 3 },
+    taskContext: {
+      kind: 'media',
+      taskId: 'task-original',
+      expectedTaskRevision: 1,
+      reviewId: 'task-review',
+      expectedReviewRevision: 3,
+      round: 1,
+    },
+  } as const satisfies MediaChatTarget;
+  expect(addMediaWorkToChat(THREAD, target).kind).toBe('added');
+  const original = media(consumeLikeTheComposer())[0];
+  const next = {
+    ...target,
+    source: { ...target.source, expectedReviewRevision: 4 },
+    taskContext: { ...target.taskContext, expectedReviewRevision: 4 },
+  };
+  for (const other of [
+    { ...next, taskContext: { ...next.taskContext, taskId: 'task-sibling' } },
+    { ...next, taskContext: { ...next.taskContext, expectedTaskRevision: 2 } },
+    { ...next, source: { ...next.source, round: 2 }, taskContext: { ...next.taskContext, round: 2 } },
+  ])
+    expect(addMediaWorkToChat(THREAD, other, true).kind).toBe('refused');
+  expect(addMediaSelectionToChat(THREAD, next, REGION, undefined, true).kind).toBe('added');
+  const selected = media(consumeLikeTheComposer())[0];
+  expect(selected?.id).toBe(original?.id);
+  expect(selected?.source).toEqual(next.source);
+  expect(selected?.taskContext).toEqual(next.taskContext);
+});
+
 describe('addMediaSelectionToChat', () => {
+  it('replaces only an explicitly selected same-source whole work, retaining its id and draft words', () => {
+    addMediaWorkToChat(THREAD, TARGET);
+    consumeLikeTheComposer();
+    const originalId = ownId();
+    useChatStore.getState().setPendingChatInsert({ threadId: THREAD, text: '原来的两行\n说明' });
+    expect(addMediaSelectionToChat(THREAD, TARGET, REGION).kind).toBe('refused');
+    const selected = addMediaSelectionToChat(THREAD, TARGET, REGION, undefined, true);
+    expect(selected.kind).toBe('added');
+    expect(useChatStore.getState().pendingChatInsert?.text).toBe('原来的两行\n说明');
+    const first = media(consumeLikeTheComposer())[0];
+    expect(first?.id).toBe(originalId);
+    expect(first?.selections).toEqual([{ id: '1', selection: REGION }]);
+    addMediaSelectionToChat(THREAD, TARGET, POINT, undefined, true);
+    expect(media(consumeLikeTheComposer())[0]?.selections.map((place) => place.id)).toEqual(['1', '2']);
+  });
+
+  it('keeps a whole work intact when an explicit region is invalid or belongs to another source', () => {
+    addMediaWorkToChat(THREAD, TARGET);
+    const before = consumeLikeTheComposer();
+    const invalid = { kind: 'image-region', x: 0, y: 0, width: -1, height: 3 } as const;
+    expect(addMediaSelectionToChat(THREAD, TARGET, invalid, undefined, true).kind).toBe('refused');
+    const other = { ...TARGET, source: { ...SOURCE, locator: { ...SOURCE.locator, path: 'other.png' } } };
+    expect(addMediaSelectionToChat(THREAD, other, REGION, undefined, true).kind).toBe('refused');
+    expect(useChatStore.getState().pendingChatInsert).toBeNull();
+    expect(getContextAttachmentDraft(THREAD)).toEqual(before);
+  });
+
   it('queues the first circled place as a new attachment for that conversation', () => {
     const result = addMediaSelectionToChat(THREAD, TARGET, REGION, '移除这里的字');
     expect(result.kind).toBe('added');

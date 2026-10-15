@@ -4,12 +4,12 @@ related_features: [F229, F258, F195, F202, F246, F295, F306, F309, F310]
 topics: [coactive, realtime, desktop-companion, gpt-live]
 doc_kind: spec
 created: 2026-09-15
-updated: 2026-10-13
+updated: 2026-10-14
 description: "让具名家猫通过实时感知与交谈、持续深思和行动，陪人跨应用共看、共听、互相指点，并接续共同经历。"
 description_source: model
 description_author: codex-astra
 description_updated_at: 2026-09-15T08:29:30Z
-tips_exempt: "Renewed 2026-10-13: front-desk response quality, timing, bounded native subagents and late-result returns refine the existing companion entry. Development/package receipts do not prove natural voice, household or shared-perception acceptance; no new general desktop entry is advertised."
+tips_exempt: "Renewed 2026-10-14: front-desk response quality, timing, bounded native subagents and late-result returns refine the existing companion entry. Development/package receipts do not prove natural voice, household or shared-perception acceptance; no new general desktop entry is advertised. The 13:36 UTC update records host boot25 loading, the existing alpha.21 recovery and the existing plugin-details upgrade to alpha.24 still awaiting the owner; it does not establish a new entry or completed human trial. The public-test dependency audit adds no user operation and makes no new runtime or acceptance claim."
 mcp_admission_status: accepted
 mcp_admission_ref: "file:docs/features/F317-coactive-companion.md"
 mcp_admission_claims:
@@ -31,7 +31,7 @@ mcp_admission_claims:
 
 Owner thread：`[thread-id]`；总任务沿用 `private-source-id`（按 `relatedFeatureId=F317` 查询）。正式安装入口与 Host 媒体边界已随 #4611 合入；第一批真实资料、非 GPT 深思及完整组合体验仍未验收，Phase/AC 不因工程合入提前关闭。workflow 沿用原记录；原任务属于源线程，未重复建任务。
 
-**最新交付（2026-10-13 01:29 UTC）**：source1351 的前台岗位、分段计时、受限原生 subagent 及使用记录、本人 Task 操作与迟到回告已随核心 #5439 / #5454 合入；公开 #76 / #78 / #79 已合入并实际发布 contract beta.27、SDK beta.23、companion alpha.24（含状态点呼吸）。日常仍为 boot24 / `8f98aed76a`，仅含先前 #5439，尚未加载最终 #5454 配对；安装的仍是 alpha.21，Host 当前报告其异常退出，原因未定。父 Task33 已登记最终版本的部署回调，按 operator source604 等重启后核版本、再提醒本人体验；开发交付不关闭真人验收或任何完整 Phase。详见下方「前台 harness 优化」的交付记录。
+**最新交付（2026-10-13 13:36 UTC）**：source1351 的前台岗位、分段计时、受限原生 subagent 及使用记录、本人 Task 操作与迟到回告已随核心 #5439 / #5454 合入；公开 #76 / #78 / #79 已合入并实际发布 contract beta.27、SDK beta.23、companion alpha.24（含状态点呼吸）。部署回调已到：日常 boot25 / `e026e368c4` 包含最终 #5454，API/Web 就绪；插件恢复 running，但实际安装仍为 alpha.21。原 Task33 进入正常插件升级与真人验收：operator 从设置的猫猫球详情更新到 alpha.24 后亲自试聊，父不自动更新或开启模型/媒体。开发交付和宿主加载均不关闭真人验收或完整 Phase。详见下方「前台 harness 优化」的交付记录。
 
 **2026-09-28 六线开工授权**：operator source `[thread-id]#private-source-id`
 A 桌面/通话由原 Sol6 现场续办，B 身体由原 Sol5.6 现场续办；新建 C 收件/长对话（Astra）、
@@ -267,7 +267,8 @@ Sol6.1 在正常安装、构建、启动的命名 Alpha `f317-jev-spoken` / `4f7
 | 公开发行与视觉 | [#76](https://github.com/zts212653/clowder-ai-plugins/pull/76) → [#78](https://github.com/zts212653/clowder-ai-plugins/pull/78) → [#79](https://github.com/zts212653/clowder-ai-plugins/pull/79) 已合入，最终 main `47071ae07ca054b4fb0b8b3f523d890381df4bfd`、CI `38320344854`（含 npm 发布）成功；registry 实际为 contract beta.27 / SDK beta.23 / companion alpha.24。父、A 与 reviewer 核过固定包摘要，不能用中间 alpha.23。呼吸点的独立代码审查与 Studio 效果验收通过（source1997），与整段通话验收分列。 |
 | 实际配对验证 | 从下载的 registry 归档经生产 installer、fresh File 库存、Broker、HostBridge 到真实 Session/Call/F153，并以已安装 SDK beta.23 发出可见回执；定向 API/shared/desktop 与隔离 Redis 检查通过。窗口执行器与 native transport 是确定性 fixture，不是自然 Electron/Live 媒体通话，也不证明正常入口的 next 解析和真实升级已经完成。会议字段尚无已准入的用户侧来源，保持 unconfirmed/false/null，不代表会议整体交付。 |
 | 日常现场 | 01:29:10Z `/health`：boot24、`8f98aed76a0d25b5053f79d4b2db0af1ff898209`，包含 #5439、未含 #5454；`plugin_get(official.companion)`：installed/available alpha.21、lifecycleRevision=96、live=crashed/active=false，诊断 `UNEXPECTED_RUNTIME_FAILURE` 发生于 `1791852028887`。异常发生在 #5454 合入前，原因未知，不能归因于尚未加载的最终配对。 |
-| 下一次体验 | 父 Task33 已登记 runtime 包含 `ee5d6629d3` 的 api/web 部署回调（generation4，baseline boot24）。回调后核新运行版本、实际安装 alpha.24 的固定 SRI 与插件状态；若仍未配齐，先报告具体缺口，不冒称可验。沿 source604「等 runtime 重启我来验收，到时候提醒我」：不自动重启、启用日常、开模型通话或采集媒体。Task33、whole F317、Task892 及原两版作品旅程均不在本开发回执中关闭。 |
+| 重启后的日常现场 | generation4 部署回调 source `private-source-id` 于 13:32 UTC 到达。父实读 health（`1791898378611`）：boot25 / `d72be768-f480-4b77-85d9-7e810a1697de` / `e026e368c475319ec8c39aeedff2b73053484c9c`；git 祖先核验含 #5454，Web HTTP 200。相关 dist 生成于 06:28:57–59 PDT、早于 API10102 的 06:29:57 启动；对应源码与运行 revision 一致。`plugin_get`：alpha.21 原摘要、lifecycleRevision=99、running/active=true，旧异常已不在当前投影中；只证明恢复运行，不证明历史故障根因消失。 |
+| 下一次体验与更新入口 | 宿主已齐、插件仍欠升级。父只读实跑当前 runtime 的官方 catalog resolver：13:36 UTC fresh、companion alpha.24、固定 SRI `sha512-TN23gstQt3AC79zddScxjr9q9ZPGaNn+ieGdrLvfm3Ju+ev1cBjH/z7US8pxP3bLLF6FbFYfPbFmogb9EeIxug==`，与当次 npm next 一致；这是同代码的独立读取，不冒充登录页面回执。正常入口为设置→插件→猫猫球详情→更新到 alpha.24（`OfficialPluginsPanel` / `OfficialPluginCard`）；更新会短暂重启插件并保留启用状态。沿 source604 提醒 operator 本人更新后试聊；未代点更新、开模型/媒体或把宿主重启当成插件升级。Task33、whole F317、Task892 及原两版作品旅程继续开放。 |
 
 **合入流程偏差**：#5454 最后预检断言失败后，作者误在同一 exec 发出了 normal merge；后验检查证明实际合入内容与已批准内容一致，不能把失败预检记成通过。原始偏差与核验存于上述 source499 及 `/tmp/cat-cafe-evidence/f317-front-desk-harness-20261012/published-{final-preflight-deviation,pr5454-merge-audit}.json`，依赖性写操作须先读成功结果、再单独执行。
 
@@ -276,6 +277,20 @@ Sol6.1 在正常安装、构建、启动的命名 Alpha `f317-jev-spoken` / `4f7
 **验收场景**：后台同时有一份已完成的旧 SOP 和一份今天的新报告。主人只说一次"那个写完了吗"→ 很快得到有内容、与真实状态对得上的回应 → 说"我是说今天那份"后只改对象、后续不回到旧那份 → 换题后结果回来，在合适的停顿提一句 → 挂断再进来能接上 → 被打断不重复执行。只跑这一条自然旅程，不跑媒体回归。
 
 **未知**：快问交给 Luna / Sol6.1 是否更快尚无端到端数据；"十秒内首个有用回应"和"猫猫球两三秒"目前都是目标，不是保证。
+
+### 2026-10-14 公开测试分发闭包（source 已修复，公开发行待接续）
+
+原缺口经 [#5514](https://github.com/zts212653/clowder-ai/pull/5514) 合入
+`8bf3ec5fd55750ae608a9e7d5a4ddf59bb5456f6`。三项合成 helper 可导出，浏览器
+改用现有 puppeteer-core 与系统 Chrome；精确排除历史 lineage 测试，内部报告与
+模型 runner 保持私有。专用入口含 12 项默认文件及 2 项可选 lab/simulation，传递
+consumer 守门已接入现有 check 链，未扩大公共 CI 的 `.test.js` selector。
+Sonnet 对最终 exact HEAD `cfd0146d45f07c24d12a9727f209410cbaacf39a` 放行；干净
+独立公开布局实际入口 79/79、公开 check 27 pass + 1 明确 skip，源仓闭包检查 43/43。
+RED、私有路径缺席、两条既有 source check 红灯及 GitHub 账单导致未启动的 job。
+[使用前提](../setup/page-action-regressions.md)包含 linked worktree 与浏览器安装。
+Task239 仍负责从不可变 source 修复继续 frozen-cut/公开发行；此记录不声称已推送
+public，也不改变 Phase/AC、Jev 结论、source604 真人验收或父 Task33。
 
 ## Acceptance Criteria
 

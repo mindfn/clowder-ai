@@ -47,7 +47,7 @@ export interface CatData {
   commandArgs?: string[];
   cliConfigArgs?: string[];
   /** Public settings only; operator-issued task grants are never returned to this form. */
-  agyProfile?: Omit<AgyProfileConfig, 'nativeCodingGrant'>;
+  agyProfile?: AgyProfileConfig;
   /** F254 D2: effective carrier truth for openai cats (per-cat > env > default), resolved server-side. */
   codexCarrier?: {
     effective: 'exec_json' | 'app_server';

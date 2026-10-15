@@ -2,11 +2,15 @@ import type { ArtifactReviewRound, ArtifactReviewView, ContentModificationReques
 import { type MediaChatTarget, mediaChatTarget } from './media-chat-selection';
 
 /** What 「引用到聊天」 names for a media round: the same source and Task a modification request names. */
-export function artifactRoundChatTarget(view: ArtifactReviewView, round: ArtifactReviewRound): MediaChatTarget | null {
+export function artifactRoundChatTarget(
+  view: ArtifactReviewView,
+  round: ArtifactReviewRound,
+  title = view.review.title,
+): MediaChatTarget | null {
   const named = artifactRoundRequestSource(view, round);
   return named
     ? mediaChatTarget({
-        title: view.review.title,
+        title,
         mime: round.asset.mediaType,
         source: named.source,
         taskContext: named.taskContext,

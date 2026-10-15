@@ -1,0 +1,90 @@
+import assert from 'node:assert/strict';
+import { InvocationQueue } from '../../../api/dist/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { MessageQueueRuntimeConversationReturnGateway } from '../../../api/dist/domains/runtime-interaction/MessageQueueRuntimeConversationReturnGateway.js';
+import {
+  MessageRuntimeInteractionCardPublisher,
+  readVerifiedRuntimeInteractionPresentation,
+} from '../../../api/dist/domains/runtime-interaction/RuntimeInteractionCardPublisher.js';
+import { RuntimeInteractionService } from '../../../api/dist/domains/runtime-interaction/RuntimeInteractionService.js';
+import { InMemoryRuntimeInteractionStore } from '../../../api/dist/domains/runtime-interaction/stores/InMemoryRuntimeInteractionStore.js';
+import { runtimeInteractionRoutes } from '../../../api/dist/routes/runtime-interaction-routes.js';
+import { createInboxProposalFixture } from './f322-inbox-proposal.fixture.mjs';
+
+/** Disposable authentic owner HTTP routes, original Message/Queue return and source validation. No provider dispatch. */
+export async function createInboxConversationFixture(language) {
+  const store = new InMemoryRuntimeInteractionStore(),
+    queue = new InvocationQueue();
+  let service, owner, messages, thread;
+  const fixture = await createInboxProposalFixture({
+    configureRuntime: async ({ app, owner: principal, messages: sourceMessages, threads, socketManager }) => {
+      owner = principal;
+      messages = sourceMessages;
+      thread = threads.create(
+        owner,
+        language === 'en' ? 'Choose the verification environment' : '选择验证环境',
+        'default',
+      );
+      const publisher = new MessageRuntimeInteractionCardPublisher({ messageStore: messages, socketManager });
+      service = new RuntimeInteractionService({
+        store,
+        hostEpoch: 'owned-native-conversation',
+        cardPublisher: publisher,
+      });
+      service.bindConversationReturnGateway(
+        new MessageQueueRuntimeConversationReturnGateway({
+          messageStore: messages,
+          queue,
+          socketManager,
+          tryAutoExecute: async () => {},
+        }),
+      );
+      await app.register(runtimeInteractionRoutes, { service });
+      return {
+        service,
+        store,
+        queue,
+        thread,
+        async readPending() {
+          const index = await store.readPendingIndexByUser(owner);
+          assert.equal(index.exhaustiveness, 'complete');
+          const presentations = new Map();
+          for (const record of index.records) {
+            const block = readVerifiedRuntimeInteractionPresentation(
+              await messages.getById(record.cardRef.messageId),
+              record.request,
+              record.cardRef,
+            );
+            assert.ok(block);
+            presentations.set(record.request.interactionId, block);
+          }
+          return { records: index.records, presentations };
+        },
+        async close() {},
+      };
+    },
+  });
+  async function create(id) {
+    const title = language === 'en' ? `Where should we verify ${id}?` : `${id} 在哪里验证？`;
+    return service.createConversationDecision({
+      version: 1,
+      interactionId: `native-${id}`,
+      kind: 'conversation_decision',
+      owner: { userId: owner, threadId: thread.id, catId: 'codex61-sol', invocationId: 'owned-producer-invocation' },
+      createdAt: Date.now(),
+      title,
+      presentation: {
+        kind: 'interactive',
+        v: 1,
+        id: `original-${id}`,
+        interactiveType: 'select',
+        title,
+        options: [
+          { id: 'alpha', label: 'Alpha' },
+          { id: 'local', label: language === 'en' ? 'Local' : '本地' },
+        ],
+      },
+      allowTextResponse: true,
+    });
+  }
+  return { ...fixture, create, service, store, queue, conversationThread: thread };
+}

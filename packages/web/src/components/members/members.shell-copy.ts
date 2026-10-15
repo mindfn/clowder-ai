@@ -3,11 +3,14 @@ import { continuationCopy } from './members.continuation-copy';
 import { membersCopySamples } from './members.copy-samples';
 import { templates } from './members.copy-templates';
 import { editorCopy } from './members.editor-copy';
+import { nativeCopy } from './members.native-copy';
+import { membersHelpCopy } from './members-help.shell-copy';
 
 export const membersCopy = defineShellCopy(
   {
     zh: {
       ...editorCopy.zh,
+      ...nativeCopy.zh,
       ...continuationCopy.zh,
       读取中: '读取中',
       '正在读取成员名单…': '正在读取成员名单…',
@@ -40,6 +43,7 @@ export const membersCopy = defineShellCopy(
       调用成功: '调用成功',
       限制已撤回: '限制已撤回',
       已恢复: '已恢复',
+      最近一次接活顺利完成: '最近一次接活顺利完成',
       本周额度不足: '本周额度紧张',
       今日额度不足: '今日额度紧张',
       服务响应超时: '服务响应超时',
@@ -152,9 +156,11 @@ export const membersCopy = defineShellCopy(
       '额外 CLI 参数': '额外 CLI 参数',
       速度档位: '速度档位',
       ...templates.zh,
+      ...membersHelpCopy.zh,
     },
     en: {
       ...editorCopy.en,
+      ...nativeCopy.en,
       ...continuationCopy.en,
       读取中: 'Loading',
       '正在读取成员名单…': 'Loading members…',
@@ -187,6 +193,7 @@ export const membersCopy = defineShellCopy(
       调用成功: 'Successful call',
       限制已撤回: 'Restriction retracted',
       已恢复: 'Recovered',
+      最近一次接活顺利完成: 'The latest work dispatch finished successfully',
       本周额度不足: 'Weekly quota low',
       今日额度不足: 'Daily quota low',
       服务响应超时: 'Service timed out',
@@ -303,10 +310,11 @@ export const membersCopy = defineShellCopy(
       '额外 CLI 参数': 'Extra CLI arguments',
       速度档位: 'Service tier',
       ...templates.en,
+      ...membersHelpCopy.en,
     },
   },
   {
-    samples: membersCopySamples,
+    samples: { ...membersCopySamples, ...membersHelpCopy.samples },
   },
 );
 

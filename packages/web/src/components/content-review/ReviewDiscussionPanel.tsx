@@ -4,6 +4,7 @@ import { ReviewRoundDecision } from './ReviewRoundDecision';
 import { ReviewToolbarIcon } from './ReviewToolbarIcon';
 import toolbar from './review-toolbar.module.css';
 import styles from './review-workspace.module.css';
+import { useArtifactChatDiscussion } from './useArtifactChatDiscussion';
 import type { useArtifactReview } from './useArtifactReview';
 
 export function ReviewDiscussionPanel({
@@ -20,6 +21,7 @@ export function ReviewDiscussionPanel({
   onReturnToCanvas,
   onReanchor,
   onClose,
+  title,
 }: {
   panel: 'comments' | 'decision';
   round: ArtifactReviewRound;
@@ -34,7 +36,9 @@ export function ReviewDiscussionPanel({
   onReturnToCanvas: (id: string) => void;
   onReanchor?: ((annotation: ArtifactReviewAnnotation) => void) | undefined;
   onClose: () => void;
+  title?: string;
 }) {
+  const discussion = useArtifactChatDiscussion(view, round, title);
   return (
     <aside className={styles.drawer} aria-label={panel === 'comments' ? '作品讨论' : '审阅结论'}>
       <div className={styles.drawerHeader}>
@@ -70,6 +74,7 @@ export function ReviewDiscussionPanel({
             saving={controller.saving}
             draftKey={`${prefix}round:${round.number}:decision`}
             act={controller.act}
+            onDiscuss={discussion.discuss}
           />
         )}
       </div>

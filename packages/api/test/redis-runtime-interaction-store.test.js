@@ -59,7 +59,11 @@ describe('RedisRuntimeInteractionStore', { skip }, () => {
     );
 
     assert.equal(await redis.pttl(RuntimeInteractionKeys.detail(request.interactionId)), -1);
-    assert.equal((await store.get(request.interactionId)).status, 'pending');
+    const pending = await store.get(request.interactionId);
+    assert.equal(pending.status, 'pending');
+    assert.equal(pending.revision, 2);
+    assert.deepEqual(pending.returnBinding, { kind: 'provider_waiter' });
+    assert.deepEqual(pending.source, { kind: 'provider_request', provider: request.provider });
     const snapshot = await store.readPendingIndexByUser('user-1');
     assert.equal(snapshot.exhaustiveness, 'complete');
     assert.deepEqual(
@@ -70,6 +74,63 @@ describe('RedisRuntimeInteractionStore', { skip }, () => {
       (await store.listPendingByUser('user-1')).map((record) => record.request.interactionId),
       ['redis-interaction'],
     );
+  });
+
+  it('replays and settles a historical provider record without the new binding or revision fields', async () => {
+    const legacyRequest = {
+      ...request,
+      interactionId: 'legacy-provider-pending',
+      owner: { ...request.owner, invocationId: 'legacy-provider-invocation' },
+      provider: { ...request.provider, requestId: 'legacy-provider-rpc' },
+    };
+    await redis.hset(RuntimeInteractionKeys.detail(legacyRequest.interactionId), {
+      request: JSON.stringify(legacyRequest),
+      status: 'pending',
+      hostEpoch: 'legacy-host',
+      cardRef: JSON.stringify({
+        threadId: legacyRequest.owner.threadId,
+        messageId: 'legacy-provider-card',
+        blockId: 'runtime-interaction:legacy-provider-pending',
+      }),
+      updatedAt: '900',
+    });
+    await redis.sadd(RuntimeInteractionKeys.active(), legacyRequest.interactionId);
+    await redis.sadd(
+      RuntimeInteractionKeys.activeByInvocation(legacyRequest.owner.invocationId),
+      legacyRequest.interactionId,
+    );
+    await redis.zadd(
+      RuntimeInteractionKeys.pendingByUser(legacyRequest.owner.userId),
+      900,
+      legacyRequest.interactionId,
+    );
+
+    const replayed = await store2.get(legacyRequest.interactionId);
+    assert.equal(replayed.revision, 1);
+    assert.deepEqual(replayed.source, { kind: 'provider_request', provider: legacyRequest.provider });
+    assert.deepEqual(replayed.returnBinding, { kind: 'provider_waiter' });
+    assert.equal(
+      (await store2.readPendingIndexByUser(legacyRequest.owner.userId)).records.some(
+        (record) => record.request.interactionId === legacyRequest.interactionId,
+      ),
+      true,
+    );
+
+    const settled = await store2.settle({
+      interactionId: legacyRequest.interactionId,
+      hostEpoch: 'legacy-host',
+      expectedRevision: replayed.revision,
+      terminal: {
+        status: 'answered',
+        reasonCode: 'answered',
+        settledAt: 901,
+        response: { kind: 'decision', decisionId: 'accept' },
+      },
+      now: 901,
+    });
+    assert.equal(settled.status, 'answered');
+    assert.equal(settled.revision, 2);
+    assert.equal(await redis.pttl(RuntimeInteractionKeys.detail(legacyRequest.interactionId)), -1);
   });
 
   it('settles once across two store instances and removes the pending index atomically', async () => {
@@ -109,6 +170,345 @@ describe('RedisRuntimeInteractionStore', { skip }, () => {
     await store.invalidate({ interactionId: first.interactionId, reasonCode: 'provider_cancelled', now: 1502 });
   });
 
+  it('allows multiple durable conversation decisions for one requester invocation', async () => {
+    const base = {
+      version: 1,
+      kind: 'conversation_decision',
+      owner: { ...request.owner, invocationId: 'conversation-invocation' },
+      createdAt: 1600,
+      title: 'Choose one',
+      presentation: {
+        id: 'conversation-block',
+        kind: 'interactive',
+        v: 1,
+        interactiveType: 'select',
+        options: [
+          { id: 'a', label: 'A' },
+          { id: 'b', label: 'B' },
+        ],
+      },
+      allowTextResponse: true,
+    };
+    for (const interactionId of ['conversation-a', 'conversation-b']) {
+      const created = await store.createStaged({
+        request: { ...base, interactionId },
+        hostEpoch: 'old-host',
+        now: 1600,
+      });
+      assert.equal(created.revision, 1);
+      const anchored = await store.anchor(
+        interactionId,
+        'old-host',
+        { threadId: 'thread-1', messageId: `message-${interactionId}`, blockId: 'conversation-block' },
+        1601,
+        created.revision,
+      );
+      assert.equal(anchored.revision, 2);
+      assert.equal(anchored.returnBinding.kind, 'conversation_turn');
+      assert.deepEqual(anchored.source, {
+        kind: 'conversation_decision',
+        requesterCatId: 'codex-sol',
+        requesterThreadId: 'thread-1',
+        requesterInvocationId: 'conversation-invocation',
+      });
+      assert.equal(await redis.pttl(RuntimeInteractionKeys.detail(interactionId)), -1);
+    }
+    const stagedAfterCrash = await store.createStaged({
+      request: { ...base, interactionId: 'conversation-staged-restart' },
+      hostEpoch: 'crashed-host',
+      now: 1602,
+    });
+    const resumed = await store2.anchor(
+      'conversation-staged-restart',
+      'replacement-host',
+      { threadId: 'thread-1', messageId: 'message-resumed', blockId: 'conversation-block' },
+      1603,
+      stagedAfterCrash.revision,
+    );
+    assert.equal(resumed.status, 'pending');
+    assert.equal(resumed.hostEpoch, 'replacement-host');
+  });
+
+  it('persists one monotonic conversation submission claim and completes it once', async () => {
+    const terminal = {
+      status: 'answered',
+      reasonCode: 'answered',
+      settledAt: 1702,
+      response: { kind: 'selection', selectedIds: ['a'] },
+      operationId: 'operation-a',
+      responseDigest: 'digest-a',
+    };
+    const submission = {
+      operationId: 'operation-a',
+      responseDigest: 'digest-a',
+      author: 'owner',
+      response: { kind: 'selection', selectedIds: ['a'] },
+      terminal,
+      claimedAt: 1701,
+    };
+    const claims = await Promise.all([
+      store.claimSubmission({
+        interactionId: 'conversation-a',
+        expectedRevision: 2,
+        submission,
+        now: 1701,
+      }),
+      store2.claimSubmission({
+        interactionId: 'conversation-a',
+        expectedRevision: 2,
+        submission: { ...submission, operationId: 'operation-b' },
+        now: 1701,
+      }),
+    ]);
+    assert.equal(claims.filter(Boolean).length, 1);
+    const claimed = await store.get('conversation-a');
+    assert.equal(claimed.revision, 3);
+    assert.equal(claimed.submission.operationId, 'operation-a');
+
+    const completed = await store.completeSubmission({
+      interactionId: 'conversation-a',
+      expectedRevision: 3,
+      operationId: 'operation-a',
+      terminal: { ...terminal, responseMessageId: 'response-message-a' },
+      now: 1702,
+    });
+    assert.equal(completed.revision, 4);
+    assert.equal(completed.status, 'answered');
+    assert.equal(completed.submission, undefined);
+    assert.deepEqual(
+      await store2.completeSubmission({
+        interactionId: 'conversation-a',
+        expectedRevision: 3,
+        operationId: 'operation-a',
+        terminal,
+        now: 1702,
+      }),
+      null,
+    );
+  });
+
+  it('settles a conversation directly once and atomically removes every pending index', async () => {
+    const directRequest = {
+      version: 1,
+      interactionId: 'conversation-direct-settle',
+      kind: 'conversation_decision',
+      owner: { ...request.owner, invocationId: 'conversation-direct-invocation' },
+      createdAt: 1720,
+      title: 'Still needed?',
+      presentation: {
+        id: 'conversation-direct-block',
+        kind: 'interactive',
+        v: 1,
+        interactiveType: 'select',
+        options: [
+          { id: 'yes', label: 'Yes' },
+          { id: 'no', label: 'No' },
+        ],
+      },
+      allowTextResponse: true,
+    };
+    const staged = await store.createStaged({ request: directRequest, hostEpoch: 'host-1', now: 1720 });
+    const pending = await store.anchor(
+      directRequest.interactionId,
+      'host-1',
+      {
+        threadId: 'thread-1',
+        messageId: 'message-conversation-direct',
+        blockId: 'conversation-direct-block',
+      },
+      1721,
+      staged.revision,
+    );
+    const terminal = {
+      status: 'cancelled',
+      reasonCode: 'withdrawn',
+      settledAt: 1722,
+      operationId: 'withdraw-direct',
+      responseDigest: 'withdraw-direct-digest',
+    };
+
+    assert.equal(
+      await store2.settleConversation({
+        interactionId: directRequest.interactionId,
+        expectedRevision: pending.revision - 1,
+        terminal,
+        now: terminal.settledAt,
+      }),
+      null,
+      'a stale revision must not settle the record',
+    );
+    const settled = await store.settleConversation({
+      interactionId: directRequest.interactionId,
+      expectedRevision: pending.revision,
+      terminal,
+      now: terminal.settledAt,
+    });
+    assert.equal(settled.status, 'cancelled');
+    assert.equal(settled.revision, pending.revision + 1);
+    assert.equal(settled.terminal.operationId, 'withdraw-direct');
+    assert.equal(
+      (await store2.listPendingByUser('user-1')).some(
+        (record) => record.request.interactionId === directRequest.interactionId,
+      ),
+      false,
+      'the settled record leaves the owner pending index atomically',
+    );
+    assert.equal(await redis.sismember(RuntimeInteractionKeys.active(), directRequest.interactionId), 0);
+    assert.equal(
+      await redis.sismember(
+        RuntimeInteractionKeys.activeByInvocation(directRequest.owner.invocationId),
+        directRequest.interactionId,
+      ),
+      0,
+    );
+    assert.equal(
+      await store2.settleConversation({
+        interactionId: directRequest.interactionId,
+        expectedRevision: pending.revision,
+        terminal,
+        now: terminal.settledAt,
+      }),
+      null,
+      'the same stale revision cannot settle twice',
+    );
+  });
+
+  it('keeps Redis conversation transitions in parity with the canonical source and binding invariant', async () => {
+    const mismatchedRequest = {
+      version: 1,
+      interactionId: 'conversation-source-mismatch',
+      kind: 'conversation_decision',
+      owner: { ...request.owner, invocationId: 'conversation-source-mismatch-invocation' },
+      createdAt: 1730,
+      title: 'Choose safely',
+      presentation: {
+        id: 'conversation-source-mismatch-block',
+        kind: 'interactive',
+        v: 1,
+        interactiveType: 'select',
+        options: [
+          { id: 'yes', label: 'Yes' },
+          { id: 'no', label: 'No' },
+        ],
+      },
+      allowTextResponse: true,
+    };
+    const staged = await store.createStaged({ request: mismatchedRequest, hostEpoch: 'host-1', now: 1730 });
+    const pending = await store.anchor(
+      mismatchedRequest.interactionId,
+      'host-1',
+      {
+        threadId: 'thread-1',
+        messageId: 'message-conversation-source-mismatch',
+        blockId: 'conversation-source-mismatch-block',
+      },
+      1731,
+      staged.revision,
+    );
+    await redis.hset(
+      RuntimeInteractionKeys.detail(mismatchedRequest.interactionId),
+      'source',
+      JSON.stringify({ kind: 'provider_request', provider: request.provider }),
+    );
+    const terminal = {
+      status: 'answered',
+      reasonCode: 'answered',
+      settledAt: 1732,
+      response: { kind: 'selection', selectedIds: ['yes'] },
+      operationId: 'source-mismatch-operation',
+      responseDigest: 'source-mismatch-digest',
+    };
+    const submission = {
+      operationId: terminal.operationId,
+      responseDigest: terminal.responseDigest,
+      author: 'owner',
+      response: terminal.response,
+      terminal,
+      claimedAt: 1732,
+    };
+
+    assert.equal(
+      await store.claimSubmission({
+        interactionId: mismatchedRequest.interactionId,
+        expectedRevision: pending.revision,
+        submission,
+        now: 1732,
+      }),
+      null,
+    );
+    await redis.hset(
+      RuntimeInteractionKeys.detail(mismatchedRequest.interactionId),
+      'submission',
+      JSON.stringify(submission),
+    );
+    await assert.rejects(
+      store.completeSubmission({
+        interactionId: mismatchedRequest.interactionId,
+        expectedRevision: pending.revision,
+        operationId: terminal.operationId,
+        terminal,
+        now: 1732,
+      }),
+      /source\/return binding does not match/,
+    );
+    await redis.hdel(RuntimeInteractionKeys.detail(mismatchedRequest.interactionId), 'submission');
+    await assert.rejects(
+      store.settleConversation({
+        interactionId: mismatchedRequest.interactionId,
+        expectedRevision: pending.revision,
+        terminal,
+        now: 1732,
+      }),
+      /source\/return binding does not match/,
+    );
+    await redis.hset(
+      RuntimeInteractionKeys.detail(mismatchedRequest.interactionId),
+      'source',
+      JSON.stringify(pending.source),
+    );
+    await store.invalidate({
+      interactionId: mismatchedRequest.interactionId,
+      expectedRevision: pending.revision,
+      reasonCode: 'confirmation_unavailable',
+      now: 1733,
+    });
+  });
+
+  it('does not let stale publication invalidation erase a newly claimed conversation response', async () => {
+    const source = await store.get('conversation-b');
+    const submission = {
+      operationId: 'publication-race-answer',
+      responseDigest: 'publication-race-digest',
+      author: 'owner',
+      response: { kind: 'selection', selectedIds: ['b'] },
+      terminal: {
+        status: 'answered',
+        reasonCode: 'answered',
+        settledAt: 1750,
+        operationId: 'publication-race-answer',
+        responseDigest: 'publication-race-digest',
+      },
+      claimedAt: 1750,
+    };
+    const claimed = await store.claimSubmission({
+      interactionId: 'conversation-b',
+      expectedRevision: source.revision,
+      submission,
+      now: 1750,
+    });
+    assert.equal(claimed.revision, source.revision + 1);
+    assert.equal(
+      await store2.invalidate({
+        interactionId: 'conversation-b',
+        expectedRevision: source.revision,
+        reasonCode: 'surface_publication_failed',
+        now: 1751,
+      }),
+      null,
+    );
+    assert.equal((await store.get('conversation-b')).submission.operationId, 'publication-race-answer');
+  });
+
   it('invalidates every old-host active record without touching terminal history', async () => {
     const oldRequest = {
       ...request,
@@ -138,6 +538,8 @@ describe('RedisRuntimeInteractionStore', { skip }, () => {
     );
     assert.equal((await store.get('old-pending')).terminal.reasonCode, 'host_restarted');
     assert.equal((await store.get('new-pending')).status, 'staged');
+    assert.equal((await store.get('conversation-b')).status, 'pending');
+    assert.equal((await store.get('conversation-b')).submission.operationId, 'publication-race-answer');
     assert.equal((await store.get('redis-interaction')).status, 'answered');
   });
 

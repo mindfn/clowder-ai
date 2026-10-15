@@ -3,11 +3,12 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
+import { runClaudeAccountJourney } from './f320-claude-accounts.journey.mjs';
 import { startFinalAccountPreview } from './f320-final-runtime.fixture.mjs';
 
 let preview, browser, companyIdentity;
 before(async () => {
-  preview = await startFinalAccountPreview({ withOverrides: true });
+  preview = await startFinalAccountPreview({ withOverrides: true, withClaude: true });
   browser = await chromium.launch({ headless: true });
 });
 after(async () => {
@@ -114,8 +115,18 @@ test(
       await page.getByRole('searchbox', { name: '搜索账户或成员' }).fill('');
       await page.goto(`${preview.url}/settings?s=members&shell=v2`, { waitUntil: 'domcontentloaded' });
       const member = page.getByTestId('member-account-codex61-sol');
-      await member.getByText('号：主号', { exact: true }).waitFor();
+      // The accepted member table gives account names their own column; the header supplies the meaning.
+      await page.getByRole('columnheader', { name: '账号', exact: true }).waitFor();
+      await member.getByText('主号', { exact: true }).waitFor();
+      const memberRow = page.locator('tr[data-cat-id="codex61-sol"]');
+      const columns = await page.locator('.member-table th').allTextContents();
+      assert.equal(await memberRow.locator('td').nth(columns.indexOf('账号')).innerText(), '主号');
       assert.equal(await member.getByRole('button').count(), 0);
+      if (process.env.F320_EVIDENCE_DIR)
+        await page.screenshot({
+          path: join(process.env.F320_EVIDENCE_DIR, 'members-selected-account-column.png'),
+          fullPage: true,
+        });
       await page.goto(`${preview.url}/settings?s=accounts&shell=v2`, { waitUntil: 'domcontentloaded' });
       // Seed the real theme owner in this fresh fixture context; ThemeApplier renders its palette.
       await page.evaluate(() => {
@@ -265,4 +276,10 @@ test(
       await page.close();
     }
   },
+);
+
+test(
+  'Claude account entry keeps secrets private, switches next calls, preserves in-flight metadata and recovers token errors',
+  { timeout: 120000 },
+  () => runClaudeAccountJourney({ preview, browser }),
 );

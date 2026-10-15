@@ -65,6 +65,7 @@ describe('F322 设置与管理 information architecture', () => {
     expect(findEntry('mission')?.destination).toEqual({ kind: 'route', path: '/mission-hub' });
     expect(findEntry('signals')?.destination).toEqual({ kind: 'route', path: '/signals' });
     expect(findEntry('schedule')?.destination).toEqual({ kind: 'workspace-mode', mode: 'schedule' });
+    expect(findEntry('evolution')?.destination).toEqual({ kind: 'evolution-home' });
     expect(findEntry('eval')?.destination).toEqual({ kind: 'workspace-mode', mode: 'eval' });
     expect(findEntry('community')?.destination).toEqual({ kind: 'workspace-mode', mode: 'community' });
   });

@@ -33,7 +33,6 @@ import {
   libraryLifecycleTools,
   limbTools,
   meetingArtifactTools,
-  nativeTaskTestTools,
   pawFeelDispositionTools,
   perspectiveTools,
   pluginManagementTools,
@@ -88,7 +87,6 @@ export const CANONICAL_TOOL_SOURCES = {
     ...scheduleTools,
     ...homeStateTools,
     ...shellTools,
-    ...nativeTaskTestTools,
     ...pluginManagementTools,
   ],
   memory: [

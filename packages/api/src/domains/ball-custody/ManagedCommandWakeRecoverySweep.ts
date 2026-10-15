@@ -1,6 +1,9 @@
 import { createModuleLogger } from '../../infrastructure/logger.js';
 import type { DynamicTaskDef } from '../../infrastructure/scheduler/DynamicTaskStore.js';
 import { managedCommandCompletionUnconsumedTotal } from '../../infrastructure/telemetry/instruments.js';
+import { readDurableGateRecord } from '../managed-job/durable-managed-gate-job-store.js';
+import { ManagedJobService } from '../managed-job/ManagedJobService.js';
+import { legacyManagedJobOrigins } from '../managed-job/managed-job-legacy-census.js';
 import { durableManagedGateConsumerLines, projectDurableManagedGateConsumer } from './durable-managed-gate-consumer.js';
 import {
   cancelDurableManagedGateJob,
@@ -8,6 +11,7 @@ import {
   validateDurableManagedGateJob,
 } from './durable-managed-gate-job.js';
 import { ManagedCommandWakeRecoveryEngine } from './ManagedCommandWakeRecoveryEngine.js';
+import { resolveManagedCommandJob } from './managed-command-job-reference.js';
 import { settleNoSpawnDurableGate } from './managed-command-no-spawn-terminal.js';
 import {
   buildAdmissionFactIdempotencyKey,
@@ -125,13 +129,24 @@ export class ManagedCommandWakeRecoverySweep {
   private async reconcileDurableGateJobs(tasks: DynamicTaskDef[]): Promise<ManagedCommandWakeRecoveryStats> {
     let recovered = 0;
     let pending = 0;
-    const running = tasks.flatMap((task) => {
+    // Action Plane reconciles EVERY producer, even if its F167 carrier was force-reset or already consumed.
+    const legacyJobs = legacyManagedJobOrigins().flatMap(({ jobId, taskId }) => {
+      const task = this.deps.dynamicTaskStore.getById(taskId);
+      const descriptor = task ? resolveManagedCommandJob(task) : undefined;
+      return descriptor?.jobId === jobId && validateDurableManagedGateJob(descriptor, taskId) ? [descriptor] : [];
+    });
+    const jobs = await new ManagedJobService().reconcile(legacyJobs, this.now());
+    const observed = new Map(jobs.map(({ job, inspection }) => [job.jobId, inspection]));
+    const allTasks = new Map(tasks.map((task) => [task.id, task]));
+    for (const { job } of jobs) {
+      const task = this.deps.dynamicTaskStore.getById(job.originTaskId);
+      if (task) allTasks.set(task.id, task);
+    }
+    const running = [...allTasks.values()].flatMap((task) => {
       const command = readManagedCommandWakeProjection(task);
       if (!command || command.state !== 'command_running') return [];
-      const durableJob = command.durableJob;
-      return durableJob?.kind === 'full_gate' || durableJob?.kind === 'resumable_full_gate_v2'
-        ? [{ task, durableJob, command }]
-        : [];
+      const durableJob = resolveManagedCommandJob(task);
+      return durableJob ? [{ task, durableJob, command }] : [];
     });
     for (const { task, durableJob, command } of running) {
       if (!validateDurableManagedGateJob(durableJob, task.id)) {
@@ -153,7 +168,10 @@ export class ManagedCommandWakeRecoverySweep {
           now: this.now(),
         });
       }
-      const inspection = inspectDurableManagedGateJob(durableJob);
+      const inspection =
+        readDurableGateRecord(durableJob)?.state === 'terminal'
+          ? inspectDurableManagedGateJob(durableJob, { now: this.now() })
+          : (observed.get(durableJob.jobId) ?? inspectDurableManagedGateJob(durableJob, { now: this.now() }));
       if (!('result' in inspection)) {
         pending += 1;
         continue;
@@ -167,7 +185,7 @@ export class ManagedCommandWakeRecoverySweep {
       const completion = {
         taskId: task.id,
         wakeContent:
-          `持球唤醒（durable full gate 终态）：${inspection.result.tailOutput ?? inspection.state}` +
+          `持球唤醒（命令完成）：${inspection.result.tailOutput ?? inspection.state}` +
           (consumerLines.length > 0 ? `\n${consumerLines.join('\n')}` : ''),
         result: inspection.result,
       };
@@ -191,12 +209,13 @@ export class ManagedCommandWakeRecoverySweep {
       const idempotencyKey = buildAdmissionFactIdempotencyKey(task.id);
       try {
         if (parsed.command.state === 'not_started') {
+          const durableJob = resolveManagedCommandJob(task);
           // Recover the exact params-written / enabled-not-yet-written crash window.
           // The explicit lifecycle fact is proof; pid=null is never used as proof.
           if (
-            (parsed.command.durableJob &&
+            (durableJob &&
               !settleNoSpawnDurableGate(
-                parsed.command.durableJob,
+                durableJob,
                 task.id,
                 parsed.command.notStartedDetail ?? 'admission_rejected',
               )) ||
@@ -234,6 +253,7 @@ export class ManagedCommandWakeRecoverySweep {
                 catId: parsed.catId,
                 wakeWhen: true,
                 recoverySource: 'startup_sweep',
+                ...(parsed.command.jobId ? { jobId: parsed.command.jobId, managedJobReceipt: 'admission' } : {}),
               },
             },
           });

@@ -12,6 +12,7 @@ import { invokeSingleCat } from '../../../api/src/domains/cats/services/agents/i
 import { accountsRoutes } from '../../../api/src/routes/accounts.ts';
 import { catsRoutes } from '../../../api/src/routes/cats.ts';
 import { configRoutes } from '../../../api/src/routes/config.ts';
+import { servicesRoutes } from '../../../api/src/routes/services.ts';
 import {
   createReviewState,
   findFreePort,
@@ -25,7 +26,13 @@ import {
 import { createFixtureLoginDriver } from './f320-native-login.fixture.mjs';
 import { createNextDevTestEnvironment } from './next-dev-test-environment.mjs';
 
-export async function startFinalAccountPreview({ withOverrides = false } = {}) {
+export async function startFinalAccountPreview({
+  withOverrides = false,
+  withClaude = false,
+  routingSnapshot,
+  withServicePreview = false,
+  ownerUserId,
+} = {}) {
   const saved = { ...process.env };
   const root = mkdtempSync(join(tmpdir(), 'f320-browser-api-'));
   Object.assign(process.env, {
@@ -40,6 +47,7 @@ export async function startFinalAccountPreview({ withOverrides = false } = {}) {
     CAT_CAFE_DISABLE_SHARED_STATE_PREFLIGHT: '1',
     AUDIT_LOG_DIR: join(root, 'audit'),
   });
+  if (ownerUserId !== undefined) process.env.DEFAULT_OWNER_USER_ID = ownerUserId;
   delete process.env.CODEX_HOME;
   delete process.env.CODEX_SQLITE_HOME;
   mkdirSync(join(root, '.cat-cafe'));
@@ -78,6 +86,28 @@ export async function startFinalAccountPreview({ withOverrides = false } = {}) {
       version: 2,
       ...(withOverrides ? { selectedAccountRefs: { openai: 'codex' } } : {}),
       breeds: [
+        ...(withClaude
+          ? [
+              {
+                id: 'ragdoll',
+                catId: 'opus',
+                name: '布偶猫',
+                displayName: '布偶猫',
+                avatar: '/avatars/opus.png',
+                color: { primary: '#123456', secondary: '#abcdef' },
+                mentionPatterns: ['@opus'],
+                roleDescription: 'fixture',
+                defaultVariantId: 'opus-default',
+                variants: ['opus', 'sonnet'].map((id) => ({
+                  ...variant(id),
+                  clientId: 'anthropic',
+                  defaultModel: 'claude-sonnet-4-6',
+                  accountRef: 'claude',
+                  cli: { command: 'claude', outputFormat: 'stream-json' },
+                })),
+              },
+            ]
+          : []),
         {
           id: 'maine',
           catId: 'codex61-sol',
@@ -98,6 +128,14 @@ export async function startFinalAccountPreview({ withOverrides = false } = {}) {
         },
       ],
       roster: {
+        ...(withClaude
+          ? Object.fromEntries(
+              ['opus', 'sonnet'].map((id) => [
+                id,
+                { family: 'ragdoll', roles: ['assistant'], lead: false, available: true, evaluation: 'fixture' },
+              ]),
+            )
+          : {}),
         'codex61-sol': { family: 'maine', roles: ['assistant'], lead: false, available: true, evaluation: 'fixture' },
         'codex-sol': { family: 'maine', roles: ['assistant'], lead: false, available: true, evaluation: 'fixture' },
       },
@@ -123,13 +161,14 @@ export async function startFinalAccountPreview({ withOverrides = false } = {}) {
   const fallback = createReviewState();
   app.addHook('onRequest', async (request, reply) => {
     request.headers['x-cat-cafe-user'] = 'fixture';
+    if (withServicePreview) request.sessionUserId = 'fixture';
     const origin = request.headers.origin;
     if (origin && /^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin))
       reply
         .header('access-control-allow-origin', origin)
         .header('access-control-allow-credentials', 'true')
         .header('access-control-allow-headers', 'content-type,x-csrf-token')
-        .header('access-control-allow-methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+        .header('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
     if (request.method === 'OPTIONS') return reply.code(204).send();
   });
   app.options('/*', async () => ({}));
@@ -180,6 +219,7 @@ export async function startFinalAccountPreview({ withOverrides = false } = {}) {
       };
     if (url.pathname === '/api/agent-hooks/status') return { status: 'configured', targets: [] };
     if (url.pathname === '/api/routing-context/snapshot') {
+      if (routingSnapshot) return routingContextReadModelV1Schema.parse(routingSnapshot());
       const common = { v: 1, ownerId: 'fixture', observedAt: Date.now(), catalogRevision: 'fixture:f320' };
       return routingContextReadModelV1Schema.parse({
         ...common,
@@ -197,6 +237,22 @@ export async function startFinalAccountPreview({ withOverrides = false } = {}) {
     if (url.pathname === '/api/config/cat-order') return { catOrder: ['codex61-sol', 'codex-sol'] };
     return fixtureForApi(url, undefined, fallback);
   });
+  if (withServicePreview)
+    await app.register(servicesRoutes, {
+      env: { CAT_CAFE_PROFILE: 'test' },
+      fetchHealth: async () => ({ ok: true, status: 200, error: null }),
+      lifecycle: {
+        serviceConfig: {
+          get: () => ({
+            installed: true,
+            enabled: false,
+            selectedModel: 'mlx-community/Qwen3-ASR-1.7B-8bit',
+            port: 19876,
+          }),
+        },
+        findPidsByPort: async () => [],
+      },
+    });
   const requireApi = createRequire(new URL('../../../api/package.json', import.meta.url));
   const { Server } = requireApi('socket.io');
   const sockets = new Server(app.server, { cors: { origin: true, credentials: true } });
@@ -247,6 +303,10 @@ export async function startFinalAccountPreview({ withOverrides = false } = {}) {
     await close();
     throw error;
   }
+  function assertSelectedToken(options) {
+    if (options.claudeTokenAccount && !options.accountEnv?.CLAUDE_CODE_OAUTH_TOKEN?.startsWith('sk-ant-oat01-fixture-'))
+      throw new Error('fixture Claude token not selected');
+  }
   return {
     url,
     apiUrl,
@@ -256,7 +316,7 @@ export async function startFinalAccountPreview({ withOverrides = false } = {}) {
     setQuota(mode) {
       quotaMode = mode;
     },
-    async reply(content) {
+    async reply(content, catId = 'codex61-sol', waitBeforeDone, onStarted) {
       // Transport is deterministic; all account selection and execution metadata come from
       // the real invocation producer and the same registry that binding updates.
       const deps = {
@@ -274,21 +334,30 @@ export async function startFinalAccountPreview({ withOverrides = false } = {}) {
         threadStore: null,
         apiUrl: 'http://127.0.0.1:0',
       };
+      let expectAccountSnapshot = true;
       const service = {
-        async *invoke() {
+        async *invoke(_prompt, options) {
+          expectAccountSnapshot = catId !== 'opus' || !!options.claudeTokenAccount;
+          if (catId === 'opus') assertSelectedToken(options);
+          onStarted?.();
           yield {
             type: 'metadata',
-            catId: 'codex61-sol',
+            catId,
             timestamp: Date.now(),
-            metadata: { model: 'fixture', provider: 'openai' },
+            metadata: {
+              model: 'fixture',
+              provider: catId === 'opus' ? 'anthropic' : 'openai',
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
           };
-          yield { type: 'text', catId: 'codex61-sol', timestamp: Date.now(), content };
-          yield { type: 'done', catId: 'codex61-sol', timestamp: Date.now() };
+          yield { type: 'text', catId, timestamp: Date.now(), content };
+          if (waitBeforeDone) await waitBeforeDone;
+          yield { type: 'done', catId, timestamp: Date.now() };
         },
       };
       const events = [];
       for await (const event of invokeSingleCat(deps, {
-        catId: 'codex61-sol',
+        catId,
         service,
         prompt: content,
         userId: 'fixture',
@@ -297,13 +366,13 @@ export async function startFinalAccountPreview({ withOverrides = false } = {}) {
       }))
         events.push(event);
       const metadata = events.find((event) => event.type === 'metadata')?.metadata;
-      if (!metadata?.executionAccount)
+      if (!metadata || !!metadata.executionAccount !== expectAccountSnapshot || events.some((e) => e.type === 'error'))
         throw new Error(`fixture invocation failed: ${events.filter((e) => e.type === 'error').map((e) => e.content)}`);
       messages.push({
         id: `reply-${messages.length}`,
         threadId: THREAD_ID,
         type: 'assistant',
-        catId: 'codex61-sol',
+        catId,
         content,
         timestamp: Date.now(),
         metadata,

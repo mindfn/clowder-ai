@@ -17,6 +17,8 @@ interface ArtifactWorkHostInput {
   isDesktop: boolean;
   statusPanelOpen: boolean;
   rightPanelMode: 'status' | 'workspace' | 'transcript';
+  currentThreadId?: string | null;
+  mediaComposerSurfaceId?: string | null;
 }
 
 function invalidationReason(
@@ -38,19 +40,37 @@ export function useArtifactWorkHostPresentation({
   isDesktop,
   statusPanelOpen,
   rightPanelMode,
+  currentThreadId,
+  mediaComposerSurfaceId,
 }: ArtifactWorkHostInput) {
   const layout = useF307ExperienceWorkbenchStore((state) => state.layout);
   const presentation = useF307ExperienceWorkbenchStore((state) => state.artifactWorkPresentation);
   const attentionSurfaceId = useF307ExperienceWorkbenchStore((state) => state.mainAreaAttentionSurfaceId);
   const attentionPresentation = useF307ExperienceWorkbenchStore((state) => state.mainAreaAttentionPresentation);
   const dispatch = useF307ExperienceWorkbenchStore((state) => state.dispatchArtifactWorkPresentation);
-  const { activeSurface, surfaceActive, hostEligible, fullWindowActive, splitPreferenceActive, workspaceWideActive } =
-    projectWorkspaceWorkHost(
-      { threadId, viewMode, isDesktop, statusPanelOpen, rightPanelMode, shellPresentation: useShellPresentation() },
-      layout,
-      presentation,
-      { surfaceId: attentionSurfaceId, presentation: attentionPresentation },
-    );
+  const {
+    activeSurface,
+    surfaceActive,
+    hostEligible,
+    fullWindowActive,
+    narrowWorkComposerActive,
+    splitPreferenceActive,
+    workspaceWideActive,
+  } = projectWorkspaceWorkHost(
+    {
+      threadId,
+      currentThreadId,
+      mediaComposerSurfaceId,
+      viewMode,
+      isDesktop,
+      statusPanelOpen,
+      rightPanelMode,
+      shellPresentation: useShellPresentation(),
+    },
+    layout,
+    presentation,
+    { surfaceId: attentionSurfaceId, presentation: attentionPresentation },
+  );
 
   const invalidateHost = useCallback(
     (reason: ArtifactWorkInvalidationReason = 'host-ineligible') => {
@@ -128,6 +148,7 @@ export function useArtifactWorkHostPresentation({
     hostEligible,
     splitPreferenceActive,
     fullWindowActive,
+    narrowWorkComposerActive,
     workspaceWideActive,
     chatBasis: presentation.desktopWorkChatBasis,
     invalidateHost,

@@ -15,6 +15,7 @@ const decisionId = 'b5e80c62-2a8c-4554-8e72-9cf22ac0214a';
 async function admittedFixture(
   options: {
     projectionState?: 'idle' | 'running' | 'unknown';
+    runningBinding?: { threadId: string; catId: string };
     messages?: Pick<IMessageStore, 'appendIdempotent' | 'getByIdempotencyKey'>;
     failFirstAppend?: boolean;
   } = {},
@@ -68,12 +69,13 @@ async function admittedFixture(
       },
     };
     if (options.projectionState === 'running') {
+      const binding = options.runningBinding ?? { threadId: task.threadId, catId: 'codex-sol' };
       return {
         ...base,
         state: 'running',
         reasonCode: 'exact_parent_running',
         canConfirmSatisfied: false,
-        binding: { leaseId: 'lease-a', generation: 1, threadId: task.threadId, catId: 'codex-sol' },
+        binding: { leaseId: 'lease-a', generation: 1, ...binding },
         execution: { parentInvocationId: 'parent-a' },
       };
     }
@@ -100,13 +102,26 @@ async function admittedFixture(
   const execution = {
     inspect: async (task: TaskItem): Promise<EntrustedWorkTaskExecutionInspection> => {
       inspectCalls.push(task);
-      return { projection: projectionFor(task) };
+      const projection = projectionFor(task);
+      return projection.state === 'running'
+        ? {
+            projection,
+            control: {
+              parentInvocationId: projection.execution.parentInvocationId,
+              threadId: projection.binding.threadId,
+              userId: task.userId ?? '',
+              catId: projection.binding.catId,
+            },
+          }
+        : { projection };
     },
     stopAfterTerminal: async (_task: TaskItem, inspection: EntrustedWorkTaskExecutionInspection) => {
       stopCalls.push(inspection);
-      return options.projectionState === 'running'
+      return options.projectionState === 'running' && inspection.control
         ? stopped
-        : ({ state: 'not_running', reasonCode: 'task_binding_idle', executionRefs: [] } as const);
+        : inspection.projection.state === 'running'
+          ? ({ state: 'unknown', reasonCode: 'execution_control_unavailable', executionRefs: [] } as const)
+          : ({ state: 'not_running', reasonCode: 'task_binding_idle', executionRefs: [] } as const);
     },
   };
   let clock = 110;
@@ -223,6 +238,34 @@ describe('F310 authenticated human terminal orchestration', () => {
     assert.equal(replayed.status, 'replayed');
     assert.equal(f.messageStore.getByThread('thread-original', 10, 'operator').length, 1);
     assert.equal(f.stopCalls.length, stopCountAfterRecovery);
+  });
+
+  test('receipt repair reconstructs exact delegated child control from the persisted terminal decision', async () => {
+    const f = await admittedFixture({
+      projectionState: 'running',
+      runningBinding: { threadId: 'thread-approved-child', catId: 'codex6-luna' },
+      failFirstAppend: true,
+    });
+    const command = {
+      taskId: f.taskId,
+      userId: 'operator',
+      input: {
+        v: 1 as const,
+        decisionId,
+        expectedRevision: 1,
+        decision: { state: 'cancelled' as const, reason: 'No longer needed' },
+      },
+    };
+    await assert.rejects(() => f.service.decide(command), /simulated append outage/);
+
+    const recovered = await f.service.decide(command);
+    assert.equal(recovered.execution.stop.state, 'stopped');
+    assert.deepEqual(f.stopCalls.at(-1)?.control, {
+      parentInvocationId: 'parent-a',
+      threadId: 'thread-approved-child',
+      userId: 'operator',
+      catId: 'codex6-luna',
+    });
   });
 
   test('concurrent submissions of one decision converge on one Task transition and one receipt', async () => {

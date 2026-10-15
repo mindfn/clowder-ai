@@ -13,6 +13,9 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test } from 'node:test';
+import { isolateManagedJobData } from './helpers/isolated-managed-job-data.js';
+
+isolateManagedJobData();
 
 function makeTask(overrides = {}) {
   return {
@@ -1470,4 +1473,54 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     assert.equal(h.appended.length, 1);
     assert.equal(h.appended[0].idempotencyKey, 'hold-ball-lost:hold-ball-task-1');
   });
+});
+
+test('API recovery atomically admits the exact managed wake before publishing its completion', async () => {
+  const { ManagedCommandWakeRecoverySweep } = await loadSweep();
+  const h = makeHarness();
+  const admit = h.deps.admitWake;
+  const admissions = [];
+  h.deps.admitWake = async (input) => {
+    assert.equal(h.appended.length, 0, 'no completion History before the atomic admission');
+    assert.deepEqual(input.message.from, { kind: 'system', service: 'managed-command-wake' });
+    assert.equal(input.catId, 'codex-sol');
+    assert.equal(input.priority, 'urgent');
+    assert.equal(input.message.idempotencyKey, 'hold-ball-completion:hold-ball-task-1');
+    const result = await admit(input);
+    admissions.push(result.messageId);
+    return result;
+  };
+  await new ManagedCommandWakeRecoverySweep(h.deps).recordCompletion({
+    taskId: 'hold-ball-task-1',
+    wakeContent: 'actual command failed',
+    result: { exitCode: 1, timedOut: false, durationMs: 5000 },
+  });
+  assert.equal(admissions.length, 1);
+  assert.equal(h.appended.length, 1);
+  await new ManagedCommandWakeRecoverySweep(h.deps).recoverTask('hold-ball-task-1');
+  assert.equal(admissions.length, 1, 'restart preserves the same committed wake');
+  assert.equal(h.appended.length, 1);
+});
+
+test('failed atomic wake admission leaves completion retryable without a stray message', async () => {
+  const { ManagedCommandWakeRecoverySweep } = await loadSweep();
+  const h = makeHarness();
+  const admit = h.deps.admitWake;
+  h.deps.admitWake = async () => {
+    throw new Error('atomic storage unavailable');
+  };
+  const sweep = new ManagedCommandWakeRecoverySweep(h.deps);
+  assert.equal(
+    await sweep.recordCompletion({
+      taskId: 'hold-ball-task-1',
+      wakeContent: 'done',
+      result: { exitCode: 0, timedOut: false, durationMs: 5000 },
+    }),
+    'pending',
+  );
+  assert.equal(h.appended.length, 0);
+  assert.equal(h.triggerCalls.length, 0);
+  h.deps.admitWake = admit;
+  await sweep.recoverTask('hold-ball-task-1');
+  assert.equal(h.appended.length, 1, 'restored storage admits the original pending wake');
 });

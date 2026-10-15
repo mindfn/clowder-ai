@@ -1,3 +1,4 @@
+import { claudeExecutionAccountSnapshot, redactClaudeLaunchToken } from '../../../../../config/claude-token-account.js';
 /**
  * Single Cat Invocation
  * 单猫调用的核心逻辑，从 AgentRouter 提取。
@@ -137,8 +138,6 @@ import {
   encodeMemoryCueSourceRef,
 } from '../../session/transcript-index/request-generation-source-policy.js';
 import { AgyNativeAgentService } from '../providers/agy-native/AgyNativeAgentService.js';
-import { resolveAgyNativeCodingGrant } from '../providers/agy-native/agy-native-coding-grant.js';
-import { callbackPolicyForAgyNativeMcpTools } from '../providers/agy-native/agy-native-policy.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
 import { ClaudeSdkAgentService } from '../providers/ClaudeSdkAgentService.js';
 import { buildClaudeCompactionLaunchPlan } from '../providers/claude-compaction-launch-plan.js';
@@ -1311,8 +1310,6 @@ export interface InvocationParams {
   readonly continuityCapsule?: RouteStateContinuityCapsule;
   /** ADR-042 hard execution boundary for automatic supplement checks. */
   readonly toolExecutionPolicy?: import('../../types.js').ToolExecutionPolicy;
-  /** F325: Host-authored exact AGY native grants; never copied from model text. */
-  readonly agyNativeScope?: AgentServiceOptions['agyNativeScope'];
   readonly executionScope?: 'collective-participation' | 'collective-work';
   /** Typed child purpose; never inferred from prompt or logs. */
   readonly executionKind?: TurnExecutionKind;
@@ -1456,45 +1453,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
   }
   const isAgyNative = usesAgyNativeCarrier(service);
   const nativeCatConfig = catRegistry.tryGet(catId as string)?.config;
-  const nativeCodingGrant =
-    isAgyNative && params.toolExecutionPolicy?.mode !== 'read_only'
-      ? await resolveAgyNativeCodingGrant({
-          grant: nativeCatConfig?.agyProfile?.nativeCodingGrant,
-          threadId,
-          catId,
-          userId,
-          ...(deps.taskStore ? { taskStore: deps.taskStore } : {}),
-        })
-      : null;
-  if (!isAgyNative && params.agyNativeScope) throw new Error('AGY native scope requires the native AGY carrier');
-  if (nativeCodingGrant && params.agyNativeScope)
-    throw new Error('AGY native caller scope conflicts with the Task grant');
-  if (params.agyNativeScope?.writableFiles.length && !nativeCodingGrant)
-    throw new Error('AGY native writes require a live operator-issued Task grant');
-  const nativeScope = isAgyNative
-    ? nativeCodingGrant
-      ? {
-          ...nativeCodingGrant,
-          mcpTools: [
-            'cat-cafe-collab/cat_cafe_get_thread_context',
-            'cat-cafe-collab/cat_cafe_post_message',
-            'cat-cafe-collab/cat_cafe_run_task_test',
-          ],
-        }
-      : (params.agyNativeScope ?? {
-          writableFiles: [],
-          mcpTools:
-            params.toolExecutionPolicy?.mode === 'read_only' ? [] : ['cat-cafe-collab/cat_cafe_get_thread_context'],
-        })
-    : undefined;
-  if (isAgyNative && params.toolExecutionPolicy?.mode === 'callback_allowlist')
-    throw new Error('AGY native callback scope must be derived from host-authored MCP grants');
-  if (isAgyNative && params.toolExecutionPolicy?.mode === 'read_only' && nativeScope?.mcpTools.length)
-    throw new Error('Read-only AGY native invocation cannot grant MCP tools');
-  const effectiveToolExecutionPolicy =
-    isAgyNative && !params.toolExecutionPolicy
-      ? callbackPolicyForAgyNativeMcpTools(nativeScope?.mcpTools ?? [])
-      : params.toolExecutionPolicy;
+  const effectiveToolExecutionPolicy = params.toolExecutionPolicy;
   if (!privateWork) {
     assertToolExecutionPolicySupported(service, effectiveToolExecutionPolicy);
   }
@@ -1735,6 +1694,19 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     | undefined;
   const resolveInvocationMemoryCues = async (): Promise<void> => {
     invocationPromptAdditions.length = 0;
+    if (deps.runtimeInteractionPort && params.ownerAuthProvenance === 'strict') {
+      try {
+        const pendingDecisionPrompt = await deps.runtimeInteractionPort.pendingConversationDecisionPrompt(
+          userId,
+          threadId,
+          catId,
+          originTriggerMessageId,
+        );
+        if (pendingDecisionPrompt) invocationPromptAdditions.push(pendingDecisionPrompt);
+      } catch (err) {
+        log.warn({ err, invocationId, threadId, catId }, '[F306] Pending conversation decision prompt failed closed');
+      }
+    }
     memoryCuePresentationEnvelopes = [];
     omittedMemoryCueOpportunityIds = [];
     const serverScope = { ownerUserId: userId, threadId, invocationId };
@@ -3954,12 +3926,17 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     const executionAccount =
       resolvedAccount && codexAccountLaunch
         ? codexExecutionAccountSnapshot(resolvedAccount, codexAccountLaunch)
-        : undefined;
+        : provider === 'anthropic' && resolvedAccount?.claude
+          ? claudeExecutionAccountSnapshot(resolvedAccount)
+          : undefined;
     const requiresImportedHistory =
       activeSessionRecordForResume?.externalImport?.cliSessionId === sessionId && Boolean(sessionId);
     const baseOptions: AgentServiceOptions = {
       ...(params.onRemoteExecutionDispatched
         ? { onRemoteExecutionDispatched: params.onRemoteExecutionDispatched }
+        : {}),
+      ...(activeSessionRecordForResume?.nativeSessionBinding
+        ? { nativeSessionBinding: activeSessionRecordForResume.nativeSessionBinding }
         : {}),
       ...(requiresImportedHistory ? { requireExactResume: true } : {}),
       ...(params.routeIntent ? { routeIntent: params.routeIntent } : {}),
@@ -3976,6 +3953,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       ...(reasoningEffortOverride ? { reasoningEffortOverride } : {}),
       ...(requestedServiceTier ? { requestedServiceTier } : {}),
       ...(accountEnv ? { accountEnv } : {}),
+      ...(resolvedAccount?.claude ? { claudeTokenAccount: true } : {}),
       ...(codexAccountLaunch ? { codexAccountLaunch } : {}),
       auditContext: {
         invocationId,
@@ -4037,7 +4015,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       ...(executionAccount ? { executionAccount } : {}),
       parentSpan: invocationSpan,
       ...(effectiveToolExecutionPolicy ? { toolExecutionPolicy: effectiveToolExecutionPolicy } : {}),
-      ...(nativeScope ? { agyNativeScope: nativeScope } : {}),
     };
 
     let lastErrorMessage: string | undefined;
@@ -4085,6 +4062,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     };
 
     const processMessage = async (msg: AgentMessage): Promise<AgentMessage[]> => {
+      msg = redactClaudeLaunchToken(msg, resolvedAccount?.claude ? accountEnv?.CLAUDE_CODE_OAUTH_TOKEN : undefined);
       if (executionAccount && msg.metadata)
         msg = {
           ...msg,
@@ -4919,6 +4897,23 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           }
         }
 
+        if (msg.nativeSessionBinding && deps.sessionChainStore) {
+          const record = await deps.sessionChainStore.getActive(catId, threadId, userId);
+          if (
+            !sessionRuntimeBindingAccepted ||
+            record?.cliSessionId !== msg.sessionId ||
+            msg.nativeSessionBinding.cliSessionId !== msg.sessionId
+          ) {
+            throw new Error('Native continuity binding could not be committed to the active session');
+          }
+          const committed = await deps.sessionChainStore.update(record.id, {
+            nativeSessionBinding: msg.nativeSessionBinding,
+          });
+          if (!committed?.nativeSessionBinding || committed.nativeSessionBinding.cliSessionId !== msg.sessionId) {
+            throw new Error('Native continuity persistence failed before stream advancement');
+          }
+        }
+
         if (sessionRuntimeBindingAccepted) {
           try {
             await sessionManager.store(userId, catId, threadId, msg.sessionId);
@@ -5703,7 +5698,14 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         if (
           allowSessionRetry &&
           msg.type === 'error' &&
-          (isMissingClaudeSessionError(msg.error) || isSessionNotFoundDiagnostic(msg.metadata))
+          (isMissingClaudeSessionError(msg.error) ||
+            isSessionNotFoundDiagnostic(msg.metadata) ||
+            (isAgyNative &&
+              !attemptHasContentOutput &&
+              msg.errorCode === 'AGY_NATIVE_RESUME_MISMATCH' &&
+              deps.sessionChainStore &&
+              deps.sessionSealer &&
+              (params.contextPromptFactory || params.rebuildPromptAfterSessionSeal)))
         ) {
           suppressedMissingSessionError = msg;
           continue;
@@ -5986,15 +5988,18 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
       if (shouldRetryWithoutSession && !requiresImportedHistory && attempt + 1 < maxAttempts) {
         await presentationDelivery?.release('provider_generation_replaced');
-        const retryReason = suppressedPromptLimitError
-          ? 'prompt_token_limit'
-          : suppressedContextOverflowError
-            ? 'context_window_overflow'
-            : suppressedTimeoutError
-              ? 'cli_timeout'
-              : suppressedMalformedError
-                ? 'malformed_toolcall'
-                : 'missing_session';
+        const nativeBindingChanged = suppressedMissingSessionError?.errorCode === 'AGY_NATIVE_RESUME_MISMATCH';
+        const retryReason = nativeBindingChanged
+          ? 'native_binding_changed'
+          : suppressedPromptLimitError
+            ? 'prompt_token_limit'
+            : suppressedContextOverflowError
+              ? 'context_window_overflow'
+              : suppressedTimeoutError
+                ? 'cli_timeout'
+                : suppressedMalformedError
+                  ? 'malformed_toolcall'
+                  : 'missing_session';
         nextRequestGenerationReason = retryReason;
         log.info(
           {
@@ -6010,6 +6015,33 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           },
           'cat retrying invoke (session self-heal)',
         );
+        if (nativeBindingChanged) {
+          // The Native adapter refuses this binding before spawning. Commit the
+          // history boundary before rebuilding or submitting any replacement.
+          const prior = await deps.sessionChainStore?.getActive(catId, threadId, userId);
+          if (!prior || prior.cliSessionId !== sessionId || !deps.sessionSealer) {
+            throw new Error('native_resume_boundary_source_unavailable');
+          }
+          const seal = await deps.sessionSealer.requestSeal({ sessionId: prior.id, reason: retryReason });
+          if (!seal.accepted) throw new Error('native_resume_boundary_seal_rejected');
+          const finalized = await deps.sessionSealer.finalize({ sessionId: prior.id });
+          if (!finalized.sealed) throw new Error('native_resume_boundary_finalize_failed');
+          const notice: AgentMessage = {
+            type: 'system_info',
+            catId,
+            timestamp: Date.now(),
+            content: JSON.stringify({
+              type: 'session_seal_requested',
+              catId,
+              sessionId: prior.id,
+              sessionSeq: prior.seq + 1,
+              reason: retryReason,
+            }),
+          };
+          for await (const out of streamProcessedOutputs(notice)) yield out;
+          delete baseOptions.nativeSessionBinding;
+          activeSessionRecordForResume = null;
+        }
         try {
           await sessionManager.delete(userId, catId, threadId);
         } catch {
@@ -6044,6 +6076,12 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         // here rather than leave a known double-injection behind a new carrier.
         if (params.systemPrompt && !baseOptions.systemPrompt && !hasTargetContinuityHandshake) {
           baseOptions.systemPrompt = params.systemPrompt;
+        }
+        if (nativeBindingChanged && !hasTargetContinuityHandshake) {
+          // Non-handshake embedders must also supply the sealed history, never
+          // replay only the latest user message into an empty conversation.
+          if (!params.rebuildPromptAfterSessionSeal) throw new Error('native_resume_cold_rebuild_unavailable');
+          prompt = await params.rebuildPromptAfterSessionSeal();
         }
         if (hasTargetContinuityHandshake) {
           // The identity belongs to exactly one channel. The rebuild below owns

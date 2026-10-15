@@ -205,6 +205,18 @@ export const DEVELOPMENT_SOP_DEFINITION = {
             futureCandidate: 'quality_gate_report_artifact',
           },
         },
+        {
+          id: 'quality-gate-confirmed-test-value',
+          kind: 'hard_rule',
+          text: '本次已确认的同根低价值测试已按 testing-standard 保留并修正、合并、降层或删除，附承接覆盖和代表性检测力证据；不把已确认假绿留给无期限清理任务，也不扩成全仓扫描',
+          severity: 'blocker',
+          owner: { type: 'stage_suggested_skill', skill: 'quality-gate' },
+          predicate: {
+            type: 'manual_only',
+            reason:
+              'Test stimulus, observation and detection power require author and selected reviewer judgment; command success is not semantic evidence. Use the existing PR, without another reviewer or full gate.',
+          },
+        },
       ],
       pitfalls: [
         {

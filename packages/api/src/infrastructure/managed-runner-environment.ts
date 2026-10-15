@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 import { delimiter, dirname } from 'node:path';
+import { MCP_CALLBACK_ENV_KEYS, MCP_SESSION_ENV_KEYS } from '../config/capabilities/mcp-constants.js';
 import { CLI_PROCESS_CONTEXT_ENV, CLI_PROCESS_OWNER_ENV } from '../utils/cli-process-environment.js';
 import { RUNTIME_ONLY_LIFECYCLE_ENV_KEYS } from '../utils/runtime-only-env.js';
 
@@ -20,6 +21,8 @@ export function buildManagedRunnerEnvironment(inheritedEnv: NodeJS.ProcessEnv): 
   // wakeWhen is owned by the API-side managed runner, not by the requesting cat CLI.
   delete environment[CLI_PROCESS_OWNER_ENV];
   delete environment[CLI_PROCESS_CONTEXT_ENV];
+  for (const key of [...MCP_CALLBACK_ENV_KEYS, ...MCP_SESSION_ENV_KEYS, 'CAT_CAFE_CREDENTIAL_FILE'])
+    delete environment[key];
   // The API process that hosts this runner is usually the live runtime; its lifecycle
   // opt-ins must not reach a command that may start a worktree dev server.
   for (const key of RUNTIME_ONLY_LIFECYCLE_ENV_KEYS) delete environment[key];

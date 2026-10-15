@@ -20,6 +20,7 @@ import {
 } from './f311-exploration-recovery.journey.mjs';
 import { startExplorationBrowserFixture } from './f311-exploration-workspace.harness.mjs';
 import { waitForResponsiveWorkspaceLayout } from './f311-responsive-workspace-layout.mjs';
+import { verifyV2ExplorationReading } from './f311-v2-exploration.journey.mjs';
 import { CONTRACT_THREAD_ID } from './f311-workspace-browser.harness.mjs';
 
 await import('tsx');
@@ -85,6 +86,17 @@ const runsFor = (title) =>
   catalog.experiments.filter(
     (run) => refIdentity(run.nodeRef) === refIdentity(catalog.nodes.find((node) => node.title === title).nodeRef),
   );
+
+test(
+  'v2 Settings opens the isolated public archive, keeps counterexamples visible and links exact original videos',
+  { timeout: 120_000 },
+  async () => {
+    await verifyV2ExplorationReading({ fixture, browser, catalog, capture });
+    report.checks.push(
+      'v2 Settings/public archive reading, independent current/selected pointers, unfiltered counterexample, original paired playback/seek/pause, 416/320/dark; isolated owner Program only, not real 352afab6 source binding.',
+    );
+  },
+);
 
 test(
   'same-version runs, explicit paired scope, regressions, source traces and canvas navigation in the real F307 host',

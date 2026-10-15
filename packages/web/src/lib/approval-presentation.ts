@@ -21,7 +21,7 @@ const SUMMARY_PREFIXES: Partial<Record<ApprovalProducerId, RegExp>> = {
 /** UI-only cleanup: the feature badge already owns the proposal kind. */
 export function approvalDisplayTitle(
   item: ApprovalPresentationItem,
-  opts?: { resolveCatName?: (catId: string) => string },
+  opts?: { resolveCatName?: (catId: string) => string; language?: 'zh' | 'en' },
 ): string {
   const resolveCatName = opts?.resolveCatName ?? ((catId: string) => catId);
   if (item.sourceFeatureId === 'F193') {
@@ -37,9 +37,11 @@ export function approvalDisplayTitle(
           .filter((name) => name.length > 0)
       : [];
     const taskLine = firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine;
-    if (names.length > 0 && taskLine) return `派给 ${names.join('、')}：${taskLine}`;
+    if (names.length > 0 && taskLine)
+      return opts?.language === 'en' ? `For ${names.join(', ')}: ${taskLine}` : `派给 ${names.join('、')}：${taskLine}`;
     if (taskLine) return taskLine;
-    if (names.length > 0) return `派给 ${names.join('、')} 的工作`;
+    if (names.length > 0)
+      return opts?.language === 'en' ? `Work for ${names.join(', ')}` : `派给 ${names.join('、')} 的工作`;
   }
   const prefix = SUMMARY_PREFIXES[item.sourceFeatureId];
   let title = prefix ? item.summary.replace(prefix, '').trim() : item.summary;
@@ -49,9 +51,18 @@ export function approvalDisplayTitle(
   return title.length > 0 ? title : item.summary;
 }
 
-export function formatApprovalRelativeTime(epochMs: number, now = Date.now()): string {
+export function formatApprovalRelativeTime(epochMs: number, now = Date.now(), language: 'zh' | 'en' = 'zh'): string {
   const delta = Math.max(0, now - epochMs);
   const minutes = Math.floor(delta / 60_000);
+  if (language === 'en') {
+    if (minutes < 1) return 'just now';
+    const formatter = new Intl.RelativeTimeFormat('en', { numeric: 'always' });
+    if (minutes < 60) return formatter.format(-minutes, 'minute');
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return formatter.format(-hours, 'hour');
+    const days = Math.floor(hours / 24);
+    return days < 30 ? formatter.format(-days, 'day') : new Date(epochMs).toLocaleDateString('en-US');
+  }
   if (minutes < 1) return '刚刚';
   if (minutes < 60) return `${minutes} 分钟前`;
   const hours = Math.floor(minutes / 60);
@@ -61,8 +72,8 @@ export function formatApprovalRelativeTime(epochMs: number, now = Date.now()): s
   return new Date(epochMs).toLocaleDateString('zh-CN');
 }
 
-export function formatApprovalAbsoluteTime(epochMs: number): string {
-  return new Date(epochMs).toLocaleString('zh-CN');
+export function formatApprovalAbsoluteTime(epochMs: number, language: 'zh' | 'en' = 'zh'): string {
+  return new Date(epochMs).toLocaleString(language === 'en' ? 'en-US' : 'zh-CN');
 }
 
 export interface ApprovalLifecyclePresentation {

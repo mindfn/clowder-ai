@@ -60,3 +60,27 @@ export const contentModificationFollowUpCarrierV1Schema = z
   })
   .strict();
 export type ContentModificationFollowUpCarrierV1 = z.infer<typeof contentModificationFollowUpCarrierV1Schema>;
+
+/** A completed file effect returns the original owner for verification; it never grants Task closure. */
+export const contentTextWritebackCompletionCarrierV1Schema = z
+  .object({
+    v: z.literal(1),
+    kind: z.literal('text_writeback_completion'),
+    returnRef: receiptRef,
+    requestId,
+    closureRequestId: requestId,
+    sourceMessageId: id,
+    taskId: id,
+    targetCatId: id,
+    observedTaskRevision: z.number().int().positive().safe(),
+    expectedSignal: z.string().min(1).max(512),
+    candidateRef: z.string().min(1).max(1000),
+    humanReceiptRef: receiptRef,
+    writebackReceiptRef: receiptRef,
+    writtenRevision: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  })
+  .strict()
+  .refine((carrier) => carrier.expectedSignal === `${carrier.closureRequestId}#file-writeback-applied`, {
+    message: 'Completion signal must name the admitted request',
+  });
+export type ContentTextWritebackCompletionCarrierV1 = z.infer<typeof contentTextWritebackCompletionCarrierV1Schema>;

@@ -71,6 +71,10 @@ export interface CliSpawnOptions {
    * stdio[0] 设为 'pipe' 并将此内容写入 child.stdin。
    */
   stdinInput?: string;
+  /** Register a prompt writer for carriers that confirm their runtime before receiving input. */
+  onStdinReady?: (write: (input: string) => void) => void;
+  /** Duplex NDJSON drivers close input after their terminal frame, not after writing the prompt. */
+  stdinCloseSignal?: AbortSignal;
   /**
    * F212 Phase F (AC-F1/F3 testability per 砚砚 R1 P1-1): test injection point for the
    * structured-log writes (`'CLI abnormal exit'` + `'CLI stderr (LOG_CLI_STDERR=1)'`).

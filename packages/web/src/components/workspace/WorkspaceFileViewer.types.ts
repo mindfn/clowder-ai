@@ -58,4 +58,6 @@ export interface WorkspaceFileViewerProps {
   modificationDisabled?: boolean;
   onQuoteSelected?: (quote: string) => void;
   showFileQuotes?: boolean;
+  /** The Workspace working set already presents the file tab. */
+  nestedWork?: boolean;
 }

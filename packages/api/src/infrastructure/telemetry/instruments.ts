@@ -13,7 +13,7 @@ import {
 } from './turn-custody-shadow-telemetry.js';
 
 // Lazy meter: deferred until first use so the SDK's MeterProvider is registered.
-// Static imports (e.g. AntigravityAgentService) cause this module to load before
+// Static imports (e.g. provider adapters) cause this module to load before
 // initTelemetry() → sdk.start(), which would bind instruments to NoopMeterProvider.
 let _meter: ReturnType<typeof metrics.getMeter> | null = null;
 function meter() {

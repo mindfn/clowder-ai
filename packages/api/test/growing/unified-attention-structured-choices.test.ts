@@ -87,7 +87,7 @@ async function pendingQuestionRecord(): Promise<RuntimeInteractionRecord> {
   return record;
 }
 
-test('pending native questions enter decision-qualified attention once and terminal or non-question interactions do not', async (t) => {
+test('the owner pending index projects approval, question and elicitation exactly once', async (t) => {
   const app = Fastify();
   t.after(() => app.close());
   const store = await populatedStore();
@@ -103,12 +103,29 @@ test('pending native questions enter decision-qualified attention once and termi
   const pending = await read();
   assert.equal(pending.status, 'available');
   assert.equal(pending.sources.structuredChoices?.exhaustiveness, 'complete');
-  assert.equal(pending.totalCount, 1, 'the Task-linked receipt and canonical question are one decision');
-  assert.equal(pending.attentionCount, 1);
-  assert.equal(pending.items[0]?.decisionRef, 'f306.runtime_interaction:choice-1');
-  assert.equal(pending.items[0]?.choiceRequest?.interactionId, 'choice-1');
-  assert.equal(pending.items[0]?.choiceRequest?.questions[0]?.question, 'Where should I run this?');
-  assert.equal(pending.items[0]?.linkedNeedsMe.length, 1);
+  assert.equal(pending.totalCount, 3, 'the Task-linked receipt and canonical question are one decision');
+  assert.equal(pending.attentionCount, 3);
+  assert.deepEqual(
+    pending.items.map((item) =>
+      (item as typeof item & { runtimeInteraction?: { interactionId: string; kind: string } }).runtimeInteraction
+        ? {
+            interactionId: (item as typeof item & { runtimeInteraction: { interactionId: string; kind: string } })
+              .runtimeInteraction.interactionId,
+            kind: (item as typeof item & { runtimeInteraction: { interactionId: string; kind: string } })
+              .runtimeInteraction.kind,
+          }
+        : undefined,
+    ),
+    [
+      { interactionId: 'choice-1', kind: 'question' },
+      { interactionId: 'approval-1', kind: 'approval' },
+      { interactionId: 'elicitation-1', kind: 'elicitation' },
+    ],
+  );
+  const projectedQuestion = pending.items.find((item) => item.decisionRef === 'f306.runtime_interaction:choice-1');
+  assert.equal(projectedQuestion?.choiceRequest?.interactionId, 'choice-1');
+  assert.equal(projectedQuestion?.choiceRequest?.questions[0]?.question, 'Where should I run this?');
+  assert.equal(projectedQuestion?.linkedNeedsMe.length, 1);
 
   await store.settle({
     interactionId: 'choice-1',
@@ -118,9 +135,67 @@ test('pending native questions enter decision-qualified attention once and termi
   });
   linked = false;
   const answered = await read();
-  assert.equal(answered.totalCount, 0);
-  assert.equal(answered.attentionCount, 0);
-  assert.deepEqual(answered.items, []);
+  assert.equal(answered.totalCount, 2);
+  assert.equal(answered.attentionCount, 2);
+  assert.deepEqual(
+    answered.items.map((item) => item.decisionRef),
+    ['f306.runtime_interaction:approval-1', 'f306.runtime_interaction:elicitation-1'],
+  );
+});
+
+test('an exact F306 approval alias merges only on owner, requester, card and revision', async (t) => {
+  const app = Fastify();
+  t.after(() => app.close());
+  const exact = {
+    ...approval('approval-1', 'F306'),
+    requesterCatId: owner.catId,
+    navigation: {
+      state: 'anchored' as const,
+      originRef: { kind: 'message' as const, threadId: owner.threadId, messageId: 'message-approval-1' },
+      approvalCardRef: { threadId: owner.threadId, messageId: 'message-approval-1' },
+    },
+    needsMeDecisionRefs: [{ producerId: 'f306.runtime_interaction' as const, subjectRef: 'approval-1', revision: 10 }],
+  };
+  let row = exact;
+  app.get('/api/approval-hub/pending', async () => ({ items: [row], coverage: { state: 'complete' } }));
+  app.get('/api/entrusted-work/needs-me', async () => ({ ownerReads: [], coverage: { state: 'complete' } }));
+  const store = await populatedStore();
+
+  const merged = await readCompanionDecisionProjection(
+    app,
+    'owner',
+    { offset: 0, limit: 20 },
+    undefined,
+    undefined,
+    store,
+  );
+  assert.equal(merged.totalCount, 3);
+  assert.equal(merged.items.filter((item) => item.decisionRef === 'f306.runtime_interaction:approval-1').length, 1);
+  assert.equal(
+    (
+      merged.items.find((item) => item.decisionRef === 'f306.runtime_interaction:approval-1') as
+        | ((typeof merged.items)[number] & { runtimeInteraction?: { kind: string } })
+        | undefined
+    )?.runtimeInteraction?.kind,
+    'approval',
+  );
+
+  row = {
+    ...exact,
+    needsMeDecisionRefs: [{ producerId: 'f306.runtime_interaction' as const, subjectRef: 'approval-1', revision: 11 }],
+  };
+  const conflict = await readCompanionDecisionProjection(
+    app,
+    'owner',
+    { offset: 0, limit: 20 },
+    undefined,
+    undefined,
+    store,
+  );
+  assert.equal(conflict.totalCount, undefined);
+  assert.equal(conflict.attentionCount, undefined);
+  assert.equal(conflict.items.filter((item) => item.decisionRef === 'f306.runtime_interaction:approval-1').length, 2);
+  assert.ok(conflict.consistency.reasons.includes('producer_version_or_link_unverified'));
 });
 
 test('an unavailable structured-choice source withholds every exact attention count', async (t) => {
@@ -223,7 +298,12 @@ test('a Task-linked question at a conflicting producer revision stays visible bu
   assert.equal(result.status, 'available');
   assert.equal(result.consistency.state, 'uncertain');
   assert.ok(result.consistency.reasons.includes('producer_version_or_link_unverified'));
-  assert.equal(result.items.length, 2, 'conflicting revisions remain separate evidence instead of false dedupe');
+  assert.equal(
+    result.items.filter((item) => item.decisionRef === 'f306.runtime_interaction:choice-1').length,
+    2,
+    'conflicting revisions remain separate evidence instead of false dedupe',
+  );
+  assert.equal(result.items.length, 4, 'the other two pending runtime kinds remain visible');
   assert.equal(result.totalCount, undefined);
   assert.equal(result.attentionCount, undefined);
 });
@@ -313,9 +393,15 @@ test('decision-qualified count includes open approvals and native questions, but
     undefined,
     await populatedStore(),
   );
-  assert.equal(result.totalCount, 3);
-  assert.equal(result.attentionCount, 2);
-  assert.deepEqual(result.items.map((item) => item.kind).sort(), ['approval', 'judgment', 'repair']);
+  assert.equal(result.totalCount, 5);
+  assert.equal(result.attentionCount, 4);
+  assert.deepEqual(result.items.map((item) => item.kind).sort(), [
+    'approval',
+    'judgment',
+    'judgment',
+    'judgment',
+    'repair',
+  ]);
 
   const paged = await readCompanionDecisionProjection(
     app,
@@ -327,8 +413,8 @@ test('decision-qualified count includes open approvals and native questions, but
   );
   assert.equal(paged.items.length, 1);
   assert.equal(paged.page.hasMore, true);
-  assert.equal(paged.totalCount, 3, 'totalCount remains full-source, not current-page length');
-  assert.equal(paged.attentionCount, 2, 'decision-qualified count remains full-source, not current-page length');
+  assert.equal(paged.totalCount, 5, 'totalCount remains full-source, not current-page length');
+  assert.equal(paged.attentionCount, 4, 'decision-qualified count remains full-source, not current-page length');
 });
 
 test('the callback consumer reads the same structured-choice source and exact count', async (t) => {
@@ -345,6 +431,6 @@ test('the callback consumer reads the same structured-choice source and exact co
 
   const response = await app.inject('/api/callbacks/companion/decisions?view=unified');
   assert.equal(response.statusCode, 200);
-  assert.equal(response.json().attentionCount, 1);
+  assert.equal(response.json().attentionCount, 3);
   assert.equal(response.json().items[0]?.choiceRequest.interactionId, 'choice-1');
 });

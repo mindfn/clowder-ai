@@ -45,6 +45,7 @@ export interface AuthorizeOptions {
 export interface ApprovalHost {
   /** Presentation only; the classic permissive host supplies no variant. */
   readonly presentation?: 'mailbox';
+  readonly decisionWords?: { approve: string; reject: string; clear: string };
   readonly originalPlaceAction?: ReactNode;
   /** Writes are locked for this card. Editing, cancel and Escape stay available. */
   readonly writesLocked: boolean;

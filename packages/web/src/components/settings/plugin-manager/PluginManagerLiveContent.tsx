@@ -41,6 +41,7 @@ export function PluginManagerLiveContent({
   const listGeneration = useRef(0);
   const detailGeneration = useRef(0);
   const mounted = useRef(true);
+  const enableRequests = useRef(new Set<string>());
 
   const loadDetail = useCallback(async (pluginId: string, afterMutation = false) => {
     const generation = ++detailGeneration.current;
@@ -100,12 +101,14 @@ export function PluginManagerLiveContent({
       const generation = ++listGeneration.current;
       try {
         const value = await fetchManagerList(search, afterMutation);
-        if (!mounted.current || generation !== listGeneration.current) return;
+        if (!mounted.current) return;
+        if (generation !== listGeneration.current) return value;
         setSnapshot(value);
         const current = selectedPluginIdRef.current;
         if (current && value.plugins.some((plugin) => plugin.pluginId === current)) {
           await loadDetail(current, afterMutation);
         }
+        return value;
       } catch {
         if (!mounted.current || generation !== listGeneration.current) return;
         setError('插件列表加载失败；现有状态没有被改写。');
@@ -124,7 +127,9 @@ export function PluginManagerLiveContent({
     };
   }, [loadList]);
 
-  const refresh = useCallback(() => loadList(query.current, true), [loadList]);
+  const refresh = useCallback(async () => {
+    await loadList(query.current, true);
+  }, [loadList]);
 
   const configure = useCallback(
     async (pluginId: string, updates: readonly ConfigurationUpdate[]) => {
@@ -197,6 +202,29 @@ export function PluginManagerLiveContent({
         }
       : fixture;
   });
+  const requestEnable = useCallback(
+    async (pluginId: string) => {
+      if (enableRequests.current.has(pluginId)) return;
+      enableRequests.current.add(pluginId);
+      setBusyPluginId(pluginId);
+      setError(null);
+      try {
+        const latest = await loadList(query.current, true);
+        if (!mounted.current || !latest) return;
+        const plugin = latest.plugins.find((candidate) => candidate.pluginId === pluginId);
+        if (!plugin?.actions.setEnabled || plugin.lifecycleRevision === null || plugin.intent === 'enabled') return;
+        await mutate(pluginId, `/api/plugin-manager/plugins/${encodeURIComponent(pluginId)}/set-enabled`, {
+          enabled: true,
+          expectedRevision: plugin.lifecycleRevision,
+        });
+      } finally {
+        enableRequests.current.delete(pluginId);
+        if (mounted.current) setBusyPluginId(null);
+      }
+    },
+    [loadList, mutate],
+  );
+
   const compatibilityIds = new Set(compatibilityFixtures.map((plugin) => plugin.id));
   const fixtures = plugins
     .filter((plugin) => !compatibilityIds.has(plugin.pluginId))
@@ -210,6 +238,7 @@ export function PluginManagerLiveContent({
       fixtures={[...fixtures, ...compatibilityPresentation]}
       renderCompatibilityDetail={renderCompatibilityDetail}
       onStateChanged={refresh}
+      onRequestEnable={requestEnable}
       catalogStatus={snapshot?.catalog.status ?? 'fresh'}
       catalogMessage={snapshot?.catalog.message}
       loading={snapshot === null && error === null}

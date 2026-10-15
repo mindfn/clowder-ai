@@ -13,6 +13,7 @@ import {
   dotEventRefSchema,
   dotSubscriptionArguments,
 } from '../domains/cats/services/cloud-bridge/dot/dot-mcp-contract.js';
+import { dotEventValidationDiagnostics } from './dot-event-validation.js';
 
 const rpcSchema = z
   .object({
@@ -30,6 +31,10 @@ const subscription = z
     delivery: delivery.extend({ secret: z.string().max(256) }),
     cursor: z.null().optional(),
     ttlMs: z.number().int().positive().nullable().optional(),
+    // Protocol metadata is never an author, owner, or permission selector.
+    _meta: z.record(z.unknown()).optional(),
+    // dot has no replay; the protocol says to ignore this bound with cursor:null.
+    maxAgeMs: z.number().int().nonnegative().optional(),
   })
   .strict();
 const unsubscribe = z
@@ -38,9 +43,12 @@ const unsubscribe = z
     arguments: dotSubscriptionArguments,
     delivery,
     cursor: z.null().optional(),
+    _meta: z.record(z.unknown()).optional(),
   })
   .strict();
-const toolCall = z.object({ name: z.string(), arguments: z.unknown() }).strict();
+const toolCall = z
+  .object({ name: z.string(), arguments: z.unknown(), _meta: z.record(z.unknown()).optional() })
+  .strict();
 
 export function registerDotMcpRoutes(
   app: FastifyInstance,
@@ -82,7 +90,11 @@ export function registerDotMcpRoutes(
           if (method === 'notifications/initialized') return reply.code(202).send();
           return reply.code(400).send({ error: 'request_id_required' });
         }
-        const response = (result: unknown) => ({ jsonrpc: '2.0', id, result });
+        const response = (result: Record<string, unknown>) => ({
+          jsonrpc: '2.0',
+          id,
+          result: { resultType: 'complete', ...result },
+        });
         try {
           if (method === 'server/discover')
             return response({
@@ -101,7 +113,19 @@ export function registerDotMcpRoutes(
           if (method === 'tools/list') return response({ tools: DOT_TOOLS });
           if (shared) secret = (await options.connection.authenticateSharedConnection(secret)).credentialSecret;
           if (method === 'events/subscribe') {
-            const input = subscription.parse(params);
+            const parsedSubscription = subscription.safeParse(params);
+            if (!parsedSubscription.success) {
+              request.log.warn(
+                {
+                  dotMethod: method,
+                  dotFailureReason: 'invalid_parameters',
+                  ...dotEventValidationDiagnostics(parsedSubscription.error),
+                },
+                'dot_subscription_failed',
+              );
+              return { jsonrpc: '2.0', id, error: { code: -32602, message: 'Invalid parameters' } };
+            }
+            const input = parsedSubscription.data;
             request.log.info(
               { dotMethod: method, callbackHostname: new URL(input.delivery.url).hostname },
               'dot_subscription_received',
@@ -149,7 +173,7 @@ export function registerDotMcpRoutes(
           if (error instanceof z.ZodError) {
             if (method === 'events/subscribe')
               request.log.warn(
-                { dotMethod: method, dotFailureReason: 'invalid_parameters' },
+                { dotMethod: method, dotPhase: 'connection_or_service', dotFailureReason: 'invalid_parameters' },
                 'dot_subscription_failed',
               );
             return { jsonrpc: '2.0', id, error: { code: -32602, message: 'Invalid parameters' } };

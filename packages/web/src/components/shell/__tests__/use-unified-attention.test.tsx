@@ -17,7 +17,7 @@ const source = (overrides: Record<string, unknown> = {}) => ({
 });
 
 function readBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
+  const body: Record<string, unknown> = {
     version: 1,
     status: 'available',
     scope: 'owner_all_projects',
@@ -31,6 +31,30 @@ function readBody(overrides: Record<string, unknown> = {}): Record<string, unkno
     page: { offset: 0, limit: 20, scope: 'known_rows', hasMore: false },
     ...overrides,
   };
+  body.sources = { ...(body.sources as Record<string, unknown>), personalPreferences: source() };
+  body.items = (body.items as Array<Record<string, unknown>>).map((item) => ({
+    ...item,
+    preferenceCoordinate: { kind: 'mailbox', decisionRef: item.decisionRef, version: 'sha256:server-version' },
+  }));
+  if (!('attentionCount' in overrides)) body.attentionCount = body.totalCount;
+  body.personalView =
+    'personalView' in overrides
+      ? overrides.personalView
+      : {
+          mode: 'visible',
+          ...(typeof body.totalCount === 'number'
+            ? {
+                preferenceRevision: 4,
+                originalTotalCount: body.totalCount,
+                visibleTotalCount: body.totalCount,
+                ignoredTotalCount: 0,
+                originalAttentionCount: body.attentionCount,
+                visibleAttentionCount: body.attentionCount,
+                ignoredAttentionCount: 0,
+              }
+            : {}),
+        };
+  return body;
 }
 
 interface Deferred {
@@ -88,12 +112,61 @@ describe('useUnifiedAttention — one verified read of the owner’s attention',
     await mount();
 
     expect(UNIFIED_ATTENTION_PATH).toBe(
-      '/api/concierge/work/decisions?view=unified&includeUserMentions=true&offset=0&limit=20',
+      '/api/concierge/work/decisions?view=unified&includeUserMentions=true&offset=0&limit=20&personalView=visible',
     );
     expect(mocks.apiFetch).toHaveBeenCalledWith(UNIFIED_ATTENTION_PATH, expect.anything(), { afterCurrentGet: true });
     expect(mocks.apiFetch).toHaveBeenCalledWith('/api/session', expect.anything());
     expect(latest.result.kind).toBe('ok');
     expect(latest.staleRead).toBeNull();
+  });
+
+  it('refuses an old canonical response to a personal-view request', async () => {
+    route(() => Promise.resolve(Response.json(readBody({ personalView: undefined }))));
+    await mount();
+    expect(latest.result).toEqual({ kind: 'failed', reason: 'unavailable' });
+  });
+
+  it('reads ignored items from the same owner and refuses a response for the other mode', async () => {
+    route(() => Promise.resolve(Response.json(readBody())));
+    await mount();
+    expect(latest.setPersonalView).toBeTypeOf('function');
+    mocks.apiFetch.mockImplementation((path: string) => {
+      if (path === '/api/session') return Promise.resolve(Response.json({ userId: 'owner-1' }));
+      return Promise.resolve(
+        Response.json(
+          readBody({
+            personalView: {
+              mode: 'ignored',
+              preferenceRevision: 4,
+              originalTotalCount: 2,
+              visibleTotalCount: 1,
+              ignoredTotalCount: 1,
+              originalAttentionCount: 2,
+              visibleAttentionCount: 1,
+              ignoredAttentionCount: 1,
+            },
+          }),
+        ),
+      );
+    });
+    await act(async () => latest.setPersonalView?.('ignored'));
+    expect(mocks.apiFetch).toHaveBeenCalledWith(
+      UNIFIED_ATTENTION_PATH.replace('personalView=visible', 'personalView=ignored'),
+      expect.anything(),
+      { afterCurrentGet: true },
+    );
+    expect(latest.result.kind === 'ok' && latest.result.read.personalView?.mode).toBe('ignored');
+    route(() => Promise.resolve(Response.json(readBody())));
+    await act(async () => latest.refetch());
+    expect(latest.result).toEqual({ kind: 'failed', reason: 'unavailable' });
+  });
+
+  it('refreshes exact counts after the existing personal preference writer reports a change', async () => {
+    route(() => Promise.resolve(Response.json(readBody())));
+    await mount();
+    const before = latest.readsStarted();
+    await fire('cat-cafe:ignored-item-preferences-updated');
+    expect(latest.readsStarted()).toBe(before + 1);
   });
 
   it('reads the next and previous owner-fenced pages, and invalidation brings new requests back to page one', async () => {

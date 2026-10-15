@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { test } from 'node:test';
 import { ensureWorkspaceOpen } from './f307-workspace-open.mjs';
 import { fulfillFixtureApi } from './f309-ordinary-workspace-journey-actions.mjs';
 import { createReviewState } from './f309-ordinary-workspace-journey-fixture.mjs';
-import { openAnnotationSave } from './fixtures/f309-artwork-controls.mjs';
 
 export function registerOrdinaryImageJourney(suite) {
   test(
@@ -12,6 +12,17 @@ export function registerOrdinaryImageJourney(suite) {
     { timeout: 90_000 },
     async () => {
       const state = createReviewState();
+      // A persisted discussion remains reachable after the new Chat-primary canvas replaces its old comment form.
+      state.annotations.push({
+        id: 'ordinary-annotation',
+        anchor: { baseRevision: state.fixture.revision, anchor: { kind: 'image-point', x: 45, y: 40 } },
+        body: '这处在普通文件里需要保留讨论。',
+        author: { kind: 'human', actorId: 'operator' },
+        createdAt: '2026-09-18T00:00:00.000Z',
+        updatedAt: '2026-09-18T00:00:00.000Z',
+        state: 'open',
+        replies: [],
+      });
       const actionKinds = [];
       const { browser, baseUrl } = suite();
       const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -38,7 +49,7 @@ export function registerOrdinaryImageJourney(suite) {
         await page.getByTestId('workspace-content-review-media').waitFor();
         await assertArtworkLayout(page, 'desktop');
 
-        await page.getByRole('button', { name: '标注', exact: true }).click();
+        await page.getByRole('button', { name: '画笔', exact: true }).click();
         await page.getByRole('button', { name: '形状', exact: true }).click();
         await page.getByRole('button', { name: '矩形', exact: true }).click();
         const canvas = page.getByTestId('review-markup-layer');
@@ -55,25 +66,32 @@ export function registerOrdinaryImageJourney(suite) {
         await page.getByRole('button', { name: '完成并保存', exact: true }).click();
         await page.getByTestId('review-saved-markup-layer').waitFor();
 
-        await page.getByRole('button', { name: '评论', exact: true }).click();
-        const media = page.getByTestId('workspace-content-review-media');
-        const mediaBox = await media.boundingBox();
-        assert.ok(mediaBox);
-        await page.mouse.click(mediaBox.x + mediaBox.width * 0.45, mediaBox.y + mediaBox.height * 0.4);
-        await page.getByPlaceholder('写下这条批注…').fill('这处在普通文件里需要保留讨论。');
+        await page.getByRole('button', { name: '圈选', exact: true }).click();
+        assert.equal(await page.getByPlaceholder('写下这条批注…').count(), 0);
+        const selectedStage = await page.getByTestId('review-media-stage').boundingBox();
+        assert.ok(selectedStage);
+        await page.mouse.move(
+          selectedStage.x + selectedStage.width * 0.2,
+          selectedStage.y + selectedStage.height * 0.2,
+        );
+        await page.mouse.down();
+        await page.mouse.move(
+          selectedStage.x + selectedStage.width * 0.4,
+          selectedStage.y + selectedStage.height * 0.4,
+        );
+        await page.mouse.up();
+        await page.getByTestId('review-pending-chat-mark').waitFor();
         await page
           .getByTestId('workspace-content-review-surface')
           .screenshot({ path: '/tmp/cat-cafe-evidence/f309-artwork-integration/desktop-comment.png' });
-        // Alpha 2026-09-24 A1: the bottom discussion button opens the drawer without ending comment mode.
+        await page.getByLabel('图片更多操作', { exact: true }).click();
         await page.getByRole('button', { name: '打开作品讨论', exact: true }).click();
         await page.getByRole('complementary', { name: '作品讨论', exact: true }).waitFor();
         assert.equal(
           await page.getByRole('region', { name: '作品画布工具' }).getAttribute('data-review-mode'),
           'comment',
         );
-        assert.equal(await page.getByPlaceholder('写下这条批注…').inputValue(), '这处在普通文件里需要保留讨论。');
         await page.getByRole('button', { name: '关闭讨论', exact: true }).click();
-        await (await openAnnotationSave(page)).click();
         await page.getByTestId('review-canvas-annotation-mark').waitFor();
         assert.equal(await page.getByRole('dialog', { name: '评论这处画面' }).count(), 0);
         const annotationMark = page.getByTestId('review-canvas-annotation-mark');
@@ -104,11 +122,11 @@ export function registerOrdinaryImageJourney(suite) {
         assert.deepEqual(actionKinds, ['add_visual_marks', 'reply', 'set_annotation_state']);
 
         await page.getByRole('button', { name: '关闭讨论', exact: true }).click();
-        await page.getByRole('button', { name: '退出评论', exact: true }).click();
+        await page.getByRole('button', { name: '圈选', exact: true }).click();
         await page.setViewportSize({ width: 390, height: 844 });
         await assertArtworkLayout(page, 'mobile');
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-        await page.getByRole('button', { name: '返回来源', exact: true }).click();
+        await page.getByRole('button', { name: '‹ 工具搜索', exact: true }).click();
         await page.getByTestId('workspace-launcher-home').waitFor();
         assert.equal(await page.getByTestId('workspace-launcher-search').inputValue(), 'cover');
         await page.getByTestId('workspace-launcher-file-result').filter({ hasText: '文件名' }).waitFor();
@@ -128,26 +146,86 @@ export function registerOrdinaryImageJourney(suite) {
   );
 }
 
-async function assertArtworkLayout(page, name) {
+export async function assertArtworkLayout(page, name) {
   const surface = page.getByTestId('workspace-content-review-surface');
   assert.equal(await surface.locator('textarea').count(), 0, 'viewing artwork must not require a comment form');
   assert.doesNotMatch(await surface.innerText(), /F309|owner-native|Workspace owner/);
-  const canvas = await page.getByTestId('workspace-review-artwork').boundingBox();
-  const toolbar = await page.getByRole('region', { name: '作品画布工具' }).boundingBox();
-  const media = await page.getByTestId('workspace-content-review-media').boundingBox();
-  assert.ok(canvas && toolbar && media);
-  assert.ok(canvas.height > 250, 'the artwork has usable height in its real Workspace host');
-  for (const box of [toolbar, media]) {
-    assert.ok(
-      box.x >= canvas.x &&
-        box.y >= canvas.y &&
-        box.x + box.width <= canvas.x + canvas.width + 1 &&
-        box.y + box.height <= canvas.y + canvas.height + 1,
-      'controls and media stay inside their own canvas',
-    );
+  const geometry = await settledArtworkGeometry(surface, page.viewportSize());
+  const evidence = process.env.F309_ARTWORK_EVIDENCE_DIR ?? '/tmp/cat-cafe-evidence/f309-artwork-integration';
+  await mkdir(evidence, { recursive: true });
+  await writeFile(path.join(evidence, `${name}-geometry.json`), `${JSON.stringify(geometry, null, 2)}\n`);
+  const detail = `${name}: ${JSON.stringify(geometry)}`;
+  const { canvas, toolbar, media } = geometry.last;
+  try {
+    assert.ok(geometry.settled, `artwork layout did not settle within 2000ms; ${detail}`);
+    assert.ok(canvas && toolbar && media, detail);
+    assert.ok(canvas.height > 250, `the artwork has usable height in its real Workspace host; ${detail}`);
+    for (const [element, box] of Object.entries({ toolbar, media })) {
+      assert.ok(
+        box.x >= canvas.x &&
+          box.y >= canvas.y &&
+          box.x + box.width <= canvas.x + canvas.width + 1 &&
+          box.y + box.height <= canvas.y + canvas.height + 1,
+        `controls and media stay inside their own canvas (${element}); ${detail}`,
+      );
+    }
+    assert.ok(toolbar.y >= media.y + media.height - 1, `tools stay below the visible artwork; ${detail}`);
+  } catch (error) {
+    // Preserve the sampled boxes before a screenshot can itself flush another layout.
+    await page.screenshot({ path: path.join(evidence, `${name}-failure.png`), timeout: 2000 }).catch(() => {});
+    throw error;
   }
-  assert.ok(toolbar.y >= media.y + media.height - 1, 'tools stay below the visible artwork');
-  await mkdir('/tmp/cat-cafe-evidence/f309-artwork-integration', { recursive: true });
-  await surface.screenshot({ path: `/tmp/cat-cafe-evidence/f309-artwork-integration/${name}.png` });
-  await page.screenshot({ path: `/tmp/cat-cafe-evidence/f309-artwork-integration/${name}-host.png`, fullPage: true });
+  await surface.screenshot({ path: path.join(evidence, `${name}.png`) });
+  await page.screenshot({ path: path.join(evidence, `${name}-host.png`), fullPage: true });
+}
+
+function settledArtworkGeometry(surface, expectedViewport) {
+  return surface.evaluate(
+    (root, expected) =>
+      new Promise((resolve) => {
+        const started = performance.now();
+        const changes = [];
+        let last, previous, stableSince, frame;
+        let stableFrames = 0;
+        const box = (selector) => {
+          const element = root.querySelector(selector);
+          return root.isConnected && element?.getClientRects().length ? element.getBoundingClientRect().toJSON() : null;
+        };
+        const finish = (settled) => {
+          clearTimeout(deadline);
+          cancelAnimationFrame(frame);
+          resolve({ settled, elapsedMs: performance.now() - started, expectedViewport: expected, last, changes });
+        };
+        const deadline = setTimeout(() => finish(false), 2000);
+        const sample = () => {
+          // All three boxes belong to this browser frame, never three separate protocol round trips.
+          last = {
+            viewport: { width: innerWidth, height: innerHeight },
+            canvas: box('[data-testid="workspace-review-artwork"]'),
+            toolbar: box('[aria-label="作品画布工具"]'),
+            media: box('[data-testid="workspace-content-review-media"]'),
+            fontsReady: document.fonts.status === 'loaded',
+          };
+          const now = performance.now();
+          const key = JSON.stringify(last);
+          if (key !== previous) {
+            changes.push({ elapsedMs: now - started, ...last });
+            changes.splice(0, Math.max(0, changes.length - 8));
+            stableSince = now;
+            stableFrames = 0;
+            previous = key;
+          }
+          stableFrames += 1;
+          const ready =
+            last.fontsReady &&
+            Object.entries(expected ?? {}).every(([axis, value]) => last.viewport[axis] === value) &&
+            [last.canvas, last.toolbar, last.media].every((rect) => rect?.width > 0 && rect?.height > 0);
+          // Stability is independent of containment: a stable overflow must still fail the assertion above.
+          if (ready && stableFrames >= 3 && now - stableSince >= 100) return finish(true);
+          frame = requestAnimationFrame(sample);
+        };
+        sample();
+      }),
+    expectedViewport,
+  );
 }

@@ -101,7 +101,7 @@ triggers:
 
 - 一页/PPT：叙事稿 → ppt-forge；已具备明确图稿 → image-generation。
 - 文章：叙事稿 → tech-writing。
-- Agent 产品片：叙事稿 → agent-product-promo-director，再由制作技能落地。
+- Agent 产品片：叙事稿 → video-forge 落地。
 - 用户要复盘：分别写故事中与制作中的贡献，不强行追加媒体制作。
 
 压力检查与近似反例见 [回放场景](refs/pressure-cases.md)。检查能否防住具体失败即可；不把一次看图认可或一次试写宣称为普遍效用证明。

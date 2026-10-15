@@ -3,6 +3,7 @@ import type { RuntimeInteractionRecord } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { SocketManager } from '../../infrastructure/websocket/index.js';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
+import type { RuntimeConversationReturnGateway } from './ports/RuntimeConversationReturnGateway.js';
 import type { RuntimeInteractionStore } from './ports/RuntimeInteractionStore.js';
 import { MessageRuntimeInteractionCardPublisher } from './RuntimeInteractionCardPublisher.js';
 import { RuntimeInteractionService } from './RuntimeInteractionService.js';
@@ -16,6 +17,8 @@ export interface RuntimeInteractionRuntime {
   store: RuntimeInteractionStore;
   service: RuntimeInteractionService;
   startupInvalidated: RuntimeInteractionRecord[];
+  bindConversationReturnGateway(gateway: RuntimeConversationReturnGateway): Promise<RuntimeInteractionRecord[]>;
+  dispose(): void;
 }
 
 export async function createRuntimeInteractionRuntime(input: {
@@ -23,6 +26,7 @@ export async function createRuntimeInteractionRuntime(input: {
   messageStore: IMessageStore;
   socketManager: RuntimeInteractionSocket;
   hostEpoch?: string;
+  onSweepError?: (error: unknown) => void;
 }): Promise<RuntimeInteractionRuntime> {
   const store: RuntimeInteractionStore = input.redis
     ? new RedisRuntimeInteractionStore(input.redis)
@@ -35,9 +39,45 @@ export async function createRuntimeInteractionRuntime(input: {
       socketManager: input.socketManager,
     }),
     onRecordUpdated: (record) => emitRuntimeInteractionRecordUpdate(input.socketManager, record),
+    ...(input.onSweepError ? { onRecoveryError: input.onSweepError } : {}),
   });
   const startupInvalidated = await service.invalidateOrphansOnStartup();
-  return { store, service, startupInvalidated };
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let sweep: Promise<RuntimeInteractionRecord[]> | undefined;
+  const runSweep = (): Promise<RuntimeInteractionRecord[]> => {
+    if (sweep) return sweep;
+    sweep = service
+      .recoverConversationCreations()
+      .then(async (creations) => {
+        const [submissions, deadlines] = await Promise.all([
+          service.recoverConversationSubmissions(),
+          service.reconcileConversationDeadlines(),
+        ]);
+        return [...creations, ...submissions, ...deadlines];
+      })
+      .finally(() => {
+        sweep = undefined;
+      });
+    return sweep;
+  };
+  return {
+    store,
+    service,
+    startupInvalidated,
+    async bindConversationReturnGateway(gateway) {
+      service.bindConversationReturnGateway(gateway);
+      const initial = await runSweep();
+      if (!timer) {
+        timer = setInterval(() => void runSweep().catch((error) => input.onSweepError?.(error)), 1_000);
+        timer.unref();
+      }
+      return initial;
+    },
+    dispose() {
+      if (timer) clearInterval(timer);
+      timer = undefined;
+    },
+  };
 }
 
 export function emitRuntimeInteractionRecordUpdate(

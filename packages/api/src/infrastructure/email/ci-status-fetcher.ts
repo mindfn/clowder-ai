@@ -15,6 +15,9 @@ export type GhExecFileAsync = (file: string, args: readonly string[], options: u
 
 export interface FetchPrCiStatusOptions {
   readonly ghToken?: string;
+  readonly timeoutMs?: number;
+  /** Keep tick admission bounded; enrich failures during per-PR execution. */
+  readonly deferFailureDetails?: boolean;
   /** Scheduler cancellation for every gh process in this poll generation. */
   readonly signal?: AbortSignal;
   /** Test seam at the real gh JSON boundary; production always uses node:child_process. */
@@ -36,6 +39,7 @@ export async function fetchPrCiStatus(
   log: MinimalLog,
   options: FetchPrCiStatusOptions = {},
 ): Promise<CiPollResult | null> {
+  const observedAt = Date.now();
   let prViewJson: string;
   try {
     const { stdout } = await executeGh(
@@ -71,6 +75,15 @@ export async function fetchPrCiStatus(
     log.warn(`[ci-status] Failed to parse gh pr view output for ${repoFullName}#${prNumber}`);
     return null;
   }
+  if (
+    !prView ||
+    typeof prView.headRefOid !== 'string' ||
+    !prView.headRefOid ||
+    !['OPEN', 'CLOSED', 'MERGED'].includes(prView.state)
+  ) {
+    log.warn(`[ci-status] Missing PR/HEAD facts for ${repoFullName}#${prNumber}`);
+    return null;
+  }
 
   const prState = normalizePrState(prView.state, prView.mergedAt);
   if (prState === 'merged' || prState === 'closed') {
@@ -81,6 +94,7 @@ export async function fetchPrCiStatus(
       prState,
       aggregateBucket: 'pending',
       checks: [],
+      observedAt,
       mergedByLogin: prView.mergedBy?.login,
     };
   }
@@ -89,7 +103,7 @@ export async function fetchPrCiStatus(
   const aggregateBucket = computeAggregateBucket(rollup);
 
   let checks: CiCheckDetail[] = [];
-  if (aggregateBucket !== 'pending') {
+  if (aggregateBucket !== 'pending' && !options.deferFailureDetails) {
     checks = await fetchCheckDetails(repoFullName, prNumber, prView.headRefOid, log, options);
   }
 
@@ -101,7 +115,26 @@ export async function fetchPrCiStatus(
     aggregateBucket,
     checkRollup: rollup.length === 0 ? 'empty' : 'present',
     checks,
+    observedAt,
+    ...(aggregateBucket === 'fail' && options.deferFailureDetails ? { failureDetailsPending: true } : {}),
   };
+}
+
+export async function enrichPrCiFailure(
+  poll: CiPollResult,
+  log: MinimalLog,
+  options: FetchPrCiStatusOptions,
+): Promise<CiPollResult> {
+  // Failure details were deferred: GitHub may have received another push or a
+  // same-HEAD rerun meanwhile. Re-read CI truth before consuming those details.
+  const complete = await fetchPrCiStatus(poll.repoFullName, poll.prNumber, log, {
+    ...options,
+    deferFailureDetails: false,
+  });
+  if (!complete) throw new Error(`CI rollup unavailable for ${poll.repoFullName}#${poll.prNumber}; retry next poll`);
+  if (!poll.fullRollupPending && complete.prState === 'open' && complete.headSha !== poll.headSha)
+    throw new Error(`Stale CI snapshot for ${poll.repoFullName}#${poll.prNumber}; retry current HEAD`);
+  return complete;
 }
 
 async function fetchCheckDetails(

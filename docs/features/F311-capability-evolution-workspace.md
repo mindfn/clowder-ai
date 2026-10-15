@@ -77,6 +77,8 @@ mcp_admission_claims:
 
 > **Status**: in-progress (v6 product-experience contract; v5 final-vision phases; Gate 0A + Phase 1–3 landed; Phase 4 implementation landed; roadshow retained as Phase 1 regression; operator-selected F314/F100 full-loop AC-41–44 and AC-UX4 remain open on owner-backed asset/evidence/outcome truth) | **Product phase owner**: Maine Coon (@codex-sol, gpt-5.6-sol)（本轮 operator 指定执行） | **Architecture co-creator/reviewer**: Ragdoll (@fable5, claude-fable-5) | **Priority**: P0
 >
+> **2026-10-14 v2 用户旅程**：operator 要求在新版界面尽快走通 F311 旅程，并用 F314 事故档案建立第一条真实进化谱系。计划见 [v2 用户旅程开发计划](#v2-用户旅程开发计划2026-10-14-起)，新增 AC-UX6；S1 已合入 #5532，独立 Alpha 样本复验通过，设计确认形状并要求在 S2 补首页内容。消费者登记补丁 #5537 已独立审合；S2 准备主区及首页遗漏已合入 #5541，设计已接受内容保留、两处修正并入 S3；隔离 Alpha 两样本准备旅程已通过，S3–S6 与 AC-UX6 仍开放。
+>
 >
 > **operator signoff**: 2026-08-28 [thread-id] `0001787926983474`（今年双旗舰之一，与 F310 Growing 并列）。
 > **v1 修订**: 2026-08-28 owner review by @codex-sol（`0001787928166311` 后续 verdict，CHANGES_REQUESTED 六 P1）——核心纠偏：**引用不是所有权**；F311 是薄联邦控制面，不私藏任何领域真相。
@@ -441,6 +443,70 @@ Meta Evolution 的正式定义为：**能力对象与改进机制的协同演进
 - **Success evidence**: 一条真实跨仓 journey 的 owner-authenticated action、exact target/version、PR或等价 review、deploy/rollback 与 fresh outcome receipts 全部可从 Workbench 下钻；F311 本地没有外部资产副本或影子治理状态
 - **Non-goals**: 未经 owner 授权修改外仓；把执行 Agent 当 value owner；声称修改闭源模型权重/二进制；用手工复制、共享凭据或聊天确认绕过正式 adapter/Approval
 
+### v2 用户旅程开发计划（2026-10-14 起）
+
+**要交的结果**：You 从新版界面自己的入口，走完一条真实项目的旅程：
+设置与管理 › 能力进化 → 项目页 → 准备四块 → 探索进化（真实谱系与真实证据）→ 有候选时拍板 → 后续任务里看到来源。
+
+衡量标准是他从入口走一遍，不是切片 PASS、合入或作者样本。依据见 F314 事故档案 10-08 / 10-12 两案。
+
+**S3 首份设计已接受结构，第二份作者实现中（10-14）**：设计 source `[thread-id]#private-source-id` 接受版本卡默认态、生效/阅读分开、反例不遮、条件在结果后与双联播，并复核 S2 两 P2 已兑现；要求第二份补同场景 v1–v4 走路联播、两场 Cortex、卡片封面/改动行、父边人话说明、画布点名/分组/留白及窄屏上下录像。作者原工位分支 `feat/f311-v2-public-sources` checkpoint `93d0eb631c` 已实现并推送，尚无第二份 PR / review / 浏览器结论：以正式 resolver 的真实目标 422 为 RED，新增 exact `352afab6` / 原 F311 capability 只读来源绑定，目标与 sequence 不写；足球与 signed Cortex 归档分读，两场挂同一比赛目录的实验、无版本父边，七个执行动作仍拒绝。Cortex annotation / observations 证明 sensor/state 区别，但源码、局部观察与控制组合及120/240秒观察窗也不同；实现不称“只换反馈”或单变量改善。走路文字为北极星已有录像观察，绑定 exact replay SHA 并标出处，不伪装冻结判据；旧相同 capture 的确定性回放保留原 provenance。20 条 API、23 条组件/经典契约及类型通过，精确登记 RED→GREEN 210 条，未增单元/配额/目录豁免；元数据不是所有 consumer 的执行证据。新增旅程在既有 canonical 两文件里实跑前，正式部署的 binding、实图/原件呈现、第二份独立审合与 Alpha 仍未证明。S3、S4待F314核对、S5/S6、AC-UX6保持开放。
+
+**S3 第二份浏览器首轮 14/15，继续修复（10-14）**：checkpoint `93d0eb6` 的两 canonical browser 获准执行（receipt `29067-7819104d…` released，排队12390ms、执行172121ms），托管真实 exit1、185秒。14条旧/准备旅程通过；新增真实目标快照的四段走路及 Cortex 两段播放已通过，红在拖到9.8秒后等待两段都在10秒暂停。首轮完整日志/报告/实图保留于作者 `.cat-cafe/evidence/2026-10-14-f311-v2-s3-sources/`，未盖掉红灯。新增精准回归复现“迟到的程序化 seeking 将领先录像9.97秒拉回9.8秒”，`b49b6b45ee` 标记程序化目标直到 seeked、保留用户显式拖动；24条组件/classic与类型通过，仍需真实浏览器确认这条机制解释本次暂停失败。不会放宽10秒断言，尚无第二份 PR/review/Alpha。设计原作者已在北极星 `2825a67cc5` 更正“只换局部反馈”，第二份保持已核实的源码/控制组合/时长差别，不增父边或改善结论。
+
+**S3 第二份原件跳转修复待完整复验（10-14）**：第二轮 `b49b6b45ee` 仍14/15，托管 exit1、176秒，receipt `29088-3497d9e0…` released；失败诊断显示 Cortex 两原片在拖动后回到0秒，说明上一处程序化 seek 反馈修复没有解释完整失败。同一120秒真实原片的 Chromium HTTP 对比实验确认：旧完整响应的 seekable 为0–0，拖到9.8秒被夹回0；支持 Range 的响应暴露0–120并成功跳转。checkpoint `57d60d6b48` 复用现有字节范围解析器，先授权和核完整 SHA，再切片；补齐206/416、开放/尾部范围、越权/撤回/篡改回归。17条相关API、API构建及本次200条消费者/policy/catalog检查通过；完整证据在原作者目录 `seek-http-probe.json`、`media-range-{red,green,metadata}.log`，探针receipt `29101-069750da…` released。完整两canonical browser仍需复验；10秒暂停断言保留并新增真实 seekable 断言，第二份PR/review/Alpha和AC-UX6未完成。
+
+**鸭鸭来源核验（10-14）**：Microduck 原 owner 在执行线程 `…001015-94918a97` 只读核实，真实 `352afab6` 的 target 仍是 `F311/capability:%E7%8C%AB%E7%8C%AB%E5%B8%A6%E9%B8%AD%E9%B8%AD%E5%8D%8F%E5%90%8C%E8%B8%A2%E7%90%83%E8%B5%9B`，正式 adapter/exploration/asset/preparation GET 均为对应 owner missing/unavailable；不能把对象 alias 到旧夹具的 `microduck-owner/simulator:walking`。两场 Cortex 的可用原件根是 git `35dfed114be3ca292aac304a888d4a9519d0dbea` 下 `pipeline/cortex/evidence/20260910/manifest.json` 与两个 bundle manifest，作者回读三个 SHA-256 均与 owner 回执一致。总索引与 bundle 是归档包含关系，两场是不同实验，原件未发布版本派生；父边保留未知，不画 live1→live2，不按时序挂到 v0–v8。上述来源可以作为后续只读 adapter 的原件输入，不能反推已存在绑定、正式采用或实施权限；新版实现继续，真实 capability 的版本与探索读取仍待产出。
+
+**S1 设计反馈并入 S2**（执行线程 `…000532-1942018f`）：恢复首页「新建目标」与聊天图标，沿用 `StartEvolution` 把目标草稿带到原对话、不自动发送，并修正不存在的「下方」指向；标题旁「?」收纳概念说明。项目行补「谁在做」的头像与小名（只消费可靠的 origin / 准备活动事实，无法核实则未知，不编当前执行猫）和来自 Program `updatedAt` 的「最近」。首页只显示待判断件数并跳待办的接线仍归 S5。北极星整页首页改为右侧 Workspace、聊天留左的偏差已由设计接受，不重画这项。
+
+**两个真实对象，不新造 Program**
+- **F314 开发流程**：`evolution-program:ba0f4524e49cc879279164d5b272cf8c`，被进化对象是 F100 的 `capability:development-process-harness-effectiveness`。证书和四角色已绑定，处于 `instrumenting`。这一条承担本轮要求：用事故档案建立谱系。
+- **鸭鸭协同踢球**：`evolution-program:352afab60afb6263b8386eaed12dba03`。准备四块已提交；探索用已归档的公开数据和录像（v0–v8 与两场比赛）。这一条验证新版界面在第二种对象上也成立。
+
+**起点**（10-14 代码普查，HEAD `6245a14baa`）
+- **入口**：新版界面只能从 Workspace「+」进入能力进化，进去是原样嵌入的经典组件（`F307WorkspaceDestinationOwnerSurface.tsx:222`）。设置与管理里的「能力进化」只打开右侧面板，没有类型化的打开请求（`settings-ia.ts:62` → `use-open-destination.ts:47`）。评估仍是单独的一级入口（`settings-ia.ts:63`）。
+- **可直接复用**：项目详情与阶段条、准备阅读（窄栏 / 主区两种排法）、探索谱系与比较、媒体回放、版本审阅。读取都走 `/api/capability-evolution/programs/:id/*`。
+- **谱系数据**：F100 owner 适配器（#4517）只为 `request-review/SKILL.md` 一个文件从 git 历史读出版本、父边和差异，只实现了 `versionReview`；探索读取在没有 `explorationReview` 时退回版本目录，实验为空。
+- **还没有的**：
+  - 后续任务现场的来源行（AC-UX4）：聊天里没有任何 F311 渲染。
+  - 新版界面里走完整旅程的浏览器测试：只有「+ → 能力进化首页」一条，而且用的是空列表。
+  - 鸭鸭项目在正式环境读不到探索记录：V1 页面写「来源暂时无法提供这些探索记录」，Alpha 用的是夹具。
+
+**切片**
+
+每片的完成标准都是「从 You 在新版界面的入口能走到」。一片最多两个 PR；互不依赖的片并行做。
+
+| 片 | 做什么 | 主要复用 / 改动位置 | 走通的标准 |
+|---|---|---|---|
+| **S1 入口与项目页** | 设置与管理 › 能力进化直接打开能力进化首页（新增类型化的打开请求，不再只开面板）。首页按北极星 v2：真实项目、阶段、「这一阶段还缺」；没名字的写「尚未命名」并写来自哪个对话。评估先作为能力进化的二级页签接入现有评估面板；逐域迁移按 F322 已定的迁移依赖另走，不先删旧入口。点项目，在右侧 Workspace 打开项目页：阶段条、回到发起对话、修改项目名称、本轮判断 / 更改历史、四块准备卡（进展与可改边界分两行）、当前采用 / 本轮候选、「在主区展开阅读」 | `settings-ia.ts`、`use-open-destination.ts`、`CapabilityEvolutionWorkspace.tsx`、`CapabilityEvolutionProgramDetail.tsx`、`EvolutionJourney.tsx` | 从设置点进 F314 和鸭鸭两个项目，读到的内容和 V1 同源；416 / 320 宽不溢出 |
+| **S2 准备在主区** | 四块各自整页阅读；规约和真值来源来回跳；依据与原件往返 | `EvolutionPreparationWorkspace.tsx` 已支持主区（PREP5 已验），只做新版主区接入与视觉对齐，不重写内容 | 鸭鸭四块和 V1 逐项一致；F314 四块能读到 |
+| **S3 探索进化 v2** | 谱系里父边只表示派生，「当前生效」和「正在读」分开标；每一版挂自己的原件（录像、截图、diff、日志）；同版多次实验；选中一次实验，先给可视结果和反例，再给条件、配对与样本数，门槛未定写「未知」；两段录像可以同步播放 | `ExplorationLineage.tsx`、`ExplorationComparison.tsx`、`ExplorationMedia.tsx`；布局照北极星 v2 第 ⑦ 屏 | 鸭鸭两条线、每版录像能播；F314 谱系（S4 的数据）能读 |
+| **S5 拍板与后续沿用** | 采用审阅从待办打开，在主区展示：只批准一件事、前后对比、成套改动与归因边界、独立验证、被拒的候选、成本与回滚（AC-UX3）。同意后写「已同意，等生效回执」。新增后续任务现场的来源行，可点来源、可「回退…」（AC-UX4） | `evolution-approval-navigation.ts`、`EvolutionChangePanel.tsx`、`EvolutionVersionEvidence.tsx`；来源行是新的聊天渲染 | 等真实候选出现时验收；在那之前用隔离夹具走一遍，并标明是夹具 |
+| **S6 新版旅程测试** | 一条浏览器旅程：设置 → 能力进化首页 → 项目页 → 准备主区 → 探索进化 → 返回恢复。用真实项目形状的数据，不用空列表 | 新增，放在 `packages/web/test/browser/` | 进 canonical gate |
+
+**顺序**
+- S1 先做，它是所有人的入口。
+- S4 和 S1 同时开始，它是数据，不依赖界面。
+- S2、S3 在 S1 之后并行。
+- S5 等 S3 能读到真实谱系后再做。
+- S6 跟着 S1–S3 一起长。
+
+**这一轮不做**
+- 不新建 Program，不改 F314 本期验收边界。
+- 不为「制造」新版本去改任何 harness 资产；谱系只读已经发生的历史。
+- 谱系不形成 keep / tune / sunset，也不当作哪一版有效的证明。F314 Phase C 规定多个变量不进同一评估；要评估某个机制，另立 E0 合格的 claim / Program。
+- 不把 V1 的旧组件原样塞进新版入口冒充完成（F322 10-12 同类事故）。
+- 鸭鸭在正式环境的探索来源，需要 microduck owner 接上适配器。这一项单独登记，不阻塞 F314 这条。
+
+**分工（执行线程已启动）**
+- **设计与验收**：Ragdoll（@opus55），本线程。每片对照北极星 v2 和 V1 内容清单验收（见 F314 事故档案 10-12 F311 案的教训）。
+- **S4 的案例—版本清单**：Ragdoll起草。
+- **S1–S3、S5、S6 实现，以及 S4 的适配器扩展**：一个新的执行线程，由小太阳·Maine Coon（@codex61-sol）负责。
+- **审阅**：非作者的Maine Coon或墨墨。
+- **测试**：S1–S4 合入后，在 Alpha 上请 F314 负责猫（小星星）以真实使用者身份走一遍 F314 这条旅程，核对版本和案例有没有挂对。他手头的工作做完再约。
+- **最后**：You 从自己的入口走一遍。
+
 ## Acceptance Criteria
 
 <!-- AC↔Why 同源；非作者可复核；度量类 AC 引 F267 契约（population/window/baseline/uncertainty/insufficient/withdrawal），不设未校准阈值。 -->
@@ -452,6 +518,7 @@ Meta Evolution 的正式定义为：**能力对象与改进机制的协同演进
 - [ ] AC-UX3: 复杂候选审阅可从窄栏将 exact Program 晋升到 typed 主区 Tab / split pane；同屏呈现 before/after、成套改动及归因边界、独立验证、被拒候选、成本与回滚，切回后选择与审阅状态不丢；批准绑定 exact action，不能把 approval、deploy 或一次通过提前写成“已采纳”
 - [ ] AC-UX4: 下一次同类任务在原任务现场显示已沿用的上轮学习、来源与撤销；路演技术剖面与 canonical 产品 UI 分离，并对演示数据 / 未实证效用显式披露
 - [ ] AC-UX5: 准备与探索正式页面有清楚的视觉重点、有角色分工的颜色与语义 SVG；主动作、内容类别 / 对照系列、真实状态可辨识，颜色不独自承担含义；真实宿主默认态、窄屏与主题的渲染及 operator 体验验收通过，灰阶交互稿不能代替视觉完成
+- [ ] AC-UX6: 新版界面从设置与管理 › 能力进化进入，F314 与鸭鸭两个真实项目都能走通：首页、项目页、准备四块主区阅读、探索进化（真实谱系与原件）；F314 谱系的每个版本可回到提交，每个案例可回到事故档案原文；由 You 从自己的入口走一遍验收，不以切片 PASS、合入或作者样本代替（v2 用户旅程开发计划，2026-10-14）
 
 ### Preparation Experience（09-09 收准；PREP1–4 Alpha 已验，09-19 PREP5 已验）
 

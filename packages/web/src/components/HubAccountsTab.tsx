@@ -12,6 +12,7 @@ import {
 } from './accounts/account-directory-view';
 import { accountMessage } from './accounts/account-message';
 import { accountsCopy } from './accounts/accounts.shell-copy';
+import { ClaudeTokenModal } from './accounts/ClaudeTokenModal';
 import { useAccountDirectory } from './accounts/useAccountDirectory';
 import type { ProfileAuthType, ProfileItem } from './hub-accounts.types';
 import { normalizeBuiltinClientIds } from './hub-accounts.view';
@@ -25,6 +26,7 @@ export function HubAccountsTab() {
   const language = useShellLanguage();
   const directory = useAccountDirectory();
   const { cats } = useCatData();
+  const [claudeModal, setClaudeModal] = useState<{ account?: ProfileItem }>();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -37,8 +39,16 @@ export function HubAccountsTab() {
   const rows = profiles.map((account) => ({
     account,
     provider: accountProvider(account, t),
-    members: accountMembers(account, cats, directory.selection),
-    used: accountIsSelected(account, cats, directory.selection),
+    members: accountMembers(
+      account,
+      cats,
+      account.clientId === 'anthropic' ? directory.claudeSelection : directory.selection,
+    ),
+    used: accountIsSelected(
+      account,
+      cats,
+      account.clientId === 'anthropic' ? directory.claudeSelection : directory.selection,
+    ),
   }));
   const counts = {
     all: rows.length,
@@ -77,6 +87,10 @@ export function HubAccountsTab() {
       setActionError(undefined);
   };
   function edit(profile: ProfileItem) {
+    if (profile.claude) {
+      setClaudeModal({ account: profile });
+      return;
+    }
     setEditTarget({
       id: profile.id,
       displayName: profile.displayName,
@@ -95,7 +109,7 @@ export function HubAccountsTab() {
         <input
           type="search"
           aria-label={t.search}
-          placeholder={t.searchHint}
+          placeholder={t.search}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -113,6 +127,7 @@ export function HubAccountsTab() {
           ))}
         </div>
         <AccountAddMenu
+          onAddClaude={() => setClaudeModal({})}
           onAdd={(type) => {
             setEditTarget(undefined);
             setAddType(type);
@@ -121,11 +136,14 @@ export function HubAccountsTab() {
         />
       </div>
       {directory.error && <p role="alert">{accountMessage(directory.error, language)}</p>}
-      {directory.memberError && <p role="status">{t.selectionUnknown}</p>}
+      {(directory.memberError || directory.claudeMemberError) && <p role="status">{t.selectionUnknown}</p>}
       {directory.data?.nativeDefaultsError && (
         <p role="status">{accountMessage(directory.data.nativeDefaultsError, language)}</p>
       )}
-      {(directory.error || directory.memberError || directory.data?.nativeDefaultsError) && (
+      {(directory.error ||
+        directory.memberError ||
+        directory.claudeMemberError ||
+        directory.data?.nativeDefaultsError) && (
         <button type="button" className="account-button" onClick={() => void directory.refresh()}>
           {t.retryRead}
         </button>
@@ -187,7 +205,7 @@ export function HubAccountsTab() {
                               <AccountSwitchConfirm
                                 account={switchTarget}
                                 onClose={() => setSwitchTarget(undefined)}
-                                onChanged={directory.applyBinding}
+                                onChanged={(next) => directory.applyBinding(next, switchTarget.clientId)}
                               />
                             </td>
                           </tr>
@@ -217,6 +235,16 @@ export function HubAccountsTab() {
             </ul>
           )}
         </section>
+      )}
+      {claudeModal && (
+        <ClaudeTokenModal
+          account={claudeModal.account}
+          onClose={() => setClaudeModal(undefined)}
+          onSaved={(profile) => {
+            update([profile]);
+            void directory.refresh();
+          }}
+        />
       )}
       <UnifiedAuthModal
         key={editTarget?.id ?? `create-${addType}`}

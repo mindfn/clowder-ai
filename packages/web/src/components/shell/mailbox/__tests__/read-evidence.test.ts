@@ -42,6 +42,24 @@ describe('buildReadEvidence: the approval is still on the page', () => {
       result: { kind: 'absent', exhaustive: false },
     });
   });
+  it.each([
+    'visible',
+    'ignored',
+  ] as const)('a personal %s partition cannot prove canonical approval absence', async (mode) => {
+    const result = readOf([], {
+      personalView: {
+        mode,
+        preferenceRevision: 3,
+        originalTotalCount: 1,
+        visibleTotalCount: 0,
+        ignoredTotalCount: 1,
+        originalAttentionCount: 1,
+        visibleAttentionCount: 0,
+        ignoredAttentionCount: 1,
+      },
+    });
+    await expect(run(result).evidence).resolves.toMatchObject({ result: { kind: 'absent', exhaustive: false } });
+  });
   it('a last page with no approval does not prove an approval on an earlier page disappeared', async () => {
     const result = readOf([], {
       page: { offset: 20, limit: 20, scope: 'known_rows', hasMore: false, hasMoreApprovals: false },

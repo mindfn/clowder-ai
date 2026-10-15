@@ -1,4 +1,4 @@
-import { closeSync, mkdirSync, openSync, writeSync } from 'node:fs';
+import { closeSync, fsyncSync, ftruncateSync, mkdirSync, openSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 const MAX_LOG_BYTES = 10 * 1024 * 1024;
@@ -11,11 +11,18 @@ export function openDurableManagedRunnerLog(logPath: string): {
   readonly finish: () => void;
 } {
   mkdirSync(dirname(logPath), { recursive: true });
-  const logFd = openSync(logPath, 'w');
+  const logFd = openSync(logPath, 'w', 0o600);
   let headBytes = 0;
   let tail = Buffer.alloc(0);
   let truncated = false;
   let open = true;
+  let pendingFlush: ReturnType<typeof setTimeout> | null = null;
+  const flushTail = () => {
+    if (!open || !truncated) return;
+    writeSync(logFd, TRUNCATION_MARKER, 0, TRUNCATION_MARKER.length, headBytes);
+    writeSync(logFd, tail, 0, tail.length, headBytes + TRUNCATION_MARKER.length);
+    ftruncateSync(logFd, headBytes + TRUNCATION_MARKER.length + tail.length);
+  };
 
   return {
     capture(chunk) {
@@ -30,13 +37,19 @@ export function openDurableManagedRunnerLog(logPath: string): {
       if (writtenFromChunk < chunk.length) truncated = true;
       tail = Buffer.concat([tail, chunk]);
       if (tail.length > TAIL_BYTES) tail = tail.subarray(tail.length - TAIL_BYTES);
+      if (truncated && !pendingFlush) {
+        pendingFlush = setTimeout(() => {
+          pendingFlush = null;
+          flushTail();
+        }, 250);
+        pendingFlush.unref();
+      }
     },
     finish() {
       if (!open) return;
-      if (truncated) {
-        writeSync(logFd, TRUNCATION_MARKER);
-        writeSync(logFd, tail);
-      }
+      if (pendingFlush) clearTimeout(pendingFlush);
+      flushTail();
+      fsyncSync(logFd);
       closeSync(logFd);
       open = false;
     },

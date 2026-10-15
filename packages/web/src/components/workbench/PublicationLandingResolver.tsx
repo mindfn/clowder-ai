@@ -44,6 +44,7 @@ export function PublicationLandingResolver({
   children,
   onBack,
   confirmSingleContext: confirmOverride,
+  leadingAction,
 }: {
   sourceSurface: WorkspaceSurfaceDescriptor;
   target: PublicationTarget;
@@ -55,6 +56,7 @@ export function PublicationLandingResolver({
    * Defaults to whether the surface was opened from a chat message; hosts that know better override.
    */
   confirmSingleContext?: boolean;
+  leadingAction?: ReactNode;
 }) {
   const confirmSingleContext = confirmOverride ?? Boolean(sourceSurface.messagePublicationSource);
   const [storedCatalogue, setCatalogue] = useState<(z.infer<typeof catalogueSchema> & { targetKey: string }) | null>(
@@ -168,9 +170,12 @@ export function PublicationLandingResolver({
     );
   return (
     <section className="p-4">
-      <button type="button" className="mb-3 text-xs text-cafe-muted" onClick={onBack}>
-        返回来源
-      </button>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        {leadingAction}
+        <button type="button" className="text-xs text-cafe-muted" onClick={onBack}>
+          返回来源
+        </button>
+      </div>
       <h2 className="text-sm font-semibold">{sourceSurface.title}</h2>
       {error ? (
         <p role="alert" className="my-2 text-sm text-cafe-error">

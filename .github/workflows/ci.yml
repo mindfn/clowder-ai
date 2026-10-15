@@ -34,7 +34,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: node .github/scripts/check-public-test-ci-contract.mjs
       - name: Verify real namespace receipt and privilege boundary
-        run: sudo --preserve-env "$(command -v node)" --test .github/scripts/run-public-test-distributable.test.mjs
+        run: |
+          python3 -B .github/scripts/public-test-namespace-init.test.py
+          sudo --preserve-env "$(command -v node)" --test .github/scripts/run-public-test-distributable.test.mjs
       - run: pnpm check
 
   build:

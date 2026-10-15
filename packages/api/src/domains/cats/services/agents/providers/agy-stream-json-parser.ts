@@ -100,8 +100,16 @@ export interface AgyStreamJsonTurn {
   readonly toolCalls: readonly AgyToolCall[];
   readonly deniedActions: readonly AgyDeniedAction[];
   readonly usage: AgyStreamJsonUsage;
+  /** result.usage is cumulative session evidence. Only step usage bills this invocation. */
+  readonly turnUsage: AgyStreamJsonUsage | null;
+  readonly lastTurnInputTokens: number | null;
   /** 上游自报状态，原样保留供取证——**不要**用它判成败。 */
   readonly upstreamStatus: string | null;
+  readonly upstreamError: string | null;
+  readonly sessionTurnCount: number;
+  /** Current input has a matching completed final response and no carrier-error step. */
+  readonly completedResponseStep: number | null;
+  readonly completedCompactionStep: number | null;
   readonly outcome: AgyTurnOutcome;
   readonly diagnosis: string;
   readonly unknownEvents: readonly string[];
@@ -277,9 +285,11 @@ function describeOutcome(
  */
 interface TurnAccumulator {
   readonly toolCalls: Map<number, AgyToolCall>;
+  readonly stepUsage: Map<number, AgyStreamJsonUsage>;
   readonly unknownEvents: string[];
   readonly anomalies: AgyProtocolAnomaly[];
   readonly deltas: string[];
+  readonly steps: Map<number, { type: string; state: AgyStepState; text: string }>;
   conversationId: string | null;
   firstStepIndex: number | null;
   lastStepIndex: number | null;
@@ -299,6 +309,18 @@ function absorbStep(state: TurnAccumulator, event: Extract<AgyStreamJsonEvent, {
     });
   }
   if (event.textDelta) state.deltas.push(event.textDelta);
+  if (event.stepIndex >= 0) {
+    const previous = state.steps.get(event.stepIndex);
+    state.steps.set(event.stepIndex, {
+      type: event.stepType,
+      state: event.state,
+      text: event.stepType === 'agent_response' ? (previous?.text ?? '') + (event.textDelta ?? '') : '',
+    });
+  }
+  if (event.stepIndex >= 0 && event.stepType === 'agent_response' && event.usage) {
+    // ACTIVE/DONE may repeat one model call. Later snapshots replace, never add.
+    state.stepUsage.set(event.stepIndex, event.usage);
+  }
   if (event.stepType !== 'tool' || !event.toolName) return;
 
   // 同一 step_index 先 ACTIVE 后 DONE/ERROR，且后到的事件是**稀疏**的：
@@ -324,21 +346,23 @@ function decideOutcome(
   anomalies: readonly AgyProtocolAnomaly[],
   finalText: string,
 ): AgyTurnOutcome {
-  // `denied` 先于 `protocol_error`：拒绝是上游给出的**肯定**证据，可操作性最强。
-  if (deniedActions.length > 0) return 'denied';
   // 读不懂的字段一旦出现，后面几条判定的前提就不成立了——不许再下确定结论。
   if (anomalies.length > 0) return 'protocol_error';
   if (!result) return 'incomplete';
   if (result.status !== 'SUCCESS' || result.error) return 'error';
+  // A refused action remains evidence, while a useful final may explain/recover it.
+  if (deniedActions.length > 0 && !finalText.trim()) return 'denied';
   return finalText.trim() === '' ? 'empty' : 'ok';
 }
 
 function accumulateTurn(lines: Iterable<string>): TurnAccumulator {
   const state: TurnAccumulator = {
     toolCalls: new Map<number, AgyToolCall>(),
+    stepUsage: new Map<number, AgyStreamJsonUsage>(),
     unknownEvents: [],
     anomalies: [],
     deltas: [],
+    steps: new Map(),
     conversationId: null,
     firstStepIndex: null,
     lastStepIndex: null,
@@ -376,6 +400,43 @@ export function summarizeAgyStreamJsonTurn(lines: Iterable<string>): AgyStreamJs
   const anomalies = state.anomalies;
   const outcome = decideOutcome(result, deniedActions, anomalies, finalText);
   const orderedToolCalls = [...state.toolCalls.values()].sort((a, b) => a.stepIndex - b.stepIndex);
+  const usageSteps = [...state.stepUsage.entries()].sort(([a], [b]) => a - b);
+  const turnUsage = usageSteps.length
+    ? usageSteps.reduce<AgyStreamJsonUsage>(
+        (sum, [, usage]) => ({
+          inputTokens: sum.inputTokens + usage.inputTokens,
+          outputTokens: sum.outputTokens + usage.outputTokens,
+          thinkingTokens: sum.thinkingTokens + usage.thinkingTokens,
+          cacheReadTokens: sum.cacheReadTokens + usage.cacheReadTokens,
+          totalTokens: sum.totalTokens + usage.totalTokens,
+        }),
+        EMPTY_USAGE,
+      )
+    : null;
+  const latestUsage = usageSteps.at(-1)?.[1];
+  const steps = [...state.steps.entries()];
+  const inputs = steps.filter(([, step]) => step.type === 'user_input' && step.state === 'DONE');
+  const finalStep = lastStepIndex === null ? undefined : state.steps.get(lastStepIndex);
+  // Fixed CLI 1.3.5 can carry a previous turn's error in result after a clean
+  // resumed turn. Require positive current-turn evidence; text alone is not it.
+  const completedCurrentStep =
+    inputs.length === 1 &&
+    lastStepIndex !== null &&
+    lastStepIndex > inputs[0]![0] &&
+    finalStep?.state === 'DONE' &&
+    steps.every(
+      ([, step]) =>
+        ['user_input', 'system_message', 'agent_response', 'tool', 'checkpoint'].includes(step.type) &&
+        (step.type === 'tool' || step.state !== 'ERROR'),
+    );
+  const completedResponseStep =
+    completedCurrentStep &&
+    finalStep?.type === 'agent_response' &&
+    finalStep.text.trim().length > 0 &&
+    finalStep.text.trim() === finalText.trim()
+      ? lastStepIndex
+      : null;
+  const completedCompactionStep = completedCurrentStep && finalStep?.type === 'checkpoint' ? lastStepIndex : null;
 
   return {
     conversationId,
@@ -385,7 +446,13 @@ export function summarizeAgyStreamJsonTurn(lines: Iterable<string>): AgyStreamJs
     toolCalls: orderedToolCalls,
     deniedActions,
     usage: result?.usage ?? EMPTY_USAGE,
+    turnUsage,
+    lastTurnInputTokens: latestUsage ? latestUsage.inputTokens + latestUsage.cacheReadTokens : null,
     upstreamStatus,
+    upstreamError: result?.error ?? null,
+    sessionTurnCount: result?.numTurns ?? 0,
+    completedResponseStep,
+    completedCompactionStep,
     outcome,
     diagnosis: describeOutcome(outcome, deniedActions, orderedToolCalls, result?.error ?? null, anomalies),
     unknownEvents,

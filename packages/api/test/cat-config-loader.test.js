@@ -373,7 +373,6 @@ describe('cat-config-loader', () => {
         assert.deepEqual(variant.agyProfile, {
           enabled: true,
           homeRoot: '/runtime/agy-profiles',
-          nativeCodingGrant,
         });
         assert.equal('model' in variant.agyProfile, false, 'base agyProfile.model must not leak through');
         assert.equal('trustedWorkspaces' in variant.agyProfile, false, 'base trustedWorkspaces must not leak through');
@@ -382,7 +381,6 @@ describe('cat-config-loader', () => {
         assert.deepEqual(cats.opus.agyProfile, {
           enabled: true,
           homeRoot: '/runtime/agy-profiles',
-          nativeCodingGrant,
         });
       } finally {
         if (saved === undefined) {

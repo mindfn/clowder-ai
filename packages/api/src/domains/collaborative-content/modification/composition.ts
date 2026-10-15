@@ -37,6 +37,7 @@ import { ContentModificationResultService } from './result-service.js';
 import { ContentModificationService } from './service.js';
 import { ModificationSourceDiscussions } from './source-discussions.js';
 import { ModificationTextBinding } from './text/text-binding.js';
+import { TextWritebackCompletionService } from './text/text-writeback-completion.js';
 
 export function createContentModificationIntegration(deps: {
   dataDir: string;
@@ -179,6 +180,13 @@ export function createContentModificationIntegration(deps: {
     databasePath: join(deps.dataDir, 'workspace', 'writebacks.sqlite'),
     proofDirectory: join(deps.dataDir, 'workspace', 'writeback-proofs'),
   });
+  const textCompletions = new TextWritebackCompletionService({
+    store,
+    writer,
+    tasks: deps.tasks,
+    messages: deps.messages,
+  });
+  dispatcher.setTextCompletionOwner((intent) => textCompletions.isCurrent(intent));
   const authorizeMediaReceipt = async (record: ContentModificationRecord) => {
     try {
       return await requireModificationSourceMessage(deps.messages, record);
@@ -203,6 +211,8 @@ export function createContentModificationIntegration(deps: {
     },
     authorizeMediaReceipt,
     recoverPublication: (record) => publicationContinuation.recover(record),
+    recoverTextCompletion: (record, acceptance) =>
+      textCompletions.recordApplied(record.requestId, record.ownerUserId, acceptance.fileReceiptRef),
     onSaved: deps.receiptChanged ?? (() => {}),
     onError: deps.onError,
   });
@@ -220,7 +230,17 @@ export function createContentModificationIntegration(deps: {
     writer,
     fileLineage,
     receipts,
+    onTextWriteback: async (record, writebackReceiptRef) => {
+      try {
+        await textCompletions.recordApplied(record.requestId, record.ownerUserId, writebackReceiptRef);
+        await dispatcher.drain();
+      } catch (error) {
+        // The file effect already has its canonical receipt; natural recovery retries only delivery custody.
+        deps.onError(error);
+      }
+    },
   });
+  text.setAcceptanceReader((record, principal) => results.acceptances(record, principal));
   reviews.setCommittedProjection(async (reviewId) => {
     const review = store.get(reviewId);
     if (!review) return;
@@ -258,6 +278,7 @@ export function createContentModificationIntegration(deps: {
       async execute() {
         await requests.recover();
         await receipts.recover();
+        await dispatcher.drain();
       },
     },
     state: { runLedger: 'sqlite' },
@@ -311,5 +332,6 @@ export function createContentModificationIntegration(deps: {
     sourceDiscussions,
     runtimeControls,
     receipts,
+    textCompletions,
   };
 }

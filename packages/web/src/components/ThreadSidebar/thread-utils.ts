@@ -155,7 +155,11 @@ function titleForSort<T extends SidebarThreadShape>(thread: T): string {
  * `sortByWorkingUnreadActivity`, but with pin taking precedence (matches the
  * tab helpers' existing pin-first contract).
  */
-function sortPinnedWorkingUnreadActivity<T extends SidebarThreadShape>(a: T, b: T, unreadIds: Set<string>): number {
+export function sortPinnedWorkingUnreadActivity<T extends SidebarThreadShape>(
+  a: T,
+  b: T,
+  unreadIds: Set<string>,
+): number {
   const aPinned = a.pinned ? 1 : 0;
   const bPinned = b.pinned ? 1 : 0;
   if (aPinned !== bPinned) return bPinned - aPinned;
@@ -164,7 +168,7 @@ function sortPinnedWorkingUnreadActivity<T extends SidebarThreadShape>(a: T, b: 
   const aUnread = unreadIds.has(a.id) ? 1 : 0;
   const bUnread = unreadIds.has(b.id) ? 1 : 0;
   if (aUnread !== bUnread) return bUnread - aUnread;
-  return b.lastActiveAt - a.lastActiveAt;
+  return b.lastActiveAt - a.lastActiveAt || a.id.localeCompare(b.id);
 }
 
 /**

@@ -86,7 +86,6 @@ export class DotConnectionService {
         lastReplyAt: null,
         lastImageAt: null,
         revokedAt: null,
-        allowedCatIds: previous?.allowedCatIds ?? [],
         testEventIds: [],
       };
       return { state, result: this.connectionInstructions(state) };
@@ -234,11 +233,7 @@ export class DotConnectionService {
     });
   }
 
-  async setOwnerPreferences(
-    ownerUserId: string,
-    preferences: { allowedCatIds?: string[]; testEventIds?: string[] },
-    expectedAttemptId?: string,
-  ) {
+  async setOwnerPreferences(ownerUserId: string, preferences: { testEventIds?: string[] }, expectedAttemptId?: string) {
     const authority = await this.requireAuthority(ownerUserId);
     return this.options.store.update(async (state) => {
       if (

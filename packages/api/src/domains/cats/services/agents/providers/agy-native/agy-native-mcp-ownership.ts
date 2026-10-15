@@ -6,7 +6,6 @@ import {
   resolveCatCafeNodeCommand,
 } from '../../../../../../config/capabilities/mcp-constants.js';
 import { AGY_NATIVE_CREDENTIAL_DIR, isLocalAgyCallbackUrl } from './agy-native-credential-file.js';
-import { AGY_NATIVE_HOST_MCP_SERVERS } from './agy-native-policy.js';
 
 export function credentialPathInProfile(home: string, path: string): boolean {
   return (
@@ -24,7 +23,7 @@ export function requireHostEntrypoint(root: string, entrypoint: string): string 
   return path;
 }
 
-function commonGitDirectory(root: string): string {
+export function commonGitDirectory(root: string): string {
   // Ignore caller Git redirection; only the named checkout determines repository ownership.
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
   const git = (...args: string[]) =>
@@ -44,7 +43,7 @@ function commonGitDirectory(root: string): string {
   return common;
 }
 
-function requireRetiredCredential(path: string): void {
+export function requireRetiredCredential(path: string): void {
   try {
     lstatSync(path);
   } catch (error) {
@@ -63,7 +62,7 @@ export function assertExistingServerIsHostOwned(
   home: string,
   newCredential?: string,
 ): string {
-  if (!AGY_NATIVE_HOST_MCP_SERVERS.includes(name as (typeof AGY_NATIVE_HOST_MCP_SERVERS)[number])) {
+  if (!CAT_CAFE_SPLIT_ENTRYPOINTS.has(name)) {
     throw new Error(`AGY native MCP server is not host-owned: ${name}`);
   }
   const entrypoint = CAT_CAFE_SPLIT_ENTRYPOINTS.get(name);

@@ -20,6 +20,8 @@ import {
   threadRecordAccessDeniedBody,
 } from '../domains/cats/services/session/thread-access-policy.js';
 import { TranscriptInvocationReader } from '../domains/cats/services/session/transcript-index/TranscriptInvocationReader.js';
+import type { TranscriptReadObserver } from '../domains/cats/services/session/transcript-index/transcript-read-observer.js';
+import { createTranscriptReadDiagnostics } from '../infrastructure/transcript-read-diagnostics.js';
 import { resolveUserId } from '../utils/request-identity.js';
 import { registerInvocationTrajectoryRoutes } from './invocation-trajectory-routes.js';
 import {
@@ -53,8 +55,17 @@ export async function sessionTranscriptRoutes(
   } = opts;
 
   const invocationReader = new TranscriptInvocationReader(transcriptReader, transcriptWriter);
-  async function readInvocationEvents(sessions: ReadableSession[], invocationId: string, signal?: AbortSignal) {
-    const pages = await invocationReader.readInvocation(sessions, invocationId, {}, signal);
+  const diagnostics = createTranscriptReadDiagnostics({
+    onEvent: (event) => app.log.info(event, '[Task229] transcript read diagnostic'),
+  });
+  app.addHook('onClose', async () => diagnostics.stop());
+  async function readInvocationEvents(
+    sessions: ReadableSession[],
+    invocationId: string,
+    signal?: AbortSignal,
+    observer?: TranscriptReadObserver,
+  ) {
+    const pages = await invocationReader.readInvocation(sessions, invocationId, {}, signal, observer);
     return new Map([...pages].map(([id, page]) => [id, page.events]));
   }
 
@@ -71,6 +82,7 @@ export async function sessionTranscriptRoutes(
       return { ...page, invocations };
     },
     readInvocationEvents,
+    createReadObserver: diagnostics.beginRead,
     ...(messageStore ? { messageStore } : {}),
     ...(transcriptWriter ? { keyedContentDigest: transcriptWriter.keyedContentDigest.bind(transcriptWriter) } : {}),
     ...(profileRepository ? { profileRepository } : {}),

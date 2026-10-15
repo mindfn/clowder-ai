@@ -8,6 +8,9 @@ import { useApprovalHubStore } from '@/stores/approvalHubStore';
 import { ApprovalFeatureFilter } from './ApprovalFeatureFilter';
 import { ApprovalItemCard } from './ApprovalItemCard';
 
+import { approvalHistoryCopy } from './approval-history.shell-copy';
+import { useShellCopy } from './shell/shell-copy';
+
 export type ApprovalStatusFilter = 'all' | 'pending' | 'stale';
 
 /** A host can scope the original list and guard its actions without copying filters or batch eligibility. */
@@ -65,6 +68,7 @@ export function ApprovalPendingPane({
   threadQuery,
   onThreadQueryChange,
 }: ApprovalPendingPaneProps) {
+  const t = useShellCopy(approvalHistoryCopy);
   const rawItems = useApprovalHubStore((state) => state.items);
   const items = useMemo(
     () =>
@@ -163,13 +167,13 @@ export function ApprovalPendingPane({
           }`}
           data-testid="approval-filter-stale"
         >
-          已过期
+          {t.stale}
         </button>
         <input
           type="text"
           value={threadQuery}
           onChange={(event) => changeThreadQuery(event.target.value)}
-          placeholder="Thread..."
+          placeholder={t.thread}
           className="w-24 rounded border border-cafe-subtle/30 bg-transparent px-2 py-0.5 text-micro text-cafe-interactive placeholder:text-cafe-interactive/30 focus:border-cafe-subtle/60 focus:outline-none"
           data-testid="approval-filter-thread"
         />
@@ -185,7 +189,7 @@ export function ApprovalPendingPane({
             className="rounded-full px-2 py-0.5 text-micro text-cafe-interactive/40 hover:text-cafe-interactive/60"
             data-testid="approval-filter-clear"
           >
-            清除
+            {t.clear}
           </button>
         )}
       </div>
@@ -201,7 +205,7 @@ export function ApprovalPendingPane({
             className="rounded px-2 py-0.5 text-micro font-medium text-cafe-interactive/60 hover:text-cafe-interactive"
             data-testid="approval-batch-select-toggle"
           >
-            {hasSelection ? `取消选择 (${selectedCount})` : '全选可操作'}
+            {hasSelection ? t.unselect(selectedCount) : t.selectAll}
           </button>
           {hasSelection && (
             <>
@@ -211,7 +215,7 @@ export function ApprovalPendingPane({
                 className="rounded px-2 py-0.5 text-micro font-medium text-[var(--semantic-success)] hover:bg-[var(--semantic-success)]/10"
                 data-testid="approval-batch-approve"
               >
-                {consumer ? '批量同意' : '批量批准'}
+                {consumer ? t.agreeBatch : t.approveBatch}
               </button>
               <button
                 type="button"
@@ -219,7 +223,7 @@ export function ApprovalPendingPane({
                 className="rounded px-2 py-0.5 text-micro font-medium text-[var(--semantic-critical)] hover:bg-[var(--semantic-critical)]/10"
                 data-testid="approval-batch-reject"
               >
-                批量拒绝
+                {t.rejectBatch}
               </button>
             </>
           )}
@@ -231,13 +235,13 @@ export function ApprovalPendingPane({
           className="border-b border-[var(--semantic-critical)]/20 bg-[var(--semantic-critical)]/5 px-3 py-1.5 text-sm text-[var(--semantic-critical)]"
           data-testid="approval-batch-results"
         >
-          <span>{failedResults.length} 项操作失败</span>
+          <span>{t.failedCount(failedResults.length)}</span>
           <details className="mt-1 text-xs">
-            <summary className="cursor-pointer">失败详情</summary>
+            <summary className="cursor-pointer">{t.failureDetails}</summary>
             <ul className="mt-1 space-y-0.5">
               {failedResults.map((result) => (
                 <li key={result.proposalId} data-testid={`batch-fail-${result.proposalId}`} className="break-all">
-                  {result.proposalId}: {result.error ?? '未知错误'}
+                  {result.proposalId}: {result.error ?? t.unknownError}
                 </li>
               ))}
             </ul>
@@ -246,28 +250,26 @@ export function ApprovalPendingPane({
       )}
 
       <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto p-3">
-        {isLoading && items.length === 0 && <PanelMessage>加载中...</PanelMessage>}
+        {isLoading && items.length === 0 && <PanelMessage>{t.loading}</PanelMessage>}
         {error && (
           <div className="rounded-lg border border-[var(--semantic-critical)] p-3" data-testid="approval-pending-error">
             <p className="text-sm text-[var(--semantic-critical)]">
-              {items.length > 0 ? '暂时无法刷新，正在显示最近一次成功读取的内容。' : '暂时无法读取待审批列表。'}
+              {items.length > 0 ? t.cached : t.pendingUnreadable}
             </p>
             <button type="button" className="mt-2 text-xs underline" onClick={() => void fetchPending()}>
-              重试
+              {t.retry}
             </button>
             <details className="mt-2 text-xs text-cafe-muted">
-              <summary className="cursor-pointer">错误详情</summary>
+              <summary className="cursor-pointer">{t.errorDetails}</summary>
               <p className="mt-1 break-words">{error}</p>
             </details>
           </div>
         )}
         {!isLoading && !error && items.length === 0 && (
-          <PanelMessage testId="approval-empty-state">
-            {consumer ? consumer.emptyMessage : '没有待审批的项目'}
-          </PanelMessage>
+          <PanelMessage testId="approval-empty-state">{consumer ? consumer.emptyMessage : t.pendingEmpty}</PanelMessage>
         )}
         {!isLoading && !error && items.length > 0 && filteredItems.length === 0 && (
-          <PanelMessage testId="approval-empty-filtered">没有符合筛选条件的项目</PanelMessage>
+          <PanelMessage testId="approval-empty-filtered">{t.pendingFilteredEmpty}</PanelMessage>
         )}
         {filteredItems.map((item) =>
           consumer ? (

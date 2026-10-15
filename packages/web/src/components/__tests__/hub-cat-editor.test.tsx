@@ -2102,7 +2102,7 @@ describe('HubCatEditor', () => {
     expect(payload.acp).toBeUndefined();
   });
 
-  it('resets default ACP command and args when switching between dual-transport clients', async () => {
+  it('switches Google from retired ACP to Native only with an explicit profile', async () => {
     const existingCat = {
       id: 'opencode-acp',
       name: 'opencode-acp',
@@ -2185,18 +2185,24 @@ describe('HubCatEditor', () => {
     expect(queryField<HTMLSelectElement>(container, 'select[aria-label="接入方式"]').value).toBe('acp');
     await changeField(queryField<HTMLSelectElement>(container, 'select[aria-label="Client"]'), 'google', 'change');
     await flushEffects();
-    expect(queryField<HTMLSelectElement>(container, 'select[aria-label="接入方式"]').value).toBe('cli');
-    await changeField(queryField<HTMLSelectElement>(container, 'select[aria-label="接入方式"]'), 'acp', 'change');
+    expect(queryField<HTMLSelectElement>(container, 'select[aria-label="接入方式"]').value).toBe('agy-native');
+    expect(
+      Array.from(queryField<HTMLSelectElement>(container, 'select[aria-label="接入方式"]').options).map(
+        (option) => option.value,
+      ),
+    ).not.toContain('acp');
     await changeField(
       queryField<HTMLSelectElement>(container, 'select[aria-label="用哪个号"]'),
       'gemini-oauth',
       'change',
     );
-    await changeField(queryField<HTMLInputElement>(container, 'input[aria-label="Model"]'), 'gemini-2.5-pro');
+    await changeField(queryField<HTMLInputElement>(container, 'input[aria-label="Model"]'), 'gemini-3.8-flash-high');
 
-    expect(queryField<HTMLInputElement>(container, 'input[aria-label="ACP Command"]').value).toBe('gemini');
-    expect(queryField<HTMLInputElement>(container, 'input[aria-label="ACP Startup Args"]').value).toBe(
-      '--acp --approval-mode yolo',
+    expect(document.body.querySelector('input[aria-label="ACP Command"]')).toBeNull();
+    expect(queryField<HTMLSelectElement>(container, 'select[aria-label="接入方式"]').value).toBe('agy-native');
+    await changeField(
+      queryField<HTMLTextAreaElement>(container, 'textarea[aria-label="批准工作区"]'),
+      '/approved/workspace',
     );
 
     const saveButton = Array.from(document.body.querySelectorAll('button')).find(
@@ -2213,9 +2219,13 @@ describe('HubCatEditor', () => {
     expect(patchCall).toBeTruthy();
     const payload = JSON.parse(String(patchCall?.[1]?.body));
     expect(payload.clientId).toBe('google');
-    expect(payload.acp).toEqual({
-      command: 'gemini',
-      startupArgs: ['--acp', '--approval-mode', 'yolo'],
+    expect(payload.carrier).toBe('cli'); // Native CLI is selected by the explicit agyProfile below.
+    expect(payload.acp).toBeUndefined(); // Inactive config cannot override the canonical carrier.
+    expect(payload.agyProfile).toMatchObject({
+      carrier: 'native',
+      model: 'gemini-3.8-flash-high',
+      trustedWorkspaces: ['/approved/workspace'],
+      autoApprove: false,
     });
   });
 
@@ -2365,7 +2375,7 @@ describe('HubCatEditor', () => {
     expect(providerInputAfter.value).toBe('');
   });
 
-  it('switches to Antigravity branch and shows CLI command field', async () => {
+  it('does not offer the retired IDE execution entry for new members', async () => {
     mockApiFetch.mockResolvedValue(
       jsonResponse({
         projectPath: '/tmp/project',
@@ -2379,9 +2389,12 @@ describe('HubCatEditor', () => {
     });
     await flushEffects();
 
-    await changeField(queryField(container, 'select[aria-label="Client"]'), 'antigravity', 'change');
-    expect(document.body.textContent).toContain('CLI Command');
-    expect(document.body.querySelector('select[aria-label="用哪个号"]')).toBeNull();
+    expect(
+      Array.from(queryField<HTMLSelectElement>(container, 'select[aria-label="Client"]').options).map(
+        (option) => option.value,
+      ),
+    ).not.toContain('antigravity');
+    expect(document.body.textContent).not.toContain('CLI Command');
   });
 
   it('shows the selected client builtin account together with all API key accounts', async () => {
@@ -3264,89 +3277,6 @@ describe('HubCatEditor', () => {
     expect(patchCall).toBeTruthy();
     const payload = JSON.parse(String(patchCall?.[1]?.body));
     expect(payload.accountRef).toBeNull();
-  });
-
-  it('sends accountRef=null when switching a bound member to antigravity', async () => {
-    const existingCat = {
-      id: 'runtime-codex',
-      name: 'runtime-codex',
-      displayName: '运行时缅因猫',
-      clientId: 'openai',
-      accountRef: 'codex-sponsor',
-      defaultModel: 'gpt-5.4',
-      color: { primary: '#5B8C5A', secondary: '#D4E6D3' },
-      mentionPatterns: ['@runtime-codex'],
-      avatar: '/avatars/codex.png',
-      roleDescription: 'review',
-    } as CatData;
-
-    mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
-      if (path === '/api/accounts') {
-        return Promise.resolve(
-          jsonResponse({
-            projectPath: '/tmp/project',
-            activeProfileId: 'codex-sponsor',
-            providers: [
-              {
-                id: 'codex-sponsor',
-                provider: 'codex-sponsor',
-                displayName: 'Codex Sponsor',
-                name: 'Codex Sponsor',
-                authType: 'api_key',
-                protocol: 'openai',
-                mode: 'api_key',
-                models: ['gpt-5.4'],
-                hasApiKey: true,
-                createdAt: '2026-03-18T00:00:00.000Z',
-                updatedAt: '2026-03-18T00:00:00.000Z',
-              },
-            ],
-          }),
-        );
-      }
-      if (path === '/api/config/session-strategy') {
-        return Promise.resolve(jsonResponse({ cats: [] }));
-      }
-      if (path === '/api/config' && !init?.method) {
-        return Promise.resolve(jsonResponse({ config: { cli: {}, codexExecution: {} } }));
-      }
-      if (path === '/api/cats/runtime-codex' && init?.method === 'PATCH') {
-        return Promise.resolve(jsonResponse({ cat: { id: 'runtime-codex' } }));
-      }
-      if (path === '/api/cat-templates') {
-        return Promise.resolve(jsonResponse({ templates: [] }));
-      }
-      throw new Error(`Unexpected apiFetch path: ${path}`);
-    });
-
-    await act(async () => {
-      root.render(
-        React.createElement(HubCatEditor, { open: true, cat: existingCat, onClose: vi.fn(), onSaved: vi.fn() }),
-      );
-    });
-    await flushEffects();
-
-    await changeField(queryField(container, 'select[aria-label="Client"]'), 'antigravity', 'change');
-    await changeField(queryField(container, 'input[aria-label="Model"]'), 'gemini-bridge');
-    await changeField(queryField(container, 'input[aria-label="CLI Command"]'), 'chat --mode agent');
-
-    const saveButton = Array.from(document.body.querySelectorAll('button')).find(
-      (button) => button.textContent === '保存',
-    );
-    await act(async () => {
-      saveButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    await flushEffects();
-
-    const patchCall = mockApiFetch.mock.calls.find(
-      ([path, init]) => path === '/api/cats/runtime-codex' && init?.method === 'PATCH',
-    );
-    expect(patchCall).toBeTruthy();
-    const payload = JSON.parse(String(patchCall?.[1]?.body));
-    expect(payload.clientId).toBe('antigravity');
-    expect(payload.accountRef).toBeNull();
-    // #712: mcpSupport is omitted from PATCH when the value hasn't changed (both default to true)
-    expect(payload.mcpSupport).toBeUndefined();
   });
 
   it('sends contextWindow=null when clearing existing runtime budget', async () => {

@@ -69,8 +69,7 @@
 | `ppt-forge` | 做 PPT/演示文稿/视觉审查（三猫流水线） | — |
 | `co-creation-storytelling` | 长期真实经历讲清楚、成长故事压成一页、人和 AI 各做了什么 | — |
 | `concept-demo-design` | 参考产品设计借鉴、交互叙事；授权后制作可讲解、可验证的 Demo | — |
-| `agent-product-promo-director` | Agent/AI 产品宣传片的主角、信念变化、格式、故事、镜头、运动、声音与 provenance creative brief | — |
-| `video-forge` | 做视频（一句话 brief 起步）：产品/讲解/宣传片（主角是猫、有剧情也算）/Remotion 合成/动态排版/视频审查 | — |
+| `video-forge` | 做视频：产品/讲解/宣传片（主角是猫、有剧情也算）/Remotion/配音/交片；家里事实、You 定过的规矩和真踩过的坑 | — |
 | `anime-forge` | 做讲角色自己故事的动画短片（醋醋喵这类）：考证 → 剧本 → 声音稿 → 动态分镜 → 精绘 → 后期；推产品的片子即使主角是猫也走 video-forge | — |
 | `sprite-forge` | 做桌宠皮肤/atlas 状态动画行/角色小循环动态素材（母图→首帧→视频→截帧；禁 imagegen 逐帧直出） | — |
 

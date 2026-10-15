@@ -184,8 +184,8 @@ export function WorkspaceContentReviewText({
         resetKey={selectionKey}
         positionMode="absolute"
         actionTestId="workspace-content-review-text-add-to-chat"
-        onSave={(action, comment) =>
-          addWorkspaceFileQuoteToChat(currentThreadId, {
+        onSave={(action, comment) => {
+          const result = addWorkspaceFileQuoteToChat(currentThreadId, {
             text: action.text,
             comment,
             path: locator.path,
@@ -199,8 +199,11 @@ export function WorkspaceContentReviewText({
             ...(!markdown && action.selectionStart !== undefined && action.selectionEnd !== undefined
               ? rawLineRange(text, action.selectionStart, action.selectionEnd)
               : {}),
-          }).kind === 'added'
-        }
+          });
+          if (result.kind !== 'added') return false;
+          onQuoteSelected('');
+          return true;
+        }}
       />
     </div>
   );

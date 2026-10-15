@@ -156,6 +156,7 @@ export async function publishManagedCommandWakeMessage(
       threadId: claimed.threadId,
       catId: claimed.catId,
       wakeWhen: true,
+      ...(claimed.command.jobId ? { jobId: claimed.command.jobId, managedJobReceipt: 'terminal' } : {}),
       ...(actionLeaseRef ? { actionLeaseRef } : {}),
     },
   } as const;

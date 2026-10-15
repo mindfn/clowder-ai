@@ -15,6 +15,7 @@ import { ConnectorIcon } from './icons/ConnectorIcon';
 import { MarkdownContent } from './MarkdownContent';
 import { MessageActionSlot } from './MessageActionSlot';
 import { MessageBubble } from './MessageBubble';
+import { ManagedJobCard } from './managed-job/ManagedJobCard';
 import { frustrationHistoryCopy } from './rich/frustration-history.shell-copy';
 import { trustedFrustrationMeta, useFrustrationVisibility } from './rich/frustration-visibility';
 import { RichBlocks } from './rich/RichBlocks';
@@ -86,6 +87,22 @@ export function ConnectorBubble({ message, threadId, timelineMessages }: Connect
   if (retiredOnly && !message.contentBlocks?.length)
     return <div data-message-id={message.id} aria-hidden="true" className="h-0" />;
   if (message.extra?.scheduler?.hiddenTrigger) return null;
+  const jobId = source.connector === 'hold-ball' && typeof source.meta?.jobId === 'string' ? source.meta.jobId : null;
+  const taskId = typeof source.meta?.taskId === 'string' ? source.meta.taskId : null;
+  if (
+    jobId &&
+    taskId &&
+    source.meta?.managedJobCard !== true &&
+    timelineMessages?.some(
+      (candidate) =>
+        candidate.id !== message.id &&
+        candidate.source?.connector === 'hold-ball' &&
+        candidate.source.meta?.jobId === jobId &&
+        candidate.source.meta.managedJobCard === true,
+    )
+  ) {
+    return <div data-message-id={message.id} aria-hidden="true" className="h-0" />;
+  }
 
   const connId = source.connector;
   const themeToken = connectorThemeToken(connId);
@@ -162,7 +179,16 @@ export function ConnectorBubble({ message, threadId, timelineMessages }: Connect
         color: 'var(--cat-msg-text, var(--cafe-text))',
       }}
     >
-      {hasBlocks ? (
+      {jobId && taskId ? (
+        <ManagedJobCard
+          taskId={taskId}
+          jobId={jobId}
+          threadId={threadId}
+          catId={sourceCatId}
+          title={typeof source.meta?.reason === 'string' ? source.meta.reason : undefined}
+          refreshKey={holdStatusRefreshKey}
+        />
+      ) : hasBlocks ? (
         <ContentBlocks blocks={message.contentBlocks!} publication={publication} />
       ) : unknownFeedback ? (
         <p className="text-xs text-cafe-muted">{t.unknown}</p>
@@ -179,7 +205,7 @@ export function ConnectorBubble({ message, threadId, timelineMessages }: Connect
       {richBlocks && richBlocks.length > 0 && (
         <RichBlocks blocks={richBlocks} messageSource={message.source} publication={publication} />
       )}
-      {source.connector === 'hold-ball' && typeof source.meta?.taskId === 'string' && (
+      {!jobId && source.connector === 'hold-ball' && typeof source.meta?.taskId === 'string' && (
         <HoldBallCancelButton
           key={holdStatusRefreshKey}
           taskId={source.meta.taskId}

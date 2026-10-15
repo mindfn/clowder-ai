@@ -110,6 +110,7 @@ export function PluginListRow({
   onBlockedToggle,
   onUninstall,
   busy,
+  enableBlockedReason,
   locale,
 }: {
   plugin: PluginManagerDesignFixture;
@@ -120,6 +121,7 @@ export function PluginListRow({
   onBlockedToggle?: () => void;
   onUninstall?: () => void;
   busy: boolean;
+  enableBlockedReason?: string;
   locale: string;
 }) {
   const installed = plugin.artifact === 'installed';
@@ -168,6 +170,9 @@ export function PluginListRow({
           />
         </div>
       </div>
+      {enableBlockedReason && (
+        <output className="block px-4 pb-3 text-xs text-conn-amber-text">{enableBlockedReason}</output>
+      )}
     </li>
   );
 }

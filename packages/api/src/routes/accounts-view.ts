@@ -1,4 +1,6 @@
 import { type AccountConfig, accountQuotaOwnerMatches, builtinAccountFamilyForRef } from '@cat-cafe/shared';
+import { readAccountStoreSnapshot } from '../config/account-store-snapshot.js';
+import { claudeTokenStatus } from '../config/claude-token-account.js';
 import { codexManagedStatus } from '../config/codex-account-identity.js';
 import { nativeCodexAccountView } from './accounts-native-view.js';
 // clowder-ai#340: Derive client identity from well-known account IDs, not stored protocol.
@@ -34,6 +36,14 @@ export function accountToView(id: string, account: AccountConfig, apiKeyPresent:
     builtin: isBuiltin,
     ...(quota ? { quota } : {}),
     kind: isBuiltin ? 'builtin' : account.authType,
+    ...(account.claude
+      ? {
+          claude: account.claude,
+          claudeTokenStatus: projectRoot
+            ? claudeTokenStatus(readAccountStoreSnapshot(projectRoot).resolve(id).credential)
+            : 'missing',
+        }
+      : {}),
     ...(codexView ? { codex: codexView } : {}),
     ...(clientId ? { clientId } : {}),
     ...(account.baseUrl ? { baseUrl: account.baseUrl } : {}),
@@ -41,7 +51,7 @@ export function accountToView(id: string, account: AccountConfig, apiKeyPresent:
     ...(account.modelAliases && Object.keys(account.modelAliases).length > 0
       ? { modelAliases: { ...account.modelAliases } }
       : {}),
-    hasApiKey: apiKeyPresent,
+    hasApiKey: account.claude ? false : apiKeyPresent,
     mode: account.authType === 'api_key' ? ('api_key' as const) : ('subscription' as const),
     ...(account.envVars && Object.keys(account.envVars).length > 0 ? { envVars: { ...account.envVars } } : {}),
     createdAt: '',

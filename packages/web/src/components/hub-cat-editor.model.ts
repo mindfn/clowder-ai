@@ -47,6 +47,7 @@ export interface HubCatEditorFormState {
   provider: string;
   agyNativeEnabled?: boolean;
   agyProfileEnabled?: boolean;
+  agyAutoApprove?: boolean;
   agyProfileId?: string;
   agyHomeRoot?: string;
   agyTrustedWorkspaces?: string;
@@ -100,10 +101,9 @@ export interface StrategyFormState {
 export const CLIENT_OPTIONS: Array<{ value: ClientId; label: string }> = [
   { value: 'anthropic', label: 'Claude' },
   { value: 'openai', label: 'Codex' },
-  { value: 'google', label: 'Gemini' },
+  { value: 'google', label: 'Google / AGY Native' },
   { value: 'kimi', label: 'Kimi' },
   { value: 'opencode', label: 'OpenCode' },
-  { value: 'antigravity', label: 'Antigravity' },
   { value: 'catagent', label: 'CatAgent' },
   { value: 'acp', label: 'ACP Client' },
 ];
@@ -398,6 +398,7 @@ export function initialState(cat?: CatData | null, draft?: HubCatEditorDraft | n
     agyNativeEnabled: cat?.clientId === 'google' && cat?.agyProfile?.carrier === 'native',
     agyProfileEnabled: cat?.agyProfile ? cat.agyProfile.enabled === true : true,
     agyProfileId: cat?.agyProfile?.profileId ?? catId,
+    agyAutoApprove: cat?.agyProfile?.carrier === 'native' && cat.agyProfile.autoApprove === true,
     agyHomeRoot: cat?.agyProfile?.homeRoot ?? '',
     agyTrustedWorkspaces: cat?.agyProfile?.trustedWorkspaces?.join('\n') ?? '',
     acpTransport: (acpConfig?.transport as 'stdio' | 'httpstream' | undefined) ?? 'stdio',

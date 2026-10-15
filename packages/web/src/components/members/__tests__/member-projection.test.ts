@@ -1,9 +1,29 @@
 import type { RoutingContextReadModelV1 } from '@cat-cafe/shared';
 import { describe, expect, it } from 'vitest';
 import type { CatData } from '@/hooks/useCatData';
-import { memberStatus, reorderMemberIds } from '../member-projection';
+import { memberStatus, reorderMemberIds, routingSubjectName } from '../member-projection';
 
 const cat = { id: 'member', roster: { available: true } } as CatData;
+it('distinguishes routing preference subjects that share a visible name', () => {
+  const cats = [
+    { ...cat, id: 'codex61-sol', nickname: '小太阳·砚砚', displayName: 'Sol6.1' },
+    { ...cat, id: 'codex6-sol', nickname: '小太阳·砚砚', displayName: 'Sol6' },
+  ];
+  expect(routingSubjectName({ type: 'cat', catId: 'codex61-sol' }, cats)).toBe('小太阳·砚砚 · codex61-sol');
+  expect(routingSubjectName({ type: 'cat', catId: 'codex6-sol' }, cats)).toBe('小太阳·砚砚 · codex6-sol');
+  expect(cats.map((item) => item.nickname)).toEqual(['小太阳·砚砚', '小太阳·砚砚']);
+});
+it('keeps unique, unknown and pool subject names while disambiguating nickname/display-name collisions', () => {
+  const cats = [
+    { ...cat, id: 'a', nickname: 'Shared', displayName: 'Alpha' },
+    { ...cat, id: 'b', nickname: '', displayName: 'Shared' },
+    { ...cat, id: 'c', nickname: 'Unique', displayName: 'Gamma' },
+  ];
+  expect(routingSubjectName({ type: 'cat', catId: 'b' }, cats)).toBe('Shared · b');
+  expect(routingSubjectName({ type: 'cat', catId: 'c' }, cats)).toBe('Unique');
+  expect(routingSubjectName({ type: 'cat', catId: 'missing' }, cats)).toBe('missing');
+  expect(routingSubjectName({ type: 'quota_pool', poolId: 'weekly' }, cats, (id) => `Pool ${id}`)).toBe('Pool weekly');
+});
 function model(
   availability: 'available' | 'scarce' | 'unknown',
   freshness: 'fresh' | 'stale' | 'unknown' = 'fresh',
@@ -187,7 +207,12 @@ describe('member status is only an owner projection', () => {
       },
     ];
     for (const now of [500, 1000, 1500]) {
-      expect(memberStatus(cat, m, null, now)).toMatchObject({ label: '可用', detail: '已恢复', source: '调用成功' });
+      expect(memberStatus(cat, m, null, now)).toMatchObject({
+        label: '已恢复',
+        detail: '最近一次接活顺利完成',
+        observedAt: 400,
+        evidenceRef: 'success-source',
+      });
       expect(memberStatus(cat, m, null, now).until).toBeUndefined();
     }
   });

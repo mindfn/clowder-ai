@@ -1,4 +1,5 @@
 import type { ApprovalHubItem, UnifiedAttentionItemV1, UnifiedAttentionVisibleApproval } from '@cat-cafe/shared';
+import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   type ApprovalHost,
@@ -9,10 +10,12 @@ import {
 } from '@/components/ApprovalHost';
 import { ApprovalItemCard } from '@/components/ApprovalItemCard';
 import { useApprovalHubStore } from '@/stores/approvalHubStore';
+import { useShellCopy } from '../shell-copy';
 import { ApprovalResultLink } from './ApprovalResultLink';
 import { type HostedApprovalMatch, matchHostedApproval } from './approval-match';
 import { describeReconcile } from './approval-reconcile';
 import { type ApprovalSessions, sessionKey } from './approval-sessions';
+import { mailboxEntryCopy } from './mailbox-entry.shell-copy';
 import type { OriginalPlace } from './original-place';
 import { PlaceAction } from './PlaceAction';
 import { ThreadProposalDecision } from './ThreadProposalDecision';
@@ -133,6 +136,7 @@ function Hosted({
   place,
   onOpen,
   readCurrent,
+  secondaryAction,
 }: {
   item: UnifiedAttentionItemV1;
   approval: UnifiedAttentionVisibleApproval;
@@ -141,7 +145,9 @@ function Hosted({
   place: OriginalPlace;
   onOpen: (place: OriginalPlace) => void;
   readCurrent: boolean;
+  secondaryAction?: ReactNode;
 }) {
+  const t = useShellCopy(mailboxEntryCopy);
   const key = sessionKey(ownerUserId, { sourceFeatureId: approval.sourceFeatureId, proposalId: approval.proposalId });
 
   useEffect(() => {
@@ -172,17 +178,26 @@ function Hosted({
     [sessions, key, storeChecked, readCurrent],
   );
   const reportRequest = useCallback((event: ApprovalRequestEvent) => sessions.hostReport(key, event), [sessions, key]);
-  const originalPlaceAction = useMemo(() => <PlaceAction quiet place={place} onOpen={onOpen} />, [place, onOpen]);
+  const originalPlaceAction = useMemo(
+    () => (
+      <span className="flex flex-wrap items-center justify-end gap-2">
+        {secondaryAction}
+        <PlaceAction quiet place={place} onOpen={onOpen} />
+      </span>
+    ),
+    [place, onOpen, secondaryAction],
+  );
   const host = useMemo<ApprovalHost>(
     () => ({
       presentation: 'mailbox',
+      decisionWords: { approve: t.approve, reject: t.reject, clear: t.clear },
       originalPlaceAction,
       writesLocked,
       authorizeWrite,
       reportEditing: noteEditing,
       reportRequest,
     }),
-    [originalPlaceAction, writesLocked, authorizeWrite, reportRequest],
+    [originalPlaceAction, writesLocked, authorizeWrite, reportRequest, t],
   );
 
   return (
@@ -234,6 +249,7 @@ export function HostedApprovalCard({
   place,
   onOpen,
   readCurrent = true,
+  secondaryAction,
 }: {
   item: UnifiedAttentionItemV1;
   /** The read's verified owner: the owner this card is shown to. */
@@ -242,6 +258,7 @@ export function HostedApprovalCard({
   place: OriginalPlace;
   onOpen: (place: OriginalPlace) => void;
   readCurrent?: boolean;
+  secondaryAction?: ReactNode;
 }) {
   const approval = item.approval;
   if (!approval) return null;
@@ -254,6 +271,7 @@ export function HostedApprovalCard({
       place={place}
       onOpen={onOpen}
       readCurrent={readCurrent}
+      secondaryAction={secondaryAction}
     />
   );
 }

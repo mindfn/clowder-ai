@@ -14,7 +14,7 @@ export const JOURNEYS = Object.freeze([
   'authoritative-compaction',
 ]);
 
-const CONTRACT_SHA256 = 'e6bbc69ddd6104cbeb6f26a3bfd7c7a38cdbee456c954379fd3883f7016046b7';
+const CONTRACT_SHA256 = '384e088c2364fead5e725bf798c1358df982761f031567b20b9237cf7d542b6b';
 const OUTCOMES = new Set(['passed', 'unsupported', 'failed']);
 const REASONS = new Set([
   'observed',

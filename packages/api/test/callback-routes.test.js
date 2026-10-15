@@ -4219,6 +4219,154 @@ describe('Callback Routes', () => {
     }
   });
 
+  test('create-rich-block explicitly publishes one durable conversation decision without using the rich-block buffer', async () => {
+    const { InMemoryRuntimeInteractionStore } = await import(
+      '../dist/domains/runtime-interaction/stores/InMemoryRuntimeInteractionStore.js'
+    );
+    const { RuntimeInteractionService } = await import(
+      '../dist/domains/runtime-interaction/RuntimeInteractionService.js'
+    );
+    const { MessageRuntimeInteractionCardPublisher } = await import(
+      '../dist/domains/runtime-interaction/RuntimeInteractionCardPublisher.js'
+    );
+    const store = new InMemoryRuntimeInteractionStore();
+    const runtimeInteractionService = new RuntimeInteractionService({
+      store,
+      hostEpoch: 'callback-test-host',
+      cardPublisher: new MessageRuntimeInteractionCardPublisher({ messageStore, socketManager }),
+    });
+    const app = await createApp({ runtimeInteractionService });
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 'thread-conversation-decision');
+    const block = {
+      id: 'release-choice',
+      kind: 'interactive',
+      v: 1,
+      interactiveType: 'select',
+      title: 'Choose a release name',
+      options: [
+        { id: 'sunrise', label: 'Sunrise' },
+        { id: 'moonrise', label: 'Moonrise' },
+      ],
+      messageTemplate: 'Release name: {selection}',
+    };
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/create-rich-block',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { block, awaitResponseV1: { mode: 'once', allowTextResponse: true } },
+    });
+
+    assert.equal(response.statusCode, 200, response.body);
+    const receipt = response.json();
+    assert.equal(receipt.status, 'ok');
+    assert.equal(receipt.revision, 2);
+    assert.equal(receipt.cardRef.blockId, block.id);
+    const record = await store.get(receipt.interactionId);
+    assert.equal(record.status, 'pending');
+    assert.equal(record.request.kind, 'conversation_decision');
+    assert.deepEqual(record.request.presentation, block);
+    const replayResponse = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/create-rich-block',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { block, awaitResponseV1: { mode: 'once', allowTextResponse: true } },
+    });
+    assert.equal(replayResponse.statusCode, 200, replayResponse.body);
+    assert.equal(replayResponse.json().interactionId, receipt.interactionId);
+    assert.equal(messageStore.getRecent(10).length, 1, 'the canonical card is one standalone durable message');
+    assert.equal(
+      messageStore.getRecent(10)[0].extra.runtimeInteractionCard.interactionId,
+      receipt.interactionId,
+      'the original block has an exact message-level RuntimeInteraction binding for Chat consumers',
+    );
+    const { getRichBlockBuffer } = await import('../dist/domains/cats/services/agents/invocation/RichBlockBuffer.js');
+    assert.deepEqual(
+      getRichBlockBuffer().consume('thread-conversation-decision', 'opus', invocationId),
+      [],
+      'durable decisions must not also enter the generic final-response buffer',
+    );
+    for (const invalidBlock of [
+      {
+        ...block,
+        id: 'callback-choice',
+        options: [
+          {
+            id: 'callback',
+            label: 'Legacy callback',
+            action: { type: 'callback', endpoint: '/api/callbacks/legacy-action' },
+          },
+        ],
+      },
+      { ...block, id: 'grouped-choice', groupId: 'legacy-guide-group' },
+    ]) {
+      const rejected = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/create-rich-block',
+        headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+        payload: { block: invalidBlock, awaitResponseV1: { mode: 'once' } },
+      });
+      assert.equal(rejected.statusCode, 400, rejected.body);
+    }
+    assert.equal(messageStore.getRecent(10).length, 1, 'legacy action/group cards create no interaction message');
+    await app.close();
+  });
+
+  test('create-rich-block fails closed for invalid or unavailable awaited decisions', async () => {
+    const app = await createApp();
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 'thread-invalid-decision');
+    const headers = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken };
+
+    const unavailable = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/create-rich-block',
+      headers,
+      payload: {
+        block: {
+          id: 'choice',
+          kind: 'interactive',
+          v: 1,
+          interactiveType: 'select',
+          options: [{ id: 'a', label: 'A' }],
+        },
+        awaitResponseV1: { mode: 'once' },
+      },
+    });
+    assert.equal(unavailable.statusCode, 503);
+
+    const nonInteractive = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/create-rich-block',
+      headers,
+      payload: {
+        block: { id: 'card', kind: 'card', v: 1, title: 'Not a decision' },
+        awaitResponseV1: { mode: 'once' },
+      },
+    });
+    assert.equal(nonInteractive.statusCode, 400);
+    const scoped = await registry.create('user-1', 'opus', 'thread-invalid-decision', undefined, undefined, {
+      mode: 'read_only',
+      replayDeniedToolNames: [],
+    });
+    const scopedResponse = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/create-rich-block',
+      headers: { 'x-invocation-id': scoped.invocationId, 'x-callback-token': scoped.callbackToken },
+      payload: {
+        block: {
+          id: 'scoped-choice',
+          kind: 'interactive',
+          v: 1,
+          interactiveType: 'select',
+          options: [{ id: 'a', label: 'A' }],
+        },
+        awaitResponseV1: { mode: 'once' },
+      },
+    });
+    assert.equal(scopedResponse.statusCode, 403);
+    assert.equal(messageStore.getRecent(10).length, 0);
+    await app.close();
+  });
+
   test('rich image validation rejects unusable paths without publishing through either callback route', async () => {
     const { mkdtemp, writeFile, symlink, truncate, rm } = await import('node:fs/promises');
     const { tmpdir } = await import('node:os');

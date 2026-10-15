@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { CLAUDE_TOKEN_PATTERN } from '../config/claude-token-account.js';
+
+const claudeTokenSchema = z.string().trim().regex(CLAUDE_TOKEN_PATTERN, 'claude_token_invalid').optional();
 
 /** F171: POSIX env key — must start with uppercase or _, rest alphanumeric + _. CAT_CAFE_ reserved. */
 const envKeySchema = z.string().regex(/^[A-Z_][A-Za-z0-9_]*$/, 'env key must match [A-Z_][A-Za-z0-9_]*');
@@ -57,6 +60,7 @@ export const createBodySchema = z
     authType: authTypeEnum.optional(),
     baseUrl: z.string().optional(),
     apiKey: z.string().optional(),
+    claudeToken: claudeTokenSchema,
     modelOverride: z.string().optional(),
     models: z
       .array(
@@ -79,6 +83,15 @@ export const createBodySchema = z
           ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: 'codex_managed_account_fields_owned' });
       }
     }
+    if (
+      value.claudeToken !== undefined &&
+      (value.authType !== 'oauth' ||
+        value.clientId !== 'anthropic' ||
+        value.apiKey !== undefined ||
+        value.baseUrl !== undefined ||
+        value.envVars !== undefined)
+    )
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'claude_token_account_fields_owned' });
     if ((value.authType ?? 'api_key') === 'api_key' && !value.clientId) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['clientId'], message: 'API key accounts require clientId' });
     }
@@ -102,6 +115,7 @@ export const updateBodySchema = z.object({
   authType: authTypeEnum.optional(),
   baseUrl: z.string().optional(),
   apiKey: z.string().optional(),
+  claudeToken: claudeTokenSchema,
   modelOverride: z.string().nullable().optional(),
   models: z
     .array(

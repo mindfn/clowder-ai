@@ -47,7 +47,6 @@ async function fixture() {
     messageStore: messages,
     threadStore: threads,
     enabled: async () => true,
-    allowedCats: async () => [],
     now: () => now,
     sendWebhook: async (_url, _headers, body) => {
       delivered.push(JSON.parse(body).eventId);

@@ -19,7 +19,7 @@ function interceptChatSend(sent) {
 }
 
 async function selectRegion(page) {
-  await page.getByRole('button', { name: '圈选区域', exact: true }).click();
+  await page.getByRole('button', { name: '圈选', exact: true }).click();
   const points = await page
     .getByTestId('review-media-stage')
     .locator('svg[aria-label="图片或视频上的批注"]')
@@ -36,7 +36,7 @@ async function selectRegion(page) {
   await page.mouse.down();
   await page.mouse.move(points[1].x, points[1].y, { steps: 5 });
   await page.mouse.up();
-  await page.getByText('修改想法 · 当前选区').waitFor();
+  await page.locator('[data-testid="context-attachment-list"] [data-context-kind="media"]').waitFor();
 }
 
 async function capture(page, width, scope, step, body) {
@@ -75,9 +75,8 @@ export function registerOrdinaryModificationJourney(suite) {
             assert.equal(await page.getByTestId('content-modification-entry').count(), 0);
             if (scope === 'selected region') {
               await selectRegion(page);
-              await page.getByRole('textbox', { name: '评论内容' }).fill('尚未保存的短评也要随所圈画面保留');
-              await page.getByTestId('workspace-content-review-media-add-to-chat').click();
             } else {
+              await page.getByLabel('图片更多操作', { exact: true }).click();
               await page.getByTestId('workspace-media-chat-whole-work').click();
             }
             const chip = page.locator('[data-testid="context-attachment-list"] [data-context-kind="media"]');
@@ -86,6 +85,7 @@ export function registerOrdinaryModificationJourney(suite) {
             assert.equal(sent.length, 0, 'adding a work is not sending it');
             assert.equal(await chip.count(), 1);
             assert.equal(await page.getByTestId('content-modification-submit').count(), 0);
+            assert.equal(await page.getByTestId('workspace-content-review-surface').locator('textarea').count(), 0);
             const shown = await image.boundingBox();
             assert.ok(shown && shown.height >= Math.max(200, defaultHeight * 0.5));
             await capture(page, width, scope, 'artwork');
@@ -117,7 +117,7 @@ export function registerOrdinaryModificationJourney(suite) {
             if (scope === 'selected region') {
               assert.equal(media.selections.length, 1);
               assert.equal(media.selections[0].selection.kind, 'image-region');
-              assert.equal(media.selections[0].instruction, '尚未保存的短评也要随所圈画面保留');
+              assert.equal(media.selections[0].instruction, undefined, 'the sole Chat draft carries the instruction');
             } else assert.deepEqual(media.selections, []);
             const prompt = await modelProjection(body);
             assert.deepEqual(

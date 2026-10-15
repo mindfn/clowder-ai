@@ -1,16 +1,19 @@
 import type {
+  RichInteractiveBlock,
   RuntimeInteractionRecord,
   UnifiedAttentionItemV1,
   UnifiedAttentionReadV1,
   UnifiedAttentionVisibleApproval,
 } from '@cat-cafe/shared';
 import { projectDecisionItems } from './companion-decision-items.js';
+import { type DecisionPersonalViewInput, selectDecisionPersonalItems } from './companion-decision-personal-view.js';
 import {
   approvalsSourceSchema,
   assertDecisionOwner,
   type DecisionSourceRead,
   needsMeSourceSchema,
 } from './companion-decision-sources.js';
+import { type OriginalApprovalCardRead, originalApprovalCardKey } from './companion-original-approval-cards.js';
 import { mergeStructuredChoices } from './companion-structured-choices.js';
 import type { UserMentionTodoRead } from './user-mention-todo-projection.js';
 
@@ -50,10 +53,6 @@ function exactCountFields(input: {
   };
 }
 
-function decisionQualifiedCount(items: UnifiedAttentionItemV1[]): number {
-  return items.filter((item) => item.approval?.resolution === 'open' || item.choiceRequest !== undefined).length;
-}
-
 function sourceRead(
   coverage: DecisionSourceRead['coverage'],
   observedAt: number,
@@ -62,49 +61,33 @@ function sourceRead(
   return { status: 'available', startedAt: observedAt, observedAt, coverage, exhaustiveness };
 }
 
-export function projectCompanionDecisions(
-  approvalsSource: unknown,
-  needsMeSource: unknown,
-  userId: string,
-  page: { offset: number; limit: number },
-  observedAt: number,
-  sourceReads?: ProjectionSourceReads,
-  userMentions?: UserMentionTodoRead,
-  structuredChoices: RuntimeInteractionRecord[] = [],
-) {
-  const approvalRead = approvalsSourceSchema.parse(approvalsSource);
-  const workRead = needsMeSourceSchema.parse(needsMeSource);
-  const approvals = approvalRead.items;
-  const needsMe = workRead.ownerReads;
-  assertDecisionOwner(approvals, needsMe, userId);
-  const unified = projectDecisionItems(approvals, needsMe);
-  const reasons = new Set(unified.reasons);
-  mergeStructuredChoices(unified.items, structuredChoices, reasons);
-  unified.reasons = [...reasons];
-  const sources = projectionSources(
-    sourceReads,
-    userMentions,
-    observedAt,
-    approvalRead.coverage?.state,
-    workRead.coverage?.state,
-  );
-  const qualifiedCount = decisionQualifiedCount(unified.items);
-  if (userMentions?.period === 'earlier' || userMentions?.period === 'handled') unified.items = [];
-  unified.items.push(...(userMentions?.items ?? []));
-  const availableSources = Object.values(sources).filter((source) => source.status === 'available').length;
+function summarizeSources(sources: Record<string, DecisionSourceRead>, reasons: string[]) {
   const sourceStates = Object.values(sources);
+  const availableSources = sourceStates.filter((source) => source.status === 'available').length;
   const complete =
     availableSources === sourceStates.length && sourceStates.every((source) => source.exhaustiveness === 'complete');
-  const consistent = unified.reasons.length === 0;
-  const approvalItems = unified.items.filter(
+  return {
+    sourceStates,
+    complete,
+    consistent: reasons.length === 0,
+    status: complete ? ('available' as const) : availableSources ? ('partial' as const) : ('unavailable' as const),
+  };
+}
+
+function legacyVectors(selectedItems: UnifiedAttentionItemV1[]) {
+  const approvalItems = selectedItems.filter(
     (item): item is UnifiedAttentionItemV1 & { approval: UnifiedAttentionVisibleApproval } =>
       item.approval !== undefined,
   );
   const otherByTask = new Map<
     string,
-    { ownerRead: (typeof needsMe)[number]; receipts: (typeof needsMe)[number]['attentionReceipts'] }
+    {
+      ownerRead: UnifiedAttentionItemV1['linkedNeedsMe'][number]['ownerRead'];
+      receipts: UnifiedAttentionItemV1['linkedNeedsMe'][number]['receipt'][];
+    }
   >();
-  for (const item of unified.items.filter((item) => !item.approval)) {
+  for (const item of selectedItems) {
+    if (item.approval) continue;
     for (const linked of item.linkedNeedsMe) {
       const key = linked.ownerRead.envelope.subjectRef;
       const group = otherByTask.get(key) ?? { ownerRead: linked.ownerRead, receipts: [] };
@@ -116,12 +99,54 @@ export function projectCompanionDecisions(
     ...ownerRead,
     attentionReceipts: receipts,
   }));
+  return { approvalItems, otherNeedsMe };
+}
+
+export function projectCompanionDecisions(
+  approvalsSource: unknown,
+  needsMeSource: unknown,
+  userId: string,
+  page: { offset: number; limit: number },
+  observedAt: number,
+  sourceReads?: ProjectionSourceReads,
+  userMentions?: UserMentionTodoRead,
+  structuredChoices: RuntimeInteractionRecord[] = [],
+  personal?: DecisionPersonalViewInput,
+  originalApprovalCards?: OriginalApprovalCardRead,
+  conversationPresentations?: ReadonlyMap<string, RichInteractiveBlock>,
+) {
+  const approvalRead = approvalsSourceSchema.parse(approvalsSource);
+  const workRead = needsMeSourceSchema.parse(needsMeSource);
+  const approvals = approvalRead.items;
+  const needsMe = workRead.ownerReads;
+  assertDecisionOwner(approvals, needsMe, userId);
+  const unified = projectDecisionItems(approvals, needsMe);
+  const reasons = new Set([...unified.reasons, ...(originalApprovalCards?.reasons ?? [])]);
+  for (const item of unified.items) {
+    if (!item.approval) continue;
+    const proof = originalApprovalCards?.proofs.get(originalApprovalCardKey(item.approval));
+    if (proof) item.originalApprovalCard = proof;
+  }
+  mergeStructuredChoices(unified.items, structuredChoices, reasons, userId, conversationPresentations);
+  const canonicalDecisionItems = unified.items;
+  const personalProjection = selectDecisionPersonalItems({
+    canonicalItems: canonicalDecisionItems,
+    reasons,
+    userMentions,
+    userId,
+    personal,
+  });
+  unified.reasons = [...reasons];
+  const sources = {
+    ...projectionSources(sourceReads, userMentions, observedAt, approvalRead.coverage?.state, workRead.coverage?.state),
+    ...(personal ? { personalPreferences: personal.state } : {}),
+  };
+  const { sourceStates, complete, consistent, status } = summarizeSources(sources, unified.reasons);
+  const selectedItems = personalProjection.pageItems;
+  const { approvalItems, otherNeedsMe } = legacyVectors(selectedItems);
   return {
     version: 1 as const,
-    status: (complete ? 'available' : availableSources ? 'partial' : 'unavailable') as
-      | 'available'
-      | 'partial'
-      | 'unavailable',
+    status,
     identity: { ownerUserId: userId },
     sources,
     readWindow: {
@@ -130,15 +155,23 @@ export function projectCompanionDecisions(
       consistency: 'independent_source_reads' as const,
     },
     consistency: { state: consistent ? ('verified' as const) : ('uncertain' as const), reasons: unified.reasons },
-    items: unified.items.slice(page.offset, page.offset + page.limit),
+    items: selectedItems.slice(page.offset, page.offset + page.limit),
     ...exactCountFields({
       complete,
       consistent,
-      totalCount: unified.items.length,
-      decisionQualifiedCount: qualifiedCount,
+      totalCount: selectedItems.length,
+      decisionQualifiedCount: personalProjection.attentionItems.length,
       hasStructuredChoices: sources.structuredChoices !== undefined,
     }),
     ...(userMentions?.counts ? { mentionCounts: userMentions.counts, mentionPeriod: userMentions.period } : {}),
+    ...(personalProjection.view
+      ? {
+          personalView: {
+            ...personalProjection.view,
+            ...(complete && consistent ? personalProjection.counts : {}),
+          },
+        }
+      : {}),
     scope: 'owner_all_projects' as const,
     observedAt,
     approvalCoverage: 'all_registered_F246_producers' as const,
@@ -158,7 +191,7 @@ export function projectCompanionDecisions(
     page: {
       ...page,
       scope: 'known_rows' as const,
-      hasMore: page.offset + page.limit < unified.items.length,
+      hasMore: page.offset + page.limit < selectedItems.length,
       hasMoreApprovals: page.offset + page.limit < approvalItems.length,
       hasMoreNeedsMe: page.offset + page.limit < otherNeedsMe.length,
     },

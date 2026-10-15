@@ -1,5 +1,22 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, before, test } from 'node:test';
+
+// The generic job ledger is independent of this legacy wake store. Keep the
+// fixture's filesystem namespace private even in the full concurrent Redis suite.
+const priorDataRoot = process.env.CAT_CAFE_DATA_DIR;
+const fixtureDataRoot = mkdtempSync(join(tmpdir(), 'managed-projection-fixture-'));
+before(() => {
+  process.env.CAT_CAFE_DATA_DIR = fixtureDataRoot;
+});
+after(() => {
+  if (priorDataRoot === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+  else process.env.CAT_CAFE_DATA_DIR = priorDataRoot;
+  rmSync(fixtureDataRoot, { recursive: true, force: true });
+});
+
 import Database from 'better-sqlite3';
 import Fastify from 'fastify';
 import { ManagedCommandWakeRecoverySweep } from '../dist/domains/ball-custody/ManagedCommandWakeRecoverySweep.js';

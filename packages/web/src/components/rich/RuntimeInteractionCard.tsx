@@ -4,6 +4,7 @@ import type { RuntimeInteractionRecord, RuntimeInteractionResponse } from '@cat-
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RichCardBlock } from '@/stores/chat-types';
 import { apiFetch } from '@/utils/api-client';
+import { CLASSIC_RUNTIME_INTERACTION_COPY, type RuntimeInteractionCopy } from './RuntimeInteractionCopy';
 import { RuntimeInteractionDecisionActions } from './RuntimeInteractionDecisionActions';
 import { RuntimeInteractionElicitationForm } from './RuntimeInteractionElicitationForm';
 import { RuntimeInteractionQuestionForm } from './RuntimeInteractionQuestionForm';
@@ -12,7 +13,23 @@ export function isRuntimeInteractionCardBlock(block: RichCardBlock): boolean {
   return block.meta?.kind === 'runtime_interaction' && typeof block.meta.interactionId === 'string';
 }
 
-export function RuntimeInteractionCard({ block, messageId }: { block: RichCardBlock; messageId?: string }) {
+export interface RuntimeInteractionHostRead {
+  ownerUserId: string;
+  revision: number;
+  cardRef: NonNullable<RuntimeInteractionRecord['cardRef']>;
+  readCurrent: boolean;
+}
+export function RuntimeInteractionCard({
+  block,
+  messageId,
+  host,
+  copy = CLASSIC_RUNTIME_INTERACTION_COPY,
+}: {
+  block: RichCardBlock;
+  messageId?: string;
+  host?: RuntimeInteractionHostRead;
+  copy?: RuntimeInteractionCopy;
+}) {
   const interactionId = String(block.meta?.interactionId ?? '');
   const [record, setRecord] = useState<RuntimeInteractionRecord | null>(null);
   const [loading, setLoading] = useState(true);
@@ -26,7 +43,7 @@ export function RuntimeInteractionCard({ block, messageId }: { block: RichCardBl
     setLoading(true);
     try {
       const response = await apiFetch(`/api/runtime-interactions/${encodeURIComponent(interactionId)}`);
-      if (!response.ok) throw new Error('交互状态同步失败');
+      if (!response.ok) throw new Error(copy.syncFailed);
       const body = (await response.json()) as { interaction: RuntimeInteractionRecord };
       if (fetchGeneration.current === generation && !submittingRef.current) {
         setRecord(body.interaction);
@@ -37,7 +54,7 @@ export function RuntimeInteractionCard({ block, messageId }: { block: RichCardBl
     } finally {
       if (fetchGeneration.current === generation) setLoading(false);
     }
-  }, [interactionId]);
+  }, [interactionId, copy]);
 
   useEffect(() => {
     void hydrate();
@@ -53,7 +70,7 @@ export function RuntimeInteractionCard({ block, messageId }: { block: RichCardBl
   }, [hydrate, interactionId]);
 
   const submitMutation = async (suffix: 'respond' | 'reject', payload: Record<string, unknown>): Promise<void> => {
-    if (!record?.cardRef || submittingRef.current) return;
+    if (!record?.cardRef || submittingRef.current || (host && (!hostAligned || loading))) return;
     submittingRef.current = true;
     fetchGeneration.current += 1;
     setSubmitting(true);
@@ -71,7 +88,7 @@ export function RuntimeInteractionCard({ block, messageId }: { block: RichCardBl
         await hydrate();
         return;
       }
-      if (!response.ok || !responseBody.interaction) throw new Error(responseBody.error ?? '提交失败');
+      if (!response.ok || !responseBody.interaction) throw new Error(responseBody.error ?? copy.submitFailed);
       fetchGeneration.current += 1;
       setRecord(responseBody.interaction);
     } catch (caught) {
@@ -90,9 +107,21 @@ export function RuntimeInteractionCard({ block, messageId }: { block: RichCardBl
     await submitMutation('reject', { cardRef: record.cardRef });
   };
 
-  const canonical = Boolean(
-    record?.cardRef && messageId === record.cardRef.messageId && block.id === record.cardRef.blockId,
-  );
+  const hostOwnerMatches =
+    !host ||
+    Boolean(
+      record &&
+        record.request.owner.userId === host.ownerUserId &&
+        record.request.owner.threadId === host.cardRef.threadId &&
+        record.cardRef?.threadId === host.cardRef.threadId &&
+        record.cardRef.messageId === host.cardRef.messageId &&
+        record.cardRef.blockId === host.cardRef.blockId,
+    );
+  const hostAligned = !host || Boolean(host.readCurrent && hostOwnerMatches && record?.updatedAt === host.revision);
+  const canonical =
+    record?.request.kind !== 'conversation_decision' &&
+    hostOwnerMatches &&
+    Boolean(record?.cardRef && messageId === record.cardRef.messageId && block.id === record.cardRef.blockId);
 
   return (
     <section
@@ -101,28 +130,35 @@ export function RuntimeInteractionCard({ block, messageId }: { block: RichCardBl
     >
       <header className="mb-3 flex items-start gap-2">
         <div className="min-w-0">
-          <p className="text-micro font-medium text-[var(--semantic-info)]">{kindLabel(record?.request.kind)}</p>
+          <p className="text-micro font-medium text-[var(--semantic-info)]">
+            {
+              copy.kind[
+                record?.request.kind === 'conversation_decision' ? 'unknown' : (record?.request.kind ?? 'unknown')
+              ]
+            }
+          </p>
           <h3 className="text-sm font-semibold">{record?.request.title ?? block.title}</h3>
           {record?.request.description ? (
             <p className="mt-1 whitespace-pre-wrap break-words text-xs text-cafe-muted">{record.request.description}</p>
           ) : null}
         </div>
-        <span className="ml-auto text-micro text-cafe-muted">{statusLabel(record?.status)}</span>
+        <span className="ml-auto text-micro text-cafe-muted">{copy.status[record?.status ?? 'staged']}</span>
       </header>
 
-      {loading && !record ? <p className="text-sm text-cafe-muted">正在同步请求…</p> : null}
+      {loading && !record ? <p className="text-sm text-cafe-muted">{copy.loading}</p> : null}
       {error ? <p className="mb-2 text-sm text-[var(--semantic-critical)]">{error}</p> : null}
-      {record && record.status === 'staged' ? <p className="text-sm text-cafe-muted">正在准备请求…</p> : null}
-      {record && record.status !== 'staged' && !canonical ? (
-        <p className="text-sm text-cafe-muted">只读副本：请回到原消息处理这个请求。</p>
+      {record && record.status === 'staged' ? <p className="text-sm text-cafe-muted">{copy.preparing}</p> : null}
+      {record && record.status !== 'staged' && (!canonical || (host && !hostAligned && record.status === 'pending')) ? (
+        <p className="text-sm text-cafe-muted">{copy.readonly}</p>
       ) : null}
       {record && canonical && record.status !== 'staged' && record.status !== 'pending' ? (
-        <TerminalState record={record} />
+        <TerminalState record={record} copy={copy} />
       ) : null}
       {record && canonical && record.status === 'pending' ? (
         <PendingSurface
           record={record}
-          disabled={submitting}
+          disabled={submitting || (host !== undefined && (!hostAligned || loading))}
+          copy={copy}
           onSubmit={(response) => void submit(response)}
           onReject={() => void reject()}
         />
@@ -136,16 +172,25 @@ function PendingSurface({
   disabled,
   onSubmit,
   onReject,
+  copy,
 }: {
+  copy: RuntimeInteractionCopy;
   record: RuntimeInteractionRecord;
   disabled: boolean;
   onSubmit: (response: RuntimeInteractionResponse) => void;
   onReject: () => void;
 }) {
   const request = record.request;
+  if (request.kind === 'conversation_decision') return null;
   if (request.kind === 'question') {
     return (
-      <RuntimeInteractionQuestionForm request={request} disabled={disabled} onSubmit={onSubmit} onReject={onReject} />
+      <RuntimeInteractionQuestionForm
+        request={request}
+        disabled={disabled}
+        onSubmit={onSubmit}
+        onReject={onReject}
+        copy={copy.form}
+      />
     );
   }
   if (request.kind === 'elicitation') {
@@ -160,35 +205,21 @@ function PendingSurface({
   );
 }
 
-function TerminalState({ record }: { record: RuntimeInteractionRecord }) {
-  return <p className="text-sm text-cafe-muted">{terminalCopy(record)}</p>;
+function TerminalState({ record, copy }: { record: RuntimeInteractionRecord; copy: RuntimeInteractionCopy }) {
+  return <p className="text-sm text-cafe-muted">{terminalCopy(record, copy)}</p>;
 }
 
-function terminalCopy(record: RuntimeInteractionRecord): string {
-  if (record.status === 'answered') return record.request.kind === 'question' ? '回答已提交。' : '请求已处理。';
-  if (record.terminal?.reasonCode === 'user_rejected') return '你已拒绝这次请求。';
-  if (record.terminal?.reasonCode === 'user_cancelled') return '你已取消这次请求。';
-  if (record.terminal?.reasonCode === 'host_restarted') return '服务重启后，这个旧请求已失效。';
-  if (record.terminal?.reasonCode === 'transport_lost') return '运行连接已中断，这个请求已失效。';
-  if (record.terminal?.reasonCode === 'confirmation_unavailable') return '此运行没有可用的确认界面。';
-  if (record.terminal?.reasonCode === 'surface_publication_failed') return '请求界面发布失败，未执行任何操作。';
-  return '这个请求已失效，不能再提交。';
-}
-
-function kindLabel(kind: RuntimeInteractionRecord['request']['kind'] | undefined): string {
-  if (kind === 'approval') return '需要确认';
-  if (kind === 'question') return '需要回答';
-  if (kind === 'elicitation') return '需要补充';
-  return '运行时请求';
-}
-
-function statusLabel(status: RuntimeInteractionRecord['status'] | undefined): string {
-  if (!status || status === 'staged') return '同步中';
-  if (status === 'pending') return '等待你处理';
-  if (status === 'answered') return '已处理';
-  if (status === 'declined') return '已拒绝';
-  if (status === 'cancelled') return '已取消';
-  return '已失效';
+function terminalCopy(record: RuntimeInteractionRecord, copy: RuntimeInteractionCopy): string {
+  if (record.status === 'answered')
+    return record.request.kind === 'question' ? copy.terminal.answered : copy.terminal.handled;
+  const reason = record.terminal?.reasonCode;
+  if (reason === 'user_rejected') return copy.terminal.rejected;
+  if (reason === 'user_cancelled') return copy.terminal.cancelled;
+  if (reason === 'host_restarted') return copy.terminal.restarted;
+  if (reason === 'transport_lost') return copy.terminal.lost;
+  if (reason === 'confirmation_unavailable') return copy.terminal.unavailable;
+  if (reason === 'surface_publication_failed') return copy.terminal.publicationFailed;
+  return copy.terminal.invalid;
 }
 
 function errorMessage(error: unknown): string {

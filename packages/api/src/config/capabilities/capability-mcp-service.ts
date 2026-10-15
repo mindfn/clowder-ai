@@ -25,9 +25,9 @@ import type { CapabilitiesConfig, CapabilityEntry } from '@cat-cafe/shared';
 import { appendAuditEntry } from './capability-audit.js';
 import {
   type CliConfigPaths,
-  generateCliConfigs,
   healCatCafeMcpTopology,
   readCapabilitiesConfig,
+  reconcileMcpRuntimeConfig,
   withCapabilityLock,
   writeCapabilitiesConfig,
 } from './capability-orchestrator.js';
@@ -52,7 +52,7 @@ export function fileBasedMcpIO(projectRoot: string, cliConfigPaths?: CliConfigPa
     readConfig: () => readCapabilitiesConfig(projectRoot),
     writeAndRegenCli: async (config) => {
       await writeCapabilitiesConfig(projectRoot, config);
-      await generateCliConfigs(config, paths, projectRoot);
+      await reconcileMcpRuntimeConfig(config, paths, projectRoot);
     },
     withLock: (fn) => withCapabilityLock(projectRoot, fn),
   };
@@ -80,7 +80,7 @@ export interface McpRemoveOpts extends McpServiceOpts {
  * Install or update an MCP capability entry through the standard pipeline.
  *
  * Pipeline: lock → read → heal → ownership check → upsert → write →
- *           generateCliConfigs → audit.
+ *           reconcileMcpRuntimeConfig → audit.
  *
  * Returns the before/after snapshots for the caller's convenience.
  */

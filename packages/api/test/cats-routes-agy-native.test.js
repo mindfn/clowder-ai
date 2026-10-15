@@ -124,7 +124,6 @@ test('Native profile mutation rejects unsafe or conflicting settings before pers
     const before = JSON.stringify(f.persisted());
     for (const body of [
       { agyProfile: { ...profile, nativeCodingGrant: { taskId: 'arbitrary' } } },
-      { agyProfile: { ...profile, autoApprove: true } },
       { agyProfile: { ...profile, model: 'Human Model Label' } },
       { agyProfile: { ...profile, trustedWorkspaces: ['relative'] } },
       { agyProfile: { ...profile, model: 'another-model' } },
@@ -141,7 +140,7 @@ test('Native profile mutation rejects unsafe or conflicting settings before pers
   }
 });
 
-test('native coding approval stays private and is retained only for an unchanged binding', async () => {
+test('retired native coding grants are stripped when member settings are saved', async () => {
   const grant = {
     threadId: 'thread-1',
     taskId: 'task-1',
@@ -157,7 +156,7 @@ test('native coding approval stays private and is retained only for an unchanged
     assert.equal(response.statusCode, 200, response.body);
     assert.ok(response.json().cat.agyProfile);
     assert.equal(response.json().cat.agyProfile.nativeCodingGrant, undefined);
-    assert.deepEqual(f.persisted().agyProfile.nativeCodingGrant, grant);
+    assert.equal(f.persisted().agyProfile.nativeCodingGrant, undefined);
     const changed = await f.patch({ agyProfile: { ...profile, profileId: 'another' } });
     assert.equal(changed.statusCode, 200, changed.body);
     assert.equal(f.persisted().agyProfile.nativeCodingGrant, undefined);
@@ -199,6 +198,23 @@ test('creation supports Native and client/ACP transitions mask template Native s
     assert.equal(switched.statusCode, 200, switched.body);
     assert.equal(switched.json().cat.agyProfile, undefined);
     assert.equal(f.persisted().agyProfile, null);
+  } finally {
+    await f.close();
+  }
+});
+
+test('member PATCH explicitly opts into AGY automatic approval and reads the choice back', async () => {
+  const f = await fixture();
+  try {
+    const automatic = { ...profile, autoApprove: true, trustedWorkspaces: [] };
+    const response = await f.patch({ defaultModel: profile.model, agyProfile: automatic });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(f.persisted().agyProfile, automatic);
+    const read = await f.app.inject({ method: 'GET', url: '/api/cats' });
+    assert.deepEqual(read.json().cats.find((cat) => cat.id === 'gemini38').agyProfile, automatic);
+    const restricted = await f.patch({ agyProfile: profile });
+    assert.equal(restricted.statusCode, 200, restricted.body);
+    assert.equal(f.persisted().agyProfile.autoApprove, false);
   } finally {
     await f.close();
   }

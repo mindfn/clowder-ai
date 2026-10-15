@@ -273,6 +273,7 @@ describe('F307 zero-surface canonical Home invariant', () => {
   });
 
   beforeEach(() => {
+    useChatStore.setState({ currentThreadId: 'thread-a' });
     mocks.isDesktop = true;
     mocks.useNativeViewport = false;
     mocks.workbenchVisible = true;
@@ -1123,6 +1124,55 @@ describe('F307 zero-surface canonical Home invariant', () => {
     });
     expect(container.querySelector('[data-testid="f307-workspace-home-page"]')).toBeNull();
     expect(onConsumed).toHaveBeenCalledWith(1);
+  });
+
+  it('opens the evolution home itself from Settings, then consumes its request', async () => {
+    const onConsumed = vi.fn();
+    await renderWorkbench({ revision: 1, threadId: 'thread-a', target: { kind: 'evolution-home' } }, onConsumed);
+    const state = useF307ExperienceWorkbenchStore.getState();
+    expect(state.layout.activeSurfaceId).toBe('workspace:capability-evolution');
+    expect(
+      state.layout.surfaces.find((surface) => surface.id === state.layout.activeSurfaceId)?.resultTargetRef?.key,
+    ).toBe('thread-a');
+    expect(onConsumed).toHaveBeenCalledWith(1);
+  });
+
+  it('reveals an evolution home request when the conversation foreground starts at Home', async () => {
+    writeShellPresentation('v2');
+    useChatStore.setState({
+      currentThreadId: 'thread-a',
+      workspaceForegroundSurfaceId: null,
+      workspaceWorktreeId: null,
+    });
+    function Host() {
+      const foregroundSurfaceId = useChatStore((state) => state.workspaceForegroundSurfaceId);
+      return (
+        <F307ExperienceWorkbench
+          threadId="thread-a"
+          foregroundSurfaceId={foregroundSurfaceId}
+          artifactWorkHostAvailable
+          onSelectDevSurface={() => undefined}
+          worktreeId={null}
+          openFilePath={null}
+          preview={{ path: '/' }}
+          workspaceOpenRequest={{ revision: 1, threadId: 'thread-a', target: { kind: 'evolution-home' } }}
+          onOpenAppRoute={mocks.openAppRoute}
+        />
+      );
+    }
+    await act(async () => root.render(<Host />));
+    expect(useChatStore.getState().workspaceForegroundSurfaceId).toBe('workspace:capability-evolution');
+    expect(container.querySelector('[data-workbench-focus="surface"]')).not.toBeNull();
+  });
+
+  it('keeps a return request queued while the global page still parks Chat at default', async () => {
+    useChatStore.setState({ currentThreadId: 'default', workspaceForegroundSurfaceId: null });
+    const onConsumed = vi.fn();
+    await renderWorkbench({ revision: 1, threadId: 'thread-a', target: { kind: 'evolution-home' } }, onConsumed);
+    expect(onConsumed).not.toHaveBeenCalled();
+    await act(async () => useChatStore.getState().setCurrentThread('thread-a'));
+    expect(onConsumed).toHaveBeenCalledWith(1);
+    expect(useChatStore.getState().workspaceForegroundSurfaceId).toBe('workspace:capability-evolution');
   });
 
   it('opens an exact Program source through the existing owner and main attention host', async () => {
