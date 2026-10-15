@@ -73,6 +73,7 @@ export interface PluginTaskHost {
 }
 
 export interface PluginTaskHostDeps {
+  readonly artifactReader?: import('../../growing/ports/PreparedArtifactReader.js').PreparedArtifactReader;
   readonly onTaskDataChanged?: (task: TaskItem) => void;
   readonly dispatch?: PluginTaskDispatchServices;
   readonly admission?: PluginTaskAdmissionServices;

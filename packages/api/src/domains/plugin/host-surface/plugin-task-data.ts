@@ -28,7 +28,7 @@ const definition = z
   .strict();
 export type PluginTaskWorkData = z.infer<typeof definition>;
 const mutation = z.union([
-  entrustedWorkUpdateActionV1Schema.omit({ taskId: true, status: true, artifactRefs: true }),
+  entrustedWorkUpdateActionV1Schema.omit({ taskId: true, status: true }),
   entrustedWorkTerminalActionV1Schema,
 ]);
 export type PluginTaskWorkMutation = z.infer<typeof mutation>;
@@ -230,7 +230,7 @@ export async function updatePluginTaskWorkData(
     work.admission.authorityRef !== authority(c.instanceId, task.subjectKey)
   )
     refuse('Task contract does not belong to this installation');
-  const lifecycle = new EntrustedWorkLifecycleService(c.tasks);
+  const lifecycle = new EntrustedWorkLifecycleService(c.tasks, { artifactReader: deps.artifactReader });
   const change = input.entrustedWork;
   if (
     'time' in change &&

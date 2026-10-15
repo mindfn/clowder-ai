@@ -141,6 +141,7 @@ export interface PluginModuleDefinitionShape {
 }
 
 export interface ModulePluginRuntimeOptions {
+  readonly taskArtifactReader?: import('../../../growing/ports/PreparedArtifactReader.js').PreparedArtifactReader;
   readonly onTaskDataChanged?: (task: import('@cat-cafe/shared').TaskItem) => void;
   readonly packages: VerifiedPluginPackageLocator;
   readonly materializer?: BuiltinPluginPackageMaterializer;
@@ -404,6 +405,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         storage,
         ...(this.options.custody ? { custody: this.options.custody(pluginInstanceId) } : {}),
         tasks: createPluginTaskHost({
+          ...(this.options.taskArtifactReader ? { artifactReader: this.options.taskArtifactReader } : {}),
           ...(this.options.onTaskDataChanged ? { onTaskDataChanged: this.options.onTaskDataChanged } : {}),
           ...(taskAdmission ? { admission: taskAdmission } : {}),
           ...(taskDispatch ? { dispatch: taskDispatch } : {}),

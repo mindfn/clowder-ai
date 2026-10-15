@@ -122,6 +122,7 @@ export interface PluginRuntimePersistencePaths {
 
 export interface DormantPluginRuntimeCompositionOptions {
   readonly builtinRuntimes?: ReadonlyMap<string, BuiltinPluginRuntime>;
+  readonly taskArtifactReader?: import('../growing/ports/PreparedArtifactReader.js').PreparedArtifactReader;
   readonly publicInvocations?: PluginPublicInvocationServices;
   readonly taskInvocations?: PluginTaskQueueServices;
   readonly projectRoot: string;
@@ -473,6 +474,7 @@ export function createDormantPluginRuntimeComposition(
       );
       return { ...options.taskInvocations, messageStore: options.messageStore, readAuthority: authority.read };
     },
+    ...(options.taskArtifactReader ? { taskArtifactReader: options.taskArtifactReader } : {}),
     ...(options.onTaskDataChanged ? { onTaskDataChanged: options.onTaskDataChanged } : {}),
     taskAdmission: (pluginInstanceId, packageDigest, assertActivation) =>
       createPluginTaskAdmissionServices({

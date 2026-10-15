@@ -24,6 +24,7 @@ export type PluginTaskReadItem = Pick<
   readonly entrustedWork?: {
     readonly revision: Work['revision'];
     readonly time?: Work['time'];
+    readonly artifactRefs: readonly string[];
     readonly closure: Pick<Work['closure'], 'state'>;
     readonly admission: { readonly sourceRefs: readonly string[] };
   };
@@ -76,6 +77,7 @@ export function projectPluginTaskRead(task: TaskItem): PluginTaskReadItem {
       : {
           entrustedWork: {
             revision: work.revision,
+            artifactRefs: work.artifactRefs,
             ...(work.time === undefined ? {} : { time: work.time }),
             closure: { state: work.closure.state },
             admission: { sourceRefs: work.admission.sourceRefs },

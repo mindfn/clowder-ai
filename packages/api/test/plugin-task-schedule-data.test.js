@@ -267,3 +267,99 @@ test('a newer source revision cannot replay the original Task admission', async 
   assert.equal(updated.id, original.id);
   assert.equal(updated.entrustedWork.time.businessDeadline.value, 1900000200000);
 });
+
+async function materialFixture() {
+  const f = await fixture();
+  const { F232PreparedArtifactReader } = await import('../src/domains/growing/F232PreparedArtifactReader.ts');
+  const artifactRef = '/uploads/selected-report.md';
+  const publication = f.messages.append({
+    userId: 'owner',
+    threadId: f.thread.id,
+    catId: 'codex',
+    content: 'Report',
+    timestamp: 100,
+    extra: { rich: { blocks: [{ kind: 'file', v: 1, id: 'report', fileName: 'report.md', url: artifactRef }] } },
+  });
+  const artifactReader = new F232PreparedArtifactReader({ messages: f.messages });
+  const host = createPluginTaskHost({ ...f.deps, artifactReader });
+  const ownerRead = new EntrustedWorkOwnerReadService({
+    tasks: f.tasks,
+    producerCatalog: { listCurrentReceipts: async () => [] },
+    artifactReader,
+  });
+  return { ...f, host, ownerRead, artifactReader, artifactRef, publication };
+}
+
+test('explicit material selection uses the same Task revision and survives completed Schedule reads', async () => {
+  const f = await materialFixture();
+  const task = await f.host.upsertBySubject(f.input);
+  assert.equal(
+    (await f.ownerRead.listForOwner('owner'))[0].preparedArtifact,
+    undefined,
+    'file arrival is not selection',
+  );
+  const selected = await f.host.update(task.id, {
+    entrustedWork: { expectedRevision: 1, artifactRefs: [f.artifactRef] },
+  });
+  assert.deepEqual((await f.host.get(task.id)).entrustedWork.artifactRefs, [f.artifactRef]);
+  const before = (await f.ownerRead.listForOwner('owner'))[0].preparedArtifact;
+  assert.equal(before.artifactRef, f.artifactRef);
+  assert.match(before.openInWorkspaceRef, /workspace:artifact:/);
+  await assert.rejects(
+    f.host.update(task.id, { entrustedWork: { expectedRevision: 1, artifactRefs: [] } }),
+    /revision/i,
+  );
+  const closed = await f.host.update(task.id, {
+    entrustedWork: {
+      expectedRevision: selected.entrustedWork.revision,
+      closure: { ...f.input.entrustedWork.closure, state: 'satisfied', evidenceRefs: ['service:accepted'] },
+    },
+  });
+  assert.deepEqual(closed.entrustedWork.completion.artifactSnapshot, before);
+  assert.deepEqual((await f.ownerRead.listForOwner('owner', 'completed'))[0].preparedArtifact, before);
+});
+
+test('closing already selected material calls the original F232 completion reader', async () => {
+  const f = await materialFixture();
+  const task = await f.host.upsertBySubject(f.input);
+  const { EntrustedWorkLifecycleService } = await import('../src/domains/growing/EntrustedWorkLifecycleService.ts');
+  const selected = await new EntrustedWorkLifecycleService(f.tasks).update({
+    taskId: task.id,
+    expectedRevision: 1,
+    artifactRefs: [f.artifactRef],
+  });
+  const closed = await f.host.update(task.id, {
+    entrustedWork: {
+      expectedRevision: selected.entrustedWork.revision,
+      closure: { ...f.input.entrustedWork.closure, state: 'satisfied', evidenceRefs: ['service:accepted'] },
+    },
+  });
+  assert.equal(closed.entrustedWork.completion?.artifactSnapshot?.artifactRef, f.artifactRef);
+});
+
+test('selection cannot make an unpublished or foreign-thread file appear as a prepared material', async () => {
+  const f = await materialFixture();
+  const other = f.threads.create('owner', 'Other');
+  const artifactRef = '/uploads/other-thread.md';
+  f.messages.append({
+    userId: 'owner',
+    threadId: other.id,
+    catId: 'codex',
+    content: 'Other',
+    timestamp: 200,
+    extra: { rich: { blocks: [{ kind: 'file', v: 1, id: 'other', fileName: 'other.md', url: artifactRef }] } },
+  });
+  const task = await f.host.upsertBySubject(f.input);
+  const selected = await f.host.update(task.id, {
+    entrustedWork: { expectedRevision: 1, artifactRefs: [artifactRef] },
+  });
+  assert.equal((await f.ownerRead.listForOwner('owner'))[0].preparedArtifact, undefined);
+  const closed = await f.host.update(task.id, {
+    entrustedWork: {
+      expectedRevision: selected.entrustedWork.revision,
+      closure: { ...f.input.entrustedWork.closure, state: 'satisfied', evidenceRefs: ['service:accepted'] },
+    },
+  });
+  assert.equal(closed.entrustedWork.completion?.artifactSnapshot, undefined);
+  assert.equal((await f.ownerRead.listForOwner('owner', 'completed'))[0].preparedArtifact, undefined);
+});

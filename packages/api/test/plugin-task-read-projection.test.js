@@ -44,6 +44,7 @@ test('all task read slots project owner and minimal entrusted work without autho
     automationState: { secret: 'automation' },
     entrustedWork: {
       revision: 3,
+      artifactRefs: ['/uploads/report.md'],
       closure: { state: 'open', condition: 'private closure' },
       admission: { sourceRefs: ['message:source'], authorityProvenance: { grantRef: 'secret grant' } },
       execution: { secret: 'execution' },
@@ -55,6 +56,7 @@ test('all task read slots project owner and minimal entrusted work without autho
     userId: 'owner',
     entrustedWork: {
       revision: 3,
+      artifactRefs: ['/uploads/report.md'],
       closure: { state: 'open' },
       admission: { sourceRefs: ['message:source'] },
     },
@@ -64,6 +66,8 @@ test('all task read slots project owner and minimal entrusted work without autho
     const item = Array.isArray(result) ? result[0] : result;
     assert.deepEqual(item, expected, method);
     assert.ok(Object.isFrozen(item.entrustedWork.admission.sourceRefs));
+    assert.ok(Object.isFrozen(item.entrustedWork.artifactRefs));
+    assert.notEqual(item.entrustedWork.artifactRefs, task.entrustedWork.artifactRefs);
     assert.notEqual(item.entrustedWork.admission.sourceRefs, task.entrustedWork.admission.sourceRefs);
   }
 });

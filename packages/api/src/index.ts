@@ -4900,7 +4900,11 @@ async function main(): Promise<void> {
   const { DotConnectionRuntime } = await import('./domains/cats/services/cloud-bridge/dot/DotConnectionRuntime.js');
   let dotConnectionService: InstanceType<typeof DotConnectionService> | undefined;
   let dotRoundTripVerified = async () => false;
+  const preparedArtifactReader = new F232PreparedArtifactReader({
+    messages: messageStore,
+  });
   const pluginRuntime = cloudConversations.createRuntime({
+    taskArtifactReader: preparedArtifactReader,
     taskInvocations: {
       queue: invocationQueue,
       resume: (threadId, userId) => queueProcessor.resumeAfterStartup(threadId, userId),
@@ -5399,9 +5403,6 @@ async function main(): Promise<void> {
       }),
     ),
     F266: bindV1ApprovalProducer(f266ApprovalAdapter),
-  });
-  const preparedArtifactReader = new F232PreparedArtifactReader({
-    messages: messageStore,
   });
   const { createArtifactReviewIntegration } = await import('./domains/growing/artifact-review-composition.js');
   const { createProgramContentMediaPort } = await import(

@@ -9,6 +9,7 @@ import { MessageStore } from '../dist/domains/cats/services/stores/ports/Message
 import { TaskStore } from '../dist/domains/cats/services/stores/ports/TaskStore.js';
 import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
 import { EntrustedWorkOwnerReadService } from '../dist/domains/growing/EntrustedWorkOwnerReadService.js';
+import { F232PreparedArtifactReader } from '../dist/domains/growing/F232PreparedArtifactReader.js';
 import { createMessagingDomain } from '../dist/domains/messaging/index.js';
 import { MediaEntitlementLedger, MemoryMediaEntitlementPort } from '../dist/domains/messaging/media-entitlements.js';
 import { FileMessagingMediaLedger } from '../dist/domains/messaging/media-ledger.js';
@@ -1181,11 +1182,25 @@ test('real module Task data writes reach original Schedule projection and change
     source: { connector: 'plugin', label: 'Plugin', icon: 'message' },
     extra: { pluginMessage: { instanceId: 'instance-0', revision: 1, provenance: {}, elements: [], appendOps: [] } },
   });
+  const artifactRef = '/uploads/module-report.md';
+  messages.append({
+    userId: 'owner',
+    threadId: thread.id,
+    catId: 'codex',
+    content: 'Report',
+    timestamp: 100,
+    extra: { rich: { blocks: [{ kind: 'file', v: 1, id: 'module-report', fileName: 'report.md', url: artifactRef }] } },
+  });
+  const artifactReader = new F232PreparedArtifactReader({ messages });
   const rootDir = await writePackage(`
     export default {create(){return {async start(host){
       const task=await host.tasks.upsertBySubject(${JSON.stringify({ threadId: thread.id, title: 'Report', subjectKey: 'module:report', ownerCatId: 'codex', entrustedWork: { sourceMessageId: source.id, intendedOutcome: 'Report', closure: { condition: 'Report accepted', expectedSignal: 'accepted' }, time: { businessDeadline: { value: 1900000000000, sourceRef: `message:${source.id}` } } } })});
       const read=await host.tasks.get(task.id);
       if(read.entrustedWork.time.businessDeadline.value!==1900000000000) throw Error('missing deadline');
+      const selected=await host.tasks.update(task.id,{entrustedWork:{expectedRevision:read.entrustedWork.revision,artifactRefs:[${JSON.stringify(artifactRef)}]}});
+      const selectedRead=await host.tasks.get(task.id);
+      if(selectedRead.entrustedWork.artifactRefs[0]!==${JSON.stringify(artifactRef)}) throw Error('missing selection');
+      await host.tasks.update(task.id,{entrustedWork:{expectedRevision:selected.entrustedWork.revision,closure:{condition:'Report accepted',expectedSignal:'accepted',state:'satisfied',evidenceRefs:['service:accepted']}}});
       return {actions:{},stop(){}};
     }}}};
   `);
@@ -1195,6 +1210,7 @@ test('real module Task data writes reach original Schedule projection and change
     {
       taskServices: {
         taskStore: tasks,
+        taskArtifactReader: artifactReader,
         taskOwnerUserId: 'owner',
         taskThreadStore: threads,
         taskAdmission: async () => ({
@@ -1209,10 +1225,13 @@ test('real module Task data writes reach original Schedule projection and change
   await host.router.start('instance-0');
   const schedule = await new EntrustedWorkOwnerReadService({
     tasks,
+    artifactReader,
     producerCatalog: { listCurrentReceipts: async () => [] },
-  }).listForOwner('owner');
+  }).listForOwner('owner', 'completed');
   assert.equal(schedule.length, 1);
   assert.equal(schedule[0].timeRefs.find((ref) => ref.role === 'business_deadline').value, 1900000000000);
-  assert.deepEqual(changes, [tasks.getBySubject('module:report').id]);
-  assert.equal(messages.getRecent(100, 'owner').length, 1);
+  assert.equal(schedule[0].preparedArtifact.artifactRef, artifactRef);
+  assert.deepEqual(changes, Array(3).fill(tasks.getBySubject('module:report').id));
+  assert.equal(messages.getRecent(100, 'owner').length, 2);
+  await host.router.stop('instance-0', 'host_stop');
 });
