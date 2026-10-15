@@ -42,8 +42,9 @@ export const OFFICIAL_PLUGIN_HOST_POLICIES: readonly MachineCatalogHostPolicy[] 
   { pluginId: 'dev.clowder.genoffice-docx', effectiveGrants: [] },
   {
     pluginId: 'official.collective-connector',
-    // Persistence, owner sync/native sources and the original owner view's Task summaries.
-    // Task reads remain owner-scoped in the Host; this grants no Task writes or admission.
+    // Shipped Collective features: private state/browser binding, ordinary thread messages,
+    // canonical Task data, and subscribed result materials. Each Host port retains its
+    // instance/owner/source checks; Task data grants do not select an execution carrier.
     effectiveGrants: [
       'data.directory',
       'thread.readContent',
@@ -51,6 +52,12 @@ export const OFFICIAL_PLUGIN_HOST_POLICIES: readonly MachineCatalogHostPolicy[] 
       'thread.write',
       'messaging.send',
       'task.read',
+      'task.write',
+      'task.admitEntrusted',
+      'plugin.state.get',
+      'plugin.state.set',
+      'message.event.subscribe',
+      'media.read',
     ],
   },
   {

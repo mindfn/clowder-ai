@@ -96,16 +96,17 @@ test('Collective cannot regain removed config or unrelated capabilities by reque
   assert.deepEqual(
     resolveLocalPluginEffectiveGrants(
       OFFICIAL_PLUGIN_HOST_POLICIES,
-      collectiveManifest(['data.directory', 'plugin.config.read', 'secret.read', 'media.read']),
+      collectiveManifest(['data.directory', 'plugin.config.read', 'secret.read', 'schedule.register']),
     ),
     ['data.directory'],
   );
   assert.deepEqual(resolveLocalPluginEffectiveGrants(OFFICIAL_PLUGIN_HOST_POLICIES, collectiveManifest([])), []);
 });
 
-test('Collective ordinary native feature receives its declared thread and messaging grants on install and restart', async () => {
+test('Collective backend receives browser-service prerequisites on install and restart', async () => {
   const capabilities = [
     'data.directory',
+    'plugin.state.get',
     'thread.readContent',
     'thread.listMetadata',
     'thread.write',
@@ -123,6 +124,21 @@ test('Collective ordinary native feature receives its declared thread and messag
       ).active.size,
       0,
     );
+  }
+  const host = await installed(
+    current,
+    `export default {
+    create() { return { async start(host) {
+      if (!host.browserServices) throw new Error('browser-service binding missing');
+      return { actions: { 'collective.http.dispatch': async () => ({ status: 200, body: {} }) }, async stop() {} };
+    } }; }
+  };`,
+  );
+  try {
+    assert.deepEqual(sorted(host.grants.effectiveGrants), sorted(capabilities));
+    await host.enable();
+  } finally {
+    await host.shutdown();
   }
   const store = new MemoryPluginInventoryStore();
   const inventory = new HostInventoryControlPlane(store, { createInstanceId: () => 'pi_collective', now: () => 1 });
@@ -150,10 +166,19 @@ test('Collective ordinary native feature receives its declared thread and messag
   );
 });
 
-test('Collective owner view receives task.read on install and reconciliation, never task.write', async () => {
+test('Collective Work receives declared data and material grants on install and reconciliation', async () => {
   const original = ['data.directory', 'thread.readContent', 'thread.listMetadata', 'thread.write', 'messaging.send'];
-  const declared = [...original, 'task.read'];
-  const current = collectiveManifest([...declared, 'task.write']);
+  const declared = [
+    ...original,
+    'task.read',
+    'task.write',
+    'task.admitEntrusted',
+    'plugin.state.get',
+    'plugin.state.set',
+    'message.event.subscribe',
+    'media.read',
+  ];
+  const current = collectiveManifest([...declared, 'secret.read']);
   assert.deepEqual(sorted(resolveLocalPluginEffectiveGrants(OFFICIAL_PLUGIN_HOST_POLICIES, current)), sorted(declared));
   assert.deepEqual(
     sorted(resolveLocalPluginEffectiveGrants(OFFICIAL_PLUGIN_HOST_POLICIES, collectiveManifest(original))),
@@ -179,7 +204,7 @@ test('Collective owner view receives task.read on install and reconciliation, ne
     {
       pluginId: current.pluginId,
       pluginInstanceId: 'pi_collective',
-      added: ['task.read'],
+      added: sorted(declared.filter((grant) => !original.includes(grant))),
       removed: [],
     },
   ]);
