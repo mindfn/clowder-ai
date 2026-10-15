@@ -7,6 +7,7 @@ import {
 } from '@clowder-ai/plugin-contract';
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { pluginAccessError, requirePluginOwnerLocalAccess } from '../../../routes/plugin-access-guards.js';
+import type { PluginSettingsInvocation } from '../builtin-runtime/carriers/module-plugin-settings.js';
 import type { HostPluginInvocationPort } from '../carrier/host-invocation.js';
 import { withoutPluginCallContext } from '../carrier/plugin-call-context.js';
 import {
@@ -22,9 +23,11 @@ import { type OperationState, transitionOperationState } from './operation-state
 import { expiredOperation, type PluginOperationCommitFence } from './plugin-operation-fence.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+class PluginSettingsUnavailableError extends Error {}
 type OperationField = Extract<ConfigurationField, { readonly kind: 'operation' }>;
 
 export interface PluginOperationConfigurationPort {
+  completeOperation?(pluginId: string, pluginInstanceId: string, expectedRevision: number): Promise<void>;
   readActionInput(pluginId: string): Promise<Readonly<Record<string, unknown>>>;
   readOperationState(pluginId: string, operationKey: string): Promise<OperationState | undefined>;
   writeOperationState(
@@ -47,6 +50,7 @@ export interface InstalledPluginOperationsOptions {
   readonly inventory: Pick<PluginInventoryStore, 'snapshot'>;
   readonly configuration: PluginOperationConfigurationPort;
   readonly invocation: Pick<HostPluginInvocationPort, 'invoke'>;
+  readonly settingsInvocation?: PluginSettingsInvocation;
   readonly timeoutMs?: number;
   readonly now?: () => number;
 }
@@ -204,7 +208,10 @@ export class InstalledPluginOperations {
     if (!instance) return response(404, { error: `Plugin '${pluginId}' is not installed` }, false);
     const packageRecord = snapshot.packages.find((candidate) => candidate.packageDigest === instance.packageDigest);
     if (!packageRecord) return response(404, { error: `Plugin '${pluginId}' package is unavailable` });
-    if (instance.activationState !== 'enabled' || instance.runtimeState !== 'healthy') {
+    if (
+      !this.options.settingsInvocation &&
+      (instance.activationState !== 'enabled' || instance.runtimeState !== 'healthy')
+    ) {
       return response(409, { error: `Plugin '${pluginId}' is not enabled` });
     }
     return {
@@ -239,6 +246,7 @@ export class InstalledPluginOperations {
         () => lifetime.abort(),
       );
     } catch (error) {
+      if (error instanceof PluginSettingsUnavailableError) return response(409, { error: error.message });
       if (error instanceof PluginInvocationTimeoutError) return response(504, { error: 'Plugin operation timed out' });
       if (error instanceof PluginOwnerOperationExpiredError) return response(409, { error: error.message });
       return response(502, { error: `Action failed: ${safeActionErrorMessage(error)}` });
@@ -279,8 +287,8 @@ export class InstalledPluginOperations {
           instance.packageDigest !== active.instance.packageDigest ||
           instance.lifecycleRevision !== active.instance.lifecycleRevision ||
           instance.lifecycleState !== 'installed' ||
-          instance.activationState !== 'enabled' ||
-          instance.runtimeState !== 'healthy' ||
+          instance.activationState !== active.instance.activationState ||
+          instance.runtimeState !== active.instance.runtimeState ||
           grant?.grantRevision !== active.grantRevision ||
           record.packageDigest !== active.packageRecord.packageDigest ||
           JSON.stringify(operation(record.manifest, operationKey)) !== declaration
@@ -306,11 +314,29 @@ export class InstalledPluginOperations {
     const currentValues = await this.options.configuration.readActionInput(pluginId);
     const input = { ...currentValues, ...((body ?? {}) as Readonly<Record<string, unknown>>) };
     await assertCurrent();
-    const invoke = () =>
-      this.options.invocation.invoke(active.instance.pluginInstanceId, action.action.method, {
-        ...(action.action.params ?? {}),
-        input,
+    const currentState = await this.options.configuration.readOperationState(pluginId, operationKey);
+    const params = {
+      ...(action.action.params ?? {}),
+      input,
+      ...(currentState ? { operationState: currentState } : {}),
+    };
+    const invoke = async () => {
+      const result = await this.options.settingsInvocation?.({
+        pluginInstanceId: active.instance.pluginInstanceId,
+        packageRecord: active.packageRecord,
+        effectiveGrants:
+          (await this.options.inventory.snapshot()).grants.find(
+            (grant) => grant.pluginInstanceId === active.instance.pluginInstanceId,
+          )?.effectiveGrants ?? [],
+        method: action.action.method,
+        params,
+        assertCurrent,
       });
+      if (result?.handled) return result.result;
+      if (active.instance.activationState !== 'enabled' || active.instance.runtimeState !== 'healthy')
+        throw new PluginSettingsUnavailableError('Plugin has no loaded settings handler');
+      return this.options.invocation.invoke(active.instance.pluginInstanceId, action.action.method, params);
+    };
     const rawResult = await (request
       ? withOwnerOperationInvocation(
           request,
@@ -324,7 +350,6 @@ export class InstalledPluginOperations {
     const result = rowsChecked(declaredOperation, operationResult(rawResult));
     if (!result) return response(502, { error: 'Plugin operation returned an invalid response' });
 
-    const currentState = await this.options.configuration.readOperationState(pluginId, operationKey);
     await assertCurrent();
     const transition = transitionOperationState({
       actions: declaredOperation.actions,
@@ -346,6 +371,12 @@ export class InstalledPluginOperations {
           );
     await assertCurrent();
     await this.options.configuration.writeOperationState(pluginId, operationKey, transition.state, fence);
+    if (backfilledKeys.length)
+      await this.options.configuration.completeOperation?.(
+        pluginId,
+        active.instance.pluginInstanceId,
+        active.instance.lifecycleRevision,
+      );
     return response(200, {
       ok: true,
       render: result.render,
@@ -374,19 +405,55 @@ export class InstalledPluginOperations {
     if ('status' in active) return active;
     const declared = active.packageRecord.manifest.test;
     if (!declared) return response(400, { error: `Plugin '${pluginId}' does not declare a test action` });
+    const controller = new AbortController();
     let rawResult: unknown;
     try {
-      rawResult = await withTimeout(
-        this.options.invocation.invoke(
+      const assertCurrent = async () => {
+        if (controller.signal.aborted) expiredOperation();
+        const fresh = await this.resolve(pluginId);
+        if (
+          'status' in fresh ||
+          fresh.instance.pluginInstanceId !== active.instance.pluginInstanceId ||
+          fresh.instance.packageDigest !== active.instance.packageDigest ||
+          fresh.instance.lifecycleRevision !== active.instance.lifecycleRevision ||
+          fresh.grantRevision !== active.grantRevision
+        )
+          expiredOperation();
+      };
+      const invoke = async () => {
+        const params = {
+          ...(declared.action.params ?? {}),
+          input: await this.options.configuration.readActionInput(pluginId),
+        };
+        const result = await this.options.settingsInvocation?.({
+          pluginInstanceId: active.instance.pluginInstanceId,
+          packageRecord: active.packageRecord,
+          effectiveGrants:
+            (await this.options.inventory.snapshot()).grants.find(
+              (grant) => grant.pluginInstanceId === active.instance.pluginInstanceId,
+            )?.effectiveGrants ?? [],
+          method: declared.action.method,
+          params,
+          assertCurrent,
+        });
+        if (result?.handled) return result.result;
+        if (active.instance.activationState !== 'enabled' || active.instance.runtimeState !== 'healthy')
+          throw new PluginSettingsUnavailableError('Plugin has no loaded test handler');
+        return this.options.invocation.invoke(
           active.instance.pluginInstanceId,
           declared.action.method,
           declared.action.params ?? {},
-        ),
-        this.timeoutMs,
-      );
+        );
+      };
+      rawResult = await withTimeout(invoke(), this.timeoutMs, () => controller.abort());
+      await assertCurrent();
     } catch (error) {
+      if (error instanceof PluginSettingsUnavailableError) return response(409, { error: error.message });
+      if (error instanceof PluginOwnerOperationExpiredError) return response(409, { error: error.message });
       if (error instanceof PluginInvocationTimeoutError) return response(504, { error: 'Plugin test timed out' });
       return response(502, { error: 'Plugin test invocation failed' });
+    } finally {
+      controller.abort();
     }
     const result = testResult(rawResult);
     return result ? response(200, result) : response(502, { error: 'Plugin test returned an invalid response' });

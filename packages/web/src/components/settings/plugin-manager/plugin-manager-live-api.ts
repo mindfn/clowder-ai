@@ -44,6 +44,7 @@ function fixtureDetail(detail: ConsolePluginManagerDetail | undefined): Partial<
         }),
     readme: detail.readme,
     ...(detail.setupSteps === undefined ? {} : { setupSteps: detail.setupSteps }),
+    ...(detail.permissions === undefined ? {} : { permissions: detail.permissions }),
     ...(detail.steps === undefined ? {} : { steps: detail.steps }),
     ...(detail.testable === undefined ? {} : { testable: detail.testable }),
     ...(detail.docsUrl === undefined ? {} : { docsUrl: detail.docsUrl }),
@@ -67,11 +68,24 @@ export function designFixture(
     ...(plugin.iconBg === undefined ? {} : { iconBg: plugin.iconBg }),
     publisher: plugin.publisher ?? (plugin.source.trust === 'official' ? 'Clowder AI' : 'Local Host'),
     packageName: packageName(plugin),
-    source: plugin.source.kind === 'catalog' ? 'catalog' : 'local',
+    source:
+      plugin.source.kind === 'catalog' || (plugin.source.kind === 'git' && plugin.source.marketplace)
+        ? 'catalog'
+        : 'local',
     trust: plugin.source.trust,
+    ...(plugin.source.kind === 'git'
+      ? {
+          repositoryName:
+            plugin.source.url
+              .replace(/\.git$/, '')
+              .split(/[/:]/)
+              .at(-1) || '插件仓库',
+        }
+      : {}),
     ...('dependencyClosure' in plugin.source && plugin.source.dependencyClosure !== undefined
       ? { dependencyClosure: plugin.source.dependencyClosure }
       : {}),
+    ...(plugin.installSources === undefined ? {} : { installSources: plugin.installSources }),
     availableVersion: plugin.availableVersion ?? plugin.installedVersion ?? 'unknown',
     installedVersion: plugin.installedVersion,
     artifact: plugin.artifact,

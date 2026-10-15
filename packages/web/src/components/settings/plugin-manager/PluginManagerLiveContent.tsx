@@ -205,23 +205,6 @@ export function PluginManagerLiveContent({
     [refresh],
   );
 
-  const installFromGit = useCallback(
-    async (url: string) => {
-      setError(null);
-      const response = await apiFetch('/api/plugin-manager/plugins/install', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ source: { kind: 'git', url } }),
-      });
-      if (!response.ok) {
-        const failure = await responseError(response, `Git 插件安装失败 (${response.status})`);
-        throw new Error(failure.message);
-      }
-      await refresh();
-    },
-    [refresh],
-  );
-
   const installFromDirectory = useCallback(
     async (path: string) => {
       setError(null);
@@ -302,8 +285,18 @@ export function PluginManagerLiveContent({
         query.current = value;
         void loadList(value);
       }}
-      onInstall={(pluginId) => {
+      onInstall={(pluginId, request) => {
+        if (request) {
+          void mutate(pluginId, '/api/plugin-manager/plugins/install', request);
+          return;
+        }
         const plugin = plugins.find((candidate) => candidate.pluginId === pluginId);
+        if (plugin?.source.kind === 'git' && plugin.source.marketplace) {
+          void mutate(pluginId, '/api/plugin-manager/plugins/install', {
+            source: { kind: 'git', url: plugin.source.url, marketplace: plugin.source.marketplace },
+          });
+          return;
+        }
         if (
           !plugin ||
           plugin.source.kind !== 'catalog' ||
@@ -319,7 +312,7 @@ export function PluginManagerLiveContent({
           expectedDigest: plugin.packageDigest,
         });
       }}
-      onGitInstall={installFromGit}
+      onMarketplaceChange={refresh}
       onDirectoryInstall={installFromDirectory}
       onSetEnabled={(pluginId, enabled) => {
         const plugin = plugins.find((candidate) => candidate.pluginId === pluginId);

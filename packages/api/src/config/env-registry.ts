@@ -113,6 +113,15 @@ export const ENV_CATEGORIES: Record<EnvCategory, string> = {
 };
 
 export const ENV_VARS: EnvDefinition[] = [
+  {
+    name: 'PLUGIN_GIT_MARKETPLACE',
+    defaultValue: '(未设置)',
+    description:
+      '额外插件 Git 仓库：一个 HTTPS/SSH 地址或地址/{url, branch} JSON 数组；在打开插件管理时同步，使用本机 Git 凭据',
+    category: 'server',
+    sensitive: false,
+    runtimeEditable: false,
+  },
   // --- server ---
   {
     name: 'CAT_CAFE_DOT_WEBHOOK_PROXY_URL',

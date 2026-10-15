@@ -142,8 +142,10 @@ function assertConfigurationFence(instance: PluginInstanceRecord, expectedRevisi
 function validateUpdates(
   fields: readonly ContractConfigurationField[],
   updates: PluginManagerConfigureRequest['updates'],
+  allowEmpty = false,
 ): void {
-  if (updates.length === 0 || updates.length > 256) throw configError('Configuration updates are invalid');
+  if ((!allowEmpty && updates.length === 0) || updates.length > 256)
+    throw configError('Configuration updates are invalid');
   const byKey = new Map(fields.map((field) => [field.key, field]));
   const seen = new Set<string>();
   for (const update of updates) {
@@ -180,6 +182,7 @@ function configureTransaction(input: {
   readonly pluginInstanceId: string;
   readonly request: PluginManagerConfigureRequest;
   readonly now: number;
+  readonly allowEmpty?: boolean;
 }): void {
   const current = requireConfigurationTarget(input.transaction, input.pluginId, input.pluginInstanceId);
   assertConfigurationFence(current.instance, input.request.expectedRevision);
@@ -193,7 +196,7 @@ function configureTransaction(input: {
       'Plugin does not declare a configuration contribution',
     );
   }
-  validateUpdates(fields, input.request.updates);
+  validateUpdates(fields, input.request.updates, input.allowEmpty);
   const next = updatedValues(readPluginConfig(input.projectRoot, input.pluginId), input.request.updates);
   writePluginConfig(
     input.projectRoot,
@@ -339,7 +342,11 @@ export class HostPluginConfigurationService implements PluginManagerConfiguratio
   async reconcile(pluginId: string, pluginInstanceId: string): Promise<void> {
     await this.options.inventory.transaction((transaction) => {
       const current = requireConfigurationTarget(transaction, pluginId, pluginInstanceId);
-      if (current.instance.activationState !== 'disabled' || current.instance.runtimeState !== 'stopped') return;
+      if (
+        current.instance.runtimeState !== 'stopped' ||
+        ['enabling', 'disabling'].includes(current.instance.activationState)
+      )
+        return;
       const fields = manifestConfiguration(current.packageRecord);
       const stored = readPluginConfig(this.options.projectRoot, pluginId);
       const configReadiness = requiredFieldsReady(fields, stored) ? 'ready' : 'incomplete';
@@ -353,7 +360,20 @@ export class HostPluginConfigurationService implements PluginManagerConfiguratio
     });
   }
 
+  async completeOperation(pluginId: string, pluginInstanceId: string, expectedRevision: number): Promise<void> {
+    await this.configureInternal(pluginId, pluginInstanceId, { expectedRevision, updates: [] }, true);
+  }
+
   async configure(pluginId: string, pluginInstanceId: string, request: PluginManagerConfigureRequest): Promise<void> {
+    return this.configureInternal(pluginId, pluginInstanceId, request, false);
+  }
+
+  private async configureInternal(
+    pluginId: string,
+    pluginInstanceId: string,
+    request: PluginManagerConfigureRequest,
+    allowEmpty: boolean,
+  ): Promise<void> {
     const persist = (expectedRevision: number) =>
       this.options.inventory.transaction((transaction) => {
         configureTransaction({
@@ -362,6 +382,7 @@ export class HostPluginConfigurationService implements PluginManagerConfiguratio
           pluginId,
           pluginInstanceId,
           request: { ...request, expectedRevision },
+          allowEmpty,
           now: this.now(),
         });
       });
@@ -381,7 +402,7 @@ export class HostPluginConfigurationService implements PluginManagerConfiguratio
             if (fields.length === 0) {
               throw new PluginManagerServiceError('CONFIGURATION_UNAVAILABLE', 'Plugin does not declare configuration');
             }
-            validateUpdates(fields, request.updates);
+            validateUpdates(fields, request.updates, allowEmpty);
           }),
         operation: async (stopped) => {
           await persist(stopped.lifecycleRevision);

@@ -17,8 +17,8 @@ import { AgentServiceUnavailableError } from './domains/cats/services/agents/reg
 
 // 必须最先 import：Node 24.16 undici setTypeOfService EINVAL 崩溃防护（见文件头注释）
 import './settos-guard.js';
-import { randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
+import { createHash, randomUUID } from 'node:crypto';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
@@ -5141,6 +5141,21 @@ async function main(): Promise<void> {
   } = await import('./domains/plugin/manager/machine-catalog-provider.js');
   const { OFFICIAL_PLUGIN_HOST_POLICIES } = await import('./domains/plugin/manager/official-plugin-host-policies.js');
   const pluginManagerHostPolicies = OFFICIAL_PLUGIN_HOST_POLICIES;
+  const { GitMarketplaceRepository } = await import('./domains/plugin/manager/git-marketplace-repository.js');
+  const { GitMarketplaceSources } = await import('./domains/plugin/manager/git-marketplace-sources.js');
+  const { validMarketplacePackages } = await import('./domains/plugin/manager/git-marketplace-catalog.js');
+  const marketplaceRepository = new GitMarketplaceRepository({
+    cacheRoot: join(
+      tmpdir(),
+      `clowder-plugin-marketplaces-${createHash('sha256').update(pluginRuntime.paths.inventorySnapshotPath).digest('hex').slice(0, 16)}`,
+    ),
+  });
+  const marketplaceSources = new GitMarketplaceSources({
+    path: join(dirname(pluginRuntime.paths.inventorySnapshotPath), 'marketplace-sources.json'),
+    repository: marketplaceRepository,
+    validateCatalog: validMarketplacePackages,
+    environment: process.env.PLUGIN_GIT_MARKETPLACE,
+  });
   const pluginManagerCatalog = new MachineOfficialPluginCatalog({
     loadCatalog: () => loadMachinePluginCatalog(OFFICIAL_PLUGIN_CATALOG_URL),
     validateCatalog: validatePluginCatalog,
@@ -5158,6 +5173,7 @@ async function main(): Promise<void> {
     ),
     runtime: pluginRuntime,
     catalogProvider: pluginManagerCatalog,
+    marketplaces: { sources: marketplaceSources, repository: marketplaceRepository },
 
     prepareDesktopComponent: async () => {
       await companionDesktopComponent.prepare();
@@ -5169,11 +5185,22 @@ async function main(): Promise<void> {
     './domains/plugin/operations/plugin-operation-routes.js'
   );
   const installedPluginOperations = new InstalledPluginOperations({
+    settingsInvocation: pluginRuntime.settingsInvocation,
     inventory: pluginRuntime.inventoryStore,
     configuration: pluginManagerRuntime.configuration,
     invocation: pluginRuntime.supervisor,
   });
   await app.register(pluginOperationRoutes, { operations: installedPluginOperations });
+  const { ConnectorSettingsService, registerConnectorSettingsRoutes } = await import(
+    './domains/plugin/manager/connector-settings.js'
+  );
+  registerConnectorSettingsRoutes(
+    app,
+    new ConnectorSettingsService({
+      inventory: pluginRuntime.inventoryStore,
+      ...(pluginRuntime.privateStorage ? { storage: pluginRuntime.privateStorage } : {}),
+    }),
+  );
   const { pluginNativeActionRoutes } = await import('./routes/plugin-native-action-routes.js');
   await app.register(pluginNativeActionRoutes, {
     actions: pluginRuntime.supervisor.nativeActions,
@@ -5218,6 +5245,8 @@ async function main(): Promise<void> {
     releaseHostListening = resolve;
   });
   const { pluginManagerUploadRoutes, registerPluginManagerRoutes } = await import('./routes/plugin-manager-routes.js');
+  const { registerPluginMarketplaceRoutes } = await import('./routes/plugin-marketplace-routes.js');
+  registerPluginMarketplaceRoutes(app, marketplaceSources);
   const { PluginManagerBindings } = await import('./domains/plugin/manager/plugin-manager-bindings.js');
   await app.register(async (managerApp) => {
     registerPluginManagerRoutes(managerApp, {

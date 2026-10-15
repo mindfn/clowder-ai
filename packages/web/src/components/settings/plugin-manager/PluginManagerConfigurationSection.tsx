@@ -127,10 +127,18 @@ export function PluginManagerConfigurationSection({
       ? `${field.key}:${plugin.intent}:${plugin.live}`
       : field.key;
   const configurableFields = fields.filter((field) => field.kind !== 'operation' && field.hidden !== true);
-  const steps = plugin.steps ?? plugin.setupSteps ?? [];
+  const declaredSteps = (plugin.steps ?? plugin.setupSteps ?? []).map((step) =>
+    typeof step === 'string' ? { text: step } : step,
+  );
+  const stepModes = new Set(declaredSteps.flatMap((step) => (step.mode ? [step.mode] : [])));
+  const modeField = fields.find(
+    (field) => field.kind === 'select' && field.options?.some((option) => stepModes.has(option.value)),
+  );
+  const selectedMode = modeField ? effectiveFieldValue(modeField, fieldValues) : undefined;
+  const steps = declaredSteps.filter((step) => !step.mode || step.mode === selectedMode).map((step) => step.text);
   const updates = configurationUpdates(fields, fieldValues);
   const prelude = presentation === 'v2' ? renderBefore : undefined;
-  const displayedFields = fields.filter((field) => (field.kind === 'operation' ? !prelude : field.hidden !== true));
+  const displayedFields = configurableFields;
   const fieldLabel = (field: ConfigurationField) =>
     presentation === 'v2' ? pluginFieldLabel(plugin.id, field) : field.label;
   const changeField = (key: string, value: string) => {
@@ -209,6 +217,19 @@ export function PluginManagerConfigurationSection({
                 </SettingsText>
               </div>
             ))}
+
+            {!prelude &&
+              fields
+                .filter((field) => field.kind === 'operation')
+                .map((field) => (
+                  <PluginManagerOperationField
+                    key={operationKey(field)}
+                    pluginId={plugin.id}
+                    field={field}
+                    pendingConfigValues={fieldValues}
+                    onStatusChange={onOperationChange}
+                  />
+                ))}
 
             {displayedFields.length > 0 && (
               <div className="space-y-2.5">

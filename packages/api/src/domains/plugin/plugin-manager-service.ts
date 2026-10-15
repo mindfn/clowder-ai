@@ -13,6 +13,7 @@ import type {
 import { pluginDescriptionVariants } from '@cat-cafe/shared';
 import type { PluginInventoryStore } from './host-inventory/ports.js';
 import type { PluginInventorySnapshot } from './host-inventory/types.js';
+import { connectorPermissionsProjection } from './manager/connector-settings.js';
 import { PluginPackageQuarantineStoreError } from './manager/plugin-package-quarantine.js';
 import {
   type PluginManagerCatalogCandidate,
@@ -160,7 +161,14 @@ function catalogDetail(
     ...(contributions === undefined
       ? {}
       : { contributions: contributions.map((contribution) => ({ ...contribution })) }),
-    ...(installedManifest?.steps === undefined ? {} : { steps: installedManifest.steps.map((step) => step.text) }),
+    ...(installedManifest?.steps === undefined
+      ? {}
+      : {
+          steps: installedManifest.steps.map((step) =>
+            'mode' in step && typeof step.mode === 'string' ? { text: step.text, mode: step.mode } : step.text,
+          ),
+        }),
+    ...connectorPermissionsProjection(installedManifest),
     ...(installedManifest === undefined ? {} : { testable: installedManifest.test !== undefined }),
   };
 }
@@ -353,7 +361,10 @@ export class PluginManagerService {
     const byPluginId = new Map<
       string,
       { readonly plugin: PluginManagerListItem; readonly detail?: PluginManagerDetail }
-    >(projectedPublished.map(({ plugin, detail }) => [plugin.pluginId, { plugin, detail }] as const));
+    >();
+    for (const entry of projectedPublished) {
+      if (!byPluginId.has(entry.plugin.pluginId)) byPluginId.set(entry.plugin.pluginId, entry);
+    }
     for (const plugin of installedPackages) {
       if (!byPluginId.has(plugin.pluginId)) byPluginId.set(plugin.pluginId, { plugin, detail: plugin });
     }
@@ -361,6 +372,36 @@ export class PluginManagerService {
       const current = byPluginId.get(plugin.pluginId);
       if (!quarantineAppliesTo(current?.plugin, plugin)) continue;
       byPluginId.set(plugin.pluginId, { plugin, detail: plugin });
+    }
+    for (const entry of byPluginId.values()) {
+      const installSources: NonNullable<PluginManagerListItem['installSources']> = [];
+      for (const candidate of catalog.candidates.filter((item) => item.pluginId === entry.plugin.pluginId)) {
+        if (entry.plugin.artifact !== 'absent' && entry.plugin.artifact !== 'installed') continue;
+        const git = candidate.directorySource;
+        if (git?.marketplace) {
+          installSources.push({
+            id: candidate.catalogId,
+            label: candidate.sourceLabel ?? '插件仓库',
+            version: candidate.version,
+            request: { source: { kind: 'git', url: git.url, marketplace: git.marketplace } },
+          });
+        } else if (entry.plugin.artifact === 'absent' && candidate.packageDigest) {
+          installSources.push({
+            id: candidate.catalogId,
+            label: '官方插件仓库',
+            version: candidate.version,
+            request: {
+              source: { kind: 'catalog', catalogId: candidate.catalogId },
+              expectedVersion: candidate.version,
+              expectedDigest: candidate.packageDigest,
+            },
+          });
+        }
+      }
+      if (installSources.length > 0) {
+        entry.plugin.installSources = installSources;
+        if (entry.detail) entry.detail.installSources = installSources;
+      }
     }
     const normalizedQuery = query?.trim().toLocaleLowerCase() ?? '';
     const entries = [...byPluginId.values()]

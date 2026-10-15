@@ -1,12 +1,14 @@
 'use client';
 
-import { resolvePluginDescription } from '@cat-cafe/shared';
+import { type PluginManagerInstallRequest, resolvePluginDescription } from '@cat-cafe/shared';
+import { useState } from 'react';
 import { ExternalLinkIcon } from '../../HubConfigIcons';
 import { HubIcon } from '../../hub-icons';
 import { MarkdownContent } from '../../MarkdownContent';
 import { settingsResourceCardClass, settingsResourceRowClass } from '../../SettingsResourceCard';
 import { SettingsText } from '../primitives/SettingsText';
 import { DotConnectionDetail } from './DotConnectionDetail';
+import PluginConnectorSettings from './PluginConnectorSettings';
 import { PluginManagerBindings } from './PluginManagerBindings';
 import { PluginManagerConfigurationSection } from './PluginManagerConfigurationSection';
 import { PluginManagerDetailPrelude } from './PluginManagerDetailPrelude';
@@ -187,6 +189,7 @@ export function PluginManagerDetailCard({
   onOperationChange,
   busy = false,
   onSaveConfig,
+  onInstallSource,
   configurationValidationRequest = 0,
   configurationSaved = false,
   onStateChanged,
@@ -196,11 +199,15 @@ export function PluginManagerDetailCard({
   presentation?: PluginManagerPresentation;
   onOperationChange?: () => void;
   busy?: boolean;
+  onInstallSource?: (request: PluginManagerInstallRequest) => void;
   onSaveConfig?: (updates: readonly { key: string; value: string | null }[]) => void;
   configurationValidationRequest?: number;
   configurationSaved?: boolean;
   onStateChanged?: () => void | Promise<void>;
 }) {
+  const [selectedSourceId, setSelectedSourceId] = useState('');
+  const sourceChoices = plugin.installSources ?? [];
+  const selectedSource = sourceChoices.find((source) => source.id === selectedSourceId) ?? sourceChoices[0];
   const installed = plugin.artifact === 'installed';
   const description = resolvePluginDescription(plugin.description, locale);
   const capabilityItems = capabilityDocItems(plugin, presentation);
@@ -210,6 +217,34 @@ export function PluginManagerDetailCard({
   return (
     <article data-testid="plugin-manager-detail" className={settingsResourceCardClass}>
       <div className="space-y-5 p-4">
+        {onInstallSource && selectedSource && (sourceChoices.length > 1 || installed) && (
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="min-w-0 flex-1 text-sm text-cafe-secondary">
+              安装来源
+              <select
+                aria-label="安装来源"
+                value={selectedSource.id}
+                onChange={(event) => setSelectedSourceId(event.target.value)}
+                disabled={busy}
+                className="mt-1 block w-full rounded-lg border border-cafe-border bg-cafe-input px-3 py-2"
+              >
+                {sourceChoices.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.label} · {source.version}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              disabled={busy}
+              className="button-secondary"
+              onClick={() => onInstallSource(selectedSource.request)}
+            >
+              {installed ? '替换为此版本' : '从此来源安装'}
+            </button>
+          </div>
+        )}
         <section className="space-y-2.5" data-plugin-detail-section="identity">
           <SectionHeading>插件标识</SectionHeading>
           <div className={`${settingsResourceRowClass} w-full px-0 py-0`}>
@@ -218,10 +253,15 @@ export function PluginManagerDetailCard({
               <SettingsText as="h3" variant="sm" tone="default" className="font-semibold">
                 {plugin.displayName}
               </SettingsText>
-              <PluginSourceLabel trust={plugin.trust} />
+              <PluginSourceLabel trust={plugin.trust} repositoryName={plugin.repositoryName} />
               <SettingsText as="p" variant="xs" tone="muted" className="mt-0.5 break-all">
                 {plugin.installedVersion ?? plugin.availableVersion} · {plugin.packageName} · {plugin.publisher}
               </SettingsText>
+              {plugin.installedVersion && plugin.availableVersion !== plugin.installedVersion && (
+                <SettingsText as="p" variant="xs" tone="secondary">
+                  仓库可用版本：{plugin.availableVersion}
+                </SettingsText>
+              )}
               {closureLabel === undefined ? null : (
                 <SettingsText as="p" variant="xs" tone="muted" className="mt-0.5">
                   {closureLabel}
@@ -268,6 +308,10 @@ export function PluginManagerDetailCard({
               validationRequest={configurationValidationRequest}
               saved={configurationSaved}
             />
+
+        {installed && plugin.permissions && (
+          <PluginConnectorSettings key={plugin.id} pluginId={plugin.id} pluginLabel={plugin.permissions.label} />
+        )}
 
         {plugin.bindings !== undefined && (
           <PluginManagerBindings

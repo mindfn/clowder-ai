@@ -467,77 +467,106 @@ describe('F202 live Plugin Manager Console wiring', () => {
     });
   });
 
-  it('installs a plugin from a git URL through the canonical Manager endpoint', async () => {
-    const gitUrl = 'https://github.example.test/clowder/example-plugin.git';
-    let listReads = 0;
+  it('adds a repository, then installs its plugin through the ordinary Manager button', async () => {
+    const gitUrl = 'ssh://git@git.example.test/team/plugins.git';
+    const marketplace = {
+      sourceId: 'a'.repeat(24),
+      commit: 'b'.repeat(40),
+      path: 'packages/demo',
+      pluginId: 'dev.clowder.video-analysis',
+      version: '0.1.0-alpha.0',
+    };
+    let added = false;
+    const source = { kind: 'git', url: gitUrl, trust: 'unverified', marketplace };
+    const sources = () => ({
+      sources: added
+        ? [{ id: marketplace.sourceId, url: gitUrl, origin: 'user', status: 'ready', pluginCount: 1 }]
+        : [],
+    });
     mockApiFetch.mockImplementation(async (url, init) => {
-      if (url === '/api/plugin-manager/plugins') {
-        listReads += 1;
-        return json(response());
+      if (url === '/api/plugin-manager/marketplaces') {
+        if (init?.method === 'POST') added = true;
+        return json(sources());
       }
+      if (url === '/api/plugin-manager/marketplaces/refresh') return json(sources());
+      if (url === '/api/plugin-manager/plugins')
+        return json(response(added ? { ...managerPlugin(), source } : managerPlugin()));
       if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') return json(detail());
-      if (url === '/api/plugin-manager/plugins/install' && init?.method === 'POST') {
-        return json({ pluginId: 'dev.clowder.example', pluginInstanceId: 'pi_example' }, 201);
-      }
+      if (url === '/api/plugin-manager/plugins/install')
+        return json({ pluginId: marketplace.pluginId, pluginInstanceId: 'pi_example' }, 201);
       return json({}, 404);
     });
-
     await act(async () => root.render(<PluginsContent />));
     await flushEffects();
-
-    const open = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === '从 Git 安装',
-    );
-    await act(async () => open?.click());
-    expect(document.body.textContent).toContain('https://、ssh://、git:// 或 file://');
-    expect(document.body.textContent).toContain('不支持 git@host:org/repo.git');
-    const input = document.querySelector('input[aria-label="Git 仓库地址"]') as HTMLInputElement | null;
+    expect(container.textContent).not.toContain('从 Git 安装');
+    expect(container.textContent).not.toContain('离线安装');
+    await act(async () => (container.querySelector('[aria-label="管理插件仓库"]') as HTMLButtonElement).click());
+    const input = document.querySelector('[role="dialog"] input') as HTMLInputElement;
+    const branchInput = document.querySelector('[aria-label="分支名"]') as HTMLInputElement;
     await act(async () => {
-      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      setValue?.call(input, gitUrl);
-      input?.dispatchEvent(new Event('input', { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, gitUrl);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(branchInput, 'feature/plugins');
+      branchInput.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    const install = Array.from(document.querySelectorAll('button')).find((button) => button.textContent === '安装插件');
-    await act(async () => install?.click());
+    await act(async () =>
+      document.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+    );
     await flushEffects();
-
-    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugin-manager/plugins/install', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ source: { kind: 'git', url: gitUrl } }),
-    });
-    expect(listReads).toBeGreaterThanOrEqual(2);
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      '/api/plugin-manager/marketplaces',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ url: gitUrl, branch: 'feature/plugins' }) }),
+    );
+    await act(async () =>
+      Array.from(document.querySelectorAll('button'))
+        .find((b) => b.textContent === '完成')
+        ?.click(),
+    );
+    await act(async () =>
+      Array.from(container.querySelectorAll('button'))
+        .find((b) => b.textContent === '安装')
+        ?.click(),
+    );
+    await flushEffects();
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      '/api/plugin-manager/plugins/install',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ source: { kind: 'git', url: gitUrl, marketplace } }),
+      }),
+    );
+    expect(mockApiFetch.mock.calls.filter(([url]) => url === '/api/plugin-manager/marketplaces/refresh')).toHaveLength(
+      1,
+    );
   });
 
-  it('keeps the git install dialog open and shows a server rejection', async () => {
+  it('preserves the repository input when checking its address fails', async () => {
     mockApiFetch.mockImplementation(async (url, init) => {
+      if (url === '/api/plugin-manager/marketplaces' && init?.method === 'POST')
+        return json({ error: '无法访问这个仓库。' }, 422);
+      if (String(url).startsWith('/api/plugin-manager/marketplaces')) return json({ sources: [] });
       if (url === '/api/plugin-manager/plugins') return json(response());
       if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') return json(detail());
-      if (url === '/api/plugin-manager/plugins/install' && init?.method === 'POST') {
-        return json({ error: '不允许的 Git 地址' }, 400);
-      }
       return json({}, 404);
     });
-
     await act(async () => root.render(<PluginsContent />));
     await flushEffects();
-    const open = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === '从 Git 安装',
-    );
-    await act(async () => open?.click());
-    const input = document.querySelector('input[aria-label="Git 仓库地址"]') as HTMLInputElement | null;
+    await act(async () => (container.querySelector('[aria-label="管理插件仓库"]') as HTMLButtonElement).click());
+    const input = document.querySelector('[role="dialog"] input') as HTMLInputElement;
     await act(async () => {
-      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-      setValue?.call(input, 'ext::sh -c evil');
-      input?.dispatchEvent(new Event('input', { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+        input,
+        'https://git.example.test/missing.git',
+      );
+      input.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    const install = Array.from(document.querySelectorAll('button')).find((button) => button.textContent === '安装插件');
-    await act(async () => install?.click());
+    await act(async () =>
+      document.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+    );
     await flushEffects();
-
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
-    expect(document.body.textContent).toContain('不允许的 Git 地址');
+    expect(document.body.textContent).toContain('无法访问这个仓库。');
+    expect(input.value).toBe('https://git.example.test/missing.git');
   });
 
   it('preserves server matches whose query is visible only in plugin identity or publisher metadata', async () => {
@@ -968,6 +997,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
     vi.useFakeTimers();
     let listReads = 0;
     mockApiFetch.mockImplementation(async (url) => {
+      if (String(url).startsWith('/api/plugin-manager/marketplaces')) return json({ sources: [] });
       if (url === '/api/plugin-manager/plugins') {
         listReads += 1;
         return json(response(managerPlugin({ installed: true })));
@@ -980,7 +1010,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
 
     await act(async () => root.render(<PluginsContent />));
     await flushEffects();
-    expect(listReads).toBe(1);
+    expect(listReads).toBe(2);
 
     await act(async () => {
       vi.advanceTimersByTime(5_000);
@@ -988,7 +1018,10 @@ describe('F202 live Plugin Manager Console wiring', () => {
       await Promise.resolve();
     });
 
-    expect(listReads).toBe(2);
+    expect(listReads).toBe(3);
+    expect(mockApiFetch.mock.calls.filter(([url]) => url === '/api/plugin-manager/marketplaces/refresh')).toHaveLength(
+      1,
+    );
     expect(container.querySelectorAll('[role="alert"]')).toHaveLength(0);
     expect(container.querySelectorAll('[data-plugin-id="dev.clowder.video-analysis"]')).toHaveLength(1);
   });
@@ -1026,5 +1059,34 @@ describe('F202 live Plugin Manager Console wiring', () => {
 
     resolveRetry?.(json({}, 503));
     await flushEffects();
+  });
+  it('shows all installed plugins, five available initially, and finds later plugins by scrolling or search', async () => {
+    const installed = Array.from({ length: 7 }, (_, i) =>
+      managerPlugin({ installed: true, pluginId: `installed.${i}`, displayName: `Installed ${i}` }),
+    );
+    const available = Array.from({ length: 12 }, (_, i) =>
+      managerPlugin({ pluginId: `available.${i}`, displayName: `Available ${i}` }),
+    );
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins') return json({ ...response(), plugins: [...installed, ...available] });
+      if (String(url).startsWith('/api/plugin-manager/marketplaces')) return json({ sources: [] });
+      if (String(url).startsWith('/api/plugin-manager/plugins/')) return json(detail(installed[0]));
+      return json({}, 404);
+    });
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+    expect(container.querySelectorAll('[data-plugin-list-row]')).toHaveLength(12);
+    expect(container.querySelector('[data-plugin-id="installed.6"]')).not.toBeNull();
+    const list = container.querySelector('[data-plugin-scroll-region="list"]') as HTMLDivElement;
+    await act(async () => list.dispatchEvent(new Event('scroll', { bubbles: true })));
+    expect(container.querySelectorAll('[data-plugin-list-row]')).toHaveLength(17);
+    const search = container.querySelector('[aria-label="搜索插件"]') as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(search, 'Available 11');
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(container.querySelector('[data-plugin-id="available.11"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-plugin-list-row]')).toHaveLength(1);
+    expect(container.querySelector('a[href="/docs/plugin-development.md"]')).not.toBeNull();
   });
 });

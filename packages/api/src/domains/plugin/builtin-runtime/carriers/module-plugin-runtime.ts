@@ -1,5 +1,4 @@
 import { pathToFileURL } from 'node:url';
-
 import type { PluginManifest } from '@clowder-ai/plugin-contract';
 import type { IConnectorThreadBindingStore } from '../../../../infrastructure/connectors/ConnectorThreadBindingStore.js';
 import type { IMessageStore } from '../../../cats/services/stores/ports/MessageStore.js';
@@ -77,6 +76,12 @@ import { snapshotModuleAuthority } from './module-authority-snapshot.js';
 import { admitModuleBrowserServices, captureModuleBrowserServices } from './module-browser-services.js';
 import { createModuleHostInvocation, exposesModuleAction } from './module-host-invocation.js';
 import {
+  invokeModuleSettings,
+  type ModulePluginSettingsDefinition,
+  type ModulePluginSettingsHost,
+  type PluginSettingsInvocation,
+} from './module-plugin-settings.js';
+import {
   type ModuleTeardownStep,
   moduleTeardown,
   rollbackModuleStart,
@@ -135,6 +140,7 @@ export type LegacyNoArgStopRemainsAssignable = AssertTrue<
 >;
 
 export interface PluginModuleDefinitionShape {
+  settings?(host: ModulePluginSettingsHost): ModulePluginSettingsDefinition | Promise<ModulePluginSettingsDefinition>;
   start(host: ModulePluginHostShape): PluginModuleActivationShape | Promise<PluginModuleActivationShape>;
 }
 
@@ -497,6 +503,24 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
     this.#unfinished.set(pluginInstanceId, failed);
     throw new AggregateError(errors, 'module stop failed');
   }
+
+  readonly invokeSettings: PluginSettingsInvocation = async (input) => {
+    const admitted = {
+      ...input,
+      packageRecord: snapshotModuleAuthority(input.packageRecord),
+      effectiveGrants: snapshotModuleAuthority(input.effectiveGrants),
+    };
+    const located = await this.#resolvePackage(admitted.pluginInstanceId, admitted.packageRecord);
+    return invokeModuleSettings(admitted, {
+      located,
+      configuration: this.options.configuration,
+      ...(this.options.dataDirectoryParent === undefined
+        ? {}
+        : { dataDirectoryParent: this.options.dataDirectoryParent }),
+      ...(this.options.storage ? { storage: this.options.storage } : {}),
+      log: this.options.log,
+    });
+  };
 
   invoke(pluginInstanceId: string, method: string, params: unknown): Promise<unknown> {
     return this.attemptInvoke(pluginInstanceId, method, params).then(settlePluginInvocation);

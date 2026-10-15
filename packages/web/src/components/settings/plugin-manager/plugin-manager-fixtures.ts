@@ -28,6 +28,7 @@ export interface PluginManagerDesignFixture {
   publisher: string;
   packageName: string;
   source: 'catalog' | 'local';
+  repositoryName?: string;
   trust: 'official' | 'first-party' | 'unverified' | 'unknown';
   dependencyClosure?: 'shipped' | 'materialized';
   availableVersion: string;
@@ -43,7 +44,9 @@ export interface PluginManagerDesignFixture {
   tools?: Array<Pick<PluginManagerContributionTool, 'contributionId' | 'name' | 'description'>>;
   readme: PluginManagerReadmeState;
   setupSteps?: string[];
-  steps?: string[];
+  steps?: Array<string | { text: string; mode?: string }>;
+  permissions?: { label: string };
+  installSources?: PluginManagerDetail['installSources'];
   testable?: boolean;
   docsUrl?: string;
   configFields?: PluginManagerDetail['configFields'];

@@ -110,6 +110,16 @@ const gitInstallSchema = z
       .object({
         kind: z.literal('git'),
         url: z.string().trim().min(1).max(4_096),
+        marketplace: z
+          .object({
+            sourceId: z.string().regex(/^[a-f0-9]{24}$/),
+            commit: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+            path: z.string().regex(/^packages\/[a-z0-9-]+$/),
+            pluginId: pluginIdSchema,
+            version: z.string().min(1).max(128),
+          })
+          .strict()
+          .optional(),
       })
       .strict(),
   })

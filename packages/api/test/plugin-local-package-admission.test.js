@@ -7,13 +7,15 @@ import { afterEach, test } from 'node:test';
 import { gzipSync } from 'node:zlib';
 
 import {
+  ExternalPluginLifecycleService,
   FilePluginPackageQuarantineStore,
   HostInventoryControlPlane,
   LocalPluginPackageAdmission,
   MemoryPluginInventoryStore,
+  OfficialPluginPackageInstaller,
   packageDirectoryName,
 } from '../dist/domains/plugin/index.js';
-import { manifest, packageArchive } from './plugin-official-package-installer.fixture.js';
+import { catalogEntry, manifest, packageArchive } from './plugin-official-package-installer.fixture.js';
 
 const roots = [];
 
@@ -367,19 +369,66 @@ test('directory update retains the request-start grant fence while source verifi
   assert.deepEqual(after.grants[0].effectiveGrants, []);
 });
 
-test('directory reselection does not silently take over an archive-origin instance', async () => {
+test('explicit directory installation replaces an installed catalog identity while preserving the instance and data', async () => {
   const sourceRoot = await tempRoot('cat-cafe-local-update-origin-');
-  await writeLocalPackage(sourceRoot);
+  await writeLocalPackage(sourceRoot, manifest({ version: '0.1.0-alpha.2' }));
+  const { admission, inventory, store, packagesRoot } = await harness();
   const archive = await packageArchive();
-  const archivePath = join(await tempRoot('cat-cafe-local-update-archive-'), 'package.tgz');
-  await writeFile(archivePath, archive.bytes);
-  const { admission, store } = await harness();
-  await admission.install({ kind: 'local-archive', path: archivePath });
-  const before = await store.snapshot();
-  await assert.rejects(admission.install({ kind: 'local-directory', path: sourceRoot }), {
-    code: 'INVENTORY_REJECTED',
+  const entry = catalogEntry(archive.integrity);
+  const official = new OfficialPluginPackageInstaller({
+    inventory,
+    packagesRoot,
+    catalog: [entry],
+    fetchArchive: async () => archive.bytes,
   });
-  assert.deepEqual(await store.snapshot(), before);
+  const first = await official.install(entry.catalogId, { version: entry.version, packageDigest: entry.packageDigest });
+  const data = join(packagesRoot, 'retained-data');
+  await writeFile(data, 'keep');
+  const replaced = await admission.install({ kind: 'local-directory', path: sourceRoot });
+  assert.equal(replaced.pluginInstanceId, first.pluginInstanceId);
+  const after = await store.snapshot();
+  assert.equal(after.instances.length, 1);
+  assert.equal(
+    after.packages.find((record) => record.packageDigest === replaced.packageDigest).provenance.kind,
+    'local-directory',
+  );
+  assert.equal(await readFile(data, 'utf8'), 'keep');
+});
+
+test('directory replacement suspends and resumes the same enabled instance through the existing lifecycle queue', async () => {
+  const directory = await tempRoot('cat-cafe-local-update-enabled-');
+  await writeLocalPackage(directory);
+  const h = await harness();
+  const first = await h.admission.install({ kind: 'local-directory', path: directory });
+  await h.store.transaction((tx) =>
+    tx.instances.put({
+      ...tx.instances.get(first.pluginInstanceId),
+      activationState: 'enabled',
+      runtimeState: 'healthy',
+      configReadiness: 'ready',
+    }),
+  );
+  const calls = [];
+  const lifecycle = new ExternalPluginLifecycleService({
+    store: h.store,
+    supervisor: {
+      stop: async (id) => calls.push(['stop', id, (await h.store.snapshot()).instances[0].packageDigest]),
+      start: async (id) => calls.push(['start', id, (await h.store.snapshot()).instances[0].packageDigest]),
+    },
+  });
+  const admission = new LocalPluginPackageAdmission({
+    inventory: h.inventory,
+    packagesRoot: h.packagesRoot,
+    grantPolicy: () => [],
+    lifecycle,
+  });
+  await writeFile(join(directory, 'dist/entrypoint.js'), '// replacement');
+  const result = await admission.install({ kind: 'local-directory', path: directory });
+  assert.deepEqual(calls, [
+    ['stop', first.pluginInstanceId, first.packageDigest],
+    ['start', first.pluginInstanceId, result.packageDigest],
+  ]);
+  assert.equal((await h.store.snapshot()).instances[0].activationState, 'enabled');
 });
 
 async function archiveSource(entrypoint, packageName = '@clowder-ai/official-test-source') {

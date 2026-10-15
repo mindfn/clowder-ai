@@ -8,11 +8,14 @@ const SOURCE_LABELS: Record<PluginManagerDesignFixture['trust'], string> = {
   unknown: '来源未知 · 缺少安装来源记录',
 };
 
-export function PluginSourceLabel({ trust }: Pick<PluginManagerDesignFixture, 'trust'>) {
+export function PluginSourceLabel({
+  trust,
+  repositoryName,
+}: Pick<PluginManagerDesignFixture, 'trust' | 'repositoryName'>) {
   return (
     <span data-plugin-source-trust={trust} className="mt-0.5 block">
       <SettingsText variant="xs" tone="muted">
-        {SOURCE_LABELS[trust]}
+        {repositoryName ? `来自 ${repositoryName}` : SOURCE_LABELS[trust]}
       </SettingsText>
     </span>
   );

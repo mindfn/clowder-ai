@@ -409,3 +409,35 @@ describe('F202 terminal Plugin Manager service', () => {
     ]);
   });
 });
+
+it('keeps one plugin row and explicit install selections for official and branch repositories', async () => {
+  const gitCandidate = {
+    ...published,
+    catalogId: 'git.team.video',
+    version: '1.2.0',
+    packageDigest: null,
+    sourceLabel: 'team-plugins · preview',
+    directorySource: {
+      kind: 'git',
+      url: 'ssh://git@example.invalid/team/plugins.git',
+      packageName: published.packageName,
+      trust: 'unverified',
+      marketplace: {
+        sourceId: 'team-preview',
+        commit: 'a'.repeat(40),
+        path: 'packages/video',
+        pluginId: published.pluginId,
+        version: '1.2.0',
+      },
+    },
+  };
+  const manager = service({ catalog: { candidates: [published, gitCandidate], status: 'fresh', refreshedAt: 1 } });
+  const listed = await manager.list();
+  assert.equal(listed.plugins.length, 1);
+  assert.equal(listed.plugins[0].source.kind, 'catalog', 'official remains the default, not an implicit override');
+  const detail = (await manager.get(published.pluginId)).plugin;
+  assert.equal(detail.installSources.length, 2);
+  assert.equal(detail.installSources[0].request.source.kind, 'catalog');
+  assert.deepEqual(detail.installSources[1].request.source.marketplace, gitCandidate.directorySource.marketplace);
+  assert.equal(detail.installSources[1].label, 'team-plugins · preview');
+});

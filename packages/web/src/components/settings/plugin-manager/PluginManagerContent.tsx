@@ -1,36 +1,40 @@
 'use client';
 
+import { type PluginManagerInstallRequest, pluginDescriptionVariants } from '@cat-cafe/shared';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { HubIcon } from '../../hub-icons';
+import { settingsResourceCardClass } from '../../SettingsResourceCard';
+import { SettingsText } from '../primitives/SettingsText';
 import { PluginDirectoryInstallButton } from './PluginDirectoryInstallButton';
+import { PluginManagerDetailCard } from './PluginManagerDetailCard';
+import { PluginListRow, PluginListSection } from './PluginManagerList';
+import { PluginMarketplaceSettings } from './PluginMarketplaceSettings';
+import { installedPluginGroups, type PluginManagerPresentation } from './plugin-manager-attention';
+import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
+import type { ReactNode } from 'react';
 
 function PluginManagerToolbar({
-  onGitInstall,
+  onMarketplaceChange,
   onDirectoryInstall,
 }: {
-  onGitInstall?: ((url: string) => Promise<void>) | undefined;
+  onMarketplaceChange?: (() => Promise<void>) | undefined;
   onDirectoryInstall?: ((path: string) => Promise<void>) | undefined;
 }) {
   return (
     <div data-plugin-manager-toolbar className="flex flex-wrap justify-end gap-2">
+      <a
+        href="/docs/plugin-development.md"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="console-inline-link self-center text-xs"
+      >
+        插件开发文档
+      </a>
       {onDirectoryInstall && <PluginDirectoryInstallButton onInstall={onDirectoryInstall} />}
-      {onGitInstall && <PluginGitInstallButton onInstall={onGitInstall} />}
-      <PluginArchiveInstallButton />
+      <PluginMarketplaceSettings onChange={onMarketplaceChange} />
     </div>
   );
 }
-
-import { installedPluginGroups, type PluginManagerPresentation } from './plugin-manager-attention';
-import { PluginGitInstallButton } from './PluginGitInstallButton';
-
-import { pluginDescriptionVariants } from '@cat-cafe/shared';
-import type { ReactNode } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { PluginArchiveInstallButton } from './PluginArchiveInstallButton';
-import { HubIcon } from '../../hub-icons';
-import { settingsResourceCardClass } from '../../SettingsResourceCard';
-import { SettingsText } from '../primitives/SettingsText';
-import { PluginManagerDetailCard } from './PluginManagerDetailCard';
-import { PluginListRow, PluginListSection } from './PluginManagerList';
-import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
 
 const DEFAULT_RECOMMENDATION_LIMIT = 3;
 
@@ -103,7 +107,7 @@ export function PluginManagerContent({
   onPluginSelect,
   onSearchChange,
   onInstall,
-  onGitInstall,
+  onMarketplaceChange,
   onDirectoryInstall,
   onSetEnabled,
   onRequestEnable,
@@ -128,8 +132,8 @@ export function PluginManagerContent({
   presentation?: PluginManagerPresentation;
   onPluginSelect?: (pluginId: string | null) => void;
   onSearchChange?: (query: string) => void;
-  onInstall?: (pluginId: string) => void;
-  onGitInstall?: (url: string) => Promise<void>;
+  onInstall?: (pluginId: string, request?: PluginManagerInstallRequest) => void;
+  onMarketplaceChange?: () => Promise<void>;
   onDirectoryInstall?: (path: string) => Promise<void>;
   onSetEnabled?: (pluginId: string, enabled: boolean) => void;
   onRequestEnable?: (pluginId: string) => void | Promise<void>;
@@ -142,16 +146,17 @@ export function PluginManagerContent({
 }) {
   const initialDetailOpened = useRef(false);
   const [query, setQuery] = useState('');
+  const [availableLimit, setAvailableLimit] = useState(5);
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [configurationValidation, setConfigurationValidation] = useState({ pluginId: '', request: 0 });
 
   const filtered = useMemo(() => fixtures.filter((plugin) => matchesSearch(plugin, query)), [fixtures, query]);
   const leadingGroups = installedPluginGroups(filtered, presentation);
   const recommendationPool = filtered.filter((plugin) => plugin.artifact === 'absent' && plugin.source === 'catalog');
-  const recommendedPlugins =
-    query.trim().length > 0 ? recommendationPool : recommendationPool.slice(0, DEFAULT_RECOMMENDATION_LIMIT);
+  const recommendedPlugins = query.trim() ? recommendationPool : recommendationPool.slice(0, availableLimit);
+  const hasMore = !query.trim() && recommendedPlugins.length < recommendationPool.length;
   const otherPlugins = filtered.filter((plugin) => plugin.artifact === 'absent' && plugin.source !== 'catalog');
-  const visible = [...leadingGroups.flatMap(group => group.plugins), ...recommendedPlugins, ...otherPlugins];
+  const visible = [...leadingGroups.flatMap((group) => group.plugins), ...recommendationPool, ...otherPlugins];
   const selection = usePluginSelection(visible, selectedPluginId, onPluginSelect);
   const selected = selection.selected;
   useEffect(() => {
@@ -191,7 +196,7 @@ export function PluginManagerContent({
 
   return (
     <section data-testid="plugin-manager" className="flex h-full min-h-0 flex-1 flex-col gap-3.5 overflow-hidden">
-      <PluginManagerToolbar onGitInstall={onGitInstall} onDirectoryInstall={onDirectoryInstall} />
+      <PluginManagerToolbar onMarketplaceChange={onMarketplaceChange} onDirectoryInstall={onDirectoryInstall} />
 
       {catalogStatus !== 'fresh' && (
         <div className="flex items-start gap-2 rounded-xl bg-conn-amber-bg px-3 py-2.5">
@@ -217,6 +222,7 @@ export function PluginManagerContent({
                 value={query}
                 onChange={(event) => {
                   setQuery(event.target.value);
+                  setAvailableLimit(5);
                   onSearchChange?.(event.target.value);
                 }}
                 placeholder="搜索插件"
@@ -228,6 +234,11 @@ export function PluginManagerContent({
           <div
             data-plugin-scroll-region="list"
             className="relative min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain pr-1"
+            onScroll={(event) => {
+              const list = event.currentTarget;
+              if (hasMore && list.scrollHeight - list.scrollTop - list.clientHeight < 96)
+                setAvailableLimit((limit) => limit + 5);
+            }}
           >
             {loading && (
               <div data-testid="plugin-manager-loading" className="space-y-2">
@@ -260,6 +271,15 @@ export function PluginManagerContent({
                   ariaLabel="推荐插件"
                   rows={renderRows(recommendedPlugins)}
                 />
+                {hasMore && (
+                  <button
+                    type="button"
+                    onClick={() => setAvailableLimit((limit) => limit + 5)}
+                    className="console-inline-link w-full py-2 text-sm"
+                  >
+                    查看更多插件
+                  </button>
+                )}
                 <PluginListSection kind="other" title="其他" ariaLabel="其他插件" rows={renderRows(otherPlugins)} />
               </>
             )}
@@ -295,6 +315,7 @@ export function PluginManagerContent({
                     configurationValidation.pluginId === selected.id ? configurationValidation.request : 0
                   }
                   configurationSaved={configurationSavedPluginId === selected.id}
+                  onInstallSource={(request) => onInstall?.(selected.id, request)}
                   onStateChanged={onStateChanged}
                   onSaveConfig={
                     selected.configFields?.length ? (updates) => onConfigure?.(selected.id, updates) : undefined

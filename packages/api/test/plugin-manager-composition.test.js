@@ -495,6 +495,11 @@ export default { create() { return { async start(host) {
     await composition.configuration.configureOperationTargets(entry.pluginId, before.pluginInstanceId, 'connect', {
       token: 'secret',
     });
+    await composition.configuration.completeOperation(
+      entry.pluginId,
+      before.pluginInstanceId,
+      before.lifecycleRevision,
+    );
     const after = (await composition.manager.get(entry.pluginId)).plugin;
     assert.equal(after.configFields.find((field) => field.key === 'connect').configured, true);
     assert.equal(after.configFields.find((field) => field.key === 'token').currentValue, '••••••');

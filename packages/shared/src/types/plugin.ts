@@ -163,6 +163,7 @@ export type PluginManagerPackageSource =
       packageName: string | null;
       trust: 'unverified';
       dependencyClosure?: 'shipped' | 'materialized';
+      marketplace?: PluginMarketplaceSelection;
     }
   | {
       kind: 'bundled';
@@ -344,6 +345,8 @@ export interface PluginManagerListItem {
   iconBg?: string;
   publisher?: string;
   source: PluginManagerPackageSource;
+  /** Explicit candidate choices; discovery never replaces the installed package. */
+  installSources?: Array<{ id: string; label: string; version: string; request: PluginManagerInstallRequest }>;
   availableVersion: string | null;
   installedVersion: string | null;
   packageDigest: string | null;
@@ -369,7 +372,8 @@ export interface PluginManagerDetail extends PluginManagerListItem {
   docsUrl?: string;
   setupSteps?: string[];
   /** Package-contract setup guidance. Kept distinct from legacy repository setupSteps. */
-  steps?: string[];
+  steps?: Array<string | { text: string; mode?: string }>;
+  permissions?: { label: string };
   testable?: boolean;
   configFields: PluginManagerConfigField[];
 }
@@ -405,8 +409,17 @@ export type PluginManagerInstallRequest =
       source: { kind: 'local-directory' | 'local-archive'; path: string };
     }
   | {
-      source: { kind: 'git'; url: string };
+      source: { kind: 'git'; url: string; marketplace?: PluginMarketplaceSelection };
     };
+
+/** A discovered directory selection, not an archive digest or execution grant. */
+export interface PluginMarketplaceSelection {
+  sourceId: string;
+  commit: string;
+  path: string;
+  pluginId: string;
+  version: string;
+}
 
 export interface PluginManagerSetEnabledRequest {
   enabled: boolean;

@@ -75,12 +75,17 @@ import { pluginDataDirectoryParent } from './host-surface/plugin-data-directory.
 import { PluginMediaReadService } from './host-surface/plugin-media-host.js';
 import { createPluginNeutralHost, type PluginDeploymentServices } from './host-surface/plugin-neutral-host.js';
 import type { PluginParticipantRosterServices } from './host-surface/plugin-participant-roster-host.js';
-import { RedisPluginPrivateStorage } from './host-surface/plugin-private-storage.js';
+import { type PluginPrivateStoragePort, RedisPluginPrivateStorage } from './host-surface/plugin-private-storage.js';
 import type { PluginPublicInvocationServices } from './host-surface/plugin-public-invocation-host.js';
 import {
   type BuiltinPluginPackageMaterializer,
   FilesystemBuiltinPluginPackageMaterializer,
 } from './manager/builtin-package-materializer.js';
+import { connectorPermissionsProjection } from './manager/connector-settings.js';
+import { GitMarketplaceCatalog } from './manager/git-marketplace-catalog.js';
+import { prepareMarketplaceDirectory } from './manager/git-marketplace-preparation.js';
+import type { GitMarketplaceRepository } from './manager/git-marketplace-repository.js';
+import type { GitMarketplaceSources } from './manager/git-marketplace-sources.js';
 import { GitPluginPackageAdmission } from './manager/git-package-admission.js';
 import { LocalPluginPackageAdmission } from './manager/local-package-admission.js';
 import { HostPluginConfigurationService } from './manager/plugin-manager-configuration.js';
@@ -207,6 +212,8 @@ export interface DormantPluginRuntimeRecoveryOptions {
 }
 
 export interface DormantPluginRuntimeComposition {
+  readonly privateStorage?: PluginPrivateStoragePort;
+  readonly settingsInvocation: import('./builtin-runtime/carriers/module-plugin-settings.js').PluginSettingsInvocation;
   readonly projectRoot: string;
   readonly paths: PluginRuntimePersistencePaths;
   readonly inventoryStore: FilePluginInventoryStore;
@@ -451,6 +458,7 @@ export function createDormantPluginRuntimeComposition(
     identityDirectory: resolve(dirname(paths.inventorySnapshotPath), PLUGIN_HOST_ENTRIES.browserEndpoints),
     parentOrigin: new URL(options.editorParentOrigin ?? resolveFrontendBaseUrl(process.env)).origin,
   });
+  const privateStorage = options.redis === undefined ? undefined : new RedisPluginPrivateStorage(options.redis);
   const moduleRuntime = new ModulePluginRuntime({
     browserServices,
     ...(options.taskArtifactReader ? { taskArtifactReader: options.taskArtifactReader } : {}),
@@ -496,7 +504,7 @@ export function createDormantPluginRuntimeComposition(
     configuration,
     media: mediaRead,
     dataDirectoryParent: pluginDataDirectoryParent(resolve(options.projectRoot)),
-    ...(options.redis === undefined ? {} : { storage: new RedisPluginPrivateStorage(options.redis) }),
+    ...(privateStorage === undefined ? {} : { storage: privateStorage }),
     ...(options.taskStore === undefined ? {} : { taskStore: options.taskStore }),
     ...(options.threadOwnerUserId === undefined ? {} : { taskOwnerUserId: options.threadOwnerUserId }),
     ...(options.threadStore === undefined ? {} : { taskThreadStore: options.threadStore }),
@@ -628,6 +636,8 @@ export function createDormantPluginRuntimeComposition(
     inventory,
     broker,
     supervisor,
+    settingsInvocation: moduleRuntime.invokeSettings,
+    ...(privateStorage === undefined ? {} : { privateStorage }),
     ...(predicateProvider === undefined ? {} : { predicateProvider }),
     externalRuntime: externalSupervisor,
     ...(contentEditors === undefined ? {} : { contentEditors }),
@@ -921,7 +931,12 @@ export class InventoryPluginManagerInstalledPackages implements PluginManagerIns
         })),
         ...(packageRecord.manifest.steps === undefined
           ? {}
-          : { steps: packageRecord.manifest.steps.map((step) => step.text) }),
+          : {
+              steps: packageRecord.manifest.steps.map((step) =>
+                'mode' in step && typeof step.mode === 'string' ? { text: step.text, mode: step.mode } : step.text,
+              ),
+            }),
+        ...connectorPermissionsProjection(packageRecord.manifest),
         testable: packageRecord.manifest.test !== undefined,
         configFields: [],
       });
@@ -971,6 +986,11 @@ export interface PluginManagerRuntimeCompositionOptions {
   readonly now?: () => number;
   readonly gitBin?: string;
   readonly gitCloneTimeoutMs?: number;
+  readonly marketplaces?: {
+    sources: GitMarketplaceSources;
+    repository: GitMarketplaceRepository;
+    prepare?: (directory: string, root: string) => Promise<void>;
+  };
 }
 
 export interface PluginManagerRuntimeComposition {
@@ -1029,6 +1049,8 @@ export function createPluginManagerRuntimeComposition(
   );
   const localAdmission = new LocalPluginPackageAdmission({
     inventory: options.runtime.inventory,
+    lifecycle: options.runtime.lifecycle,
+    reconcileConfiguration: (pluginId, instanceId) => configuration.reconcile(pluginId, instanceId),
     packagesRoot: options.runtime.paths.packagesRoot,
     grantPolicy: options.localGrantPolicy ?? (() => []),
     ...(options.runtime.contract === undefined ? {} : { validateManifest: options.runtime.contract.validateManifest }),
@@ -1040,7 +1062,23 @@ export function createPluginManagerRuntimeComposition(
     ...(options.gitBin === undefined ? {} : { gitBin: options.gitBin }),
     ...(options.gitCloneTimeoutMs === undefined ? {} : { timeoutMs: options.gitCloneTimeoutMs }),
   });
+  const baseCatalog = new OfficialPluginManagerCatalogAdapter(
+    options.catalogProvider,
+    options.catalogManifests,
+    options.runtime.contract?.validateManifest,
+  );
+  const marketplaces = options.marketplaces
+    ? new GitMarketplaceCatalog({
+        base: baseCatalog,
+        sources: options.marketplaces.sources,
+        repository: options.marketplaces.repository,
+        localAdmission,
+        prepare: options.marketplaces.prepare ?? prepareMarketplaceDirectory,
+      })
+    : undefined;
+  const catalog = marketplaces ?? baseCatalog;
   const assets = new PluginManagerPackageAssetService({
+    ...(marketplaces ? { repositoryAssets: marketplaces } : {}),
     inventory: options.runtime.inventoryStore,
     packages: options.runtime.packages,
     packagesRoot: options.runtime.paths.packagesRoot,
@@ -1048,11 +1086,7 @@ export function createPluginManagerRuntimeComposition(
     ...(options.fetchOfficialArchive === undefined ? {} : { fetchArchive: options.fetchOfficialArchive }),
     ...(options.runtime.contract === undefined ? {} : { validateManifest: options.runtime.contract.validateManifest }),
   });
-  const catalog = new OfficialPluginManagerCatalogAdapter(
-    options.catalogProvider,
-    options.catalogManifests,
-    options.runtime.contract?.validateManifest,
-  );
+
   const installedPackages = new InventoryPluginManagerInstalledPackages(
     options.runtime.inventoryStore,
     options.runtime.brokerStore,
@@ -1087,6 +1121,18 @@ export function createPluginManagerRuntimeComposition(
             packageDigest: request.expectedDigest,
           });
           return { pluginId: candidate.pluginId, pluginInstanceId: installed.pluginInstanceId };
+        }
+        if (request.source.kind === 'git' && request.source.marketplace) {
+          if (!marketplaces)
+            throw new PluginManagerServiceError('INSTALL_UNAVAILABLE', 'Plugin repositories are unavailable');
+          try {
+            return await marketplaces.install(request.source.url, request.source.marketplace);
+          } catch (error) {
+            throw new PluginManagerServiceError(
+              'INSTALL_UNAVAILABLE',
+              error instanceof Error ? error.message : 'Repository installation failed',
+            );
+          }
         }
         const installed =
           request.source.kind === 'git'

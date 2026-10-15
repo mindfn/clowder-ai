@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
@@ -318,6 +318,7 @@ function hostOf(records, options = {}) {
   };
   const moduleRuntime = new ModulePluginRuntime({
     packages,
+    ...(options.dataDirectoryParent ? { dataDirectoryParent: options.dataDirectoryParent } : {}),
     ...options.taskServices,
     ...(options.materializer === undefined ? {} : { materializer: options.materializer }),
     configuration: options.configuration ?? {
@@ -1252,4 +1253,101 @@ test('installed module exposes Task data and ordinary send without legacy execut
   const host = hostOf([{ manifest: manifest(), rootDir }]);
   await host.router.start('instance-0');
   await host.router.stop('instance-0', 'host_shutdown');
+});
+
+test('loaded settings uses the original granted data directory without starting runtime', async (t) => {
+  const rootDir = await writePackage(`
+    import { readFile } from 'node:fs/promises';
+    import { join } from 'node:path';
+    export default { create() { return {
+      start() { throw new Error('settings must not start the adapter'); },
+      settings(host) { return { actions: { inspect: async () => ({
+        directory: host.dataDirectory,
+        binding: host.dataDirectory ? await readFile(join(host.dataDirectory, 'conversation-binding.json'), 'utf8') : null,
+        secret: await host.secrets.get('TOKEN'),
+      }) } }; }
+    }; } };
+  `);
+  t.after(() => rm(rootDir, { recursive: true, force: true }));
+  const parent = join(rootDir, 'host-data');
+  const directory = join(parent, 'personal-chrome-host');
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, 'conversation-binding.json'), '{"original":true}');
+  const admitted = manifest({
+    runtime: { transport: 'builtin', entrypoint: 'dist/plugin.js', dataDirectory: 'personal-chrome-host' },
+    features: [{ id: 'settings', name: 'Settings', resources: [], capabilities: ['data.directory', 'secret.read'] }],
+    configuration: [{ key: 'TOKEN', kind: 'secret', label: 'Token', required: true }],
+    test: { action: { method: 'inspect' } },
+  });
+  const host = hostOf([{ manifest: admitted, rootDir }], { dataDirectoryParent: parent });
+  const record = (await host.inventory.snapshot()).packages[0];
+  const input = {
+    pluginInstanceId: 'instance-0',
+    packageRecord: record,
+    effectiveGrants: ['data.directory', 'secret.read'],
+    method: 'inspect',
+    params: {},
+    assertCurrent: async () => {},
+  };
+  const result = await host.moduleRuntime.invokeSettings(input);
+  assert.deepEqual(result, { handled: true, result: { directory, binding: '{"original":true}', secret: undefined } });
+  const withoutGrant = await host.moduleRuntime.invokeSettings({ ...input, effectiveGrants: ['secret.read'] });
+  assert.equal(withoutGrant.result.directory, undefined);
+  assert.equal(await readFile(join(directory, 'conversation-binding.json'), 'utf8'), '{"original":true}');
+  await assert.rejects(
+    host.moduleRuntime.invokeSettings({
+      ...input,
+      assertCurrent: async () => {
+        throw new Error('stale');
+      },
+    }),
+    /stale/,
+  );
+  assert.equal(host.released.length, 3);
+});
+
+test('loaded settings consumes the one-shot HTTP owner authority and leaves the commit fence current', async (t) => {
+  const { withOwnerOperationInvocation } = await import(
+    '../dist/domains/plugin/carrier/plugin-owner-operation-context.js'
+  );
+  const rootDir = await writePackage(
+    `export default {create(){return {start(){throw Error('no runtime');},settings(){return {actions:{inspect:async(_params,_caller,owner)=>{await owner.assertCurrent();return {userId:owner.userId,kind:owner.kind};}}};}};}};`,
+  );
+  t.after(() => rm(rootDir, { recursive: true, force: true }));
+  const host = hostOf([{ manifest: manifest({ test: { action: { method: 'inspect' } } }), rootDir }]);
+  const record = (await host.inventory.snapshot()).packages[0];
+  const bound = [];
+  const controller = new AbortController();
+  const request = {
+    pluginId: record.pluginId,
+    operationKey: 'inspect',
+    actionId: 'inspect',
+    userId: 'owner',
+    requestId: 'request',
+    signal: controller.signal,
+    assertCurrent() {
+      assert.equal(controller.signal.aborted, false);
+    },
+    bindActivation(check) {
+      bound.push(check);
+    },
+  };
+  const result = await withOwnerOperationInvocation(
+    request,
+    'instance-0',
+    'inspect',
+    async () => {},
+    () =>
+      host.moduleRuntime.invokeSettings({
+        pluginInstanceId: 'instance-0',
+        packageRecord: record,
+        effectiveGrants: [],
+        method: 'inspect',
+        params: {},
+        assertCurrent: async () => {},
+      }),
+  );
+  assert.deepEqual(result, { handled: true, result: { userId: 'owner', kind: 'owner-operation' } });
+  for (const check of bound) check(); // Disposal of a settings carrier must not invalidate the subsequent Host commit.
+  assert.equal(host.released.length, 1);
 });

@@ -382,3 +382,47 @@ test('declared test route retains installed and enabled checks', async () => {
   assert.equal(absent.statusCode, 404, absent.payload);
   assert.deepEqual(missing.calls, []);
 });
+
+test('loaded settings run before enable and receive the persisted QR state without starting runtime', async () => {
+  const current = snapshot({ enabled: false });
+  let state;
+  let started = 0;
+  const calls = [];
+  const completed = [];
+  const operations = new InstalledPluginOperations({
+    inventory: { snapshot: async () => structuredClone(current) },
+    invocation: {
+      invoke: async () => {
+        started++;
+        throw new Error('runtime must remain stopped');
+      },
+    },
+    settingsInvocation: async ({ method, params, assertCurrent }) => {
+      await assertCurrent();
+      calls.push({ method, params });
+      return {
+        handled: true,
+        result:
+          method === 'qr.generate'
+            ? { render: 'img', data: { url: 'data:image/png;base64,abc', qrPayload: 'persistent-challenge' } }
+            : { render: 'status', data: { status: 'confirmed' }, targetValues: { BOT_TOKEN: 'new-token' } },
+      };
+    },
+    configuration: {
+      readActionInput: async () => ({}),
+      readOperationState: async () => state,
+      writeOperationState: async (_p, _k, next) => {
+        state = structuredClone(next);
+      },
+      clearOperationState: async () => {},
+      configureOperationTargets: async () => ['BOT_TOKEN'],
+      completeOperation: async (...args) => completed.push(args),
+    },
+  });
+  assert.equal((await operations.runAction(pluginId, 'qr_login', 'generate', {})).status, 200);
+  assert.equal((await operations.runAction(pluginId, 'qr_login', 'status', {})).status, 200);
+  assert.equal(calls[1].params.operationState.lastResult.data.qrPayload, 'persistent-challenge');
+  assert.equal(started, 0);
+  assert.equal(current.instances[0].activationState, 'disabled');
+  assert.equal(completed.length, 1);
+});

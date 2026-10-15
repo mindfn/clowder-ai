@@ -1349,6 +1349,7 @@ export type {
   PluginManagerSetEnabledRequest,
   PluginManagerUninstallRequest,
   PluginManifest,
+  PluginMarketplaceSelection,
   PluginOperationRow,
   PluginOperationRowAction,
   PluginOperationRows,

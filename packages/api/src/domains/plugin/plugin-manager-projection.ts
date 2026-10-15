@@ -19,10 +19,12 @@ import type { PluginInstanceRecord, PluginInventorySnapshot, PluginPackageRecord
 /** Catalog-owned metadata required to render an available plugin before installation. */
 export interface PluginManagerCatalogCandidate {
   readonly catalogId: string;
+  readonly sourceLabel?: string;
   readonly pluginId: string;
   readonly packageName: string;
   readonly version: string;
-  readonly packageDigest: string;
+  readonly packageDigest: string | null;
+  readonly directorySource?: Extract<PluginManagerPackageSource, { kind: 'git' }>;
   readonly displayName: string;
   readonly description?: PluginDescription;
   readonly icon?: PluginIconSpec;
@@ -221,6 +223,7 @@ function candidateSource(
   if (packageRecord && provenance?.kind !== 'catalog') {
     throw new Error('Installed plugin package is missing admitted source provenance');
   }
+  if (candidate.directorySource && !packageRecord) return candidate.directorySource;
   return {
     kind: 'catalog',
     catalogId: candidate.catalogId,

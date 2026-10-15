@@ -5,6 +5,7 @@ import { type FileHandle, lstat, mkdir, mkdtemp, open, readFile, realpath, rm, w
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { Capability, PluginManifest, SignalSchemaCatalog } from '@clowder-ai/plugin-contract';
+import type { ExternalPluginLifecycleService } from '../external-plugin-lifecycle.js';
 import { FilesystemVerifiedPluginPackageLocator } from '../external-runtime/filesystem-package-locator.js';
 import type { PluginManifestValidator } from '../external-runtime/package-staging.js';
 import type { VerifiedPluginPackage } from '../external-runtime/types.js';
@@ -48,6 +49,8 @@ export type LocalPluginPackageProvenance =
 
 export interface LocalPluginPackageAdmissionOptions {
   readonly inventory: HostInventoryControlPlane;
+  readonly lifecycle?: Pick<ExternalPluginLifecycleService, 'runWithRuntimeSuspended'>;
+  readonly reconcileConfiguration?: (pluginId: string, instanceId: string) => Promise<void>;
   readonly packagesRoot: string;
   /** Host-owned policy. Package declarations are requests, never grants. */
   readonly grantPolicy: (manifest: PluginManifest) => Promise<readonly Capability[]> | readonly Capability[];
@@ -59,6 +62,8 @@ export interface LocalPluginPackageAdmissionOptions {
 
 export interface LocalPluginAdmissionFence {
   readonly expectedDigest?: string;
+  /** Repository discovery selects an identity before package preparation runs. */
+  readonly expectedPackage?: { readonly pluginId: string; readonly version: string; readonly packageName: string };
   readonly signal?: AbortSignal;
 }
 
@@ -424,6 +429,14 @@ export class LocalPluginPackageAdmission {
       const signalSchemas = await readSignalSchemas(located.rootDir, located.manifest);
       const effectiveGrants = await this.options.grantPolicy(located.manifest);
       const packageMetadata = await readPackageMetadata(located.rootDir);
+      if (
+        fence.expectedPackage &&
+        (located.manifest.pluginId !== fence.expectedPackage.pluginId ||
+          located.manifest.version !== fence.expectedPackage.version ||
+          packageMetadata.packageName !== fence.expectedPackage.packageName)
+      ) {
+        throw sourceError('prepared directory does not match the selected package identity');
+      }
       const admittedProvenance = { ...provenance, ...packageMetadata };
       await publishPluginPackageArchive(this.packagesRoot, digest, bytes);
       const installed = await this.admitCandidate(source, inventoryAtRequest, {
@@ -456,21 +469,45 @@ export class LocalPluginPackageAdmission {
       const previousPackage = inventoryAtRequest.packages.find(
         (record) => record.packageDigest === current?.packageDigest,
       );
+      // An explicit owner-selected directory replaces by pluginId, including an
+      // installed npm package. Discovery alone never reaches this admission path.
       const localUpdate =
-        candidate.provenance?.kind === source.kind &&
         current !== undefined &&
-        previousPackage?.provenance?.kind === source.kind &&
-        (source.kind === 'local-directory' || candidate.provenance.packageName !== undefined) &&
-        previousPackage.provenance.packageName === candidate.provenance.packageName;
+        (source.kind === 'local-directory' ||
+          (candidate.provenance?.kind === source.kind &&
+            previousPackage?.provenance?.kind === source.kind &&
+            candidate.provenance.packageName !== undefined &&
+            previousPackage.provenance.packageName === candidate.provenance.packageName));
       if (!localUpdate) return await this.options.inventory.installPackage(candidate);
       const grants = inventoryAtRequest.grants.find((grant) => grant.pluginInstanceId === current.pluginInstanceId);
       if (!grants) throw new PluginInventoryError('INVENTORY_INVARIANT', 'current instance has no grant record');
-      return await this.options.inventory.upgradePackage({
-        ...candidate,
-        pluginInstanceId: current.pluginInstanceId,
-        expectedLifecycleRevision: current.lifecycleRevision,
-        expectedGrantRevision: grants.grantRevision,
-      });
+      const upgrade = async (revision: number) => {
+        const result = await this.options.inventory.upgradePackage({
+          ...candidate,
+          pluginInstanceId: current.pluginInstanceId,
+          expectedLifecycleRevision: revision,
+          expectedGrantRevision: grants.grantRevision,
+        });
+        await this.options.reconcileConfiguration?.(candidate.packagePluginId, current.pluginInstanceId);
+        return result;
+      };
+      if (!this.options.lifecycle) return await upgrade(current.lifecycleRevision);
+      return (
+        await this.options.lifecycle.runWithRuntimeSuspended({
+          instanceId: current.pluginInstanceId,
+          expectedRevision: current.lifecycleRevision,
+          stopReason: 'package_update',
+          resumeFailureCode: 'UPDATE_RESUME_FAILED',
+          preflight: async () => {
+            const grant = (await this.options.inventory.store.snapshot()).grants.find(
+              (item) => item.pluginInstanceId === current.pluginInstanceId,
+            );
+            if (grant?.grantRevision !== grants.grantRevision)
+              throw new PluginInventoryError('STALE_GRANT_REVISION', 'grant changed during package preparation');
+          },
+          operation: (stopped) => upgrade(stopped.lifecycleRevision),
+        })
+      ).result;
     } catch (error) {
       if (error instanceof PluginInventoryError) throw inventoryAdmissionError(error);
       throw error;

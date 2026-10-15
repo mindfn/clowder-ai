@@ -156,7 +156,7 @@ export function PluginListRow({
             <SettingsText as="span" variant="sm" tone="default" className="block truncate font-semibold">
               {plugin.displayName}
             </SettingsText>
-            <PluginSourceLabel trust={plugin.trust} />
+            <PluginSourceLabel trust={plugin.trust} repositoryName={plugin.repositoryName} />
             <span
               data-plugin-description="true"
               className={`mt-0.5 block overflow-hidden ${presentation === 'v2' ? 'truncate' : 'line-clamp-2'}`}
