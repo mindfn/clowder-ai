@@ -431,6 +431,189 @@ test('directory replacement suspends and resumes the same enabled instance throu
   assert.equal((await h.store.snapshot()).instances[0].activationState, 'enabled');
 });
 
+for (const origin of ['catalog', 'local']) {
+  for (const failOld of [false, true]) {
+    test(`failed enabled ${origin} replacement restores old coordinates (old start fails: ${failOld})`, async () => {
+      const directory = await tempRoot('cat-cafe-update-rollback-');
+      await writeLocalPackage(directory);
+      const h = await harness();
+      let first;
+      if (origin === 'catalog') {
+        const archive = await packageArchive();
+        const entry = catalogEntry(archive.integrity);
+        first = await new OfficialPluginPackageInstaller({
+          inventory: h.inventory,
+          packagesRoot: h.packagesRoot,
+          catalog: [entry],
+          fetchArchive: async () => archive.bytes,
+        }).install(entry.catalogId, { version: entry.version, packageDigest: entry.packageDigest });
+      } else first = await h.admission.install({ kind: 'local-directory', path: directory });
+      await h.store.transaction((tx) =>
+        tx.instances.put({
+          ...tx.instances.get(first.pluginInstanceId),
+          activationState: 'enabled',
+          runtimeState: 'healthy',
+          configReadiness: 'ready',
+        }),
+      );
+      const before = await h.store.snapshot();
+      const retained = join(h.packagesRoot, 'owner-config-and-data');
+      await writeFile(retained, 'owner settings and retained data');
+      const starts = [];
+      const reports = [];
+      const lifecycle = new ExternalPluginLifecycleService({
+        store: h.store,
+        onStartFailure: (report) => reports.push(report),
+        supervisor: {
+          stop: async () => {},
+          start: async (id) => {
+            const instance = (await h.store.snapshot()).instances[0];
+            starts.push(instance.packageDigest);
+            if (instance.packageDigest !== first.packageDigest || failOld) throw new Error('fixture start failed');
+            await h.store.transaction((tx) => tx.instances.put({ ...tx.instances.get(id), runtimeState: 'healthy' }));
+          },
+        },
+      });
+      const admission = new LocalPluginPackageAdmission({
+        inventory: h.inventory,
+        packagesRoot: h.packagesRoot,
+        grantPolicy: () => [],
+        lifecycle,
+        reconcileConfiguration: async () =>
+          h.store.transaction((tx) => {
+            const i = tx.instances.get(first.pluginInstanceId);
+            tx.instances.put({ ...i, lifecycleRevision: i.lifecycleRevision + 1 });
+          }),
+      });
+      await writeLocalPackage(directory, manifest({ version: '0.1.0-alpha.2' }), '// broken replacement');
+      await assert.rejects(
+        admission.install({ kind: 'local-directory', path: directory }),
+        (error) => error.code === (failOld ? 'UPDATE_ROLLBACK_RESUME_FAILED' : 'UPDATE_RESUME_FAILED'),
+      );
+      const after = await h.store.snapshot();
+      const restored = after.instances[0];
+      assert.equal(restored.packageDigest, first.packageDigest);
+      assert.equal(restored.pluginInstanceId, first.pluginInstanceId);
+      assert.equal(restored.configReadiness, before.instances[0].configReadiness);
+      assert.equal(restored.activationState, 'enabled');
+      assert.equal(restored.runtimeState, failOld ? 'crashed' : 'healthy');
+      assert.deepEqual(after.grants[0].effectiveGrants, before.grants[0].effectiveGrants);
+      assert.deepEqual(after.grants[0].requestedCapabilities, before.grants[0].requestedCapabilities);
+      assert.ok(after.grants[0].grantRevision > before.grants[0].grantRevision);
+      assert.ok(restored.lifecycleRevision > before.instances[0].lifecycleRevision);
+      assert.equal(await readFile(retained, 'utf8'), 'owner settings and retained data');
+      assert.equal(starts.length, 2);
+      assert.notEqual(starts[0], first.packageDigest);
+      assert.equal(starts[1], first.packageDigest);
+      assert.deepEqual(
+        reports.map((r) => r.phase),
+        failOld ? ['maintenance_resume', 'maintenance_rollback_resume'] : ['maintenance_resume'],
+      );
+      if (failOld) assert.equal(restored.lastRuntimeError.code, 'UPDATE_ROLLBACK_RESUME_FAILED');
+    });
+  }
+}
+
+test('replacement rollback does not resurrect a grant revoked while the new runtime starts', async () => {
+  const directory = await tempRoot('cat-cafe-rollback-revocation-');
+  await writeLocalPackage(directory);
+  const h = await harness();
+  const first = await h.admission.install({ kind: 'local-directory', path: directory });
+  await h.store.transaction((tx) =>
+    tx.instances.put({
+      ...tx.instances.get(first.pluginInstanceId),
+      activationState: 'enabled',
+      runtimeState: 'healthy',
+      configReadiness: 'ready',
+    }),
+  );
+  let starts = 0;
+  const lifecycle = new ExternalPluginLifecycleService({
+    store: h.store,
+    onStartFailure: () => {},
+    supervisor: {
+      stop: async () => {},
+      start: async () => {
+        starts += 1;
+        const grant = (await h.store.snapshot()).grants[0];
+        await h.inventory.revokeGrant({
+          pluginInstanceId: first.pluginInstanceId,
+          capability: 'events.publish',
+          expectedGrantRevision: grant.grantRevision,
+        });
+        throw new Error('revoked during start');
+      },
+    },
+  });
+  const admission = new LocalPluginPackageAdmission({
+    inventory: h.inventory,
+    packagesRoot: h.packagesRoot,
+    grantPolicy: () => ['events.publish'],
+    lifecycle,
+  });
+  await writeFile(join(directory, 'dist/entrypoint.js'), '// replacement');
+  await assert.rejects(
+    admission.install({ kind: 'local-directory', path: directory }),
+    (error) => error.code === 'UPDATE_ROLLBACK_RESUME_FAILED',
+  );
+  const after = await h.store.snapshot();
+  assert.equal(starts, 1);
+  assert.deepEqual(after.grants[0].effectiveGrants, []);
+  assert.equal(after.grants[0].grantRevision, 3);
+  assert.notEqual(after.instances[0].packageDigest, first.packageDigest);
+  assert.equal(after.instances[0].activationState, 'enabled');
+  assert.equal(after.instances[0].runtimeState, 'crashed');
+});
+
+for (const enabled of [false, true]) {
+  test(`failed configuration reconciliation rolls back admitted package and readiness (enabled: ${enabled})`, async () => {
+    const directory = await tempRoot('cat-cafe-rollback-readiness-');
+    await writeLocalPackage(directory);
+    const h = await harness();
+    const first = await h.admission.install({ kind: 'local-directory', path: directory });
+    await h.store.transaction((tx) =>
+      tx.instances.put({
+        ...tx.instances.get(first.pluginInstanceId),
+        activationState: enabled ? 'enabled' : 'disabled',
+        runtimeState: enabled ? 'healthy' : 'stopped',
+        configReadiness: 'ready',
+      }),
+    );
+    const starts = [];
+    const lifecycle = new ExternalPluginLifecycleService({
+      store: h.store,
+      supervisor: {
+        stop: async () => {},
+        start: async () => starts.push((await h.store.snapshot()).instances[0].packageDigest),
+      },
+    });
+    const admission = new LocalPluginPackageAdmission({
+      inventory: h.inventory,
+      packagesRoot: h.packagesRoot,
+      grantPolicy: () => [],
+      ...(enabled ? { lifecycle } : {}),
+      reconcileConfiguration: async () => {
+        await h.store.transaction((tx) => {
+          const i = tx.instances.get(first.pluginInstanceId);
+          tx.instances.put({ ...i, configReadiness: 'incomplete', lifecycleRevision: i.lifecycleRevision + 1 });
+        });
+        throw new Error('fixture reconciliation failed');
+      },
+    });
+    await writeFile(join(directory, 'dist/entrypoint.js'), '// replacement');
+    await assert.rejects(
+      admission.install({ kind: 'local-directory', path: directory }),
+      /fixture reconciliation failed/,
+    );
+    const after = await h.store.snapshot();
+    assert.equal(after.instances[0].packageDigest, first.packageDigest);
+    assert.equal(after.instances[0].configReadiness, 'ready');
+    assert.equal(after.instances[0].activationState, enabled ? 'enabled' : 'disabled');
+    assert.deepEqual(after.grants[0].effectiveGrants, ['events.publish']);
+    assert.deepEqual(starts, enabled ? [first.packageDigest] : []);
+  });
+}
+
 async function archiveSource(entrypoint, packageName = '@clowder-ai/official-test-source') {
   const archive = await packageArchive({
     extraFiles: {

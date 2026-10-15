@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
@@ -12,6 +12,7 @@ import {
   createPluginManagerRuntimeComposition,
 } from '../dist/domains/plugin/index.js';
 import { InstalledPluginOperations } from '../dist/domains/plugin/operations/plugin-operation-routes.js';
+import { registerPluginManagerRoutes } from '../dist/routes/plugin-manager-routes.js';
 import { catalogEntry, manifest, packageArchive } from './plugin-official-package-installer.fixture.js';
 
 const roots = [];
@@ -582,6 +583,98 @@ export default {
     const disabled = (await composition.manager.get(entry.pluginId)).plugin;
     await composition.manager.uninstall(entry.pluginId, { expectedRevision: disabled.lifecycleRevision });
   });
+
+  for (const failOld of [false, true]) {
+    it(`HTTP replacement with a throwing real module restores old package (old restart fails: ${failOld})`, async () => {
+      const packageManifest = manifest({
+        runtime: { transport: 'builtin', entrypoint: 'dist/entrypoint.js' },
+        configuration: [{ key: 'ownerValue', label: 'Owner value', kind: 'string', required: false }],
+        test: { action: { method: 'self.test' } },
+      });
+      const failureMarker = join(await root('cat-cafe-old-restart-failure-'), 'fail');
+      const entrypoint = `import { existsSync } from 'node:fs';
+export default { create() { return { async start() {
+  if (existsSync(${JSON.stringify(failureMarker)})) throw new Error('old runtime recovery fixture failure');
+  return { actions: { 'self.test': async () => ({ ok: true }) }, stop() {} };
+} }; } };`;
+      const { composition, entry, runtime, projectRoot } = await harness({
+        packageManifest,
+        contract: contributionContractRuntime(),
+        extraFiles: { 'dist/entrypoint.js': entrypoint },
+      });
+      const app = Fastify();
+      app.addHook('preHandler', async (request) => {
+        request.sessionUserId = process.env.DEFAULT_OWNER_USER_ID ?? 'owner-user';
+      });
+      registerPluginManagerRoutes(app, { manager: composition.manager, auditLog: { append: async () => {} } });
+      try {
+        await composition.manager.install({
+          source: { kind: 'catalog', catalogId: entry.catalogId },
+          expectedVersion: entry.version,
+          expectedDigest: entry.packageDigest,
+        });
+        let plugin = (await composition.manager.get(entry.pluginId)).plugin;
+        await composition.manager.configure(entry.pluginId, {
+          expectedRevision: plugin.lifecycleRevision,
+          updates: [{ key: 'ownerValue', value: 'keep owner configuration' }],
+        });
+        plugin = (await composition.manager.get(entry.pluginId)).plugin;
+        await composition.manager.setEnabled(entry.pluginId, {
+          enabled: true,
+          expectedRevision: plugin.lifecycleRevision,
+        });
+        if (failOld) await writeFile(failureMarker, 'fail next old runtime start');
+        const before = await runtime.inventoryStore.snapshot();
+        const dataFile = join(projectRoot, 'retained-owner-data');
+        await writeFile(dataFile, 'retained');
+        const directory = await root('cat-cafe-broken-replacement-');
+        await mkdir(join(directory, 'dist'));
+        await mkdir(join(directory, 'schemas'));
+        await writeFile(
+          join(directory, 'manifest.json'),
+          JSON.stringify({ ...packageManifest, version: '0.1.0-alpha.2' }),
+        );
+        await writeFile(join(directory, 'schemas/official.test.v1.schema.json'), JSON.stringify({ type: 'object' }));
+        await writeFile(
+          join(directory, 'dist/entrypoint.js'),
+          `export default { create() { return { async start() { throw new Error('new runtime fixture failure'); } }; } };`,
+        );
+        const response = await app.inject({
+          method: 'POST',
+          url: '/api/plugin-manager/plugins/install',
+          headers: { host: 'localhost:3004', origin: 'http://localhost:5173' },
+          payload: { source: { kind: 'local-directory', path: directory } },
+        });
+        assert.equal(response.statusCode, 503, response.body);
+        assert.equal(response.json().code, failOld ? 'UPDATE_ROLLBACK_RESUME_FAILED' : 'UPDATE_RESUME_FAILED');
+        const after = await runtime.inventoryStore.snapshot();
+        assert.equal(after.instances[0].packageDigest, before.instances[0].packageDigest);
+        assert.equal(after.instances[0].pluginInstanceId, before.instances[0].pluginInstanceId);
+        assert.deepEqual(after.grants[0].effectiveGrants, before.grants[0].effectiveGrants);
+        const current = (await composition.manager.get(entry.pluginId)).plugin;
+        assert.equal(current.intent, 'enabled');
+        assert.equal(current.live, failOld ? 'crashed' : 'running');
+        assert.equal(current.config, 'ready');
+        assert.equal(current.configFields.find((f) => f.key === 'ownerValue').currentValue, 'keep owner configuration');
+        assert.equal(await readFile(dataFile, 'utf8'), 'retained');
+        if (!failOld) {
+          const operations = new InstalledPluginOperations({
+            inventory: runtime.inventoryStore,
+            configuration: composition.configuration,
+            invocation: runtime.supervisor,
+          });
+          assert.deepEqual(await operations.runTest(entry.pluginId), {
+            matched: true,
+            status: 200,
+            body: { ok: true },
+          });
+        }
+      } finally {
+        await app.close();
+        await runtime.shutdown('replacement_recovery_test');
+      }
+    });
+  }
 
   it('keeps an installed catalog plugin manageable while discovery is offline and fences uninstall', async () => {
     let offline = false;

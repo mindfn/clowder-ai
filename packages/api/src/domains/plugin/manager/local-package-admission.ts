@@ -481,6 +481,30 @@ export class LocalPluginPackageAdmission {
       if (!localUpdate) return await this.options.inventory.installPackage(candidate);
       const grants = inventoryAtRequest.grants.find((grant) => grant.pluginInstanceId === current.pluginInstanceId);
       if (!grants) throw new PluginInventoryError('INVENTORY_INVARIANT', 'current instance has no grant record');
+      let upgraded: InventoryMutationResult | undefined;
+      const rollback = async () => {
+        if (!upgraded) return;
+        await this.options.inventory.store.transaction((tx) => {
+          const instance = tx.instances.getCurrent(current.pluginId);
+          const grant = tx.grants.get(current.pluginInstanceId);
+          if (
+            instance?.pluginInstanceId !== current.pluginInstanceId ||
+            instance.packageDigest !== upgraded?.packageDigest ||
+            instance.lifecycleState !== 'installed'
+          )
+            throw new PluginInventoryError('STALE_INSTANCE', 'replacement is no longer current');
+          if (grant?.grantRevision !== upgraded.grantRevision)
+            throw new PluginInventoryError('STALE_GRANT_REVISION', 'grant changed during replacement');
+          // Keep fences monotonic: old leases must not become valid again.
+          tx.instances.put({
+            ...current,
+            runtimeState: 'stopped',
+            lifecycleRevision: instance.lifecycleRevision + 1,
+            updatedAt: Date.now(),
+          });
+          tx.grants.put({ ...grants, grantRevision: grant.grantRevision + 1, updatedAt: Date.now() });
+        });
+      };
       const upgrade = async (revision: number) => {
         const result = await this.options.inventory.upgradePackage({
           ...candidate,
@@ -488,10 +512,18 @@ export class LocalPluginPackageAdmission {
           expectedLifecycleRevision: revision,
           expectedGrantRevision: grants.grantRevision,
         });
+        upgraded = result;
         await this.options.reconcileConfiguration?.(candidate.packagePluginId, current.pluginInstanceId);
         return result;
       };
-      if (!this.options.lifecycle) return await upgrade(current.lifecycleRevision);
+      if (!this.options.lifecycle) {
+        try {
+          return await upgrade(current.lifecycleRevision);
+        } catch (error) {
+          await rollback();
+          throw error;
+        }
+      }
       return (
         await this.options.lifecycle.runWithRuntimeSuspended({
           instanceId: current.pluginInstanceId,
@@ -506,6 +538,7 @@ export class LocalPluginPackageAdmission {
               throw new PluginInventoryError('STALE_GRANT_REVISION', 'grant changed during package preparation');
           },
           operation: (stopped) => upgrade(stopped.lifecycleRevision),
+          rollback,
         })
       ).result;
     } catch (error) {

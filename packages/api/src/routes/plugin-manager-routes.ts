@@ -19,6 +19,7 @@ import type { PluginRuntimeCarrierRouter } from '../domains/plugin/carrier/runti
 import {
   ExternalPluginRuntimeError,
   LocalPluginPackageAdmissionError,
+  PluginLifecycleError,
   PluginManagerPackageAssetError,
   type PluginManagerPackageAssetPort,
   type PluginManagerPackageDocumentationPort,
@@ -223,6 +224,12 @@ function officialInstallStatus(code: OfficialPluginInstallError['code']): number
 }
 
 function sendManagerError(reply: FastifyReply, error: unknown) {
+  if (
+    error instanceof PluginLifecycleError &&
+    (error.code === 'UPDATE_RESUME_FAILED' || error.code === 'UPDATE_ROLLBACK_RESUME_FAILED')
+  ) {
+    return reply.status(503).send({ error: error.message, code: error.code });
+  }
   if (error instanceof PluginManagerServiceError) {
     return reply.status(managerServiceStatus(error.code)).send({ error: error.message, code: error.code });
   }

@@ -166,6 +166,10 @@ export class ExternalPluginLifecycleService {
       try {
         result = await input.operation(stopped);
       } catch (error) {
+        if (input.rollback) {
+          await this.restoreMaintenance(input, stopped, shouldResume);
+          throw error;
+        }
         if (shouldResume) {
           try {
             await this.options.supervisor.start(input.instanceId);
@@ -186,7 +190,19 @@ export class ExternalPluginLifecycleService {
         try {
           await this.options.supervisor.start(input.instanceId);
         } catch (resumeError) {
-          this.reportStartFailure(stopped, 'maintenance_resume', resumeError, this.now());
+          this.reportStartFailure(
+            await this.readCurrent(input.instanceId),
+            'maintenance_resume',
+            resumeError,
+            this.now(),
+          );
+          if (input.rollback) {
+            await this.restoreMaintenance(input, stopped, shouldResume);
+            throw new PluginLifecycleError(
+              input.resumeFailureCode,
+              'replacement failed to start; previous package restored',
+            );
+          }
           await this.projectMaintenanceResumeFailure(input.instanceId, input.resumeFailureCode);
           throw new PluginLifecycleError(
             input.resumeFailureCode,
@@ -196,6 +212,26 @@ export class ExternalPluginLifecycleService {
       }
       return { result, instance: await this.readCurrent(input.instanceId) };
     });
+  }
+
+  private async restoreMaintenance<T>(
+    input: PluginMaintenanceInput<T>,
+    previous: PluginInstanceRecord,
+    shouldResume: boolean,
+  ): Promise<void> {
+    try {
+      // A rejected start may have acquired resources. Release them before changing authority.
+      await this.options.supervisor.stop(input.instanceId, 'package_update_rollback');
+      await input.rollback!();
+      if (shouldResume) await this.options.supervisor.start(input.instanceId);
+    } catch (error) {
+      this.reportStartFailure(previous, 'maintenance_rollback_resume', error, this.now());
+      await this.projectMaintenanceResumeFailure(input.instanceId, 'UPDATE_ROLLBACK_RESUME_FAILED', shouldResume);
+      throw new PluginLifecycleError(
+        'UPDATE_ROLLBACK_RESUME_FAILED',
+        'replacement failed and the previous runtime could not be restored',
+      );
+    }
   }
 
   async recoverAfterRestart(
@@ -290,14 +326,22 @@ export class ExternalPluginLifecycleService {
     });
   }
 
-  private projectMaintenanceResumeFailure(instanceId: string, code: PluginMaintenanceResumeFailureCode): Promise<void> {
+  private projectMaintenanceResumeFailure(
+    instanceId: string,
+    code: PluginMaintenanceResumeFailureCode,
+    preserveEnabledIntent = false,
+  ): Promise<void> {
     return this.options.store.transaction((transaction) => {
       const current = currentInstance(transaction, instanceId);
       const now = this.now();
       transaction.instances.put({
         ...withRuntimeFailure(current, { code, exitCode: null, signal: null, occurredAt: now }),
-        activationState: code === 'CONFIGURATION_RESUME_FAILED' ? current.activationState : 'error',
-        runtimeState: 'stopped',
+        activationState: preserveEnabledIntent
+          ? 'enabled'
+          : code === 'CONFIGURATION_RESUME_FAILED'
+            ? current.activationState
+            : 'error',
+        runtimeState: preserveEnabledIntent ? 'crashed' : 'stopped',
         lifecycleRevision: current.lifecycleRevision + 1,
         updatedAt: now,
       });

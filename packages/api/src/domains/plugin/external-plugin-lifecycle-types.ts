@@ -25,6 +25,8 @@ export interface PluginMaintenanceInput<T> {
   /** Validate a replacement before disrupting the currently running package. */
   readonly preflight?: () => Promise<void>;
   readonly operation: (stopped: PluginInstanceRecord) => Promise<T>;
+  /** Restore an admitted replacement before resuming the old runtime. Runs inside the same queue. */
+  readonly rollback?: () => Promise<void>;
 }
 
 export type PluginMaintenanceResumeFailureCode = Extract<
