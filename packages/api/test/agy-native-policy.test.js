@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
-const { buildAgyNativePolicy, callbackPolicyForAgyNativeMcpTools, preflightAgyNativeWorkspace } = await import(
+const { buildAgyNativePolicy, preflightAgyNativeWorkspace } = await import(
   '../dist/domains/cats/services/agents/providers/agy-native/agy-native-policy.js'
 );
 
@@ -18,86 +18,25 @@ function fixture() {
 }
 
 describe('F325 AGY CLI native policy', () => {
-  test('gives the agent exact approved file and MCP grants without native shell', () => {
+  test('normal work uses native permissions without exact-file or per-tool grants', () => {
     const f = fixture();
     try {
-      const canonicalWorkspace = realpathSync(f.workspace);
-      const policy = buildAgyNativePolicy({
-        workspaceRoot: f.workspace,
-        writableFiles: ['src/existing.ts', 'src/new.ts'],
-        mcpTools: ['cat-cafe-collab/cat_cafe_get_thread_context'],
-      });
-
-      assert.equal(policy.settings.enableTerminalSandbox, true);
-      assert.equal(policy.settings.toolPermission, 'request-review');
-      assert.equal(policy.settings.allowNonWorkspaceAccess, false);
-      assert.deepEqual(policy.cliArgs, ['--sandbox']);
-      assert.deepEqual(policy.settings.permissions.allow, [
-        `write_file(${join(canonicalWorkspace, 'src', 'existing.ts')})`,
-        `write_file(${join(canonicalWorkspace, 'src', 'new.ts')})`,
-        'mcp(cat-cafe-collab/cat_cafe_get_thread_context)',
-      ]);
-      assert.deepEqual(policy.grantedMcpTools, ['cat-cafe-collab/cat_cafe_get_thread_context']);
-      assert.deepEqual(callbackPolicyForAgyNativeMcpTools(policy.grantedMcpTools), {
-        mode: 'callback_allowlist',
-        allowedCallbackRoutes: ['GET /api/callbacks/thread-context'],
-      });
-      assert.ok(policy.settings.permissions.deny.includes('command(*)'));
-      assert.ok(policy.settings.permissions.deny.includes('unsandboxed(*)'));
-      assert.ok(!policy.agentTools.includes('run_command'));
-      assert.ok(policy.agentTools.includes('write_to_file'));
-      assert.ok(policy.agentTools.includes('replace_file_content'));
-    } finally {
-      f.cleanup();
-    }
-  });
-
-  test('rejects directory, outside, executable customization, wildcard MCP, and symlink grants', () => {
-    const f = fixture();
-    try {
-      const outside = join(f.base, 'outside.ts');
-      symlinkSync(outside, join(f.workspace, 'src', 'escape.ts'));
-      const input = { workspaceRoot: f.workspace, mcpTools: [] };
-
-      for (const path of [
-        'src',
-        '../outside.ts',
-        '.Agents/hooks.json',
-        'src/escape.ts',
-        'AGENTS.md',
-        'src/GEMINI.md',
-        'src/*.ts',
-        'src/file?.ts',
-        'src/[draft].ts',
-        'package.json',
-        'pnpm-lock.yaml',
-        '.npmrc',
-        '.gitattributes',
-        '.env.local',
-        'src/tsconfig.json',
-        'src/vitest.config.ts',
-        'cat-config.json',
-        'cat-template.json',
-        '.cat-cafe/cat-catalog.json',
-      ]) {
-        assert.throws(() => buildAgyNativePolicy({ ...input, writableFiles: [path] }), /unsafe|outside|file|symlink/i);
+      for (const autoApprove of [false, true]) {
+        const policy = buildAgyNativePolicy({ workspaceRoot: f.workspace, autoApprove });
+        assert.equal(policy.workspaceRoot, realpathSync(f.workspace));
+        assert.equal(policy.settings.enableTerminalSandbox, !autoApprove);
+        assert.equal(policy.permissionMode, autoApprove ? 'always-proceed' : 'request-review');
+        assert.ok(policy.agentTools.includes('run_command'));
+        assert.ok(policy.agentTools.includes('search_web'));
+        assert.ok(policy.agentTools.includes('generate_image'));
+        assert.ok(policy.settings.permissions.allow.includes('mcp(*)'));
+        assert.deepEqual(policy.settings.permissions.deny, []);
       }
-      assert.throws(
-        () => buildAgyNativePolicy({ ...input, writableFiles: [], mcpTools: ['cat-cafe-collab/*'] }),
-        /MCP|exact|wildcard/i,
-      );
-      assert.throws(
-        () => buildAgyNativePolicy({ ...input, writableFiles: [], mcpTools: ['untrusted/tool'] }),
-        /MCP|trusted/i,
-      );
-      assert.throws(
-        () => buildAgyNativePolicy({ ...input, writableFiles: [], mcpTools: ['cat-cafe-evil/tool'] }),
-        /MCP|trusted/i,
-      );
-      assert.throws(
-        () => buildAgyNativePolicy({ ...input, writableFiles: [], mcpTools: ['cat-cafe-collab/cat_cafe_create_task'] }),
-        /MCP|trusted|scope/i,
-      );
+      const readOnly = buildAgyNativePolicy({ workspaceRoot: f.workspace, autoApprove: true, readOnly: true });
+      assert.equal(readOnly.permissionMode, 'request-review');
+      assert.ok(!readOnly.agentTools.includes('run_command'));
+      assert.ok(!readOnly.agentTools.includes('write_to_file'));
+      assert.ok(readOnly.settings.permissions.deny.includes('mcp(*)'));
     } finally {
       f.cleanup();
     }
@@ -116,20 +55,6 @@ describe('F325 AGY CLI native policy', () => {
         ok: false,
         reason: 'workspace_executable_customization',
         path: join(realpathSync(f.workspace), '.agents', 'hooks.json'),
-      });
-    } finally {
-      f.cleanup();
-    }
-  });
-
-  test('refuses a workspace with a local environment secret file before exposing read tools', () => {
-    const f = fixture();
-    try {
-      writeFileSync(join(f.workspace, '.env.local'), 'TEST_SECRET=fake-sentinel\n');
-      assert.deepEqual(preflightAgyNativeWorkspace(f.workspace), {
-        ok: false,
-        reason: 'workspace_sensitive_content',
-        path: join(realpathSync(f.workspace), '.env.local'),
       });
     } finally {
       f.cleanup();
@@ -193,23 +118,11 @@ describe('F325 AGY CLI native policy', () => {
     }
   });
 
-  test('refuses sensitive filename aliases while accepting example env templates', () => {
-    for (const name of ['.ENV.local', '.NETRC', '.PYPIRC', '.SSH', '.AWS']) {
-      const f = fixture();
-      try {
-        writeFileSync(join(f.workspace, name), 'fake-sentinel');
-        const result = preflightAgyNativeWorkspace(f.workspace);
-        assert.equal(result.ok, false, name);
-        assert.equal(result.reason, 'workspace_sensitive_content');
-      } finally {
-        f.cleanup();
-      }
-    }
+  test('ordinary workspace files do not prevent normal work', () => {
     const f = fixture();
     try {
-      for (const name of ['.env.example', '.env.local.example', '.env.example.opensource']) {
-        writeFileSync(join(f.workspace, name), 'EXAMPLE=placeholder');
-      }
+      for (const name of ['.env', '.ENV.local', 'package.json', 'pnpm-lock.yaml'])
+        writeFileSync(join(f.workspace, name), 'fixture');
       assert.deepEqual(preflightAgyNativeWorkspace(f.workspace), { ok: true });
     } finally {
       f.cleanup();

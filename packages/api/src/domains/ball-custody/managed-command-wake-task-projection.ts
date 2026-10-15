@@ -39,6 +39,9 @@ export interface ManagedCommandTerminalResult {
   readonly cancelled?: boolean;
   readonly durationMs: number;
   readonly tailOutput?: string;
+  readonly signal?: string | null;
+  readonly terminationReason?: 'command_exit' | 'explicit_cancel' | 'runtime_deadline' | 'worker_lost';
+  readonly log?: { readonly path: string; readonly sha256: string; readonly bytes: number };
 }
 
 export interface ManagedCommandWakeProjection {
@@ -51,6 +54,8 @@ export interface ManagedCommandWakeProjection {
   readonly startedAt: number;
   /** F261: durable action-plane identity for canonical full gates. */
   readonly durableJob?: DurableManagedGateJob;
+  /** Action Plane owns new job descriptors; the wake carrier holds only its reference. */
+  readonly jobId?: string;
   /** F167 Phase P: persisted spawn pid. */
   readonly pid?: number | null;
   readonly notStartedReason?: 'admission_rejected' | 'spawn_failed';
@@ -252,7 +257,7 @@ export function createInitialManagedCommandWakeProjection(
     state: 'command_running',
     command,
     startedAt,
-    ...(durableJob ? { durableJob } : {}),
+    ...(durableJob ? (durableJob.recordStorage === 'sqlite_v1' ? { jobId: durableJob.jobId } : { durableJob }) : {}),
     ...(cwd ? { cwd } : {}),
   };
 }

@@ -33,6 +33,8 @@ import {
   parseManagedCommandWakeTask,
   parseRetiredManagedCommandWakeTask,
 } from '../../../../ball-custody/managed-command-wake-lifecycle.js';
+import { readManagedCommandWakeProjection } from '../../../../ball-custody/managed-command-wake-task-projection.js';
+import { ManagedJobService } from '../../../../managed-job/ManagedJobService.js';
 import type { IInvocationRecordStore } from '../../stores/ports/InvocationRecordStore.js';
 import type { ITurnExecutionStore } from '../../stores/ports/TurnExecutionStore.js';
 import {
@@ -100,6 +102,7 @@ export function listManagedCommandExecutions(
     // "这不是我的任务"——用户点了取消却取消不掉。判据是**取消路径认不认**，
     // 不是有没有忠实复刻旧行为。
     if (!task) continue;
+    if (readManagedCommandWakeProjection(task)?.jobId) continue;
     const parsed = isPendingHoldBallWakeTask(task)
       ? parseManagedCommandWakeTask(task)
       : isRetiredWakeWithRunningManagedCommand(task)
@@ -113,6 +116,16 @@ export function listManagedCommandExecutions(
       userId: parsed.userId,
       activity: classifyManagedCommandActivity(parsed.command.command),
       startedAt: parsed.command.startedAt,
+    });
+  }
+  for (const { job, startedAt } of new ManagedJobService().activeExecutions()) {
+    executions.push({
+      taskId: job.originTaskId,
+      threadId: job.wakeTarget.threadId,
+      catId: job.wakeTarget.catId,
+      userId: job.definition!.principal.userId,
+      activity: classifyManagedCommandActivity(job.definition!.command),
+      startedAt,
     });
   }
   return executions;

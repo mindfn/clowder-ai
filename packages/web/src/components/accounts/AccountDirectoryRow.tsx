@@ -123,7 +123,7 @@ export function AccountDirectoryRow({
       ? 'cancel'
       : account.codex && (failed || !status.ready)
         ? 'retry'
-        : status.ready && !used
+        : (status.ready || (native && account.clientId === 'anthropic')) && !used
           ? 'switch'
           : '';
   return (
@@ -214,6 +214,7 @@ export function AccountDirectoryRow({
             {(error || actionError) && <p role="alert">{error ? accountMessage(error, language) : actionError}</p>}
             {open && (
               <div className="account-details">
+                {account.claude && <p>{t.tokenUnknown}</p>}
                 {editing && (
                   <form
                     onSubmit={(e) => {

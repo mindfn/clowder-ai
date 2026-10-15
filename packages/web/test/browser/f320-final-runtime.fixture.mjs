@@ -28,6 +28,7 @@ import { createNextDevTestEnvironment } from './next-dev-test-environment.mjs';
 
 export async function startFinalAccountPreview({
   withOverrides = false,
+  withClaude = false,
   routingSnapshot,
   withServicePreview = false,
   ownerUserId,
@@ -85,6 +86,28 @@ export async function startFinalAccountPreview({
       version: 2,
       ...(withOverrides ? { selectedAccountRefs: { openai: 'codex' } } : {}),
       breeds: [
+        ...(withClaude
+          ? [
+              {
+                id: 'ragdoll',
+                catId: 'opus',
+                name: '布偶猫',
+                displayName: '布偶猫',
+                avatar: '/avatars/opus.png',
+                color: { primary: '#123456', secondary: '#abcdef' },
+                mentionPatterns: ['@opus'],
+                roleDescription: 'fixture',
+                defaultVariantId: 'opus-default',
+                variants: ['opus', 'sonnet'].map((id) => ({
+                  ...variant(id),
+                  clientId: 'anthropic',
+                  defaultModel: 'claude-sonnet-4-6',
+                  accountRef: 'claude',
+                  cli: { command: 'claude', outputFormat: 'stream-json' },
+                })),
+              },
+            ]
+          : []),
         {
           id: 'maine',
           catId: 'codex61-sol',
@@ -105,6 +128,14 @@ export async function startFinalAccountPreview({
         },
       ],
       roster: {
+        ...(withClaude
+          ? Object.fromEntries(
+              ['opus', 'sonnet'].map((id) => [
+                id,
+                { family: 'ragdoll', roles: ['assistant'], lead: false, available: true, evaluation: 'fixture' },
+              ]),
+            )
+          : {}),
         'codex61-sol': { family: 'maine', roles: ['assistant'], lead: false, available: true, evaluation: 'fixture' },
         'codex-sol': { family: 'maine', roles: ['assistant'], lead: false, available: true, evaluation: 'fixture' },
       },
@@ -272,6 +303,10 @@ export async function startFinalAccountPreview({
     await close();
     throw error;
   }
+  function assertSelectedToken(options) {
+    if (options.claudeTokenAccount && !options.accountEnv?.CLAUDE_CODE_OAUTH_TOKEN?.startsWith('sk-ant-oat01-fixture-'))
+      throw new Error('fixture Claude token not selected');
+  }
   return {
     url,
     apiUrl,
@@ -281,7 +316,7 @@ export async function startFinalAccountPreview({
     setQuota(mode) {
       quotaMode = mode;
     },
-    async reply(content) {
+    async reply(content, catId = 'codex61-sol', waitBeforeDone, onStarted) {
       // Transport is deterministic; all account selection and execution metadata come from
       // the real invocation producer and the same registry that binding updates.
       const deps = {
@@ -299,21 +334,30 @@ export async function startFinalAccountPreview({
         threadStore: null,
         apiUrl: 'http://127.0.0.1:0',
       };
+      let expectAccountSnapshot = true;
       const service = {
-        async *invoke() {
+        async *invoke(_prompt, options) {
+          expectAccountSnapshot = catId !== 'opus' || !!options.claudeTokenAccount;
+          if (catId === 'opus') assertSelectedToken(options);
+          onStarted?.();
           yield {
             type: 'metadata',
-            catId: 'codex61-sol',
+            catId,
             timestamp: Date.now(),
-            metadata: { model: 'fixture', provider: 'openai' },
+            metadata: {
+              model: 'fixture',
+              provider: catId === 'opus' ? 'anthropic' : 'openai',
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
           };
-          yield { type: 'text', catId: 'codex61-sol', timestamp: Date.now(), content };
-          yield { type: 'done', catId: 'codex61-sol', timestamp: Date.now() };
+          yield { type: 'text', catId, timestamp: Date.now(), content };
+          if (waitBeforeDone) await waitBeforeDone;
+          yield { type: 'done', catId, timestamp: Date.now() };
         },
       };
       const events = [];
       for await (const event of invokeSingleCat(deps, {
-        catId: 'codex61-sol',
+        catId,
         service,
         prompt: content,
         userId: 'fixture',
@@ -322,13 +366,13 @@ export async function startFinalAccountPreview({
       }))
         events.push(event);
       const metadata = events.find((event) => event.type === 'metadata')?.metadata;
-      if (!metadata?.executionAccount)
+      if (!metadata || !!metadata.executionAccount !== expectAccountSnapshot || events.some((e) => e.type === 'error'))
         throw new Error(`fixture invocation failed: ${events.filter((e) => e.type === 'error').map((e) => e.content)}`);
       messages.push({
         id: `reply-${messages.length}`,
         threadId: THREAD_ID,
         type: 'assistant',
-        catId: 'codex61-sol',
+        catId,
         content,
         timestamp: Date.now(),
         metadata,

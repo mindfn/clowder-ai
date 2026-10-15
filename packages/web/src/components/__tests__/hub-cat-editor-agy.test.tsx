@@ -58,6 +58,8 @@ describe('AGY Native member settings', () => {
     );
     const transport = container.querySelector<HTMLSelectElement>('select[aria-label="接入方式"]');
     expect(Array.from(transport?.options ?? []).map((option) => option.value)).toContain('agy-native');
+    expect(Array.from(transport?.options ?? []).map((option) => option.value)).not.toContain('cli');
+    expect(Array.from(transport?.options ?? []).map((option) => option.value)).not.toContain('acp');
     await act(async () => {
       if (!transport) throw new Error('Transport missing');
       transport.value = 'agy-native';
@@ -102,6 +104,7 @@ describe('AGY Native member settings', () => {
     const onChange = vi.fn();
     const form = initialState({ ...cat, agyProfile: profile });
     await act(async () => root.render(<AgyNativeFields form={form} onChange={onChange} />));
+    expect(container.textContent).toContain('直接拒绝');
     const select = [...container.querySelectorAll('select')].find((element) =>
       element.querySelector('option[value="auto"]'),
     );
@@ -116,6 +119,7 @@ describe('AGY Native member settings', () => {
       root.render(<AgyNativeFields form={{ ...form, agyAutoApprove: true }} onChange={onChange} />),
     );
     expect(container.textContent).not.toContain('批准工作区');
+    expect(container.textContent).not.toContain('直接拒绝');
     expect(container.textContent).toContain('自动批准文件与命令操作');
     expect(container.querySelector('textarea')).toBeNull();
   });

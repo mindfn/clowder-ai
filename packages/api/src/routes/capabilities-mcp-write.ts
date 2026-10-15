@@ -16,9 +16,9 @@ import { buildInstallPreview } from '../config/capabilities/capability-install.j
 import {
   type DiscoveryPaths,
   discoverExternalMcpServersTagged,
-  generateCliConfigs,
   healCatCafeMcpTopology,
   readCapabilitiesConfig,
+  reconcileMcpRuntimeConfig,
   toCapabilityEntry,
   withCapabilityLock,
   writeCapabilitiesConfig,
@@ -303,7 +303,7 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
       }
 
       await writeCapabilitiesConfig(projectRoot, config);
-      await generateCliConfigs(config, getCliConfigPaths(projectRoot), projectRoot);
+      await reconcileMcpRuntimeConfig(config, getCliConfigPaths(projectRoot), projectRoot);
 
       await appendAuditEntry(projectRoot, {
         timestamp: new Date().toISOString(),
@@ -427,7 +427,7 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
       }
 
       await writeCapabilitiesConfig(projectRoot, nextConfig);
-      await generateCliConfigs(nextConfig, getCliConfigPaths(projectRoot), projectRoot);
+      await reconcileMcpRuntimeConfig(nextConfig, getCliConfigPaths(projectRoot), projectRoot);
 
       await appendAuditEntry(projectRoot, {
         timestamp: new Date().toISOString(),
@@ -563,7 +563,7 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
       nextConfig.capabilities[idx] = after;
 
       await writeCapabilitiesConfig(projectRoot, nextConfig);
-      await generateCliConfigs(nextConfig, getCliConfigPaths(projectRoot), projectRoot);
+      await reconcileMcpRuntimeConfig(nextConfig, getCliConfigPaths(projectRoot), projectRoot);
 
       await appendAuditEntry(projectRoot, {
         timestamp: new Date().toISOString(),
@@ -645,7 +645,7 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
 
       if (added.length > 0) {
         await writeCapabilitiesConfig(projectRoot, config);
-        await generateCliConfigs(config, getCliConfigPaths(projectRoot), projectRoot);
+        await reconcileMcpRuntimeConfig(config, getCliConfigPaths(projectRoot), projectRoot);
       }
 
       return { ok: true, added, count: added.length };

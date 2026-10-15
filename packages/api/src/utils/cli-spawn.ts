@@ -357,6 +357,9 @@ export async function* spawnCli(
   options: CliSpawnOptions,
   deps?: CliSpawnerDeps,
 ): AsyncGenerator<unknown, void, undefined> {
+  if (options.stdinInput !== undefined && options.onStdinReady) {
+    throw new Error('CLI stdin must have exactly one input owner');
+  }
   const doSpawn: SpawnFn = deps?.spawnFn ?? defaultSpawn;
   const livenessWarningDrainIntervalMs = deps?.livenessWarningDrainIntervalMs ?? LIVENESS_WARNING_DRAIN_INTERVAL_MS;
   // Only a caller that asks for a response timeout gets one (probes and other one-off commands).
@@ -391,7 +394,7 @@ export async function* spawnCli(
     // Incident 2026-05-29 (cross-thread-context-contamination): when stdinInput is
     // provided, open stdin as a pipe so the prompt can be streamed off the command
     // line. Otherwise keep 'ignore' (unchanged for providers not using stdin).
-    stdio: [options.stdinInput != null ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+    stdio: [options.stdinInput != null || options.onStdinReady ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     bindExecutionOwner: options.bindExecutionOwner !== false,
   });
   if (options.bindExecutionOwner !== false) {
@@ -408,7 +411,8 @@ export async function* spawnCli(
   // cross-process prompt leakage (`ps -o command=` / /proc/<pid>/cmdline can read
   // any concurrent process's full argv). The child reads it because the CLI is
   // invoked with PROMPT='-'.
-  if (options.stdinInput != null) {
+  let closeStdin: (() => void) | undefined;
+  if (options.stdinInput != null || options.onStdinReady) {
     const childStdin = child.stdin;
     if (childStdin) {
       // EPIPE guard: child may exit before consuming all stdin. EPIPE is expected
@@ -418,8 +422,20 @@ export async function* spawnCli(
           log.warn({ err, pid: child.pid, command: options.command }, 'Unexpected CLI stdin write error');
         }
       });
-      childStdin.write(options.stdinInput);
-      childStdin.end();
+      if (options.stdinInput != null) childStdin.write(options.stdinInput);
+      if (options.stdinCloseSignal && !options.stdinCloseSignal.aborted) {
+        closeStdin = () => childStdin.end();
+        options.stdinCloseSignal.addEventListener('abort', closeStdin, { once: true });
+      } else if (!options.onStdinReady || options.stdinCloseSignal?.aborted) {
+        childStdin.end();
+      }
+      options.onStdinReady?.((input) => {
+        if (childStdin.destroyed || childStdin.writableEnded || options.signal?.aborted) {
+          throw new Error('CLI stdin is closed');
+        }
+        childStdin.write(input);
+        if (!options.stdinCloseSignal) childStdin.end();
+      });
     }
   }
 
@@ -1162,6 +1178,7 @@ export async function* spawnCli(
       child.stderr?.destroy();
     }
     if (timeoutTimer) clearTimeout(timeoutTimer);
+    if (closeStdin) options.stdinCloseSignal?.removeEventListener('abort', closeStdin);
     if (options.signal) {
       options.signal.removeEventListener('abort', abortHandler);
     }

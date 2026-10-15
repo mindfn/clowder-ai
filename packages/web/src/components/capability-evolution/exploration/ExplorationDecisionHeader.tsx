@@ -1,7 +1,14 @@
 import { refIdentity } from '@cat-cafe/shared';
+import { EvolutionSource } from '../EvolutionVersionEvidence';
 import type { useExplorationWorkspace } from './use-exploration-workspace';
 
-export function ExplorationDecisionHeader({ workspace }: { workspace: ReturnType<typeof useExplorationWorkspace> }) {
+export function ExplorationDecisionHeader({
+  workspace,
+  v2 = false,
+}: {
+  workspace: ReturnType<typeof useExplorationWorkspace>;
+  v2?: boolean;
+}) {
   const { node, catalog, experiments, experiment, reading, change, selectedExperimentKey } = workspace;
   if (!node || !catalog) return null;
   const incomplete = experiments.filter((run) => run.status !== 'recorded' || !run.recordCount);
@@ -9,7 +16,21 @@ export function ExplorationDecisionHeader({ workspace }: { workspace: ReturnType
     <header className="exploration-decision-header">
       <h2>{node.title}</h2>
       <p className="exploration-version-summary">{node.summary}</p>
-      <details className="exploration-run-picker">
+      {v2 && (
+        <section aria-label="整体方案与版本来源" className="exploration-version-changes">
+          <h3>整体方案 · 这一版改了什么</h3>
+          <EvolutionSource label="版本原件与出处" source={node.sourceRef} />
+          {node.changes.map((item, index) => (
+            <div key={`${item.label}:${index}`}>
+              <h4>{item.label}</h4>
+              <p>{item.detail}</p>
+              <EvolutionSource label="依据" source={item.sourceRef} />
+            </div>
+          ))}
+          {!node.changes.length && <p>来源未登记成员变化，不能推断哪些成员改变或保持不变。</p>}
+        </section>
+      )}
+      <details className="exploration-run-picker" open={v2 || undefined}>
         <summary>
           <span>{experiment?.title ?? '尚未测量'}</span>
           <span>对照 {workspace.compareExperiment?.title ?? '未选择'}</span>

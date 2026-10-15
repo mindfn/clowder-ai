@@ -49,7 +49,7 @@ describe('F325 native stream boundary', () => {
     await assert.rejects(() => readAgyNativeTurn(duplicate(), expected), /multiple terminal/i);
   });
 
-  test('does not report success if an undeclared native command appears in the tool steps', () => {
+  test('does not report success if an unrecognized native tool appears in the tool steps', () => {
     const lines = [
       JSON.stringify(init),
       JSON.stringify({
@@ -59,7 +59,7 @@ describe('F325 native stream boundary', () => {
           step_index: 1,
           state: 'DONE',
           step_type: 'tool',
-          tool_name: 'run_command',
+          tool_name: 'future_unknown_native_tool',
           tool_info: { parameters: { CommandLine: 'echo unsafe' }, output: 'unsafe' },
         },
       }),
@@ -76,49 +76,10 @@ describe('F325 native stream boundary', () => {
       false,
     );
     assert.equal(messages.at(-1).errorCode, 'AGY_UNEXPECTED_TOOL');
-    assert.ok(!messages.some((message) => message.type === 'text'));
+    assert.ok(messages.some((message) => message.type === 'text'));
   });
 
-  test('only the exact task-scoped MCP pair may appear in a successful turn', () => {
-    const lines = [
-      JSON.stringify(init),
-      JSON.stringify({
-        event: 'step_update',
-        step_update: {
-          conversation_id: 'session-1',
-          step_index: 1,
-          state: 'DONE',
-          step_type: 'tool',
-          tool_name: 'call_mcp_tool',
-          tool_info: {
-            parameters: {
-              ServerName: 'cat-cafe-collab',
-              ToolName: 'cat_cafe_get_thread_context',
-              Arguments: '{"responseMode":"full"}',
-            },
-            output: 'thread context',
-          },
-        },
-      }),
-      JSON.stringify({
-        event: 'result',
-        result: { conversation_id: 'session-1', status: 'SUCCESS', response: 'done' },
-      }),
-    ];
-    const turn = summarizeAgyStreamJsonTurn(lines);
-    const observed = { sessionId: 'session-1', turn, transportError: null };
-    const metadata = { provider: 'google', model: expected.model };
-    const allowed = projectAgyNativeTurn('gemini38', { ...metadata }, observed, false, [
-      'cat-cafe-collab/cat_cafe_get_thread_context',
-    ]);
-    assert.equal(allowed.at(-1).errorCode, undefined);
-    for (const grants of [[], ['cat-cafe-collab/cat_cafe_post_message']]) {
-      const denied = projectAgyNativeTurn('gemini38', { ...metadata }, observed, false, grants);
-      assert.equal(denied.at(-1).errorCode, 'AGY_UNEXPECTED_TOOL');
-    }
-  });
-
-  test('does not turn a failed MCP step into success when upstream result says SUCCESS', () => {
+  test('retains failed MCP results while delivering the provider response', () => {
     for (const state of ['ERROR', 'DONE']) {
       const lines = [
         JSON.stringify(init),
@@ -151,11 +112,10 @@ describe('F325 native stream boundary', () => {
         { provider: 'google', model: expected.model },
         { sessionId: 'session-1', turn, transportError: null },
         false,
-        ['cat-cafe-collab/cat_cafe_get_thread_context'],
       );
-      assert.equal(messages.at(-1).errorCode, 'AGY_TOOL_FAILED');
+      assert.equal(messages.at(-1).errorCode, undefined);
       assert.equal(messages.find((message) => message.type === 'tool_result').toolResultStatus, 'error');
-      assert.ok(!messages.some((message) => message.type === 'text' && message.content === 'All done.'));
+      assert.equal(messages.find((message) => message.type === 'text')?.content, 'All done.');
     }
   });
 
@@ -226,7 +186,6 @@ function projectReadSteps(calls, overrides = {}) {
     { provider: 'google', model: expected.model },
     { sessionId: 'session-1', turn, transportError: overrides.transportError ?? null },
     overrides.cancelled ?? false,
-    ['cat-cafe-collab/cat_cafe_get_thread_context'],
   );
 }
 
@@ -261,7 +220,7 @@ describe('F325 native missing-file observations', () => {
     }
   });
 
-  test('a later successful read cannot pardon permission, unknown or mismatched-path errors', () => {
+  test('does not infer carrier permission denial from unstructured tool error wording', () => {
     for (const message of [
       'permission denied',
       'EACCES: failed to read file',
@@ -271,12 +230,13 @@ describe('F325 native missing-file observations', () => {
     ]) {
       const error = { ...alphaMissingRead, tool_info: { ...alphaMissingRead.tool_info, error: { message } } };
       const messages = projectReadSteps([error, readSuccess]);
-      assert.equal(messages.at(-1).errorCode, 'AGY_TOOL_FAILED', message);
-      assert.ok(!messages.some((entry) => entry.type === 'text'));
+      assert.equal(messages.at(-1).errorCode, undefined, message);
+      assert.equal(messages.find((entry) => entry.type === 'tool_result').toolResultStatus, 'error');
+      assert.equal(messages.find((entry) => entry.type === 'text')?.content, 'Read observations.');
     }
   });
 
-  test('missing-file text without its path or with contradictory file output stays a failure', () => {
+  test('missing-file wording does not hide an error result when metadata is sparse', () => {
     for (const tool_info of [
       { ...alphaMissingRead.tool_info, parameters: {} },
       { ...alphaMissingRead.tool_info, output: 'unexpected file content' },
@@ -285,12 +245,12 @@ describe('F325 native missing-file observations', () => {
       { parameters: { AbsolutePath: '  ' }, error: { message: 'File not found' } },
     ]) {
       const messages = projectReadSteps([{ ...alphaMissingRead, tool_info }, readSuccess]);
-      assert.equal(messages.at(-1).errorCode, 'AGY_TOOL_FAILED');
-      assert.ok(!messages.some((entry) => entry.type === 'text'));
+      assert.equal(messages.at(-1).errorCode, undefined);
+      assert.equal(messages.find((entry) => entry.type === 'text')?.content, 'Read observations.');
     }
   });
 
-  test('missing-file wording does not pardon writes, MCP or other native read tools', () => {
+  test('all declared tools preserve error results independently of the carrier outcome', () => {
     for (const tool_name of [
       'write_to_file',
       'replace_file_content',
@@ -315,30 +275,34 @@ describe('F325 native missing-file observations', () => {
           },
           { ...readSuccess, tool_name, tool_info: { ...readSuccess.tool_info, parameters: mcpParameters } },
         ]);
-        assert.equal(messages.at(-1).errorCode, 'AGY_TOOL_FAILED', `${tool_name}: ${message}`);
-        assert.ok(!messages.some((entry) => entry.type === 'text'));
+        assert.equal(messages.at(-1).errorCode, undefined, `${tool_name}: ${message}`);
+        assert.equal(messages.find((entry) => entry.type === 'tool_result').toolResultStatus, 'error');
+        assert.equal(messages.find((entry) => entry.type === 'text')?.content, 'Read observations.');
       }
     }
   });
 
-  test('an ERROR tool state without an error message still blocks the final answer', () => {
+  test('an ERROR tool state without an error message stays an error result', () => {
     for (const tool_name of ['view_file', 'list_dir', 'write_to_file']) {
       const messages = projectReadSteps([{ state: 'ERROR', tool_name, tool_info: {} }, readSuccess]);
-      assert.equal(messages.at(-1).errorCode, 'AGY_TOOL_FAILED');
-      assert.ok(!messages.some((entry) => entry.type === 'text'));
+      assert.equal(messages.at(-1).errorCode, undefined);
+      assert.equal(messages.find((entry) => entry.type === 'text')?.content, 'Read observations.');
     }
   });
 
   test('missing-file observations never override denial, cancellation, transport or protocol failure', () => {
     for (const [overrides, code] of [
-      [{ result: { denied_actions: [{ action: 'view_file', display_name: 'view_file' }] } }, 'AGY_PERMISSION_DENIED'],
+      [
+        { result: { response: '', denied_actions: [{ action: 'view_file', display_name: 'view_file' }] } },
+        'AGY_PERMISSION_DENIED',
+      ],
       [{ cancelled: true }, 'AGY_CANCELLED'],
       [{ transportError: 'fixture transport failure' }, 'AGY_NATIVE_FAILED'],
       [{ result: { status: 'ERROR', error: 'fixture provider failure' } }, 'AGY_NATIVE_FAILED'],
     ]) {
       const messages = projectReadSteps([alphaMissingRead], overrides);
       assert.equal(messages.at(-1).errorCode, code);
-      assert.ok(!messages.some((entry) => entry.type === 'text'));
+      if (!overrides.result?.denied_actions) assert.ok(messages.some((entry) => entry.type === 'text'));
     }
   });
 });

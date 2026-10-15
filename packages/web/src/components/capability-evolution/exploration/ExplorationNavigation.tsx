@@ -3,9 +3,16 @@ import { useMemo, useState } from 'react';
 import { ExplorationIcon } from './ExplorationIcon';
 import { ExplorationLineage } from './ExplorationLineage';
 import { ExplorationLineageDialog } from './ExplorationLineageDialog';
+import { ExplorationVersionCards } from './ExplorationVersionCards';
 import type { useExplorationWorkspace } from './use-exploration-workspace';
 
-export function ExplorationNavigation({ workspace }: { workspace: ReturnType<typeof useExplorationWorkspace> }) {
+export function ExplorationNavigation({
+  workspace,
+  v2 = false,
+}: {
+  workspace: ReturnType<typeof useExplorationWorkspace>;
+  v2?: boolean;
+}) {
   const [graph, setGraph] = useState(false);
   const { catalog, node, selectedNodeKey, selectNode, currentKeys, reading, change } = workspace;
   const notes = useMemo(() => {
@@ -21,8 +28,8 @@ export function ExplorationNavigation({ workspace }: { workspace: ReturnType<typ
     return result;
   }, [catalog]);
   if (!catalog || !node) return null;
-  const nodes = catalog.nodes.filter((entry) => entry.kind === node.kind);
-  const open = reading.lineageCollapsed === false;
+  const nodes = v2 ? catalog.nodes : catalog.nodes.filter((entry) => entry.kind === node.kind);
+  const open = v2 ? reading.lineageCollapsed !== true : reading.lineageCollapsed === false;
   return (
     <aside className="exploration-version-nav" aria-label="版本导航" data-map-open={open}>
       <div className="exploration-nav-heading">
@@ -41,7 +48,7 @@ export function ExplorationNavigation({ workspace }: { workspace: ReturnType<typ
         >
           {open ? '收起地图' : '展开地图'}
         </button>
-        {!open && (
+        {(v2 || !open) && (
           <button type="button" onClick={() => setGraph(true)}>
             完整谱系
           </button>
@@ -71,56 +78,60 @@ export function ExplorationNavigation({ workspace }: { workspace: ReturnType<typ
         </select>
       </label>
       <div className="exploration-embedded-map" data-open={open}>
-        {!graph && (
-          <ExplorationLineage
-            nodes={nodes}
-            selected={selectedNodeKey}
-            currentKeys={currentKeys}
-            nodeNotes={notes}
-            toolbarEnd={
-              <>
-                {catalog.nodes.some((entry) => entry.kind !== node.kind) && (
+        {v2 ? (
+          <ExplorationVersionCards workspace={workspace} notes={notes} />
+        ) : (
+          !graph && (
+            <ExplorationLineage
+              nodes={nodes}
+              selected={selectedNodeKey}
+              currentKeys={currentKeys}
+              nodeNotes={notes}
+              toolbarEnd={
+                <>
+                  {catalog.nodes.some((entry) => entry.kind !== node.kind) && (
+                    <select
+                      aria-label="版本来源"
+                      value={node.kind}
+                      onChange={(event) => {
+                        const next = catalog.nodes.filter((entry) => entry.kind === event.target.value).at(-1);
+                        if (next) {
+                          selectNode(next);
+                          change({ viewport: { ...reading.viewport, framing: 'fit', collapsed: [] } });
+                        }
+                      }}
+                    >
+                      <option value="owner_version">本项目版本</option>
+                      <option value="public_archive">公开归档</option>
+                    </select>
+                  )}
                   <select
-                    aria-label="版本来源"
-                    value={node.kind}
-                    onChange={(event) => {
-                      const next = catalog.nodes.filter((entry) => entry.kind === event.target.value).at(-1);
-                      if (next) {
-                        selectNode(next);
-                        change({ viewport: { ...reading.viewport, framing: 'fit', collapsed: [] } });
-                      }
-                    }}
+                    aria-label="谱系排列"
+                    value={reading.lineageLayout ?? 'map'}
+                    onChange={(event) =>
+                      change({
+                        lineageLayout: event.target.value as 'map' | 'vertical',
+                        viewport: { ...reading.viewport, framing: 'fit' },
+                      })
+                    }
                   >
-                    <option value="owner_version">本项目版本</option>
-                    <option value="public_archive">公开归档</option>
+                    <option value="map">来源关系</option>
+                    <option value="vertical">纵向阅读</option>
                   </select>
-                )}
-                <select
-                  aria-label="谱系排列"
-                  value={reading.lineageLayout ?? 'map'}
-                  onChange={(event) =>
-                    change({
-                      lineageLayout: event.target.value as 'map' | 'vertical',
-                      viewport: { ...reading.viewport, framing: 'fit' },
-                    })
-                  }
-                >
-                  <option value="map">来源关系</option>
-                  <option value="vertical">纵向阅读</option>
-                </select>
-                <button type="button" aria-label="完整谱系" title="完整谱系" onClick={() => setGraph(true)}>
-                  <ExplorationIcon kind="expand" />
-                </button>
-              </>
-            }
-            viewport={reading.viewport}
-            direction={reading.lineageLayout ?? 'map'}
-            onViewport={(viewport) => change({ viewport })}
-            onSelect={selectNode}
-          />
+                  <button type="button" aria-label="完整谱系" title="完整谱系" onClick={() => setGraph(true)}>
+                    <ExplorationIcon kind="expand" />
+                  </button>
+                </>
+              }
+              viewport={reading.viewport}
+              direction={reading.lineageLayout ?? 'map'}
+              onViewport={(viewport) => change({ viewport })}
+              onSelect={selectNode}
+            />
+          )
         )}
       </div>
-      {graph && <ExplorationLineageDialog workspace={workspace} close={() => setGraph(false)} />}
+      {graph && <ExplorationLineageDialog workspace={workspace} allSources={v2} close={() => setGraph(false)} />}
     </aside>
   );
 }

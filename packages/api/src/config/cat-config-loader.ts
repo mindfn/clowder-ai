@@ -87,18 +87,6 @@ const agyProfileSchema = z
     model: z.string().min(1).optional(),
     autoApprove: z.boolean().optional(),
     trustedWorkspaces: z.array(z.string().min(1)).optional(),
-    nativeCodingGrant: z
-      .object({
-        threadId: z.string().min(1).max(160),
-        taskId: z.string().min(1).max(160),
-        workUnitRef: developmentPlanRefSchema,
-        acceptedRevision: developmentRevisionSchema,
-        workspaceRoot: z.string().min(1),
-        writableFiles: z.array(z.string().min(1)).min(1).max(8),
-        testFile: z.string().min(1),
-      })
-      .strict()
-      .optional(),
   })
   .nullable()
   .optional();

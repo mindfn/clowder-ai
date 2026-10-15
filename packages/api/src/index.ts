@@ -1,3 +1,4 @@
+import { AgentServiceUnavailableError } from './domains/cats/services/agents/registry/AgentServiceUnavailableError.js';
 /**
  * Clowder AI API Server
  * 后端 API 入口
@@ -140,8 +141,6 @@ import {
 } from './domains/cats/services/agents/providers/acp/AcpServiceFactory.js';
 import { closeStaleAcpPools } from './domains/cats/services/agents/providers/acp/acp-pool-registry.js';
 import { createGoogleAgentService } from './domains/cats/services/agents/providers/agy-native/agy-native-carrier-selection.js';
-import { AntigravityAgentService } from './domains/cats/services/agents/providers/antigravity/AntigravityAgentService.js';
-import { RedisAntigravitySupervisorStore } from './domains/cats/services/agents/providers/antigravity/AntigravitySupervisorStore.js';
 import { getCodexAppServerLifecycle } from './domains/cats/services/agents/providers/CodexAppServerLifecycleRegistry.js';
 import { isNativeRealtimeCompanionDeployment } from './domains/cats/services/agents/providers/CodexRealtimeFeatureConfig.js';
 import {
@@ -293,6 +292,7 @@ import {
 } from './domains/runtime-deployment/RuntimeDeploymentBootstrap.js';
 import { runtimeDeploymentSubjectRef } from './domains/runtime-deployment/RuntimeDeploymentObservationProvider.js';
 import { readRuntimeServiceReadiness } from './domains/runtime-deployment/RuntimeDeploymentServiceReadiness.js';
+import { MessageQueueRuntimeConversationReturnGateway } from './domains/runtime-interaction/MessageQueueRuntimeConversationReturnGateway.js';
 import { createRuntimeInteractionRuntime } from './domains/runtime-interaction/runtime-interaction-composition.js';
 import { appendServiceLog } from './domains/services/service-lifecycle.js';
 import { FileTasteRepository } from './domains/taste/services/TasteRepository.js';
@@ -959,27 +959,14 @@ async function main(): Promise<void> {
   let ownsGlobalAgentKeySidecars = false;
   let agentKeySidecarRenewalLoop: { start(): void; stop(): Promise<void> } | null = null;
   try {
-    const { shouldProvisionAntigravityAgentKeySidecar } = await import(
-      './domains/cats/services/agents/agent-key/antigravity-agent-key-sidecar-policy.js'
+    const { shouldProvisionGlobalAgentKeySidecars } = await import(
+      './domains/cats/services/agents/agent-key/agent-key-sidecar-policy.js'
     );
-    ownsGlobalAgentKeySidecars = shouldProvisionAntigravityAgentKeySidecar({
+    ownsGlobalAgentKeySidecars = shouldProvisionGlobalAgentKeySidecars({
       backendKind: agentKeyRegistryBackendKind,
     });
-    if (ownsGlobalAgentKeySidecars) {
-      const { ensureAntigravityAgentKeySidecar } = await import(
-        './domains/cats/services/agents/agent-key/antigravity-agent-key-sidecar.js'
-      );
-      const sidecar = await ensureAntigravityAgentKeySidecar(agentKeyRegistry);
-      app.log.info(
-        `[api] Antigravity agent-key sidecar ready: ${sidecar.filePath} (${sidecar.catId}/${sidecar.userId})`,
-      );
-    } else {
-      app.log.warn(
-        '[api] Antigravity agent-key sidecar skipped: memory AgentKeyRegistry cannot safely back global sidecar files; set CAT_CAFE_AGENT_KEY_ALLOW_MEMORY_SIDECAR=1 only for local degraded development',
-      );
-    }
   } catch (err) {
-    app.log.warn(`[api] Antigravity agent-key sidecar setup failed (best-effort): ${String(err)}`);
+    app.log.warn(`[api] Global agent-key sidecar eligibility unavailable: ${String(err)}`);
   }
 
   // Fail-closed: refuse to start without Redis unless explicitly opted into memory mode.
@@ -1023,6 +1010,7 @@ async function main(): Promise<void> {
     ...(redis ? { redis } : {}),
     messageStore,
     socketManager,
+    onSweepError: (error) => app.log.warn({ error }, '[F306] Conversation decision recovery sweep failed'),
   });
   if (runtimeInteractionRuntime.startupInvalidated.length > 0) {
     app.log.warn(
@@ -1888,17 +1876,7 @@ async function main(): Promise<void> {
     );
     agentKeySidecarRenewalLoop = new AgentKeySidecarRenewalLoop({
       reconcile: async () => {
-        const reconciliations: Array<{ name: string; reconcile: () => Promise<void> }> = [
-          {
-            name: 'antigravity',
-            reconcile: async () => {
-              const { ensureAntigravityAgentKeySidecar } = await import(
-                './domains/cats/services/agents/agent-key/antigravity-agent-key-sidecar.js'
-              );
-              await ensureAntigravityAgentKeySidecar(agentKeyRegistry);
-            },
-          },
-        ];
+        const reconciliations: Array<{ name: string; reconcile: () => Promise<void> }> = [];
         if (catRegistry.has('gpt-pro')) {
           reconciliations.push({
             name: 'gpt-pro',
@@ -2185,23 +2163,23 @@ async function main(): Promise<void> {
             break;
           }
           case 'google':
-            service = createGoogleAgentService(catId, config.agyProfile);
+            try {
+              service = createGoogleAgentService(catId, config.agyProfile);
+            } catch (error) {
+              if (!(error instanceof AgentServiceUnavailableError)) throw error;
+              agentRegistry.markUnavailable(id, error.reason);
+              continue;
+            }
             break;
           case 'kimi':
             service = new KimiAgentService({ catId });
             break;
           case 'antigravity':
-            service = new AntigravityAgentService({
-              catId,
-              runtimeSessionStore,
-              transcriptReader,
-              supervisorStore: redisClient
-                ? new RedisAntigravitySupervisorStore(redisClient, {
-                    auditDir: join(process.cwd(), 'data', 'antigravity-audit'),
-                  })
-                : undefined,
+            agentRegistry.markUnavailable(id, {
+              code: 'AGY_IDE_EXECUTION_RETIRED',
+              message: 'AGY IDE 执行入口已退役。请在成员设置选择 Google 的 AGY Native 入口；成员身份与历史保留。',
             });
-            break;
+            continue;
           case 'opencode':
             service = new OpenCodeAgentService({ catId });
             break;
@@ -2828,6 +2806,15 @@ async function main(): Promise<void> {
       },
     },
   );
+  await runtimeInteractionRuntime.bindConversationReturnGateway(
+    new MessageQueueRuntimeConversationReturnGateway({
+      messageStore,
+      queue: invocationQueue,
+      socketManager,
+      tryAutoExecute: (threadId) => queueProcessor.requestDrain(threadId),
+    }),
+  );
+  app.addHook('onClose', async () => runtimeInteractionRuntime.dispose());
   const deliverApprovedActionCarrier = async (
     proposal: import('@cat-cafe/shared').DispatchProposal,
     fence: import('./domains/ball-custody/ActionSuccessorAdmissionService.js').ActionSuccessorFence,
@@ -4852,9 +4839,8 @@ async function main(): Promise<void> {
       registerWeChatVisibleReaderLimbFactory,
     } = await import('./plugins/wechat-visible-reader/index.js');
     const { registerPluginRoutes } = await import('./routes/plugin-routes.js');
-    const { generateCliConfigs, readCapabilitiesConfig, writeCapabilitiesConfig, withCapabilityLock } = await import(
-      './config/capabilities/capability-orchestrator.js'
-    );
+    const { reconcileMcpRuntimeConfig, readCapabilitiesConfig, writeCapabilitiesConfig, withCapabilityLock } =
+      await import('./config/capabilities/capability-orchestrator.js');
     const { resolveStartupCliConfigContext } = await import('./config/capabilities/startup-cli-config.js');
     const monorepoRoot = findMonorepoRoot(process.cwd());
     const pluginsDir = join(monorepoRoot, 'packages', 'api', 'src', 'plugins');
@@ -4916,7 +4902,7 @@ async function main(): Promise<void> {
         const root = resolveActiveProjectRoot();
         await writeCapabilitiesConfig(root, config);
         const { projectRoot, paths } = resolveStartupCliConfigContext(root);
-        await generateCliConfigs(config, paths, projectRoot);
+        await reconcileMcpRuntimeConfig(config, paths, projectRoot);
       },
       withCapabilityLock: (fn) => withCapabilityLock(resolveActiveProjectRoot(), fn),
       limbAdapterFactory: async (pluginId, limbYamlPath, pluginConfig) => {
@@ -5202,6 +5188,7 @@ async function main(): Promise<void> {
         }
       : {}),
     ...(liveCompanionSessions ? { companionRuntimeInteractionStore: runtimeInteractionRuntime.store } : {}),
+    runtimeInteractionService: runtimeInteractionRuntime.service,
     ...(liveCompanionSessions
       ? { withLiveCarrierOperation: liveCompanionSessions.withCarrierOperation.bind(liveCompanionSessions) }
       : {}),
@@ -5369,6 +5356,7 @@ async function main(): Promise<void> {
   await app.register(callbackRuntimeInteractionRoutes, {
     registry,
     callbackAuthNotifier,
+    service: runtimeInteractionRuntime.service,
   });
 
   // F174 Phase D1 — callback auth failure telemetry debug endpoint (AC-D3).
@@ -6137,7 +6125,6 @@ async function main(): Promise<void> {
     messageStore,
     threadStore,
     enabled: dotEnabled,
-    allowedCats: async () => (await dotConnectionService?.status())?.allowedCatIds ?? [],
   });
   dotReturnService = new DotReturnService({
     connection: dotConnectionService,
@@ -6204,7 +6191,6 @@ async function main(): Promise<void> {
     dispatches: dotDispatches,
     threads: threadStore,
     startTest: (ownerUserId) => dotConnectionTests.run(ownerUserId),
-    selectableCat: (id) => !!catRegistry.tryGet(id),
   });
   // Dot resume consumes its persisted connection and source proofs, composed above.
   const externalPluginRecovery = await pluginRuntime.recoverAfterRestart({ desktopWindowsAfter: hostListening });

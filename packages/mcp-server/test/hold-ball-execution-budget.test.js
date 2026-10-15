@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from '../dist/index.js';
-import { handleHoldBall } from '../dist/tools/callback-tools.js';
+import { handleGetHoldStatus, handleHoldBall } from '../dist/tools/callback-tools.js';
 import { useInvocationAuth } from './helpers/invocation-auth.js';
 
 const schema = createServer()._registeredTools.cat_cafe_hold_ball.inputSchema;
@@ -11,6 +11,32 @@ test('hold_ball preserves an explicit execution budget independently of timeout'
   const parsed = schema.parse(request({ command: 'pnpm gate', timeoutMs: 2_000, executionSlaMs: 7_200_000 }));
   assert.equal(parsed.wakeWhen.executionSlaMs, 7_200_000);
   assert.equal(parsed.wakeWhen.timeoutMs, 2_000);
+});
+
+test('ordinary managed commands preserve a stable retry key and a bounded status tail', async (t) => {
+  useInvocationAuth(t);
+  const input = schema.parse(
+    request({ command: 'python train.py', executionSlaMs: 7_200_000, idempotencyKey: 'training-1' }),
+  );
+  assert.equal(input.wakeWhen.idempotencyKey, 'training-1');
+  const previous = globalThis.fetch;
+  const previousUrl = process.env.CAT_CAFE_API_URL;
+  process.env.CAT_CAFE_API_URL = 'http://127.0.0.1:1';
+  t.after(() => {
+    globalThis.fetch = previous;
+    if (previousUrl === undefined) delete process.env.CAT_CAFE_API_URL;
+    else process.env.CAT_CAFE_API_URL = previousUrl;
+  });
+  let url;
+  globalThis.fetch = async (value) => {
+    url = String(value);
+    return { ok: true, json: async () => ({ status: 'ok' }) };
+  };
+  assert.equal((await handleGetHoldStatus({ taskId: 'hold-ball-1', tailBytes: 2048 })).isError, undefined);
+  assert.match(url, /\/hold-ball\/hold-ball-1\/status\?tailBytes=2048$/);
+  assert.equal((await handleGetHoldStatus({ tailBytes: 2048 })).isError, true);
+  const statusSchema = createServer()._registeredTools.cat_cafe_get_hold_status.inputSchema;
+  assert.equal(statusSchema.safeParse({ taskId: 'hold-ball-1', tailBytes: 65_537 }).success, false);
 });
 
 test('hold_ball keeps execution bounded by three hours and ordinary timeout by one hour', () => {

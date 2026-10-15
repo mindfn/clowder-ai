@@ -371,6 +371,7 @@ function mergeMessageExtra(
     outputLayout: preferred?.outputLayout,
     liveCompanion: pick('liveCompanion'),
     custodyOfferV1: pick('custodyOfferV1'),
+    runtimeInteractionCard: pick('runtimeInteractionCard'),
     contentModificationRequestV1: pick('contentModificationRequestV1'),
     contentModificationReceiptV1: pick('contentModificationReceiptV1'),
     semanticEvent: pick('semanticEvent'),

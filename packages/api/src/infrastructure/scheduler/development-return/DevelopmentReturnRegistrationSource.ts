@@ -7,10 +7,11 @@ import type {
 import type { DevelopmentWorkActor } from '../../../domains/cats/services/stores/ports/DevelopmentWorkTransition.js';
 import type { StoredMessage } from '../../../domains/cats/services/stores/ports/MessageStore.js';
 import type { Thread } from '../../../domains/cats/services/stores/ports/ThreadStore.js';
+import type { DevelopmentReturnStorage } from '../DynamicTaskStore.js';
+import { resolveDevelopmentReturnSource } from './DevelopmentReturnOriginalSource.js';
 import type { DevelopmentReturnDeps } from './DevelopmentReturnService.js';
 import {
   parseDevelopmentReturnActionLeaseRef,
-  resolveDevelopmentReturnSource,
   resolveReturnedActionSuccessorReturnStatus,
 } from './DevelopmentReturnSource.js';
 
@@ -30,6 +31,31 @@ export type DevelopmentReturnRegistrationInput = DevelopmentReturnActionV1 &
       'taskId' | 'expectedRevision' | 'executionThreadId' | 'sourceActionRef' | 'expectedSignal' | 'slaUntil'
     >
   >;
+
+function registrationReturnStorage(
+  originalStorage: Exclude<DevelopmentReturnStorage, 'successor'>,
+  hasReturnedSource: boolean,
+): DevelopmentReturnStorage {
+  if (originalStorage === 'parent_bound') return 'parent_bound';
+  return hasReturnedSource ? 'successor' : originalStorage;
+}
+
+function requireRegistrationSource(input: {
+  action: DevelopmentReturnRegistrationInput;
+  actionLeaseCoordinate: { leaseId: string; generation: number } | null;
+  hasProposalSource: boolean;
+  originalSourceActionRef?: string;
+  hasOriginalSource: boolean;
+  hasSourceBinding: boolean;
+  hasReturnedSource: boolean;
+}) {
+  const validActionSource = input.actionLeaseCoordinate
+    ? Boolean(input.action.predecessorRegistrationId && input.hasReturnedSource)
+    : input.action.sourceActionRef === input.originalSourceActionRef;
+  if (!input.hasProposalSource || !input.hasOriginalSource || !input.hasSourceBinding || !validActionSource) {
+    throw new Error('Original human source or returned action generation is unavailable');
+  }
+}
 
 export function assertDevelopmentReturnRegistrationInput(
   input: DevelopmentReturnActionV1,
@@ -56,6 +82,7 @@ function activePredecessorSupersession(input: {
   proposal: ThreadProposal;
   child: Thread;
   actionLeaseCoordinate: { leaseId: string; generation: number };
+  originalSourceActionRef: string;
   predecessorRegistrationId: string | undefined;
   returnedStatus: Extract<Awaited<ReturnType<typeof resolveReturnedActionSuccessorReturnStatus>>, { kind: 'current' }>;
 }): DevelopmentReturnRegistrationV1 | undefined {
@@ -85,7 +112,7 @@ function activePredecessorSupersession(input: {
   const sourceMatches = predecessorLease
     ? predecessorLease.leaseId === input.actionLeaseCoordinate.leaseId &&
       predecessorLease.generation === superseded.generation
-    : superseded.generation === 1 && predecessor.sourceActionRef === `message:${input.proposal.sourceMessageId}`;
+    : superseded.generation === 1 && predecessor.sourceActionRef === input.originalSourceActionRef;
   return sourceMatches ? predecessor : undefined;
 }
 
@@ -99,6 +126,14 @@ export async function resolveDevelopmentReturnRegistrationSource(input: {
   action: DevelopmentReturnRegistrationInput;
 }) {
   const actionLeaseCoordinate = parseDevelopmentReturnActionLeaseRef(input.action.sourceActionRef);
+  const originalSource = await resolveDevelopmentReturnSource(
+    input.deps,
+    input.actor,
+    input.task,
+    input.proposal,
+    input.source,
+    actionLeaseCoordinate ? undefined : input.action.sourceActionRef,
+  );
   const returnedStatus = actionLeaseCoordinate
     ? await resolveReturnedActionSuccessorReturnStatus(
         input.deps,
@@ -118,17 +153,17 @@ export async function resolveDevelopmentReturnRegistrationSource(input: {
         }
       : null;
   const sourceBinding =
-    returnedSource ??
-    (await resolveDevelopmentReturnSource(input.deps, input.actor, input.task, input.proposal, input.source));
-  if (
-    !input.source ||
-    !sourceBinding ||
-    (actionLeaseCoordinate
-      ? !input.action.predecessorRegistrationId || !returnedSource
-      : input.action.sourceActionRef !== `message:${input.proposal.sourceMessageId}`)
-  ) {
-    throw new Error('Original human source or returned action generation is unavailable');
-  }
+    returnedSource ?? (originalSource && { sourceMessageRevision: originalSource.sourceMessageRevision });
+  requireRegistrationSource({
+    action: input.action,
+    actionLeaseCoordinate,
+    hasProposalSource: Boolean(input.source),
+    originalSourceActionRef: originalSource?.sourceActionRef,
+    hasOriginalSource: Boolean(originalSource),
+    hasSourceBinding: Boolean(sourceBinding),
+    hasReturnedSource: Boolean(returnedSource),
+  });
+  if (!input.source || !originalSource || !sourceBinding) throw new Error('Unreachable source validation state');
   const predecessorSupersession =
     actionLeaseCoordinate && returnedStatus?.kind === 'current'
       ? activePredecessorSupersession({
@@ -138,6 +173,7 @@ export async function resolveDevelopmentReturnRegistrationSource(input: {
           proposal: input.proposal,
           child: input.child,
           actionLeaseCoordinate,
+          originalSourceActionRef: originalSource.sourceActionRef,
           predecessorRegistrationId: input.action.predecessorRegistrationId,
           returnedStatus,
         })
@@ -147,6 +183,7 @@ export async function resolveDevelopmentReturnRegistrationSource(input: {
     sourceBinding,
     reporterCatIds: returnedSource?.reporterCatIds ?? input.proposal.preferredCats,
     hasReturnedSource: Boolean(returnedSource),
+    returnStorage: registrationReturnStorage(originalSource.returnStorage, Boolean(returnedSource)),
     ...(predecessorSupersession ? { predecessorSupersession } : {}),
   };
 }

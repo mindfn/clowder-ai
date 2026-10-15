@@ -70,11 +70,14 @@ export async function canDeliverDotSource(
   state: DotConnectionState,
   source: DotReplyCandidate,
   messages: Pick<IMessageStore, 'getById'>,
-  allowedCatIds: readonly string[],
 ) {
+  if (source.userId !== state.ownerUserId || source.catId === DOT_CAT_ID) return false;
+  if (
+    state.pairedAt === null ||
+    !state.subscription ||
+    (state.subscription.expiresAt !== null && state.subscription.expiresAt <= Date.now())
+  )
+    return false;
   const permission = await dotReplyAuthority(state, source, messages);
-  return (
-    permission === 'request_reply' ||
-    (permission === 'ordinary' && (!source.catId || allowedCatIds.includes(source.catId)))
-  );
+  return permission !== 'rejected';
 }

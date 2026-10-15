@@ -19,10 +19,19 @@ describe('refresh loop algorithm (F174-C)', () => {
   // server's 5min cooldown and never wastes a 429 round-trip.
   // Range: jittered min ≈ 6.18 × 0.85 = 5.25min; jittered max from MIN ≈ 6.18 × 1.15 = 7.11min.
   const MIN_BASE_MS = Math.ceil((5 * 60_000 * 1.05) / 0.85); // ≈ 370_588ms
-  const MIN_JITTERED = MIN_BASE_MS * 0.85; // ≈ 314_999ms (5.25min)
-  const MIN_JITTERED_UPPER = MIN_BASE_MS * 1.15; // ≈ 426_176ms (7.11min)
+  const MIN_JITTERED = Math.floor(MIN_BASE_MS * 0.85); // ≈ 314_999ms (5.25min)
+  const MIN_JITTERED_UPPER = Math.floor(MIN_BASE_MS * 1.15); // ≈ 426_176ms (7.11min)
   const MAX_JITTERED_LOWER = 30 * 60_000 * 0.85; // 25.5min
   const MAX_JITTERED_UPPER = 30 * 60_000 * 1.15; // 34.5min
+
+  test('AC-C3: integer jitter endpoints retain the server cooldown', async (t) => {
+    const { computeNextRefreshDelay } = await import('../dist/refresh-loop.js');
+    const random = t.mock.method(Math, 'random', () => 0);
+    assert.equal(computeNextRefreshDelay(10 * 60_000), MIN_JITTERED);
+    assert.ok(MIN_JITTERED >= 5 * 60_000);
+    random.mock.mockImplementation(() => 1 - Number.EPSILON);
+    assert.equal(computeNextRefreshDelay(10 * 60_000), MIN_JITTERED_UPPER);
+  });
 
   test('AC-C3: 2h TTL → ~30min next-delay (clamped to upper bound, ±15%)', async () => {
     const { computeNextRefreshDelay } = await import('../dist/refresh-loop.js');

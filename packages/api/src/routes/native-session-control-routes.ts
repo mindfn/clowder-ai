@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { CatId } from '@cat-cafe/shared';
+import type { CatId, NativeSessionBinding } from '@cat-cafe/shared';
 import type { FastifyInstance, FastifyPluginOptions, FastifyReply, FastifyRequest } from 'fastify';
 import type { AgentRegistry } from '../domains/cats/services/agents/registry/AgentRegistry.js';
 import type { ContextEpochOwner } from '../domains/cats/services/session/context/ContextEpochOwner.js';
@@ -29,6 +29,7 @@ interface NativeCompactionTarget {
   readonly userId: string;
   readonly service: ReturnType<AgentRegistry['get']>;
   readonly sessionId: string;
+  readonly nativeSessionBinding?: NativeSessionBinding;
 }
 
 export async function nativeSessionControlRoutes(
@@ -53,18 +54,30 @@ async function handleNativeCompaction(
     // journey but cannot roll the provider event back, and concurrent delivery
     // may conservatively produce the same failure.
     const cursorsBefore = await readCursorSnapshot(options.deliveryCursorStore, target);
+    let observedDecision: Awaited<ReturnType<ContextEpochOwner['observeCompaction']>> | undefined;
+    let observedEventId: string | undefined;
+    const onObserved: NonNullable<
+      Parameters<NonNullable<typeof target.service.requestNativeCompaction>>[0]['onObserved']
+    > = async (event) => {
+      observedDecision = await options.contextEpochOwner.observeCompaction({
+        userId: target.userId,
+        catId: target.catId,
+        threadId: target.threadId,
+        event,
+      });
+      observedEventId = event.eventId;
+    };
     const event = await target.service.requestNativeCompaction?.({
       sessionId: target.sessionId,
       invocationId: `native-compact-${randomUUID()}`,
       timeoutMs: 120_000,
+      userId: target.userId,
+      ...(target.nativeSessionBinding ? { nativeSessionBinding: target.nativeSessionBinding } : {}),
+      onObserved,
     });
     if (!event) return reply.status(409).send(unsupported());
-    const decision = await options.contextEpochOwner.observeCompaction({
-      userId: target.userId,
-      catId: target.catId,
-      threadId: target.threadId,
-      event,
-    });
+    if (observedEventId !== event.eventId) await onObserved(event);
+    const decision = observedDecision!;
     const cursorsAfter = await readCursorSnapshot(options.deliveryCursorStore, target);
     if (cursorsBefore.delivery !== cursorsAfter.delivery || cursorsBefore.seen !== cursorsAfter.seen) {
       return reply.status(502).send({
@@ -122,13 +135,21 @@ async function resolveNativeCompactionTarget(
   if (!session?.cliSessionId || !service.requestNativeCompaction) {
     return reply.status(409).send(unsupported());
   }
-  return { userId, threadId, catId, service, sessionId: session.cliSessionId };
+  return {
+    userId,
+    threadId,
+    catId,
+    service,
+    sessionId: session.cliSessionId,
+    ...(session.nativeSessionBinding ? { nativeSessionBinding: session.nativeSessionBinding } : {}),
+  };
 }
 
 function isNativeSessionUnavailable(error: unknown): boolean {
   return (
     error instanceof Error &&
     (error.message === 'codex_native_session_owner_unavailable' ||
+      error.message === 'agy_native_session_owner_unavailable' ||
       error.message.includes('already has an active host lease'))
   );
 }

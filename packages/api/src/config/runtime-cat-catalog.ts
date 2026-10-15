@@ -18,6 +18,7 @@ import { bootstrapCatCatalog, readCatCatalog, resolveCatCatalogPath } from './ca
 import type { AcpVariantConfig } from './cat-config-loader.js';
 import { _resetCachedConfig, loadCatConfig, parseRawCatConfig, toAllCatConfigs } from './cat-config-loader.js';
 import { clearVoiceCache } from './cat-voices.js';
+import { planClaudeAccountBinding } from './claude-account-binding.js';
 import {
   assertCodexMemberMutationReady,
   type CodexBindingSelection,
@@ -338,24 +339,44 @@ export function readRuntimeAccountMembers(projectRoot: string): CatCafeConfig {
 }
 
 /** One synchronous catalog commit for the complete confirmed selection, never a per-member PATCH loop. */
+export function bindRuntimeClaudeAccounts(
+  projectRoot: string,
+  selection: CodexBindingSelection,
+  previewToken: string,
+  accountProjectRoot = projectRoot,
+): CatCafeConfig {
+  return bindRuntimeLocalAccounts(projectRoot, selection, previewToken, accountProjectRoot, 'anthropic');
+}
 export function bindRuntimeCodexAccounts(
   projectRoot: string,
   selection: CodexBindingSelection,
   previewToken: string,
   accountProjectRoot = projectRoot,
 ): CatCafeConfig {
+  return bindRuntimeLocalAccounts(projectRoot, selection, previewToken, accountProjectRoot, 'openai');
+}
+function bindRuntimeLocalAccounts(
+  projectRoot: string,
+  selection: CodexBindingSelection,
+  previewToken: string,
+  accountProjectRoot: string,
+  client: 'openai' | 'anthropic',
+): CatCafeConfig {
   const current = readRuntimeAccountMembers(projectRoot);
-  const plan = planCodexAccountBinding(accountProjectRoot, current, selection);
+  const plan =
+    client === 'openai'
+      ? planCodexAccountBinding(accountProjectRoot, current, selection)
+      : planClaudeAccountBinding(accountProjectRoot, current, selection);
   if (plan.previewToken !== previewToken) throw new Error('Binding preview changed; please review it again');
   const targets = new Set(plan.targets.map((target) => target.catId));
-  const previous = readLocalAccountSelection(current, 'openai');
+  const previous = readLocalAccountSelection(current, client);
   const selectedRef =
-    selection.scope === 'local' ? selection.accountRef : readLocalAccountSelection(current, 'openai').accountRef;
+    selection.scope === 'local' ? selection.accountRef : readLocalAccountSelection(current, client).accountRef;
   const next = {
     ...current,
     ...(selectedRef
       ? {
-          selectedAccountRefs: { ...current.selectedAccountRefs, openai: selectedRef },
+          selectedAccountRefs: { ...current.selectedAccountRefs, [client]: selectedRef },
         }
       : {}),
     breeds: current.breeds.map((breed) => ({
@@ -441,7 +462,8 @@ export function updateRuntimeCat(projectRoot: string, catId: string, patch: Runt
   const breed = catalog.breeds[located.breedIndex] as Record<string, any>;
   const variant = breed.variants[located.variantIndex] as Record<string, any>;
   const shouldWriteBreedIdentity = located.isDefaultVariant && breed.variants.length === 1;
-  const selectedAccountRef = readLocalAccountSelection(catalog as unknown as CatCafeConfig, 'openai').accountRef;
+  const bindingClient = (patch.clientId ?? variant.clientId) === 'anthropic' ? 'anthropic' : 'openai';
+  const selectedAccountRef = readLocalAccountSelection(catalog as unknown as CatCafeConfig, bindingClient).accountRef;
 
   if (patch.name !== undefined) {
     if (shouldWriteBreedIdentity) {
@@ -582,11 +604,12 @@ export function updateRuntimeCat(projectRoot: string, catId: string, patch: Runt
       variant.cli = patch.cli;
     }
   }
-  if (variant.clientId !== 'openai' || !variant.cli || catId === 'gpt-pro') delete variant.accountBindingMode;
+  if (!['openai', 'anthropic'].includes(variant.clientId) || !variant.cli || catId === 'gpt-pro')
+    delete variant.accountBindingMode;
   if (patch.accountRef !== undefined) {
     if (patch.accountRef && patch.accountRef.trim().length > 0) {
       variant.accountRef = patch.accountRef.trim();
-      if (variant.clientId === 'openai' && variant.cli && catId !== 'gpt-pro')
+      if (['openai', 'anthropic'].includes(variant.clientId) && variant.cli && catId !== 'gpt-pro')
         variant.accountBindingMode = selectedAccountRef === variant.accountRef ? 'follow' : 'override';
     } else {
       delete variant.accountRef;
@@ -594,24 +617,29 @@ export function updateRuntimeCat(projectRoot: string, catId: string, patch: Runt
     }
   }
   if (patch.accountBindingMode !== undefined) {
-    if (variant.clientId !== 'openai' || !variant.cli || catId === 'gpt-pro')
-      throw new Error('跟随账号仅适用于本地 Codex');
+    if (!['openai', 'anthropic'].includes(variant.clientId) || !variant.cli || catId === 'gpt-pro')
+      throw new Error('跟随账号仅适用于本地 Codex / Claude');
     const selected = selectedAccountRef;
     if (patch.accountBindingMode === 'follow') {
-      if (!selected || (patch.accountRef ?? variant.accountRef ?? 'codex') !== selected)
+      if (
+        !selected ||
+        (patch.accountRef ?? variant.accountRef ?? (bindingClient === 'anthropic' ? 'claude' : 'codex')) !== selected
+      )
         throw new Error('请先在账号页选定正在用的账号，再恢复跟随');
-      catalog.selectedAccountRefs = { ...catalog.selectedAccountRefs, openai: selected };
+      catalog.selectedAccountRefs = { ...catalog.selectedAccountRefs, [bindingClient]: selected };
       variant.accountRef = selected;
     }
     variant.accountBindingMode =
-      (patch.accountRef ?? variant.accountRef ?? 'codex') === selected ? 'follow' : patch.accountBindingMode;
+      (patch.accountRef ?? variant.accountRef ?? (bindingClient === 'anthropic' ? 'claude' : 'codex')) === selected
+        ? 'follow'
+        : patch.accountBindingMode;
   }
   if (
     patch.available === true &&
     patch.accountRef === undefined &&
     patch.accountBindingMode === undefined &&
     variant.accountBindingMode === 'follow' &&
-    variant.clientId === 'openai' &&
+    ['openai', 'anthropic'].includes(variant.clientId) &&
     variant.cli &&
     catId !== 'gpt-pro' &&
     selectedAccountRef

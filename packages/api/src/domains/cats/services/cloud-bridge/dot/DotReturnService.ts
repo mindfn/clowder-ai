@@ -142,7 +142,7 @@ export class DotReturnService {
       !this.visible(source)
     )
       throw new Error('dot_source_unavailable');
-    if (!(await canDeliverDotSource(fresh, source, this.options.messages, fresh.allowedCatIds)))
+    if (!(await canDeliverDotSource(fresh, source, this.options.messages)))
       throw new Error('dot_source_authority_revoked');
     return source;
   }

@@ -101,10 +101,9 @@ export interface StrategyFormState {
 export const CLIENT_OPTIONS: Array<{ value: ClientId; label: string }> = [
   { value: 'anthropic', label: 'Claude' },
   { value: 'openai', label: 'Codex' },
-  { value: 'google', label: 'Gemini' },
+  { value: 'google', label: 'Google / AGY Native' },
   { value: 'kimi', label: 'Kimi' },
   { value: 'opencode', label: 'OpenCode' },
-  { value: 'antigravity', label: 'Antigravity' },
   { value: 'catagent', label: 'CatAgent' },
   { value: 'acp', label: 'ACP Client' },
 ];

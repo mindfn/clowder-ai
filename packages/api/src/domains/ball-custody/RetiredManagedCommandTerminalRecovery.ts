@@ -179,6 +179,7 @@ async function publish(
             wakeWhen: true,
             terminalReceipt: true,
             cancelable: false,
+            ...(claimed.command.jobId ? { jobId: claimed.command.jobId, managedJobReceipt: 'terminal' } : {}),
           },
         },
       }));

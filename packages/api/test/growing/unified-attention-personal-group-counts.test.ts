@@ -110,6 +110,38 @@ test('personal group counts describe the complete selected vector before paging 
   assert.deepEqual(ignored.personalView?.groupCounts, visible.personalView?.groupCounts);
 });
 
+test('only an exact named F309 content-review receipt is decision-qualified', () => {
+  const mentions: UserMentionTodoRead = {
+    items: [],
+    period: 'week',
+    counts: { today: 0, week: 0, earlier: 0, handled: 0 },
+    state: source('explicit_user_mentions'),
+  };
+  const exact = {
+    ...receipt('review-one', 'f309.content_review', 4),
+    reasonCode: 'content_review_requested',
+    salience: 'normal' as const,
+    producer: {
+      producerId: 'f309.content_review',
+      ownerRef: 'content-review:review-one',
+      subjectRef: 'review-one',
+      revision: 4,
+    },
+    action: { actionRef: 'content-review:review-one', expectedProducerRevision: 4 },
+    reEvaluateActionRef: 'content-review:review-one#reevaluate',
+  };
+  const exactResult = project(undefined, mentions, [work([exact])]);
+  assert.equal(exactResult.attentionCount, 2, 'the approval and named review both await a decision');
+  assert.deepEqual(exactResult.personalView, undefined);
+  assert.equal(
+    exactResult.items.find((item) => item.decisionRef === 'f309.content_review:review-one')?.kind,
+    'judgment',
+  );
+
+  const unnamed = project(undefined, mentions, [work([receipt('review-two', 'f309.content_review', 4)])]);
+  assert.equal(unnamed.attentionCount, 1, 'an untyped lookalike judgment remains other');
+});
+
 test('the owner route returns exact group counts for a full vector larger than its 20-row page', async (t) => {
   const now = new Date(2026, 9, 13, 10).getTime();
   const store = new MessageStore();

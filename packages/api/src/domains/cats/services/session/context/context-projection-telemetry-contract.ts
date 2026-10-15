@@ -86,6 +86,7 @@ export const CONTEXT_PROJECTION_ENUMS = Object.freeze({
     'exec_json',
     'app_server',
     'gemini_cli',
+    'agy_stream_json',
     'antigravity_adapter',
     'cdp_bridge',
     'stream_json',

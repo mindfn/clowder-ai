@@ -130,6 +130,7 @@ it('renders Native fields and its original model validation in English', async (
   expect(
     container.querySelector('textarea[aria-label="Approved workspaces"]')?.closest('label')?.textContent,
   ).toContain('Approved workspaces');
+  expect(container.textContent).toContain('denied outright');
   const save = [...document.querySelectorAll('button')].find((button) => button.textContent === 'Save');
   await act(async () => save?.click());
   expect(container.querySelector('[role="alert"]')?.textContent).toBe(

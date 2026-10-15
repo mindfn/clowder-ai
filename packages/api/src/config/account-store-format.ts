@@ -20,6 +20,10 @@ const accountSchema = z
     modelAliases: stringRecord.optional(),
     envVars: stringRecord.optional(),
     codex: codexManagedAccountSchema.optional(),
+    claude: z
+      .object({ kind: z.literal('long_lived_token') })
+      .strict()
+      .optional(),
     quota: z
       .object({
         owner: z.object({ accountRef: z.string(), userId: z.string(), workspaceId: z.string() }).optional(),
@@ -69,6 +73,15 @@ export function parseStoredAccount(value: unknown, source: string): AccountConfi
   const raw = objectMap(value, source);
   const parsed = accountSchema.safeParse({ ...raw, authType: normalizeLegacyAuthType(raw.authType) });
   if (!parsed.success) malformedAccountStore(source);
+  if (
+    parsed.data.claude &&
+    (parsed.data.authType !== 'oauth' ||
+      parsed.data.clientId !== 'anthropic' ||
+      parsed.data.codex ||
+      parsed.data.baseUrl ||
+      parsed.data.envVars)
+  )
+    malformedAccountStore(source);
   return parsed.data;
 }
 
@@ -102,6 +115,7 @@ export function canonicalizeAccount(account: AccountConfig) {
     ...(Object.keys(aliases).length ? { modelAliases: aliases } : {}),
     ...(Object.keys(account.envVars ?? {}).length ? { envVars: account.envVars } : {}),
     ...(account.codex ? { codex: account.codex } : {}),
+    ...(account.claude ? { claude: account.claude } : {}),
     ...(account.quota ? { quota: account.quota } : {}),
   };
 }

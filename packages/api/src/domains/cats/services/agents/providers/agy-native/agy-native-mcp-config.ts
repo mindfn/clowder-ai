@@ -6,18 +6,20 @@ import {
   CAT_CAFE_SPLIT_ENTRYPOINTS,
   resolveCatCafeNodeCommand,
 } from '../../../../../../config/capabilities/mcp-constants.js';
+import { validateAgyNativeConfigReceipt, writeAgyNativeConfigReceipt } from './agy-native-config-receipt.js';
 import { AGY_NATIVE_CREDENTIAL_DIR, isLocalAgyCallbackUrl } from './agy-native-credential-file.js';
 import {
   assertExistingServerIsHostOwned,
   credentialPathInProfile,
   requireHostEntrypoint,
 } from './agy-native-mcp-ownership.js';
-import { AGY_NATIVE_HOST_MCP_SERVERS } from './agy-native-policy.js';
 
 export interface AgyNativeMcpConfigInput {
   readonly profileHome: string;
   readonly runtimeRoot: string;
   readonly serverNames: readonly string[];
+  /** Already resolved through canonical per-cat/project capability discovery. */
+  readonly resolvedServers?: Readonly<Record<string, Record<string, unknown>>>;
   readonly callback?: { readonly apiUrl: string; readonly credentialFile: string };
 }
 
@@ -39,7 +41,7 @@ function expectedServer(
   callback: NonNullable<AgyNativeMcpConfigInput['callback']>,
   home: string,
 ): StdioServerConfig {
-  if (!AGY_NATIVE_HOST_MCP_SERVERS.includes(name as (typeof AGY_NATIVE_HOST_MCP_SERVERS)[number])) {
+  if (!CAT_CAFE_SPLIT_ENTRYPOINTS.has(name)) {
     throw new Error(`AGY native MCP server is not host-owned: ${name}`);
   }
   const entrypoint = CAT_CAFE_SPLIT_ENTRYPOINTS.get(name);
@@ -80,6 +82,7 @@ function readExistingConfig(path: string, runtimeRoot: string, home: string, cre
   // The official CLI creates a zero-byte placeholder during OAuth onboarding.
   // Replace only that exact empty file; malformed non-empty config still fails closed.
   if (content.length === 0) return null;
+  if (validateAgyNativeConfigReceipt(home, content, runtimeRoot, credential)) return content;
   const parsed: unknown = JSON.parse(content);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
     throw new Error('AGY native MCP config is invalid');
@@ -114,11 +117,22 @@ export function materializeAgyNativeMcpConfig(input: AgyNativeMcpConfigInput): s
   const callback = input.serverNames.length ? requireCallbackBinding(input.callback) : undefined;
   const credential = callback ? realpathSync(callback.credentialFile) : undefined;
   if (input.serverNames.length) requireDirectory(join(configDir, AGY_NATIVE_CREDENTIAL_DIR));
-  const servers = Object.fromEntries(
-    [...new Set(input.serverNames)]
-      .sort()
-      .map((name) => [name, expectedServer(runtimeRoot, name, requireCallbackBinding(callback), home)]),
-  );
+  const servers = input.resolvedServers
+    ? Object.fromEntries(
+        Object.entries(input.resolvedServers).map(([name, entry]) => {
+          // The upstream remote transport uses serverUrl, not Claude's type/url envelope.
+          if (entry.type === 'http' && typeof entry.url === 'string') {
+            const { type: _type, url, ...rest } = entry;
+            return [name, { ...rest, serverUrl: url }];
+          }
+          return [name, entry];
+        }),
+      )
+    : Object.fromEntries(
+        [...new Set(input.serverNames)]
+          .sort()
+          .map((name) => [name, expectedServer(runtimeRoot, name, requireCallbackBinding(callback), home)]),
+      );
   const path = join(configDir, 'mcp_config.json');
   const lock = join(configDir, '.cat-cafe-mcp-config.lock');
   writeFileSync(lock, '', { flag: 'wx', mode: 0o600 });
@@ -133,6 +147,7 @@ export function materializeAgyNativeMcpConfig(input: AgyNativeMcpConfigInput): s
       throw new Error('AGY native MCP binding changed during handoff');
     }
     renameSync(temp, path);
+    writeAgyNativeConfigReceipt(home, next, runtimeRoot, credential);
   } finally {
     rmSync(temp, { force: true });
     rmSync(lock, { force: true });

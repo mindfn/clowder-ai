@@ -21,6 +21,14 @@ import type {
   ThreadArtifactDTO,
   TurnExecutionMessageProjection,
 } from '@cat-cafe/shared';
+export interface RuntimeConversationAnswerContext {
+  interactionId: string;
+  expectedRevision: number;
+  operationId: string;
+  ownerUserId: string;
+  cardRef: import('@cat-cafe/shared').RuntimeInteractionCardRef;
+}
+
 import type { WorkspaceMode } from '@/lib/workspace-modes';
 import type { EvidenceSourceType } from '@/types/evidence';
 
@@ -326,6 +334,12 @@ export interface ChatMessage {
   evidence?: EvidenceData;
   /** F22+F52+F098-C1: Rich blocks + cross-thread origin + explicit targets */
   extra?: {
+    runtimeInteractionCard?: {
+      version: 1;
+      interactionId: string;
+      blockId: string;
+      requestKind: 'approval' | 'question' | 'elicitation' | 'conversation_decision';
+    };
     outputLayout?: import('@cat-cafe/shared').MessageOutputLayoutV1;
     /** F310 source-owner projection; the card rehydrates canonical state before acting. */
     custodyOfferV1?: CustodyOfferV1;

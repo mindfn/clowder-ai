@@ -1,6 +1,8 @@
 import { isAbsolute, resolve } from 'node:path';
 import type { EffortLevel, Options } from '@anthropic-ai/claude-agent-sdk';
 import type { CatId } from '@cat-cafe/shared';
+import { applyClaudeTokenAccountEnv } from '../../../../../config/claude-token-account.js';
+import { composeClaudeTokenSettingsDocument } from '../../../../../config/claude-token-settings.js';
 import { buildChildEnv } from '../../../../../utils/cli-spawn.js';
 import type { AgentServiceOptions, PreparedProviderRequestV1 } from '../../types.js';
 import {
@@ -111,12 +113,21 @@ export async function prepareClaudeSdkLaunch(input: {
     ...new Set([...(operator.additionalDirectories ?? []), ...collectImageAccessDirectories(imagePaths)]),
   ];
   const plan = options?.compactionLaunchPlan;
-  const settings = plan?.ready
-    ? composeManagedSettingsDocument(plan, operator.settings, options?.workingDirectory)
+  const settingSources: NonNullable<Options['settingSources']> = readOnly
+    ? []
+    : options?.callbackEnv?.[ANTHROPIC_PROFILE_MODE_KEY] === 'api_key'
+      ? ['project', 'local']
+      : ['user', 'project', 'local'];
+  const accountSettings = options?.claudeTokenAccount
+    ? await composeClaudeTokenSettingsDocument(operator.settings, options?.workingDirectory, settingSources)
     : operator.settings;
+  const settings = plan?.ready
+    ? composeManagedSettingsDocument(plan, accountSettings, options?.workingDirectory)
+    : accountSettings;
   const overrides = { ...buildClaudeEnvOverrides(options?.callbackEnv), ...options?.accountEnv };
   if (options?.callbackEnv?.[ANTHROPIC_PROFILE_MODE_KEY] === 'subscription')
     for (const key of SUBSCRIPTION_MODE_DENY_KEYS) overrides[key] = null;
+  applyClaudeTokenAccountEnv(overrides, options?.claudeTokenAccount);
   const env = buildChildEnv(overrides, { workingDirectory: options?.workingDirectory });
   if (readOnly) env.CAT_CAFE_READONLY = 'true';
   const request: PreparedProviderRequestV1 = Object.freeze({
@@ -154,11 +165,7 @@ export async function prepareClaudeSdkLaunch(input: {
       ...(readOnly ? { tools: [] } : { allowDangerouslySkipPermissions: true }),
       strictMcpConfig: true,
       mcpServers: mcpServers as Options['mcpServers'],
-      settingSources: readOnly
-        ? []
-        : options?.callbackEnv?.[ANTHROPIC_PROFILE_MODE_KEY] === 'api_key'
-          ? ['project', 'local']
-          : ['user', 'project', 'local'],
+      settingSources,
       ...(options?.sessionId ? { resume: options.sessionId } : {}),
       ...(additionalDirectories.length ? { additionalDirectories } : {}),
       ...(settings

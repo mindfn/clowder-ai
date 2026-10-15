@@ -1,4 +1,5 @@
 import type { ChildProcess } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { hasDurableGateCancellationRequestArtifact } from '../domains/ball-custody/durable-managed-gate-cancellation.js';
 import {
   DURABLE_MANAGED_GATE_CHILD_TERMINATION_GRACE_MS,
@@ -9,7 +10,11 @@ import {
   recordDurableManagedGateProcess,
   validateDurableManagedGateJob,
 } from '../domains/ball-custody/durable-managed-gate-job.js';
-import { readDurableGateRecord } from '../domains/ball-custody/durable-managed-gate-job-store.js';
+import {
+  readDurableGateRecord,
+  recordManagedJobAttempt,
+  settleDurableManagedGateJobFromRunner,
+} from '../domains/ball-custody/durable-managed-gate-job-store.js';
 import {
   acknowledgeDurableGateSelfRecovery,
   blockDurableGateSelfRecovery,
@@ -22,7 +27,9 @@ import {
 import { hasDurableGateRecoveryReadyReceipt } from '../domains/ball-custody/durable-managed-gate-recovery-child-contract.js';
 import { durableGateRawOutcomeIsAmbiguous } from '../domains/ball-custody/durable-managed-gate-recovery-policy.js';
 import { publishDurableGateStopIntent } from '../domains/ball-custody/durable-managed-gate-stop-intent.js';
+import { managedJobLogReceipt, readManagedJobLogTail } from '../domains/managed-job/managed-job-log.js';
 import { readUnixProcessSnapshotSync, type UnixProcessIdentity } from '../utils/cli-process-ownership.js';
+import { runManagedCommandWorker } from './managed-runner-command-worker.js';
 import {
   cleanupAndDrainDurableManagedGateAttempt,
   type DurableManagedGateAttemptProcess,
@@ -64,12 +71,22 @@ delete childEnv.CAT_CAFE_MANAGED_RUNNER_COMMAND;
 delete childEnv.CAT_CAFE_MANAGED_RUNNER_CWD;
 delete childEnv.CAT_CAFE_MANAGED_JOB_DESCRIPTOR;
 
-const { capture, finish: finishLog } = openDurableManagedRunnerLog(logPath);
+let durableLog: ReturnType<typeof openDurableManagedRunnerLog> | null = null;
+const capture = (chunk: Buffer) => durableLog?.capture(chunk);
+const finishLog = () => durableLog?.finish();
 let terminationTimer: ReturnType<typeof setTimeout> | null = null;
 let terminationSignal: NodeJS.Signals | null = null;
 let activeChild: ChildProcess | null = null;
 
 function failClosedBeforeExecution(message: string): never {
+  if (!durableLog) {
+    // A refused duplicate worker must never truncate the live worker's log.
+    try {
+      writeFileSync(logPath!, `${message}\n`, { flag: 'wx', mode: 0o600 });
+    } catch (error) {
+      if (!(error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')) throw error;
+    }
+  }
   capture(Buffer.from(`${message}\n`));
   finishLog();
   process.exit(70);
@@ -97,6 +114,7 @@ function spawnAttempt(
     frozenIdentity,
     reconcileFrom,
     capture,
+    beforeSpawn: (attemptToken) => recordManagedJobAttempt(durableJob, attemptToken),
   });
   activeChild = attempt.child;
   void attempt.closed.then(() => {
@@ -314,22 +332,10 @@ async function runRecoveryAwareAttempt(
   }
 }
 
-const workerIdentity = readUnixProcessSnapshotSync({ pids: [process.pid] })?.get(process.pid);
-if (!workerIdentity || !recordDurableManagedGateProcess(durableJob, workerIdentity)) {
-  failClosedBeforeExecution('durable worker birth registration failed; command was not executed');
-}
-if (durableJob.recovery) {
-  const createdAt = readDurableGateRecord(durableJob)?.createdAt ?? Date.now();
-  initializeDurableGateRecovery(durableJob, workerIdentity, createdAt);
-}
-if (hasDurableGateCancellationRequestArtifact(durableJob)) {
-  failClosedBeforeExecution('durable worker cancellation was requested before execution; command was not executed');
-}
-
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     terminationSignal ??= signal;
-    if (!durableJob.recovery) activeChild?.kill(signal);
+    if (!durableJob.recovery && durableJob.kind !== 'command') activeChild?.kill(signal);
     if (terminationTimer) return;
     terminationTimer = setTimeout(() => {
       try {
@@ -341,19 +347,74 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   });
 }
 
-let resumeEpoch: number | null = null;
-let resumeIdentity: DurableGateFrozenIdentity | null = null;
-let resumeReconcileFrom: number | null = null;
-while (true) {
-  const outcome = await runRecoveryAwareAttempt(workerIdentity, resumeEpoch, resumeIdentity, resumeReconcileFrom);
-  if (outcome.kind === 'resume') {
-    resumeEpoch = outcome.pauseEpoch;
-    resumeIdentity = outcome.frozenIdentity;
-    resumeReconcileFrom = outcome.reconcileFrom;
-    continue;
+const workerIdentity = readUnixProcessSnapshotSync({ pids: [process.pid] })?.get(process.pid);
+if (!workerIdentity || !recordDurableManagedGateProcess(durableJob, workerIdentity)) {
+  failClosedBeforeExecution('durable worker birth registration failed; command was not executed');
+}
+durableLog = openDurableManagedRunnerLog(logPath);
+if (durableJob.recovery) {
+  const createdAt = readDurableGateRecord(durableJob)?.createdAt ?? Date.now();
+  initializeDurableGateRecovery(durableJob, workerIdentity, createdAt);
+}
+if (terminationSignal || hasDurableGateCancellationRequestArtifact(durableJob)) {
+  if (durableJob.recordStorage === 'sqlite_v1') {
+    capture(Buffer.from('Command cancelled before execution\n'));
+    finishLog();
+    settleDurableManagedGateJobFromRunner(durableJob, {
+      exitCode: null,
+      timedOut: false,
+      cancelled: true,
+      durationMs: 0,
+      terminationReason: 'explicit_cancel',
+      tailOutput: 'Command cancelled before execution',
+    });
+    process.exit(143);
   }
+  failClosedBeforeExecution('durable worker cancellation was requested before execution; command was not executed');
+}
+
+if (durableJob.kind === 'command') {
+  process.exitCode = await runManagedCommandWorker({
+    job: durableJob,
+    environment: childEnv,
+    capture,
+    finishLog,
+    cancelled: () => terminationSignal !== null,
+  });
   if (terminationTimer) clearTimeout(terminationTimer);
-  finishLog();
-  process.exitCode = exitCodeFor(outcome.result);
-  break;
+} else {
+  let resumeEpoch: number | null = null;
+  let resumeIdentity: DurableGateFrozenIdentity | null = null;
+  let resumeReconcileFrom: number | null = null;
+  while (true) {
+    const outcome = await runRecoveryAwareAttempt(workerIdentity, resumeEpoch, resumeIdentity, resumeReconcileFrom);
+    if (outcome.kind === 'resume') {
+      resumeEpoch = outcome.pauseEpoch;
+      resumeIdentity = outcome.frozenIdentity;
+      resumeReconcileFrom = outcome.reconcileFrom;
+      continue;
+    }
+    if (terminationTimer) clearTimeout(terminationTimer);
+    finishLog();
+    if (durableJob.recordStorage === 'sqlite_v1') {
+      const record = readDurableGateRecord(durableJob);
+      settleDurableManagedGateJobFromRunner(durableJob, {
+        exitCode: outcome.result.code,
+        timedOut: record?.terminationIntent === 'timed_out',
+        cancelled: record?.terminationIntent === 'cancelled' || terminationSignal !== null,
+        durationMs: Date.now() - (record?.createdAt ?? Date.now()),
+        tailOutput: readManagedJobLogTail(durableJob.logPath),
+        signal: outcome.result.signal,
+        log: managedJobLogReceipt(durableJob.logPath),
+        terminationReason:
+          record?.terminationIntent === 'timed_out'
+            ? 'runtime_deadline'
+            : record?.terminationIntent === 'cancelled' || terminationSignal
+              ? 'explicit_cancel'
+              : 'command_exit',
+      });
+    }
+    process.exitCode = exitCodeFor(outcome.result);
+    break;
+  }
 }

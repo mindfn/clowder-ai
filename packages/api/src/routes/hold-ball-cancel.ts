@@ -8,12 +8,14 @@
 
 import type { SchedulerAwaitStateV1 } from '@cat-cafe/shared';
 import { readManagedCommandWakeProjection } from '../domains/ball-custody/ManagedCommandWakeRecoverySweep.js';
+import { resolveManagedCommandJob } from '../domains/ball-custody/managed-command-job-reference.js';
 import {
   isHoldBallWakeTask,
   isPendingHoldBallWakeTask,
   isRetiredWakeWithRunningManagedCommand as isRetiredWakeWithRunningManagedCommandTask,
   readHoldLifecycleProjection,
 } from '../domains/ball-custody/managed-command-wake-lifecycle.js';
+import { readDurableGateRecord } from '../domains/managed-job/durable-managed-gate-job-store.js';
 import type { DynamicTaskDef } from '../infrastructure/scheduler/DynamicTaskStore.js';
 import {
   c1HoldCancelCount,
@@ -106,6 +108,13 @@ export const isPendingHoldBallTask = isPendingHoldBallWakeTask;
 export const isRetiredWakeWithRunningManagedCommand = isRetiredWakeWithRunningManagedCommandTask;
 
 export function isCancelableHoldBallTask(task: DynamicTaskDef): boolean {
+  const lifecycle = task.params.holdLifecycle as Record<string, unknown> | undefined;
+  const command = lifecycle?.managedCommand as Record<string, unknown> | undefined;
+  if (command?.jobId) {
+    const job = resolveManagedCommandJob(task);
+    const record = job ? readDurableGateRecord(job) : null;
+    return !!record?.admissionMessageId && record.state !== 'terminal';
+  }
   return isPendingHoldBallTask(task) || isRetiredWakeWithRunningManagedCommand(task);
 }
 

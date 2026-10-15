@@ -27,6 +27,8 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { type CatId, createCatId } from '@cat-cafe/shared';
 import { getCatModel } from '../../../../../config/cat-models.js';
+import { applyClaudeTokenAccountEnv } from '../../../../../config/claude-token-account.js';
+import { composeClaudeTokenSettingsDocument } from '../../../../../config/claude-token-settings.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import type {
   AgentMessage,
@@ -170,6 +172,7 @@ export class ClaudeInteractivePtyCarrierService implements AgentService {
         envOverrides[k] = v;
       }
     }
+    applyClaudeTokenAccountEnv(envOverrides, options?.claudeTokenAccount);
     // Hardcoded guard — always unset entrypoint vars (D3 double-safety)
     // These will map to env -u flags in PtyDriver.buildClaudeCommand().
     envOverrides.CLAUDE_CODE_ENTRYPOINT = null;
@@ -219,6 +222,11 @@ export class ClaudeInteractivePtyCarrierService implements AgentService {
       extraArgs.push('--mcp-config', this.mcpConfigFilePath, '--strict-mcp-config');
     }
     const cwd = options?.workingDirectory ?? this.cwd;
+    if (options?.claudeTokenAccount)
+      extraArgs.push(
+        '--settings',
+        await composeClaudeTokenSettingsDocument(undefined, cwd, ['user', 'project', 'local']),
+      );
     // R8: use accountEnv.HOME (if set) for transcriptDir derivation instead of API process homedir.
     const effectiveHome = options?.accountEnv?.HOME;
     const transcriptDir = this.transcriptDirOverride ?? ptyTranscriptDir(cwd, effectiveHome);

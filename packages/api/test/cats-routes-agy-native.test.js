@@ -140,7 +140,7 @@ test('Native profile mutation rejects unsafe or conflicting settings before pers
   }
 });
 
-test('native coding approval stays private and is retained only for an unchanged binding', async () => {
+test('retired native coding grants are stripped when member settings are saved', async () => {
   const grant = {
     threadId: 'thread-1',
     taskId: 'task-1',
@@ -156,7 +156,7 @@ test('native coding approval stays private and is retained only for an unchanged
     assert.equal(response.statusCode, 200, response.body);
     assert.ok(response.json().cat.agyProfile);
     assert.equal(response.json().cat.agyProfile.nativeCodingGrant, undefined);
-    assert.deepEqual(f.persisted().agyProfile.nativeCodingGrant, grant);
+    assert.equal(f.persisted().agyProfile.nativeCodingGrant, undefined);
     const changed = await f.patch({ agyProfile: { ...profile, profileId: 'another' } });
     assert.equal(changed.statusCode, 200, changed.body);
     assert.equal(f.persisted().agyProfile.nativeCodingGrant, undefined);

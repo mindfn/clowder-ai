@@ -574,6 +574,26 @@ describe('RedisSessionChainStore', { skip: redisIsolationSkipReason(REDIS_URL) }
     assert.deepEqual(updated.contextHealth, health);
   });
 
+  it('update() persists nativeSessionBinding across restart and lookup paths', async () => {
+    const record = await store.create(BASE_INPUT);
+    const nativeSessionBinding = {
+      v: 1,
+      carrier: 'agy_stream_json',
+      cliSessionId: 'cli-sess-1',
+      l0Hash: 'l0-hash',
+      workspaceRoot: '/workspace',
+      profileHome: '/isolated/profile',
+      model: 'gemini-3.8-flash-high',
+      permissionMode: 'request-review',
+      agentName: 'native-test',
+    };
+    await store.update(record.id, { nativeSessionBinding });
+    const fresh = new RedisSessionChainStore(redis);
+    assert.deepEqual((await fresh.get(record.id)).nativeSessionBinding, nativeSessionBinding);
+    assert.deepEqual((await fresh.getActive('opus', 'thread-1')).nativeSessionBinding, nativeSessionBinding);
+    assert.deepEqual((await fresh.getByCliSessionId('cli-sess-1')).nativeSessionBinding, nativeSessionBinding);
+  });
+
   it('update() persists capacityPin across hydrated lookup paths', async () => {
     const record = await store.create(BASE_INPUT);
     const capacityPin = {

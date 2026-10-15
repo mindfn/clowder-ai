@@ -14,12 +14,22 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, test } from 'node:test';
+import Database from 'better-sqlite3';
 import Fastify from 'fastify';
+import { resolveManagedCommandJob } from '../dist/domains/ball-custody/managed-command-job-reference.js';
+import {
+  readDurableGateRecord,
+  readDurableTerminalReceipt,
+  settleDurableManagedGateJobFromRunner,
+} from '../dist/domains/managed-job/durable-managed-gate-job-store.js';
 import { tryAutoCancelPendingHolds } from '../dist/routes/messages.js';
+import { isolateManagedJobData } from './helpers/isolated-managed-job-data.js';
+
+isolateManagedJobData();
 
 /**
  * Each exceptional launch terminal below is announced under the generic
@@ -206,6 +216,221 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     });
     return app;
   }
+
+  async function waitForCommandTerminal(deps, taskId) {
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      const job = resolveManagedCommandJob(deps.dynamicTaskStore.getById(taskId));
+      if (job && readDurableGateRecord(job)?.state === 'terminal') return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.fail('command did not reach its durable terminal');
+  }
+
+  for (const actorUserId of ['scheduler', 'system']) {
+    test(`F261 ${actorUserId} command and wake share the server-owned thread principal`, async () => {
+      const deliveries = [];
+      const deps = makeStubDeps({
+        threadStore,
+        invocationRecordStore: { getByIdempotencyKey: () => null },
+        getEventCarrier: () =>
+          deliveries.length ? { state: 'handled', invocationId: 'delivered' } : { state: 'missing' },
+      });
+      const admit = deps.admitManagedWake;
+      deps.admitManagedWake = async (input) => {
+        const result = await admit(input);
+        deliveries.push({ threadId: input.threadId, catId: input.catId, userId: input.userId });
+        return result;
+      };
+      deps.admitWake = deps.admitManagedWake;
+      const app = await createApp(deps);
+      const thread = await threadStore.create(`owner-${actorUserId}`, 'scheduled command');
+      const auth = await registry.create(actorUserId, 'codex', thread.id);
+      const request = {
+        method: 'POST',
+        url: '/api/callbacks/hold-ball',
+        headers: { 'x-invocation-id': auth.invocationId, 'x-callback-token': auth.callbackToken },
+        payload: {
+          reason: 'scheduled user work',
+          nextStep: 'read the result',
+          wakeWhen: { command: `printf ${actorUserId}`, executionSlaMs: 5000, idempotencyKey: 'scheduled-once' },
+        },
+      };
+      try {
+        const first = await app.inject(request);
+        assert.equal(first.statusCode, 200, first.body);
+        const body = first.json();
+        const job = resolveManagedCommandJob(deps.dynamicTaskStore.getById(body.taskId));
+        assert.deepEqual(job.definition.principal, job.wakeTarget);
+        assert.equal(job.definition.principal.userId, thread.createdBy);
+        const duplicate = await app.inject(request);
+        assert.equal(duplicate.statusCode, 200, duplicate.body);
+        assert.equal(duplicate.json().wakeWhen.jobId, body.wakeWhen.jobId);
+        const { ManagedCommandWakeRecoverySweep } = await import(
+          '../dist/domains/ball-custody/ManagedCommandWakeRecoverySweep.js'
+        );
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline && deliveries.length === 0) {
+          await new ManagedCommandWakeRecoverySweep(deps).runOnce();
+          await new Promise((resolve) => setTimeout(resolve, 40));
+        }
+        await new ManagedCommandWakeRecoverySweep(deps).runOnce();
+        const record = readDurableGateRecord(job);
+        assert.equal(record.state, 'terminal');
+        assert.equal(record.result.exitCode, 0);
+        assert.equal(record.result.tailOutput, actorUserId);
+        assert.deepEqual(deliveries, [{ threadId: thread.id, catId: 'codex', userId: thread.createdBy }]);
+        assert.equal(
+          deps._appendedMessages.filter((message) => message.idempotencyKey === `hold-ball-completion:${body.taskId}`)
+            .length,
+          1,
+        );
+      } finally {
+        cancelWakeWhenRunner(thread.id, 'codex');
+        await app.close();
+      }
+    });
+  }
+
+  test('F261 ordinary command has a durable job before its first side effect', async () => {
+    const deps = makeStubDeps();
+    const app = await createApp(deps);
+    const auth = await registry.create('job-owner', 'codex', 'job-thread');
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/hold-ball',
+        headers: { 'x-invocation-id': auth.invocationId, 'x-callback-token': auth.callbackToken },
+        payload: {
+          reason: 'ordinary durable command regression',
+          nextStep: 'consume its result',
+          wakeWhen: { command: 'sleep 1', timeoutMs: 5000 },
+        },
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      const body = response.json();
+      const task = deps._insertedTasks.find((entry) => entry.id === body.taskId);
+      const jobId = task?.params.holdLifecycle.managedCommand.jobId;
+      assert.equal(typeof jobId, 'string', 'ordinary command must persist an Action Plane job reference');
+      assert.equal(body.wakeWhen?.jobId, jobId);
+      const { ManagedJobService } = await import('../dist/domains/managed-job/ManagedJobService.js');
+      const service = new ManagedJobService();
+      const job = service.get({ userId: 'job-owner', catId: 'codex', threadId: 'job-thread' }, jobId);
+      assert.equal(job.originTaskId, body.taskId);
+      assert.ok(job.admissionMessageId, 'user-visible queued record precedes launch');
+    } finally {
+      cancelWakeWhenRunner('job-thread', 'codex');
+      await app.close();
+    }
+  });
+
+  test('F261 an interrupted admission is never reported as a successfully held command', async () => {
+    const deps = makeStubDeps();
+    const app = await createApp(deps);
+    const auth = await registry.create('crash-owner', 'codex', 'crash-thread');
+    const { ManagedJobService } = await import('../dist/domains/managed-job/ManagedJobService.js');
+    const service = new ManagedJobService();
+    const principal = { userId: 'crash-owner', catId: 'codex', threadId: 'crash-thread' };
+    const job = await service.submit(principal, {
+      command: 'sleep 1',
+      executionSlaMs: 5000,
+      idempotencyKey: 'interrupted-admission',
+      originTaskId: 'missing-origin-task',
+      originInvocationId: auth.invocationId,
+      wakeTarget: principal,
+    });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/hold-ball',
+        headers: { 'x-invocation-id': auth.invocationId, 'x-callback-token': auth.callbackToken },
+        payload: {
+          reason: 'recover admission',
+          nextStep: 'consume once',
+          wakeWhen: {
+            command: 'sleep 1',
+            executionSlaMs: 5000,
+            idempotencyKey: 'interrupted-admission',
+          },
+        },
+      });
+      assert.equal(response.statusCode, 409, response.body);
+      assert.equal(response.json().code, 'managed_job_admission_incomplete');
+      assert.equal(response.json().jobId, job.jobId);
+      assert.equal(response.json().held, false);
+      assert.equal(service.get(principal, job.jobId).ownerIdentity, undefined);
+      assert.equal(deps._insertedTasks.length, 0);
+    } finally {
+      service.cancel(principal, job.jobId);
+      await app.close();
+    }
+  });
+
+  test('F261 a retried command reuses its original job without spending hold quota again', async () => {
+    const deps = makeStubDeps();
+    let admissions = 0;
+    deps.holdQuotaStore.tryAdmit = async () => {
+      admissions++;
+      return { admitted: admissions === 1, count: admissions, eventId: 'original-admission' };
+    };
+    const app = await createApp(deps);
+    const auth = await registry.create('retry-owner', 'codex', 'retry-thread');
+    const request = {
+      method: 'POST',
+      url: '/api/callbacks/hold-ball',
+      headers: { 'x-invocation-id': auth.invocationId, 'x-callback-token': auth.callbackToken },
+      payload: { reason: 'transport retry', nextStep: 'consume once', wakeWhen: { command: 'sleep 1' } },
+    };
+    try {
+      const first = (await app.inject(request)).json();
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const response = await app.inject(request);
+        assert.equal(response.statusCode, 200, response.body);
+        assert.equal(response.json().taskId, first.taskId);
+        assert.equal(response.json().wakeWhen.jobId, first.wakeWhen.jobId);
+      }
+      assert.equal(admissions, 1);
+      assert.equal(deps._insertedTasks.length, 1);
+    } finally {
+      cancelWakeWhenRunner('retry-thread', 'codex');
+      await app.close();
+    }
+  });
+
+  test('F261 an unavailable visible admission prevents the ordinary command from spawning', async () => {
+    const deps = makeStubDeps();
+    deps.messageStore.append = async () => {
+      throw new Error('visible state unavailable');
+    };
+    const app = await createApp(deps);
+    const auth = await registry.create('card-owner', 'codex', 'card-thread');
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/hold-ball',
+        headers: { 'x-invocation-id': auth.invocationId, 'x-callback-token': auth.callbackToken },
+        payload: {
+          reason: 'card persistence',
+          nextStep: 'inspect receipt',
+          wakeWhen: { command: 'echo should-not-start' },
+        },
+      });
+      assert.equal(response.statusCode, 503, response.body);
+      const body = response.json();
+      assert.equal(body.code, 'HOLD_WAITING_HISTORY_UNAVAILABLE');
+      assert.equal(deps._insertedTasks.length, 1);
+      const task = deps._insertedTasks[0];
+      assert.equal(deps.dynamicTaskStore.getById(task.id), undefined, 'failed wake carrier is rolled back');
+      const record = readDurableGateRecord(resolveManagedCommandJob(task));
+      assert.equal(record.state, 'terminal');
+      assert.equal(record.ownerIdentity, undefined, 'no worker was admitted');
+      assert.equal(record.terminalStatus, 'failed');
+      assert.equal(getActiveRunnerCount(), 0, 'no executable runner remains');
+    } finally {
+      cancelWakeWhenRunner('card-thread', 'codex');
+      await app.close();
+    }
+  });
 
   test(
     'readonly MCP → authenticated callback → native statistics → durable wake receipt',
@@ -589,7 +814,7 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
   });
 
   for (const [budgetName, wakeWhen, expectedExecutionSlaMs] of [
-    ['default budget', { command: 'pnpm gate', cwd: '/tmp/frozen-gate-candidate' }, 3_600_000],
+    ['default budget', { command: 'pnpm gate', cwd: process.cwd() }, 3_600_000],
     ['isolated Redis prefix', { command: 'REDIS_URL=redis://127.0.0.1:6398 pnpm gate' }, 3_600_000],
     [
       'bounded env wrapper',
@@ -643,10 +868,10 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
 
         assert.equal(response.statusCode, 200, response.body);
         const body = JSON.parse(response.body);
-        assert.match(body.wakeWhen.jobId, /^managed-gate-/);
+        assert.match(body.wakeWhen.jobId, /^managed-job-/);
         assert.notEqual(body.wakeWhen.jobId, body.taskId);
         const task = deps.dynamicTaskStore.getById(body.taskId);
-        const job = task.params.holdLifecycle.managedCommand.durableJob;
+        const job = resolveManagedCommandJob(task);
         assert.equal(task.params.holdLifecycle.managedCommand.cwd, wakeWhen.cwd);
         assert.equal(job.jobId, body.wakeWhen.jobId);
         assert.equal(job.originTaskId, body.taskId);
@@ -666,18 +891,20 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
         assert.equal(runnerOptions.managedJob.executionSlaMs, expectedExecutionSlaMs);
         assert.equal(runnerOptions.timeoutMs, job.wallSlaMs);
         assert.equal(runnerOptions.maximumTimeoutMs, job.wallSlaMs);
-        assert.equal(runnerOptions.cwd, wakeWhen.cwd);
-        const running = JSON.parse(readFileSync(job.recordPath, 'utf8'));
+        assert.equal(runnerOptions.cwd, realpathSync(wakeWhen.cwd ?? process.cwd()));
+        const running = readDurableGateRecord(job);
         assert.equal(running.state, 'running');
         assert.equal(running.ownerIdentity.startedAt, 'birth-42');
 
-        resolveCompletion({ exitCode: 0, timedOut: false, durationMs: 25, tailOutput: 'gate green' });
+        const terminal = { exitCode: 0, timedOut: false, durationMs: 25, tailOutput: 'gate green' };
+        settleDurableManagedGateJobFromRunner(job, terminal);
+        resolveCompletion(terminal);
         const deadline = Date.now() + 1_000;
-        while (JSON.parse(readFileSync(job.recordPath, 'utf8')).state !== 'terminal' && Date.now() < deadline) {
+        while (readDurableGateRecord(job).state !== 'terminal' && Date.now() < deadline) {
           await new Promise((resolve) => setTimeout(resolve, 10));
         }
-        assert.equal(JSON.parse(readFileSync(job.recordPath, 'utf8')).terminalStatus, 'green');
-        assert.equal(JSON.parse(readFileSync(`${job.recordPath}.terminal`, 'utf8')).terminalStatus, 'green');
+        assert.equal(readDurableGateRecord(job).terminalStatus, 'green');
+        assert.equal(readDurableTerminalReceipt(job).terminalStatus, 'green');
         while (getActiveRunnerCount() > 0 && Date.now() < deadline) {
           await new Promise((resolve) => setTimeout(resolve, 10));
         }
@@ -905,10 +1132,11 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     const reservation = reserveManagedWakeCancellation(taskId, thread.id, 'codex');
     assert.equal(reservation.outcome, 'reserved');
 
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await waitForCommandTerminal(deps, taskId);
     assert.equal(completionCount, 0, 'completion must not become visible while cancellation truth is unsettled');
     assert.equal(releaseManagedWakeCancellation(taskId, thread.id, 'codex', reservation.token), true);
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    const deadline = Date.now() + 3000;
+    while (completionCount === 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(completionCount, 1, 'proven-uncommitted cancellation restores the original completion');
   });
 
@@ -941,7 +1169,7 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     const reservation = reserveManagedWakeCancellation(taskId, thread.id, 'codex');
     assert.equal(reservation.outcome, 'reserved');
 
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await waitForCommandTerminal(deps, taskId);
     assert.equal(completionCount, 0);
     assert.equal(commitManagedWakeCancellation(taskId, thread.id, 'codex', reservation.token), true);
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -1310,7 +1538,13 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
       let job;
       ManagedRunner.prototype.start = (_command, options) => {
         job = options.managedJob;
-        if (failingStep === 'settle') mkdirSync(`${job.recordPath}.terminal`);
+        if (failingStep === 'settle') {
+          const db = new Database(path.join(path.dirname(job.recordPath), 'supervisor.sqlite'));
+          db.exec(
+            "CREATE TRIGGER injected_terminal_failure BEFORE INSERT ON managed_job_transitions WHEN NEW.state = 'terminal' BEGIN SELECT RAISE(ABORT, 'injected terminal persistence failure'); END;",
+          );
+          db.close();
+        }
         return {
           admission: Promise.resolve({
             spawned: false,
@@ -1352,7 +1586,11 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
           false,
         );
         deps.dynamicTaskStore.setEnabled = originalDisable;
-        if (failingStep === 'settle') rmSync(`${job.recordPath}.terminal`, { recursive: true });
+        if (failingStep === 'settle') {
+          const db = new Database(path.join(path.dirname(job.recordPath), 'supervisor.sqlite'));
+          db.exec('DROP TRIGGER injected_terminal_failure');
+          db.close();
+        }
         let triggers = 0;
         const recovery = new ManagedCommandWakeRecoverySweep({
           ...deps,
@@ -1366,7 +1604,7 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
         await recovery.runOnce();
         await recovery.runOnce();
         assert.equal(deps.dynamicTaskStore.getById(body.taskId).enabled, false);
-        assert.equal(JSON.parse(readFileSync(job.recordPath, 'utf8')).state, 'terminal');
+        assert.equal(readDurableGateRecord(job).state, 'terminal');
         assert.equal(
           deps._appendedMessages.filter((message) => message.idempotencyKey?.startsWith('hold-ball-admission-fact:'))
             .length,
@@ -1452,7 +1690,7 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
               params.holdLifecycle.managedCommand.admissionFactAppended === false
             ) {
               assert.equal(
-                JSON.parse(readFileSync(descriptor.recordPath, 'utf8')).state,
+                readDurableGateRecord(descriptor).state,
                 'queued',
                 'persist explicit no-spawn before the gate terminal can be recovered as completion',
               );
@@ -1465,7 +1703,7 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
           deps.messageStore.append = async (message) => {
             if (message.source?.meta?.phase === 'waiting') {
               const taskId = message.source.meta.taskId;
-              descriptor = deps.dynamicTaskStore.getById(taskId).params.holdLifecycle.managedCommand.durableJob;
+              descriptor = resolveManagedCommandJob(deps.dynamicTaskStore.getById(taskId));
               cancelManagedWakeIfTaskMatches(taskId, message.threadId, 'codex');
               deps.dynamicTaskStore.remove(taskId);
             }
@@ -1483,13 +1721,10 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
         });
         assert.equal(response.statusCode, 200, response.body);
         assert.equal(response.json().held, false);
-        const record = JSON.parse(readFileSync(descriptor.recordPath, 'utf8'));
+        const record = readDurableGateRecord(descriptor);
         assert.equal(record.state, 'terminal');
         assert.equal(record.terminalStatus, mode === 'pre_cancel' ? 'cancelled' : 'failed');
-        assert.equal(
-          JSON.parse(readFileSync(`${descriptor.recordPath}.terminal`, 'utf8')).terminalStatus,
-          record.terminalStatus,
-        );
+        assert.equal(readDurableTerminalReceipt(descriptor).terminalStatus, record.terminalStatus);
         assert.equal(
           deps._appendedMessages.some((message) => message.content.includes('持球唤醒（命令完成）')),
           false,
@@ -1582,7 +1817,8 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     assert.equal(managedReleaseCount, 1, 'a proven failed commit must release the exact pre-launch reservation');
     releaseVisibilityAppend();
     const held = await heldPromise;
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    const completedBy = Date.now() + 3000;
+    while (completionCount === 0 && Date.now() < completedBy) await new Promise((resolve) => setTimeout(resolve, 20));
     await app.close();
 
     assert.equal(held.statusCode, 200);
@@ -1682,7 +1918,7 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
       payload: {
         reason: 'replacement command',
         nextStep: 'second',
-        wakeWhen: { command: 'sleep 999', timeoutMs: 300_000 },
+        wakeWhen: { command: 'sleep 999', timeoutMs: 300_000, idempotencyKey: 'intentional-successor' },
       },
     });
     assert.equal(second.statusCode, 200);

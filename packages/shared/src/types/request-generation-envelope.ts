@@ -73,6 +73,7 @@ export const REQUEST_GENERATION_RETRY_REASONS = [
   'cli_timeout',
   'malformed_toolcall',
   'missing_session',
+  'native_binding_changed',
   'transient_cli_exit',
   'provider_continuation',
   'provider_busy',

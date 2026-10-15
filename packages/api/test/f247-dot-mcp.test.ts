@@ -168,7 +168,6 @@ test('installed Pro connection → dot events → canonical reply and private or
       messageStore: messages,
       threadStore: threads,
       enabled: async () => true,
-      allowedCats: async () => [],
       sendWebhook: async (_url, _headers, body) => {
         delivered.push(JSON.parse(body));
         return { status: 202, body: '{}' };

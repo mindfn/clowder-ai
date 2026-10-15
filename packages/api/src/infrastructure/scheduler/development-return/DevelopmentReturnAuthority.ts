@@ -14,6 +14,7 @@ import {
 } from '../../../domains/cats/services/stores/ports/MessageStore.js';
 import type { Thread } from '../../../domains/cats/services/stores/ports/ThreadStore.js';
 import type { DevelopmentReturnStorage } from '../DynamicTaskStore.js';
+import { resolveDevelopmentReturnSource } from './DevelopmentReturnOriginalSource.js';
 import {
   assertDevelopmentReturnRegistrationInput,
   resolveDevelopmentReturnRegistrationSource,
@@ -21,7 +22,6 @@ import {
 import type { DevelopmentReturnDeps } from './DevelopmentReturnService.js';
 import {
   parseDevelopmentReturnActionLeaseRef,
-  resolveDevelopmentReturnSource,
   resolveReturnedActionSuccessorReturnStatus,
   sameDevelopmentReturnSource,
 } from './DevelopmentReturnSource.js';
@@ -129,16 +129,6 @@ function isCurrentTerminalReport(
   );
 }
 
-function developmentReturnStorage(
-  source: StoredMessage,
-  hasReturnedSource: boolean,
-  actor: DevelopmentWorkActor,
-): DevelopmentReturnStorage {
-  if (source.threadId !== actor.threadId) return 'parent_bound';
-  if (hasReturnedSource) return 'successor';
-  return source.catId === null ? 'direct' : 'reviewed';
-}
-
 export async function prepareDevelopmentReturn(
   deps: AuthorityDeps,
   actor: DevelopmentWorkActor,
@@ -157,13 +147,8 @@ export async function prepareDevelopmentReturn(
     : null;
   const { child, proposal } = requireApprovedExecution(candidateChild, candidateProposal, actor, task);
   const source = await deps.messages.getById(proposal.sourceMessageId ?? '');
-  const {
-    source: currentSource,
-    sourceBinding,
-    reporterCatIds,
-    hasReturnedSource,
-    predecessorSupersession,
-  } = await resolveDevelopmentReturnRegistrationSource({ deps, actor, task, proposal, child, source, action: input });
+  const { sourceBinding, reporterCatIds, returnStorage, predecessorSupersession } =
+    await resolveDevelopmentReturnRegistrationSource({ deps, actor, task, proposal, child, source, action: input });
   const id = `development-return-${createHash('sha256')
     .update(
       JSON.stringify([
@@ -199,7 +184,7 @@ export async function prepareDevelopmentReturn(
   });
   return {
     registration,
-    returnStorage: developmentReturnStorage(currentSource, hasReturnedSource, actor),
+    returnStorage,
     ...(predecessorSupersession ? { predecessorSupersession } : {}),
   };
 }
@@ -266,9 +251,7 @@ export async function resolveDevelopmentReturnFreshness(
   const returnedSource = returnedStatus?.kind === 'current' ? returnedStatus : null;
   const sourceBinding =
     returnedSource ??
-    (state.sourceActionRef === `message:${proposal.sourceMessageId}`
-      ? await resolveDevelopmentReturnSource(deps, actor, task, proposal, source)
-      : null);
+    (await resolveDevelopmentReturnSource(deps, actor, task, proposal, source, state.sourceActionRef));
   if (!sameDevelopmentReturnSource(state, sourceBinding)) return { kind: 'invalid' };
   if (returnedSource && JSON.stringify(returnedSource.reporterCatIds) !== JSON.stringify(state.reporterCatIds)) {
     return { kind: 'invalid' };

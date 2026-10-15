@@ -3,7 +3,7 @@ import type { AgyProfileConfig, ClientId } from '@cat-cafe/shared';
 import { z } from 'zod';
 import { resolveByAccountRef } from './account-resolver.js';
 
-/** Member settings select the carrier and explicit automatic approval; task grants have a separate issuer. */
+/** Member settings select the carrier and explicit automatic approval. */
 export const agyNativeMemberSettingsSchema = z
   .object({
     enabled: z.boolean(),
@@ -28,10 +28,8 @@ export const agyNativeMemberSettingsSchema = z
 
 type MemberSettings = z.infer<typeof agyNativeMemberSettingsSchema>;
 
-export function publicAgyProfile(profile?: AgyProfileConfig): Omit<AgyProfileConfig, 'nativeCodingGrant'> | undefined {
-  if (!profile) return undefined;
-  const { nativeCodingGrant: _grant, ...settings } = profile;
-  return settings;
+export function publicAgyProfile(profile?: AgyProfileConfig): AgyProfileConfig | undefined {
+  return profile;
 }
 
 export function resolveAgyNativeMemberPatch(input: {
@@ -57,21 +55,5 @@ export function resolveAgyNativeMemberPatch(input: {
   }
   if (input.cliConfigArgs?.length) throw new Error('AGY Native does not accept CLI extension arguments');
   if (next.model !== input.model) throw new Error('AGY Native profile model must match the member model ID');
-  if (!input.requested) {
-    if (input.accountRef === input.previousAccountRef || !next.nativeCodingGrant) return undefined;
-    const { nativeCodingGrant: _grant, ...unboundProfile } = next;
-    return unboundProfile;
-  }
-  // A profile/account/model/workspace change cannot carry old task write authority into a new binding.
-  const unchanged =
-    input.accountRef === input.previousAccountRef &&
-    ['profileId', 'homeRoot', 'model', 'enabled', 'autoApprove', 'trustedWorkspaces'].every(
-      (key) =>
-        JSON.stringify(input.current?.[key as keyof AgyProfileConfig]) ===
-        JSON.stringify(input.requested?.[key as keyof MemberSettings]),
-    );
-  return {
-    ...input.requested,
-    ...(unchanged && input.current?.nativeCodingGrant ? { nativeCodingGrant: input.current.nativeCodingGrant } : {}),
-  };
+  return input.requested ?? undefined;
 }

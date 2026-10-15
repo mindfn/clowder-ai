@@ -17,6 +17,9 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 import Fastify from 'fastify';
+import { isolateManagedJobData } from './helpers/isolated-managed-job-data.js';
+
+isolateManagedJobData();
 
 describe('F167 C1: /api/callbacks/hold-ball auth + body validation', () => {
   let registry;
@@ -292,7 +295,7 @@ describe('F167 C1: /api/callbacks/hold-ball auth + body validation', () => {
   });
 
   for (const wakeWhen of [
-    { command: 'echo ok', executionSlaMs: 7_200_000 },
+    { command: 'echo ok', executionSlaMs: 10_800_001 },
     { command: 'pnpm gate', executionSlaMs: 10_800_001 },
     { command: 'pnpm gate', executionSlaMs: 999 },
     { command: 'pnpm gate', executionSlaMs: 1_000.5 },

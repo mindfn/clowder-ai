@@ -3,9 +3,9 @@ import { join } from 'node:path';
 import { findMonorepoRoot } from '../../utils/monorepo-root.js';
 import {
   type CliConfigPaths,
-  generateCliConfigs,
   healCatCafeMcpTopology,
   readCapabilitiesConfig,
+  reconcileMcpRuntimeConfig,
   withCapabilityLock,
   writeCapabilitiesConfig,
 } from './capability-orchestrator.js';
@@ -65,7 +65,7 @@ export async function regenerateStartupCliConfigs(
       await writeCapabilitiesConfig(projectRoot, config);
     }
 
-    await generateCliConfigs(config, paths, projectRoot);
+    await reconcileMcpRuntimeConfig(config, paths, projectRoot);
     return { projectRoot, generated: true, healed: healed.migrated };
   });
 }

@@ -1,6 +1,8 @@
 import type { UnifiedAttentionItemV1 } from '@cat-cafe/shared';
 import { useId, useSyncExternalStore } from 'react';
-import { ShellCatAvatar } from '../ShellCatAvatar';
+import { useCatData } from '@/hooks/useCatData';
+import { conversationDecisionCopy } from '../../rich/conversation-decision.shell-copy';
+import { knownCatName, ShellCatAvatar, UNKNOWN_CAT_NAME } from '../ShellCatAvatar';
 import { useShellCopy } from '../shell-copy';
 import { isHostableApproval } from './approval-match';
 import { describeReconcile } from './approval-reconcile';
@@ -8,6 +10,7 @@ import { type ApprovalSessions, sessionKey } from './approval-sessions';
 import { HostedApprovalCard } from './HostedApprovalCard';
 import { MailboxChoiceCard } from './MailboxChoiceCard';
 import { MailboxItemPersonalAction } from './MailboxItemPersonalAction';
+import { MailboxRuntimeCard } from './MailboxRuntimeCard';
 import { MailboxWorkDetails } from './MailboxWorkDetails';
 import { mailboxEntryCopy } from './mailbox-entry.shell-copy';
 import { useMailboxRowText } from './mailbox-row-text';
@@ -116,15 +119,30 @@ function RowBody({
     >
       {item.userMention ? (
         <UserMentionDetails key={item.userMention.messageId} request={item.userMention} showHandling={!personal} />
-      ) : item.approval || item.choiceRequest ? null : (
+      ) : item.approval || item.choiceRequest || item.runtimeInteraction ? null : (
         <MailboxWorkDetails item={item} />
       )}
-      {personal && !hostable && !item.userMention ? (
+      {personal && !hostable && !item.userMention && !((item.choiceRequest || item.runtimeInteraction) && hosted) ? (
         <div className="flex flex-wrap items-center justify-end gap-2">
           <MailboxItemPersonalAction item={item} personal={personal} />
         </div>
       ) : null}
-      {item.choiceRequest && hosted ? (
+      {item.runtimeInteraction && hosted ? (
+        <MailboxRuntimeCard
+          source={item.runtimeInteraction}
+          ownerUserId={hosted.ownerUserId}
+          sessions={hosted.sessions}
+          readCurrent={readCurrent}
+          onAnswerInText={() => onOpen(place)}
+          secondaryActions={
+            <>
+              {personal ? <MailboxItemPersonalAction item={item} personal={personal} /> : null}
+              <PlaceAction quiet place={place} onOpen={onOpen} />
+            </>
+          }
+        />
+      ) : null}
+      {item.choiceRequest && !item.runtimeInteraction && hosted ? (
         <MailboxChoiceCard
           key={`${item.choiceRequest.interactionId}:${item.choiceRequest.revision}`}
           choice={item.choiceRequest}
@@ -142,7 +160,7 @@ function RowBody({
           onOpen={onOpen}
           readCurrent={readCurrent}
         />
-      ) : item.userMention && personal ? null : (
+      ) : (item.userMention && personal) || (item.runtimeInteraction && hosted) ? null : (
         <PlaceAction quiet={Boolean(item.approval)} place={place} onOpen={onOpen} />
       )}
     </section>
@@ -176,6 +194,8 @@ export function MailboxRow({
   readCurrent?: boolean;
 }) {
   const t = useShellCopy(mailboxEntryCopy);
+  const conversationCopy = useShellCopy(conversationDecisionCopy);
+  const { getCatById } = useCatData({ fetch: false });
   const bodyId = useId();
   const { catId, lead, title, source, time } = useMailboxRowText(item);
   const heading = lead ? `${lead} ${title}` : title;
@@ -183,10 +203,14 @@ export function MailboxRow({
     hosted && item.approval ? hosted.sessions.get(sessionKey(hosted.ownerUserId, item.approval)) : undefined;
   const retainingDecision = session !== undefined && session.model.state.kind !== 'idle';
   const open = expanded && (!stale || retainingDecision);
+  const nativeConversation = Boolean(hosted && item.runtimeInteraction?.sourceKind === 'conversation_decision');
+  const requester = item.runtimeInteraction?.requesterCatId;
+  const requesterName = requester ? (knownCatName(requester, getCatById) ?? UNKNOWN_CAT_NAME) : null;
+  const requesterModel = requester ? getCatById(requester)?.defaultModel : null;
   return (
     <li
       data-testid="mailbox-item"
-      data-kind-label={item.choiceRequest ? t.choice : t.kinds[item.kind]}
+      data-kind-label={nativeConversation ? conversationCopy.kind : item.choiceRequest ? t.choice : t.kinds[item.kind]}
       data-row-key={rowKey}
       data-stale={stale ? 'true' : undefined}
       data-expanded={open ? 'true' : 'false'}
@@ -198,76 +222,95 @@ export function MailboxRow({
       }}
     >
       <div className={item.userMention && personal ? 'flex items-start gap-2 px-3 py-3' : undefined}>
-        <button
-          type="button"
-          data-testid="mailbox-item-toggle"
-          aria-expanded={open}
-          aria-controls={bodyId}
-          disabled={stale}
-          onClick={onToggle}
-          className={`shell-nav-row shell-focusable flex min-w-0 flex-1 flex-col gap-1.5 rounded-[14px] text-left text-sm ${item.userMention && personal ? '' : 'w-full px-4 py-3'}`}
-        >
-          {item.userMention ? (
-            <>
-              <span className="flex w-full items-start gap-2">
-                {catId ? (
-                  <span className="mt-px flex-none" data-testid="mailbox-item-avatar">
-                    <ShellCatAvatar catId={catId} size={24} />
+        {nativeConversation ? (
+          <div
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 pt-3 text-xs"
+            style={{ color: 'var(--shell-muted)' }}
+          >
+            <span>{conversationCopy.kind}</span>
+            {requester ? (
+              <span className="inline-flex min-w-0 items-center gap-1">
+                <ShellCatAvatar catId={requester} size={20} />
+                <span className="break-words">
+                  {requesterName}
+                  {requesterModel ? ` · ${requesterModel}` : ''}
+                </span>
+              </span>
+            ) : null}
+            {time ? <time className="ml-auto flex-none whitespace-nowrap">{time}</time> : null}
+          </div>
+        ) : (
+          <button
+            type="button"
+            data-testid="mailbox-item-toggle"
+            aria-expanded={open}
+            aria-controls={bodyId}
+            disabled={stale}
+            onClick={onToggle}
+            className={`shell-nav-row shell-focusable flex min-w-0 flex-1 flex-col gap-1.5 rounded-[14px] text-left text-sm ${item.userMention && personal ? '' : 'w-full px-4 py-3'}`}
+          >
+            {item.userMention ? (
+              <>
+                <span className="flex w-full items-start gap-2">
+                  {catId ? (
+                    <span className="mt-px flex-none" data-testid="mailbox-item-avatar">
+                      <ShellCatAvatar catId={catId} size={24} />
+                    </span>
+                  ) : null}
+                  <span
+                    data-testid="mailbox-mention-preview"
+                    className="line-clamp-2 min-w-0 break-words text-sm"
+                    style={{ color: 'var(--shell-body)' }}
+                  >
+                    {source}：{item.userMention.content}
                   </span>
-                ) : null}
+                </span>
                 <span
-                  data-testid="mailbox-mention-preview"
-                  className="line-clamp-2 min-w-0 break-words text-sm"
-                  style={{ color: 'var(--shell-body)' }}
+                  className="flex w-full min-w-0 items-center gap-2 pl-8 text-xs"
+                  style={{ color: 'var(--shell-muted)' }}
                 >
-                  {source}：{item.userMention.content}
+                  <span className={`min-w-0 flex-1 ${open ? 'break-words' : 'truncate'}`}>{title}</span>
+                  {time && !personal ? <time className="flex-none whitespace-nowrap">{time}</time> : null}
+                  <Chevron open={open} />
                 </span>
-              </span>
-              <span
-                className="flex w-full min-w-0 items-center gap-2 pl-8 text-xs"
-                style={{ color: 'var(--shell-muted)' }}
-              >
-                <span className={`min-w-0 flex-1 ${open ? 'break-words' : 'truncate'}`}>{title}</span>
-                {time && !personal ? <time className="flex-none whitespace-nowrap">{time}</time> : null}
-                <Chevron open={open} />
-              </span>
-            </>
-          ) : (
-            <>
-              <span className="flex w-full items-center gap-2">
-                <span
-                  className="flex-none rounded px-1.5 text-micro"
-                  style={{ background: 'var(--shell-selected)', color: 'var(--shell-muted)' }}
-                >
-                  {item.choiceRequest ? t.choice : t.kinds[item.kind]}
+              </>
+            ) : (
+              <>
+                <span className="flex w-full items-center gap-2">
+                  <span
+                    className="flex-none rounded px-1.5 text-micro"
+                    style={{ background: 'var(--shell-selected)', color: 'var(--shell-muted)' }}
+                  >
+                    {item.choiceRequest ? t.choice : t.kinds[item.kind]}
+                  </span>
+                  <span className="flex-1" />
+                  {time ? (
+                    <span className="text-xs" style={{ color: 'var(--shell-muted)' }}>
+                      {time}
+                    </span>
+                  ) : null}
+                  <Chevron open={open} />
                 </span>
-                <span className="flex-1" />
-                {time ? (
-                  <span className="text-xs" style={{ color: 'var(--shell-muted)' }}>
-                    {time}
+                <span className="flex w-full items-start gap-2">
+                  {catId ? (
+                    <span className="mt-px flex-none" data-testid="mailbox-item-avatar">
+                      <ShellCatAvatar catId={catId} size={24} />
+                    </span>
+                  ) : null}
+                  <span className={`${open ? 'block' : 'line-clamp-2 block'} min-w-0 flex-1`}>
+                    {lead ? <span className="font-semibold">{lead} </span> : null}
+                    {title}
+                  </span>
+                </span>
+                {source ? (
+                  <span className="block truncate text-xs" style={{ color: 'var(--shell-muted)' }}>
+                    {source}
                   </span>
                 ) : null}
-                <Chevron open={open} />
-              </span>
-              <span className="flex w-full items-start gap-2">
-                {catId ? (
-                  <span className="mt-px flex-none" data-testid="mailbox-item-avatar">
-                    <ShellCatAvatar catId={catId} size={24} />
-                  </span>
-                ) : null}
-                <span className={`${open ? 'block' : 'line-clamp-2 block'} min-w-0 flex-1`}>
-                  {lead ? <span className="font-semibold">{lead} </span> : null}
-                  {title}
-                </span>
-              </span>
-              {source ? (
-                <span className="block truncate text-xs" style={{ color: 'var(--shell-muted)' }}>
-                  {source}
-                </span>
-              ) : null}
-            </>
-          )}
-        </button>
+              </>
+            )}
+          </button>
+        )}
         {item.userMention && personal ? (
           <div className="flex flex-none flex-col items-end gap-1.5" data-testid="mailbox-row-actions">
             <div className="flex items-center gap-1">
@@ -282,8 +325,8 @@ export function MailboxRow({
           </div>
         ) : null}
       </div>
-      <RowSessionLine open={open} hosted={hosted} approval={item.approval} />
-      {open ? (
+      <RowSessionLine open={open || nativeConversation} hosted={hosted} approval={item.approval} />
+      {open || nativeConversation ? (
         <RowBody
           item={item}
           id={bodyId}

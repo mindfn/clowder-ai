@@ -259,6 +259,8 @@ type ExtraCarrierPersistence = ExtraCarrierPersistenceClassification<{
   collectiveWorkDelegationV1: 'parsed';
   collectiveAuthorizationInvalid: 'derived';
   semanticEvent: 'parsed';
+  runtimeInteractionReturn: 'parsed';
+  runtimeInteractionCard: 'parsed';
   realtimeCompanion: 'parsed';
   liveCompanion: 'parsed';
   liveAdmission: 'parsed';
@@ -536,6 +538,50 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
 
     if (isProviderSemanticEvent(parsed.semanticEvent)) {
       result.semanticEvent = parsed.semanticEvent;
+      hasField = true;
+    }
+
+    const runtimeReturn = parsed.runtimeInteractionReturn;
+    if (
+      runtimeReturn &&
+      typeof runtimeReturn === 'object' &&
+      typeof runtimeReturn.interactionId === 'string' &&
+      runtimeReturn.interactionId.length > 0 &&
+      typeof runtimeReturn.operationId === 'string' &&
+      runtimeReturn.operationId.length > 0 &&
+      (runtimeReturn.author === 'owner' || runtimeReturn.author === 'host') &&
+      typeof runtimeReturn.requesterCatId === 'string' &&
+      runtimeReturn.requesterCatId.length > 0 &&
+      typeof runtimeReturn.cardMessageId === 'string' &&
+      runtimeReturn.cardMessageId.length > 0
+    ) {
+      result.runtimeInteractionReturn = {
+        interactionId: runtimeReturn.interactionId,
+        operationId: runtimeReturn.operationId,
+        author: runtimeReturn.author,
+        requesterCatId: runtimeReturn.requesterCatId as CatId,
+        cardMessageId: runtimeReturn.cardMessageId,
+      };
+      hasField = true;
+    }
+
+    const runtimeCard = parsed.runtimeInteractionCard;
+    if (
+      runtimeCard &&
+      typeof runtimeCard === 'object' &&
+      runtimeCard.version === 1 &&
+      typeof runtimeCard.interactionId === 'string' &&
+      runtimeCard.interactionId.length > 0 &&
+      typeof runtimeCard.blockId === 'string' &&
+      runtimeCard.blockId.length > 0 &&
+      ['approval', 'question', 'elicitation', 'conversation_decision'].includes(String(runtimeCard.requestKind))
+    ) {
+      result.runtimeInteractionCard = {
+        version: 1,
+        interactionId: runtimeCard.interactionId,
+        blockId: runtimeCard.blockId,
+        requestKind: runtimeCard.requestKind as 'approval' | 'question' | 'elicitation' | 'conversation_decision',
+      };
       hasField = true;
     }
 

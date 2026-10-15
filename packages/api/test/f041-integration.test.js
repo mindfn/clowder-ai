@@ -3,7 +3,7 @@
  * F041 Integration Tests — 红绿测试
  *
  * End-to-end verification of the capability management pipeline:
- * 1. Config round-trip: capabilities.json ↔ CLI configs
+ * 1. Config round-trip: capabilities.json → invocation-owned MCP config
  * 2. Injection互斥: MCP available → no injection; unavailable → fallback
  * 3. Discovery consistency: external servers correctly merged
  * 4. Per-cat override resolution
@@ -20,11 +20,31 @@ const {
   writeCapabilitiesConfig,
   bootstrapCapabilities,
   resolveServersForCat,
-  generateCliConfigs,
+  reconcileMcpRuntimeConfig,
   orchestrate,
 } = await import('../dist/config/capabilities/capability-orchestrator.js');
 
-const { readGeminiMcpConfig } = await import('../dist/config/capabilities/mcp-config-adapters.js');
+const { resolveProviderMcpConfig } = await import(
+  '../dist/domains/cats/services/agents/providers/provider-mcp-config.js'
+);
+const { MCP_CALLBACK_ENV_KEYS } = await import('../dist/config/capabilities/mcp-constants.js');
+const callbackEnv = Object.fromEntries(MCP_CALLBACK_ENV_KEYS.map((key) => [key, `fixture-${key}`]));
+callbackEnv.CAT_CAFE_CAT_ID = 'gemini';
+async function invocationServers(dir) {
+  const { readFile } = await import('node:fs/promises');
+  await assert.rejects(
+    readFile(join(dir, '.gemini', 'settings.json')),
+    { code: 'ENOENT' },
+    'retired global writer must stay absent',
+  );
+  const servers = await resolveProviderMcpConfig({
+    callbackEnv,
+    workingDirectory: dir,
+    mcpServerPath: new URL('../../mcp-server/dist/index.js', import.meta.url).pathname,
+    provider: 'google',
+  });
+  return Object.entries(servers).map(([name, entry]) => ({ name, ...entry }));
+}
 
 const { needsMcpInjection, buildMcpCallbackInstructions } = await import(
   '../dist/domains/cats/services/agents/invocation/McpPromptInjector.js'
@@ -51,7 +71,7 @@ describe('F041 Config Round-Trip', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('capabilities.json → CLI configs → read back preserves servers', async () => {
+  it('capabilities.json → invocation MCP preserves enabled servers without a legacy writer', async () => {
     // Seed capabilities.json with cat-cafe + external
     const config = {
       version: /** @type {1} */ (1),
@@ -83,14 +103,14 @@ describe('F041 Config Round-Trip', () => {
 
     await writeCapabilitiesConfig(dir, config);
 
-    // #712: Only Gemini gets persistent CLI config; Claude/Codex use invoke-time injection
+    // F325: all active carriers consume invocation-owned MCP configuration.
     const paths = {
       google: join(dir, '.gemini', 'settings.json'),
     };
-    await generateCliConfigs(config, paths, dir);
+    await reconcileMcpRuntimeConfig(config, paths, dir);
 
-    // Read back Gemini CLI config — the only persistent config
-    const geminiServers = await readGeminiMcpConfig(paths.google);
+    // Render the same canonical resolver consumed by Native.
+    const geminiServers = await invocationServers(dir);
 
     assert.ok(
       geminiServers.find((s) => s.name === 'cat-cafe'),
@@ -110,7 +130,7 @@ describe('F041 Config Round-Trip', () => {
       geminiConfig: join(dir, 'x.json'),
       kimiConfig: join(dir, 'x-kimi.json'),
     };
-    // #712: Only Gemini gets persistent CLI config
+    // Legacy path retained only to prove reconciliation does not write it.
     const cliPaths = {
       google: join(dir, '.gemini', 'settings.json'),
     };
@@ -126,7 +146,7 @@ describe('F041 Config Round-Trip', () => {
 // 1b. Cloud P1-1: Bootstrap must generate CLI configs
 // ════════════════════════════════════════════════════
 
-describe('F041 Cloud P1-1: bootstrap generates CLI configs', () => {
+describe('F041 Cloud P1-1: bootstrap feeds invocation-owned MCP', () => {
   /** @type {string} */ let dir;
 
   beforeEach(async () => {
@@ -136,7 +156,7 @@ describe('F041 Cloud P1-1: bootstrap generates CLI configs', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('bootstrapCapabilities + generateCliConfigs produces CLI config files', async () => {
+  it('bootstrap and reconciliation feed the next invocation without global CLI writes', async () => {
     // Simulate first-run: no capabilities.json exists
     const discoveryPaths = {
       claudeConfig: join(dir, '.mcp.json'),
@@ -144,7 +164,7 @@ describe('F041 Cloud P1-1: bootstrap generates CLI configs', () => {
       geminiConfig: join(dir, '.gemini', 'settings.json'),
       kimiConfig: join(dir, '.kimi', 'mcp.json'),
     };
-    // #712: Only Gemini gets persistent CLI config
+    // Legacy path retained only to prove reconciliation does not write it.
     const cliPaths = {
       google: join(dir, '.gemini', 'settings.json'),
     };
@@ -153,11 +173,11 @@ describe('F041 Cloud P1-1: bootstrap generates CLI configs', () => {
     const config = await bootstrapCapabilities(dir, discoveryPaths);
     assert.ok(config, 'Bootstrap should return config');
 
-    // CLI configs should be generated after bootstrap
-    await generateCliConfigs(config, cliPaths, dir);
+    // Reconcile discovery; the next invocation renders its config.
+    await reconcileMcpRuntimeConfig(config, cliPaths, dir);
 
-    // Verify Gemini CLI config contains split cat-cafe servers
-    const geminiServers = await readGeminiMcpConfig(cliPaths.google);
+    // Verify the invocation contains split managed servers.
+    const geminiServers = await invocationServers(dir);
     const collab = geminiServers.find((s) => s.name === 'cat-cafe-collab');
     const memory = geminiServers.find((s) => s.name === 'cat-cafe-memory');
     const signals = geminiServers.find((s) => s.name === 'cat-cafe-signals');
@@ -165,29 +185,18 @@ describe('F041 Cloud P1-1: bootstrap generates CLI configs', () => {
     assert.ok(memory);
     assert.ok(signals);
     for (const server of [collab, memory, signals]) {
-      // #712: env placeholders now include all MCP_CALLBACK_ENV_KEYS from mcp-constants.ts
-      assert.deepEqual(server.env, {
-        CAT_CAFE_API_URL: '${CAT_CAFE_API_URL}',
-        CAT_CAFE_INVOCATION_ID: '${CAT_CAFE_INVOCATION_ID}',
-        CAT_CAFE_CALLBACK_TOKEN: '${CAT_CAFE_CALLBACK_TOKEN}',
-        CAT_CAFE_USER_ID: '${CAT_CAFE_USER_ID}',
-        CAT_CAFE_CAT_ID: '${CAT_CAFE_CAT_ID}',
-        CAT_CAFE_THREAD_ID: '${CAT_CAFE_THREAD_ID}',
-        CAT_CAFE_SIGNAL_USER: '${CAT_CAFE_SIGNAL_USER}',
-        CAT_CAFE_RUN_TYPE: '${CAT_CAFE_RUN_TYPE}',
-        CAT_CAFE_AUDIT_TOPIC: '${CAT_CAFE_AUDIT_TOPIC}',
-        // CAT_CAFE_CREDENTIAL_FILE intentionally absent — session-scoped,
-        // injected by the ACP layer at session creation (#1099 review P1)
-      });
+      const { ALLOWED_WORKSPACE_DIRS, ...boundEnv } = server.env;
+      assert.ok(ALLOWED_WORKSPACE_DIRS, 'the configured workspace boundary remains present');
+      assert.deepEqual(boundEnv, callbackEnv, 'only this invocation supplies identity and callback credentials');
     }
   });
 });
 
 // ════════════════════════════════════════════════════
-// 1c. Hot-Reload: PATCH toggle → CLI config regenerated
+// 1c. Hot-Reload: PATCH toggle → next invocation config refreshed
 // ════════════════════════════════════════════════════
 
-describe('F041 Hot-Reload: toggle → CLI config regenerated', () => {
+describe('F041 Hot-Reload: toggle → next invocation config refreshed', () => {
   /** @type {string} */ let dir;
 
   beforeEach(async () => {
@@ -197,7 +206,7 @@ describe('F041 Hot-Reload: toggle → CLI config regenerated', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('disabling MCP tool via PATCH removes it from CLI configs', async () => {
+  it('disabling MCP tool removes it from the next invocation', async () => {
     // 1. Seed: two MCP tools, both enabled
     const config = {
       version: /** @type {1} */ (1),
@@ -220,14 +229,14 @@ describe('F041 Hot-Reload: toggle → CLI config regenerated', () => {
     };
     await writeCapabilitiesConfig(dir, config);
 
-    // #712: Only Gemini gets persistent CLI config
+    // Legacy path retained only to prove reconciliation does not write it.
     const paths = {
       google: join(dir, '.gemini', 'settings.json'),
     };
-    await generateCliConfigs(config, paths, dir);
+    await reconcileMcpRuntimeConfig(config, paths, dir);
 
     // Verify both present in Gemini
-    let gemini = await readGeminiMcpConfig(paths.google);
+    let gemini = await invocationServers(dir);
     assert.ok(
       gemini.find((s) => s.name === 'filesystem'),
       'filesystem should be in Gemini config',
@@ -241,10 +250,10 @@ describe('F041 Hot-Reload: toggle → CLI config regenerated', () => {
     fsCap.enabled = false;
     fsCap.globalEnabled = false;
     await writeCapabilitiesConfig(dir, updated);
-    await generateCliConfigs(updated, paths, dir);
+    await reconcileMcpRuntimeConfig(updated, paths, dir);
 
     // 3. Verify: filesystem removed from Gemini config
-    gemini = await readGeminiMcpConfig(paths.google);
+    gemini = await invocationServers(dir);
     assert.ok(
       !gemini.find((s) => s.name === 'filesystem'),
       'filesystem should be REMOVED from Gemini config after disable',
@@ -255,7 +264,7 @@ describe('F041 Hot-Reload: toggle → CLI config regenerated', () => {
     );
   });
 
-  it('re-enabling MCP tool via PATCH restores it in CLI configs', async () => {
+  it('re-enabling MCP tool restores it to the next invocation', async () => {
     // 1. Seed: filesystem disabled
     const config = {
       version: /** @type {1} */ (1),
@@ -279,14 +288,14 @@ describe('F041 Hot-Reload: toggle → CLI config regenerated', () => {
     };
     await writeCapabilitiesConfig(dir, config);
 
-    // #712: Only Gemini gets persistent CLI config
+    // Legacy path retained only to prove reconciliation does not write it.
     const paths = {
       google: join(dir, '.gemini', 'settings.json'),
     };
-    await generateCliConfigs(config, paths, dir);
+    await reconcileMcpRuntimeConfig(config, paths, dir);
 
     // Verify filesystem not in Gemini
-    let gemini = await readGeminiMcpConfig(paths.google);
+    let gemini = await invocationServers(dir);
     assert.ok(!gemini.find((s) => s.name === 'filesystem'), 'filesystem starts disabled in Gemini');
 
     // 2. PATCH: re-enable filesystem (set both enabled and globalEnabled)
@@ -297,10 +306,10 @@ describe('F041 Hot-Reload: toggle → CLI config regenerated', () => {
     fsCap.enabled = true;
     fsCap.globalEnabled = true;
     await writeCapabilitiesConfig(dir, updated);
-    await generateCliConfigs(updated, paths, dir);
+    await reconcileMcpRuntimeConfig(updated, paths, dir);
 
     // 3. Verify: filesystem restored in Gemini config
-    gemini = await readGeminiMcpConfig(paths.google);
+    gemini = await invocationServers(dir);
     assert.ok(
       gemini.find((s) => s.name === 'filesystem'),
       'filesystem should be RESTORED in Gemini config after re-enable',

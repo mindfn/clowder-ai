@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -77,6 +77,24 @@ export async function runTestCommand(command, { cwd, env, signal }) {
     killGraceMs: 2000,
     settleGraceMs: 100,
     isCommandClosed: () => tracked.ended,
+    killImpl: (pid, killSignal) => {
+      // Capture only process identity/state, never argv or its environment.
+      // This runs only for a token-matched process the cleanup already owns.
+      try {
+        const identity = execFileSync('/bin/ps', ['-p', String(pid), '-o', 'pid=,ppid=,stat=,etime=,comm='], {
+          encoding: 'utf8',
+          timeout: 1000,
+          maxBuffer: 4096,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
+          .trim()
+          .slice(0, 512);
+        console.error(`[redis-test] cleanup signal=${killSignal} process=${identity || pid}`);
+      } catch {
+        console.error(`[redis-test] cleanup signal=${killSignal} pid=${pid} identity=unavailable`);
+      }
+      process.kill(pid, killSignal);
+    },
   });
   if (!proof.tokenZeroMatches || proof.killedPids.length > 0) {
     console.error(`[redis-test] command descendants cleanup=${proof.status} killed=${proof.killedPids.length}`);

@@ -1,6 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { writeShellPresentation } from '@/components/shell/shell-presentation';
 import { MOMENTS } from '../EvolutionJourney';
 import { parseProgramProjection } from '../evolution-program-projection';
 import { DEFAULT_READING, useEvolutionReading } from '../evolution-reading-state';
@@ -53,6 +54,25 @@ describe('F311 production preparation reading surface', () => {
     expect(button, label).toBeDefined();
     await act(async () => button?.click());
   }
+
+  it('shows one honest v2 activity line with the selected section work, while classic keeps its detail', async () => {
+    localStorage.setItem('cat-cafe:shell-presentation', 'v2');
+    const projection = fixtureProjection();
+    const activity = projection.preparation!.sections.object_map.activities[0]!;
+    delete activity.itemId;
+    activity.state = 'unknown';
+    activity.spinning = false;
+    await render(projection);
+    expect(host.textContent?.match(/活动状态待核实/g)).toHaveLength(1);
+    expect(host.querySelector('[role="status"]')?.textContent).toContain('最近记录的工作：核查项目数据与反馈入口');
+    expect(host.querySelector('[data-preparation-spinner]')).toBeNull();
+    expect(host.textContent).toContain('当前 Program 只绑定一个 target');
+    await act(async () => {
+      writeShellPresentation('classic');
+    });
+    await render(projection);
+    expect(host.querySelector('.evolution-preparation-section-activity')?.textContent).toContain('活动状态待核实');
+  });
 
   it('accepts all 32 object source refs permitted by the submitted body', () => {
     const projection = fixtureProjection();

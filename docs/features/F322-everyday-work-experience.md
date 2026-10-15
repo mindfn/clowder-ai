@@ -10,6 +10,14 @@ description_source: model
 description_author: codex-astra
 description_updated_at: 2026-09-27T00:55:00Z
 tips_exempt: "本次整治首先让已有入口和状态自解释，不用主动 tips 弥补不清楚的图标；若实施新增可独立发现的用户能力，再按具体 delta 贡献 tip。"
+mcp_admission_status: accepted
+mcp_admission_ref: "file:docs/features/F322-everyday-work-experience.md"
+mcp_admission_claims:
+  - ref: "file:docs/features/F322-everyday-work-experience.md"
+    toolName: cat_cafe_manage_conversation_decision
+    resourceFamily: runtime-interaction
+    boundaryKind: side-effect-boundary
+    decision: accepted
 ---
 
 # F322: Everyday Work Experience｜看得懂、找得到、接得上

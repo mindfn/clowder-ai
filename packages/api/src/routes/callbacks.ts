@@ -40,6 +40,7 @@ import {
   resolveGitHubNotificationPerspective,
   resolveWorkflowSopSkill,
   reviewSubjectRefSchema,
+  runtimeConversationResponseSchema,
   VersionBoundContextAttachmentsSchema,
 } from '@cat-cafe/shared';
 import type { FastifyBaseLogger, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
@@ -235,7 +236,6 @@ import { registerCallbackMemoryRoutes } from './callback-memory-routes.js';
 import { projectCallbackMessageBody, projectQueuedCallbackMessageBody } from './callback-message-body.js';
 import { registerCallbackMessageReadRoutes } from './callback-message-read-routes.js';
 import { getMultiMentionOrchestrator, registerMultiMentionRoutes } from './callback-multi-mention-routes.js';
-import { registerCallbackNativeTestGrantRoute } from './callback-native-test-grant.js';
 import { registerNativeTurnAdmissionRoute } from './callback-native-turn-admission.js';
 import {
   appendDispatchNegativeAuthorizationBlockedAudit,
@@ -853,6 +853,7 @@ export interface CallbackRoutesOptions {
   /** Host-selected single project for the Live companion; never a model selector. */
   companionProjectPath?: string;
   companionRuntimeInteractionStore?: import('../domains/runtime-interaction/ports/RuntimeInteractionStore.js').RuntimeInteractionPendingReadSource;
+  runtimeInteractionService?: import('../domains/runtime-interaction/RuntimeInteractionService.js').RuntimeInteractionService;
   withLiveCarrierOperation?: <T>(
     query: { invocationId: string; catId: string; threadId: string },
     operation: () => Promise<T>,
@@ -1320,7 +1321,26 @@ const richBlockSchema = z.discriminatedUnion('kind', [
 ]);
 const createRichBlockSchema = z.object({
   block: richBlockSchema,
+  awaitResponseV1: z
+    .object({
+      mode: z.literal('once'),
+      allowTextResponse: z.boolean().optional().default(true),
+      deadlineAt: z.number().int().positive().optional(),
+      defaultResponse: runtimeConversationResponseSchema.optional(),
+    })
+    .strict()
+    .optional(),
 });
+
+function conversationDecisionInteractionId(invocationId: string, blockId: string): string {
+  const digest = createHash('sha256')
+    .update('cat-cafe:runtime-interaction:conversation:v1\0')
+    .update(invocationId)
+    .update('\0')
+    .update(blockId)
+    .digest('hex');
+  return `conversation:${digest}`;
+}
 
 function canUnregisterTrackingTask(
   task: { readonly userId?: string; readonly threadId: string },
@@ -1454,7 +1474,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     ...(opts.admitDotReturn ? { allowDotSourceBoundReturn: true } : {}),
   });
   if (opts.companionProjectPath) {
-    registerCompanionWorkReadRoutes(app, opts.companionProjectPath, opts.companionRuntimeInteractionStore);
+    registerCompanionWorkReadRoutes(
+      app,
+      opts.companionProjectPath,
+      opts.companionRuntimeInteractionStore,
+      messageStore,
+    );
   }
   if (taskStore && opts.deploymentObservationProvider && opts.deploymentWaitLifecycleHolder) {
     registerCallbackDeploymentWaitRoutes(app, {
@@ -1467,11 +1492,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     });
   }
   registerNativeTurnAdmissionRoute(app);
-  registerCallbackNativeTestGrantRoute(app, {
-    ...(taskStore ? { taskStore } : {}),
-    ...(threadStore ? { threadStore } : {}),
-    getGrantConfig: (catId) => catRegistry.tryGet(catId as string)?.config.agyProfile?.nativeCodingGrant,
-  });
   if (opts.meetingArtifactReaderHolder) {
     registerCallbackMeetingArtifactRoutes(app, {
       readerHolder: opts.meetingArtifactReaderHolder,
@@ -6316,7 +6336,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const record = requireCallbackAuth(request, reply);
     if (!record) return;
 
-    const { block } = parsed.data;
+    const { block, awaitResponseV1 } = parsed.data;
     const { invocationId } = record;
     // #573: parent (outer) id used for broadcast identity to align with stream/queue path.
     const effectiveInvId = record.parentInvocationId ?? invocationId;
@@ -6335,6 +6355,60 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
     if (!(await registry.isLatest(invocationId))) {
       return { status: 'stale_ignored' };
+    }
+
+    if (awaitResponseV1) {
+      if (record.toolExecutionPolicy) {
+        reply.status(403);
+        return { error: 'awaitResponseV1 is available only in an ordinary conversation invocation' };
+      }
+      if (block.kind !== 'interactive') {
+        reply.status(400);
+        return { error: 'awaitResponseV1 requires one interactive block' };
+      }
+      if (!opts.runtimeInteractionService) {
+        reply.status(503);
+        return { error: 'Conversation decision runtime unavailable' };
+      }
+      try {
+        const interaction = await opts.runtimeInteractionService.createConversationDecision({
+          version: 1,
+          interactionId: conversationDecisionInteractionId(record.invocationId, block.id),
+          kind: 'conversation_decision',
+          owner: {
+            userId: record.userId,
+            threadId: record.threadId,
+            catId: record.catId,
+            invocationId: record.invocationId,
+          },
+          createdAt: Date.now(),
+          title: block.title?.trim() || '需要你决定',
+          ...(block.description ? { description: block.description } : {}),
+          presentation: block,
+          allowTextResponse: awaitResponseV1.allowTextResponse,
+          ...(awaitResponseV1.deadlineAt ? { deadlineAt: awaitResponseV1.deadlineAt } : {}),
+          ...(awaitResponseV1.defaultResponse ? { defaultResponse: awaitResponseV1.defaultResponse } : {}),
+        });
+        return {
+          status: 'ok',
+          interactionId: interaction.request.interactionId,
+          revision: interaction.revision,
+          cardRef: interaction.cardRef,
+          routing_warnings: [],
+          message: '一次性决定卡已发布；当前调用不会等待用户回答。',
+        };
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          reply.status(400);
+          return { error: 'Invalid conversation decision', details: error.issues };
+        }
+        const { RuntimeInteractionError } = await import('../domains/runtime-interaction/RuntimeInteractionError.js');
+        if (error instanceof RuntimeInteractionError) {
+          reply.status(error.code === 'unavailable' ? 503 : 409);
+          return { error: error.message, ...(error.reasonCode ? { reasonCode: error.reasonCode } : {}) };
+        }
+        throw error;
+      }
     }
 
     // F34-b: Resolve voice blocks (audio with text, no url) before buffering

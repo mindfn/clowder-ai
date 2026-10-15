@@ -83,6 +83,26 @@ function bashSets(command) {
 }
 
 describe('segment locations agree with bash on the exactly-modelled grammar', () => {
+  test('directory changes separate argv from attached and spaced redirections', () => {
+    for (const change of [
+      `cd '${dirs.A}' >/dev/null`,
+      `pushd '${dirs.A}' > /dev/null`,
+      `cd '${dirs.A}' 2>/dev/null`,
+      `>/dev/null pushd '${dirs.A}'`,
+      `time cd '${dirs.A}' >/dev/null`,
+    ]) {
+      for (const command of [`${change} && pwd -P`, `( ${change} && pwd -P )`]) {
+        const actual = spawnSync('bash', ['-c', command], { cwd: dirs.S, encoding: 'utf8' });
+        assert.equal(actual.status, 0, command);
+        assert.deepEqual(
+          segmentLocations(splitShellExecutionSegmentsWithSeparators(command), dirs.S).at(-1),
+          [actual.stdout.trim()],
+          command,
+        );
+      }
+    }
+  });
+
   test('every reachable marker gets exactly the directories bash reaches', () => {
     // Widen locally with F306_ORACLE_SEED / F306_ORACLE_COUNT; the default keeps the suite fast.
     const rand = random(Number(process.env.F306_ORACLE_SEED ?? 20260927));

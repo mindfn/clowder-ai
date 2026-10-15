@@ -1699,6 +1699,63 @@ describe('MCP Callback Tools', () => {
     assert.ok(capturedUrl.includes('/api/callbacks/create-rich-block'));
   });
 
+  test('handleCreateRichBlock forwards an explicit durable decision without Route B fallback', async () => {
+    const { handleCreateRichBlock } = await import('../dist/tools/callback-tools.js');
+    const requests = [];
+    globalThis.fetch = async (url, options) => {
+      requests.push({ url: String(url), body: JSON.parse(options.body) });
+      return {
+        ok: true,
+        json: async () => ({ status: 'ok', interactionId: 'conversation-1', revision: 2 }),
+      };
+    };
+    const block = JSON.stringify({
+      id: 'choice-1',
+      kind: 'interactive',
+      v: 1,
+      interactiveType: 'select',
+      options: [{ id: 'sunrise', label: 'Sunrise' }],
+    });
+    const awaitResponseV1 = {
+      mode: 'once',
+      allowTextResponse: true,
+      deadlineAt: 2_000,
+      defaultResponse: { kind: 'selection', selectedIds: ['sunrise'] },
+    };
+
+    const result = await handleCreateRichBlock({ block, awaitResponseV1 });
+    assert.equal(result.isError, undefined);
+    assert.equal(requests.length, 1);
+    assert.match(requests[0].url, /\/api\/callbacks\/create-rich-block$/);
+    assert.deepEqual(requests[0].body.awaitResponseV1, awaitResponseV1);
+  });
+
+  test('handleCreateRichBlock refuses awaited decisions without invocation auth and never degrades to text', async () => {
+    const { handleCreateRichBlock } = await import('../dist/tools/callback-tools.js');
+    delete process.env.CAT_CAFE_INVOCATION_ID;
+    delete process.env.CAT_CAFE_CALLBACK_TOKEN;
+    delete process.env.CAT_CAFE_CREDENTIAL_FILE;
+    let requests = 0;
+    globalThis.fetch = async () => {
+      requests += 1;
+      return { ok: true, json: async () => ({ status: 'unexpected' }) };
+    };
+    const result = await handleCreateRichBlock({
+      block: JSON.stringify({
+        id: 'choice-no-auth',
+        kind: 'interactive',
+        v: 1,
+        interactiveType: 'select',
+        options: [{ id: 'a', label: 'A' }],
+      }),
+      awaitResponseV1: { mode: 'once' },
+    });
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /requires the current authenticated invocation/i);
+    assert.equal(requests, 0);
+  });
+
   test('handleCreateRichBlock surfaces a completed-invocation rejection without fallback or outbox', async () => {
     const { handleCreateRichBlock } = await import('../dist/tools/callback-tools.js');
     let attempts = 0;

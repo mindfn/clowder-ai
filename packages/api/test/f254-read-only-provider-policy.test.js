@@ -6,7 +6,6 @@ import { fakeL0Compiler } from './helpers/fake-l0-compiler.js';
 
 ensureFakeCliOnPath('claude');
 ensureFakeCliOnPath('codex');
-ensureFakeCliOnPath('gemini');
 ensureFakeCliOnPath('agy');
 ensureFakeCliOnPath('opencode');
 
@@ -102,68 +101,6 @@ describe('F254 provider-native read-only enforcement', () => {
     assert.equal(captured.env.CAT_CAFE_READONLY, 'true');
   });
 
-  it('Gemini CLI uses plan mode plus an invocation-scoped admin deny policy', async () => {
-    const { GeminiAgentService } = await import('../dist/domains/cats/services/agents/providers/GeminiAgentService.js');
-    let captured;
-    let adminPolicyContent;
-    const service = new GeminiAgentService({ adapter: 'gemini-cli', model: 'gemini-test' });
-    await collect(
-      service.invoke('supplement check', {
-        toolExecutionPolicy: POLICY,
-        accountEnv: { CAT_CAFE_READONLY: 'false' },
-        cliConfigArgs: ['--approval-mode yolo --admin-policy unsafe.toml -y'],
-        spawnCliOverride: async function* (options) {
-          captured = options;
-          const policyPath = options.args[options.args.indexOf('--admin-policy') + 1];
-          adminPolicyContent = readFileSync(policyPath, 'utf8');
-          yield { type: 'result', status: 'success', stats: {} };
-        },
-      }),
-    );
-
-    assert.equal(service.supportsToolExecutionPolicy(POLICY), true);
-    const args = captured.args;
-    assert.equal(args[args.indexOf('--approval-mode') + 1], 'plan');
-    assert.ok(args.includes('--admin-policy'));
-    assert.equal(args.includes('-y'), false);
-    assert.equal(args.includes('yolo'), false);
-    assert.equal(args.includes('unsafe.toml'), false);
-    assert.match(adminPolicyContent, /toolName\s*=\s*"\*"/);
-    assert.match(adminPolicyContent, /decision\s*=\s*"deny"/);
-    assert.equal(captured.env.CAT_CAFE_READONLY, 'true');
-  });
-
-  it('Antigravity CLI forces plan mode and strips permission bypass aliases', async () => {
-    const { GeminiAgentService } = await import('../dist/domains/cats/services/agents/providers/GeminiAgentService.js');
-    let captured;
-    const service = new GeminiAgentService({ adapter: 'antigravity-cli', model: 'gemini-test' });
-    await collect(
-      service.invoke('supplement check', {
-        toolExecutionPolicy: POLICY,
-        accountEnv: { CAT_CAFE_READONLY: 'false' },
-        cliConfigArgs: ['--mode accept-edits --dangerously-skip-permissions'],
-        spawnCliOverride: async function* (options) {
-          captured = options;
-          yield {
-            __cliPlainText: true,
-            stdout: 'read-only answer',
-            stderr: '',
-            exitCode: 0,
-            signal: null,
-            command: options.command,
-          };
-        },
-      }),
-    );
-
-    assert.equal(service.supportsToolExecutionPolicy(POLICY), true);
-    const args = captured.args;
-    assert.equal(args[args.indexOf('--mode') + 1], 'plan');
-    assert.equal(args.includes('accept-edits'), false);
-    assert.equal(args.includes('--dangerously-skip-permissions'), false);
-    assert.equal(captured.env.CAT_CAFE_READONLY, 'true');
-  });
-
   it('OpenCode selects a pure read-only agent whose inline policy overrides project grants', async () => {
     const { OpenCodeAgentService } = await import(
       '../dist/domains/cats/services/agents/providers/OpenCodeAgentService.js'
@@ -203,11 +140,5 @@ describe('F254 provider-native read-only enforcement', () => {
     assert.equal(inline.permission.edit, 'deny');
     assert.deepEqual(inline.agent['cat-cafe-read-only'].permission, inline.permission);
     assert.equal(captured.env.CAT_CAFE_READONLY, 'true');
-  });
-
-  it('native Antigravity remains unsupported because its bridge has no hard per-invocation mode', async () => {
-    const { GeminiAgentService } = await import('../dist/domains/cats/services/agents/providers/GeminiAgentService.js');
-    const service = new GeminiAgentService({ adapter: 'antigravity', model: 'gemini-test' });
-    assert.equal(service.supportsToolExecutionPolicy?.(POLICY) ?? false, false);
   });
 });

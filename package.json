@@ -25,7 +25,6 @@
     "alpha:start": "./scripts/alpha-worktree.sh start",
     "alpha:stop": "./scripts/alpha-worktree.sh stop",
     "alpha:status": "./scripts/alpha-worktree.sh status",
-    "f210:agy-profile-smoke": "pnpm --filter @cat-cafe/api run smoke:f210-agy-profiles",
     "alpha:test": "bash ./scripts/alpha-worktree.test.sh",
     "runtime:init": "./scripts/runtime-worktree.sh init",
     "runtime:start": "./scripts/runtime-worktree.sh start",

@@ -7,66 +7,41 @@ import {
   parseToolExecutionPolicy,
   toolExecutionPolicyDenial,
 } from '../dist/domains/cats/services/agents/invocation/tool-execution-policy.js';
-import {
-  AGY_NATIVE_DEFAULT_MCP_TOOLS,
-  callbackPolicyForAgyNativeMcpTools,
-} from '../dist/domains/cats/services/agents/providers/agy-native/agy-native-policy.js';
 import { registerCallbackAuthHook } from '../dist/routes/callback-auth-prehandler.js';
 
-test('ordinary native grants use canonical context and friction callbacks without retired completion grants', async () => {
-  const names = ['cat_cafe_get_thread_context', 'cat_cafe_capture_paw_feel'];
-  assert.deepEqual(
-    AGY_NATIVE_DEFAULT_MCP_TOOLS,
-    names.map((name) => `cat-cafe-collab/${name}`),
-  );
-  const allowed = [
-    ['GET', '/api/callbacks/thread-context'],
-    ['POST', '/api/callbacks/paw-feel-capture-intent'],
-  ];
-  const policy = callbackPolicyForAgyNativeMcpTools(names.map((name) => `cat-cafe-collab/${name}`));
-  assert.deepEqual(policy.allowedCallbackRoutes, allowed.map(([method, path]) => `${method} ${path}`).sort());
+test('ordinary Native callbacks share owner authentication without a provider tool shortlist', async () => {
   const registry = new InvocationRegistry();
-  const auth = await registry.create('owner', 'gemini38', 'thread', undefined, undefined, policy);
+  const auth = await registry.create('owner', 'gemini38', 'thread');
   const headers = { 'x-invocation-id': auth.invocationId, 'x-callback-token': auth.callbackToken };
   const app = Fastify();
-  registerCallbackAuthHook(app, registry, { enforceToolExecutionPolicy: false });
-  for (const [method, url] of [
-    ...allowed,
+  registerCallbackAuthHook(app, registry);
+  const routes = [
+    ['GET', '/api/callbacks/thread-context'],
+    ['GET', '/api/callbacks/search-evidence'],
     ['POST', '/api/callbacks/post-message'],
-    ['POST', '/api/callbacks/refresh-token'],
-    ...['complete-a2a-dispatch', 'complete-managed-hold', 'complete-event-wait'].map((route) => [
-      'POST',
-      `/api/callbacks/${route}`,
-    ]),
-  ]) {
-    app.route({ method, url, handler: async () => ({ reached: true }) });
-  }
+  ];
+  for (const [method, url] of routes)
+    app.route({
+      method,
+      url,
+      handler: async (request) => ({ catId: request.callbackAuth.catId, threadId: request.callbackAuth.threadId }),
+    });
   try {
-    for (const [method, url] of allowed) {
-      assert.equal((await app.inject({ method, url, headers })).statusCode, 200, url);
+    for (const [method, url] of routes) {
+      const response = await app.inject({ method, url, headers });
+      assert.equal(response.statusCode, 200, url);
+      assert.deepEqual(response.json(), { catId: 'gemini38', threadId: 'thread' });
       assert.notEqual(
         (await app.inject({ method, url, headers: { ...headers, 'x-callback-token': 'foreign-token' } })).statusCode,
         200,
-        url,
       );
-    }
-    for (const url of [
-      '/api/callbacks/post-message',
-      '/api/callbacks/refresh-token',
-      '/api/callbacks/complete-a2a-dispatch',
-      '/api/callbacks/complete-managed-hold',
-      '/api/callbacks/complete-event-wait',
-    ]) {
-      const denied = await app.inject({ method: 'POST', url, headers });
-      assert.equal(denied.statusCode, 403);
-      assert.equal(denied.json().reason, 'callback_allowlist_tool_policy');
     }
   } finally {
     await app.close();
   }
 });
 
-test('AGY native callback policy persists only exact callback paths', () => {
+test('explicit callback policy persists only exact callback paths', () => {
   const policy = { mode: 'callback_allowlist', allowedCallbackRoutes: ['GET /api/callbacks/thread-context'] };
   assert.deepEqual(normalizeToolExecutionPolicy(policy), policy);
   assert.deepEqual(parseToolExecutionPolicy(JSON.stringify(policy)), policy);

@@ -15,7 +15,7 @@
 
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -28,7 +28,10 @@ import { fakeL0Compiler } from '../helpers/fake-l0-compiler.js';
 
 const { ClaudeAgentService } = await import('../../dist/domains/cats/services/agents/providers/ClaudeAgentService.js');
 const { CodexAgentService } = await import('../../dist/domains/cats/services/agents/providers/CodexAgentService.js');
-const { GeminiAgentService } = await import('../../dist/domains/cats/services/agents/providers/GeminiAgentService.js');
+const { AgyNativeAgentService } = await import(
+  '../../dist/domains/cats/services/agents/providers/agy-native/AgyNativeAgentService.js'
+);
+const { spawnCli } = await import('../../dist/utils/cli-spawn.js');
 const { AgentRouter } = await import('../../dist/domains/cats/services/agents/routing/AgentRouter.js');
 const { InvocationRegistry } = await import('../../dist/domains/cats/services/agents/invocation/InvocationRegistry.js');
 const { MessageStore } = await import('../../dist/domains/cats/services/stores/ports/MessageStore.js');
@@ -134,13 +137,47 @@ function codexEvents(threadId, text) {
   ];
 }
 
-/** Standard Gemini NDJSON: session_init + text */
+/** Native AGY stream-json fixture; init fields are filled from the actual launch below. */
 function geminiEvents(sessionId, text) {
   return [
-    { type: 'init', session_id: sessionId },
-    { type: 'message', role: 'assistant', content: text },
-    { type: 'result', status: 'success' },
+    {
+      event: 'init',
+      conversation_id: sessionId,
+      init: { model: 'gemini-3.8-flash-high', permission_mode: 'request-review', tools: [] },
+    },
+    { event: 'result', result: { conversation_id: sessionId, status: 'SUCCESS', response: text } },
   ];
+}
+
+function createNativeFixtureService(spawnFn) {
+  const workspace = join(testGlobalConfigRoot, 'native-workspace');
+  mkdirSync(workspace, { recursive: true });
+  const service = new AgyNativeAgentService({
+    catId: 'gemini',
+    l0CompilerFn: fakeL0Compiler,
+    profile: {
+      enabled: true,
+      carrier: 'native',
+      profileId: 'gemini',
+      homeRoot: join(testGlobalConfigRoot, 'profiles'),
+      model: 'gemini-3.8-flash-high',
+      trustedWorkspaces: [workspace],
+    },
+  });
+  const invoke = service.invokeWithContinuityPreflight.bind(service);
+  service.invokeWithContinuityPreflight = (preflight, options) =>
+    invoke(preflight, {
+      ...options,
+      workingDirectory: workspace,
+      spawnCliOverride: (launch) => {
+        // Observe the credential at the real launch fence, before finally retires it.
+        const config = JSON.parse(readFileSync(join(launch.env.HOME, '.gemini/config/mcp_config.json'), 'utf8'));
+        const credentialPath = config.mcpServers?.['cat-cafe-collab']?.env?.CAT_CAFE_CREDENTIAL_FILE;
+        if (credentialPath) spawnFn._nativeCredential = JSON.parse(readFileSync(credentialPath, 'utf8'));
+        return spawnCli(launch, { spawnFn });
+      },
+    });
+  return service;
 }
 
 /**
@@ -153,27 +190,16 @@ function createTrackingSpawnFn(eventsFn) {
     const proc = createMockProcess();
     calls.push({ cmd: _cmd, args: _args, options, proc });
     // Schedule events on next tick so caller can start reading
-    process.nextTick(() => emitEvents(proc, eventsFn(calls.length)));
-    return proc;
-  });
-  spawnFn._calls = calls;
-  return spawnFn;
-}
-
-function createTrackingPlainTextSpawnFn(outputFn) {
-  const calls = [];
-  const spawnFn = mock.fn((_cmd, _args, options) => {
-    const proc = createMockProcess();
-    calls.push({ cmd: _cmd, args: _args, options, proc });
-    process.nextTick(() => {
-      const output = outputFn(calls.length);
-      if (output.stderr) proc.stderr.write(output.stderr);
-      if (output.stdout) proc.stdout.write(output.stdout);
-      proc.stdout.end();
-      proc.stderr.end();
-      const exitCode = output.exitCode === undefined ? 0 : output.exitCode;
-      proc._emitter.emit('exit', exitCode, null);
-    });
+    process.nextTick(() =>
+      emitEvents(
+        proc,
+        eventsFn(calls.length).map((event) =>
+          event.event === 'init'
+            ? { ...event, init: { ...event.init, agent: _args[_args.indexOf('--agent') + 1], cwd: options.cwd } }
+            : event,
+        ),
+      ),
+    );
     return proc;
   });
   spawnFn._calls = calls;
@@ -308,7 +334,7 @@ describe('AgentRouter + Services wiring', () => {
       await migrateRouterOpts({
         claudeService: new ClaudeAgentService({ spawnFn: claudeSpawn }),
         codexService: new CodexAgentService({ l0CompilerFn: fakeL0Compiler, spawnFn: codexSpawn }),
-        geminiService: new GeminiAgentService({ spawnFn: geminiSpawn, adapter: 'gemini-cli' }),
+        geminiService: createNativeFixtureService(geminiSpawn),
         registry,
         messageStore,
       }),
@@ -335,7 +361,7 @@ describe('AgentRouter + Services wiring', () => {
       await migrateRouterOpts({
         claudeService: new ClaudeAgentService({ spawnFn: claudeSpawn }),
         codexService: new CodexAgentService({ l0CompilerFn: fakeL0Compiler, spawnFn: codexSpawn }),
-        geminiService: new GeminiAgentService({ spawnFn: geminiSpawn, adapter: 'gemini-cli' }),
+        geminiService: createNativeFixtureService(geminiSpawn),
         registry,
         messageStore,
       }),
@@ -358,7 +384,7 @@ describe('AgentRouter + Services wiring', () => {
       await migrateRouterOpts({
         claudeService: new ClaudeAgentService({ spawnFn: claudeSpawn }),
         codexService: new CodexAgentService({ l0CompilerFn: fakeL0Compiler, spawnFn: codexSpawn }),
-        geminiService: new GeminiAgentService({ spawnFn: geminiSpawn, adapter: 'gemini-cli' }),
+        geminiService: createNativeFixtureService(geminiSpawn),
         registry,
         messageStore,
       }),
@@ -368,48 +394,14 @@ describe('AgentRouter + Services wiring', () => {
 
     assert.equal(geminiSpawn._calls.length, 1);
     const call = geminiSpawn._calls[0];
-    assert.equal(commandName(call.cmd), 'gemini');
-    assert.ok(call.args.includes('-o'), 'gemini-cli fallback should request stream-json output');
-    assert.ok(call.args.includes('stream-json'), 'gemini-cli fallback should remain NDJSON-based');
-    assert.equal(call.args.includes('--print'), false, 'gemini-cli fallback must not use agy --print mode');
+    assert.equal(commandName(call.cmd), 'agy');
+    assert.ok(call.args.includes('--output-format'));
+    assert.ok(call.args.includes('stream-json'));
+    assert.ok(call.args.includes('--input-format'));
     const spawnOpts = geminiSpawn._calls[0].options;
     assert.ok(spawnOpts.env.CAT_CAFE_INVOCATION_ID);
-    assert.ok(spawnOpts.env.CAT_CAFE_CALLBACK_TOKEN);
-  });
-
-  test('routes Gemini through antigravity-cli plain-text adapter by default', async () => {
-    delete process.env.GEMINI_ADAPTER;
-    const claudeSpawn = createTrackingSpawnFn(() => claudeEvents('s-1', 'hi'));
-    const codexSpawn = createTrackingSpawnFn(() => codexEvents('t-1', 'hi'));
-    const agySpawn = createTrackingPlainTextSpawnFn(() => ({
-      stdout: 'CAT_CAFE_AGY_ROUTE_OK\n',
-    }));
-
-    const router = new AgentRouter(
-      await migrateRouterOpts({
-        claudeService: new ClaudeAgentService({ spawnFn: claudeSpawn }),
-        codexService: new CodexAgentService({ l0CompilerFn: fakeL0Compiler, spawnFn: codexSpawn }),
-        geminiService: new GeminiAgentService({ spawnFn: agySpawn }),
-        registry,
-        messageStore,
-      }),
-    );
-
-    const msgs = await collect(router.route('user-1', '@gemini hello'));
-
-    assert.equal(agySpawn._calls.length, 1);
-    const call = agySpawn._calls[0];
-    assert.equal(commandName(call.cmd), 'agy');
-    assert.ok(call.args.includes('--print'), 'default antigravity-cli route should use agy --print');
-    assert.ok(call.args.includes('--add-dir'), 'default antigravity-cli route should bind the working directory');
-    const modelIdx = call.args.indexOf('--model');
-    assert.ok(modelIdx >= 0, 'default antigravity-cli route should pass runtime-owned --model');
-    assert.equal(call.args[modelIdx + 1], 'Gemini 3.1 Pro (High)');
-    assert.ok(
-      msgs.some((m) => m.type === 'text' && m.content === 'CAT_CAFE_AGY_ROUTE_OK'),
-      'route should surface plain-text AGY stdout',
-    );
-    assert.equal(msgs.at(-1)?.type, 'done');
+    assert.equal(spawnOpts.env.CAT_CAFE_CALLBACK_TOKEN, undefined);
+    assert.ok(geminiSpawn._nativeCredential?.callbackToken);
   });
 
   // --- InvocationRegistry 接线验证 ---
@@ -423,7 +415,7 @@ describe('AgentRouter + Services wiring', () => {
       await migrateRouterOpts({
         claudeService: new ClaudeAgentService({ spawnFn: claudeSpawn }),
         codexService: new CodexAgentService({ l0CompilerFn: fakeL0Compiler, spawnFn: codexSpawn }),
-        geminiService: new GeminiAgentService({ spawnFn: geminiSpawn, adapter: 'gemini-cli' }),
+        geminiService: createNativeFixtureService(geminiSpawn),
         registry,
         messageStore,
       }),
@@ -449,7 +441,7 @@ describe('AgentRouter + Services wiring', () => {
       await migrateRouterOpts({
         claudeService: new ClaudeAgentService({ spawnFn: claudeSpawn }),
         codexService: new CodexAgentService({ l0CompilerFn: fakeL0Compiler, spawnFn: codexSpawn }),
-        geminiService: new GeminiAgentService({ spawnFn: geminiSpawn, adapter: 'gemini-cli' }),
+        geminiService: createNativeFixtureService(geminiSpawn),
         registry,
         messageStore,
       }),
@@ -476,7 +468,7 @@ describe('AgentRouter + Services wiring', () => {
       await migrateRouterOpts({
         claudeService: new ClaudeAgentService({ spawnFn: claudeSpawn }),
         codexService: new CodexAgentService({ l0CompilerFn: fakeL0Compiler, spawnFn: codexSpawn }),
-        geminiService: new GeminiAgentService({ spawnFn: geminiSpawn, adapter: 'gemini-cli' }),
+        geminiService: createNativeFixtureService(geminiSpawn),
         registry,
         messageStore,
       }),
@@ -500,7 +492,7 @@ describe('AgentRouter + Services wiring', () => {
       await migrateRouterOpts({
         claudeService: new ClaudeAgentService({ spawnFn: claudeSpawn }),
         codexService: new CodexAgentService({ l0CompilerFn: fakeL0Compiler, spawnFn: codexSpawn }),
-        geminiService: new GeminiAgentService({ spawnFn: geminiSpawn, adapter: 'gemini-cli' }),
+        geminiService: createNativeFixtureService(geminiSpawn),
         registry,
         messageStore,
       }),
@@ -529,7 +521,7 @@ describe('AgentRouter + Services wiring', () => {
       await migrateRouterOpts({
         claudeService: new ClaudeAgentService({ spawnFn: claudeSpawn }),
         codexService: new CodexAgentService({ l0CompilerFn: fakeL0Compiler, spawnFn: codexSpawn }),
-        geminiService: new GeminiAgentService({ spawnFn: geminiSpawn, adapter: 'gemini-cli' }),
+        geminiService: createNativeFixtureService(geminiSpawn),
         registry,
         messageStore,
       }),
@@ -564,7 +556,7 @@ describe('AgentRouter + Services wiring', () => {
       await migrateRouterOpts({
         claudeService: new ClaudeAgentService({ spawnFn: claudeSpawn }),
         codexService: new CodexAgentService({ l0CompilerFn: fakeL0Compiler, spawnFn: codexSpawn }),
-        geminiService: new GeminiAgentService({ spawnFn: geminiSpawn, adapter: 'gemini-cli' }),
+        geminiService: createNativeFixtureService(geminiSpawn),
         registry,
         messageStore,
         threadStore,
@@ -590,7 +582,7 @@ describe('AgentRouter + Services wiring', () => {
       await migrateRouterOpts({
         claudeService: new ClaudeAgentService({ spawnFn: claudeSpawn }),
         codexService: new CodexAgentService({ l0CompilerFn: fakeL0Compiler, spawnFn: codexSpawn }),
-        geminiService: new GeminiAgentService({ spawnFn: geminiSpawn, adapter: 'gemini-cli' }),
+        geminiService: createNativeFixtureService(geminiSpawn),
         registry,
         messageStore,
       }),
@@ -650,7 +642,7 @@ describe('MCP callback end-to-end flow', () => {
       await migrateRouterOpts({
         claudeService: new ClaudeAgentService({ spawnFn: claudeSpawn }),
         codexService: new CodexAgentService({ l0CompilerFn: fakeL0Compiler, spawnFn: codexSpawn }),
-        geminiService: new GeminiAgentService({ spawnFn: geminiSpawn, adapter: 'gemini-cli' }),
+        geminiService: createNativeFixtureService(geminiSpawn),
         registry,
         messageStore,
       }),
@@ -699,7 +691,7 @@ describe('MCP callback end-to-end flow', () => {
       await migrateRouterOpts({
         claudeService: new ClaudeAgentService({ spawnFn: claudeSpawn }),
         codexService: new CodexAgentService({ l0CompilerFn: fakeL0Compiler, spawnFn: codexSpawn }),
-        geminiService: new GeminiAgentService({ spawnFn: geminiSpawn, adapter: 'gemini-cli' }),
+        geminiService: createNativeFixtureService(geminiSpawn),
         registry,
         messageStore,
       }),

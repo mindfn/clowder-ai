@@ -5,9 +5,11 @@ import type { useExplorationWorkspace } from './use-exploration-workspace';
 export function ExplorationLineageDialog({
   workspace,
   close,
+  allSources = false,
 }: {
   workspace: ReturnType<typeof useExplorationWorkspace>;
   close(): void;
+  allSources?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -31,7 +33,11 @@ export function ExplorationLineageDialog({
         </button>
       </header>
       <ExplorationLineage
-        nodes={workspace.catalog.nodes.filter((node) => node.kind === workspace.node?.kind)}
+        nodes={
+          allSources
+            ? workspace.catalog.nodes
+            : workspace.catalog.nodes.filter((node) => node.kind === workspace.node?.kind)
+        }
         selected={workspace.selectedNodeKey}
         currentKeys={workspace.currentKeys}
         viewport={workspace.reading.viewport}

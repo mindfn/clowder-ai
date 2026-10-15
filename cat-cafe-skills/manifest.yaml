@@ -1036,67 +1036,30 @@ skills:
     sop_step: null
     merged_from: null
 
-  agent-product-promo-director:
-    category: "创作与媒体"
-    description: >
-      Agent/AI 产品宣传片的创意导演层：先锁产品主角、观众信念变化与影片格式，再把不可见的 Agent
-      协作翻译成可拍的故事、镜头、运动、声音和 provenance contract。
-      Use when: 用户问 Agent 产品宣传片如何导演/剪辑/叙事/配声音、要拆参考片、写 creative brief/beat sheet，
-      或 video-forge 开机前仍未锁定主语与镜头语法。
-      Not for: brief 已冻结后的录制/TTS/对齐/渲染（用 video-forge）、教程/功能 walkthrough、
-      目的就是讲角色自己故事的动画（用 anime-forge）、只找时效性竞品（先用 deep-research）。
-      Output: product-hero sentence + belief change + format decision + claim/proof beat sheet +
-      shot/motion/sound maps + provenance ledger + operator acceptance questions。
-      GOTCHA: 用户举的页面、thread 或成果只是候选证据，不自动成为影片主题；内部静态分镜不能冒充成片；
-      宣传片的故事层默认可以虚构（§7 dramatization），不要写成纪录片。
-    triggers:
-      - "Agent 产品宣传片"
-      - "AI 产品宣传片"
-      - "宣传片怎么剪"
-      - "宣传片导演"
-      - "宣传片叙事"
-      - "宣传片运镜"
-      - "宣传片音效"
-      - "creative brief"
-      - "beat sheet"
-      - "产品是主角"
-    not_for:
-      - "已冻结 brief 的视频生产"
-      - "教程或功能 walkthrough"
-      - "讲角色自己故事的动画"
-      - "只找时效性竞品"
-    output: "Agent product-hero director brief + causal beat/shot/motion/sound/provenance contracts"
-    next: ["deep-research", "video-forge", "anime-forge", "rich-messaging"]
-    sop_step: null
-    merged_from: null
-
   video-forge:
     category: "创作与媒体"
     description: >
-      用 Remotion 做有品味的视频：从一句话 brief 或一堆素材出发，先在素材里找戏（主张、反转、因果），
-      再推出风格、按声音排时间、写 Remotion 合成、用样张自审，交给 operator 看片。
-      Use when: 要做或改一支视频（宣传短片、产品界面演示、讲解/纪录片段、动态排版、录屏剪辑），
-      包括主角是家里的猫、片里有剧情的产品宣传片；或写、审 Remotion 代码的画面、运动、节奏与声音。
+      家里用 Remotion 做视频要知道的事：工程在哪、本机配音和回听怎么调、You 定过的片子规矩、真踩过的坑、怎么在 Console 里交片。
+      Use when: 要做或改一支视频（宣传片、产品界面演示、讲解片、动态排版、录屏剪辑），包括主角是家里的猫、片里有剧情的产品宣传片；
+      或给片子配音、对时间轴、交片。
       Not for: 只查某个 Remotion API 怎么写（读官方 remotion-best-practices skill 的 rules/）；
-      目的就是讲角色自己故事的动画短片（用 anime-forge）；Agent 产品宣传片还没想清楚讲什么（先用 agent-product-promo-director）；PPT（用 ppt-forge）。
-      Output: 一页 treatment + Remotion 工程 + 样张 contact sheet + Console 内联可播的预览片/成片。
-      GOTCHA: 给 operator 看从便宜到贵：一句话 → 最危险那一段的最小样张（样张过之前只做这一段）→ 全片粗片；声音稿是猫自己查念错、量时长的，不单独交他听；静帧粗片能验故事和节奏，不能当成片交付。
+      目的就是讲角色自己故事的动画短片（用 anime-forge）；PPT（用 ppt-forge）。
+      Output: Remotion 工程 + Console 里能直接播的片子。
+      GOTCHA: 本 skill 不教怎么拍得好看，那靠你自己看片的眼光；2026-10-14 前的长版方法和审美条文把猫带成了「走流程」，已删。
     triggers:
       - "做视频"
       - "Remotion"
+      - "宣传片"
       - "showcase 视频"
       - "教程视频"
       - "动态排版"
       - "录屏剪辑"
-      - "video review"
-      - "节奏审查"
     not_for:
       - "只查 Remotion API 用法"
       - "讲角色自己故事的动画短片"
-      - "Agent 产品宣传片尚未锁定主角与导演语法"
       - "PPT"
-    output: "Treatment + Remotion project + contact sheet + inline-playable preview/final cut"
-    next: ["agent-product-promo-director", "rich-messaging", "anime-forge"]
+    output: "Remotion project + inline-playable film in Console"
+    next: ["rich-messaging", "anime-forge"]
     sop_step: null
     merged_from: null
   anime-forge:
@@ -1106,7 +1069,7 @@ skills:
       只有少数几格要「活起来」时才走图生视频。
       Use when: 做目的就是讲角色自己故事的动画短剧、角色 IP 短片、醋醋喵这类猫咖新集；把家里的真事改编成动画；
       给已有剧本做设定、声音稿、分镜、动态分镜、精绘或后期。
-      Not for: 推产品、讲功能的片子，哪怕主角是猫、片里有剧情（走 agent-product-promo-director → video-forge）；
+      Not for: 推产品、讲功能的片子，哪怕主角是猫、片里有剧情（用 video-forge）；
       录屏剪辑（用 video-forge）；单张图或单页漫画（用 image-generation）；PPT（用 ppt-forge）。
       Output: 带真事对照的剧本 md、设定图、声音稿、分镜表、分镜图、动态分镜粗片，以及 Console 里能直接播的成片。
       GOTCHA: 按片子目的分流，不按有没有猫角色分：推产品的片子即使主角是猫也走 video-forge（要画的角色段落照本 skill 的画稿开头）；
@@ -1537,7 +1500,7 @@ skills:
     triggers: ["把很长的故事讲清楚", "人和 AI 各做了什么", "人猫共创故事", "成长故事压成一页", "故事只剩履历"]
     not_for: ["已锁定叙事的排版或出图", "虚构剧情", "纯技术论证", "启动能力进化项目"]
     output: "事实与贡献图 + 因果分镜 + 载体交接稿；授权时落盘"
-    next: ["ppt-forge", "tech-writing", "agent-product-promo-director", "image-generation", "concept-demo-design"]
+    next: ["ppt-forge", "tech-writing", "video-forge", "image-generation", "concept-demo-design"]
     sop_step: null
 
   # ── PPT 制作全链路 (F144) ──

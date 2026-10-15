@@ -330,6 +330,21 @@ export interface StoredMessage {
     collectiveAuthorizationInvalid?: true;
     /** F306 durable provider-neutral event; native wire vocabulary is never stored here. */
     semanticEvent?: ProviderSemanticEvent;
+    /** F306 conversation return provenance; canonical content remains on this one Message. */
+    runtimeInteractionReturn?: {
+      interactionId: string;
+      operationId: string;
+      author: 'owner' | 'host';
+      requesterCatId: CatId;
+      cardMessageId: string;
+    };
+    /** Exact message-level binding for an unmodified RuntimeInteraction rich block. */
+    runtimeInteractionCard?: {
+      version: 1;
+      interactionId: string;
+      blockId: string;
+      requestKind: 'approval' | 'question' | 'elicitation' | 'conversation_decision';
+    };
     /** F306: environment-audio-driven reply provenance, distinct from an ordinary user turn. */
     realtimeCompanion?: {
       consumer: 'watch_video' | 'meeting_companion';

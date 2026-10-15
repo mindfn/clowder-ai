@@ -49,6 +49,8 @@ import { GameLobby, type GameStartPayload } from './game/GameLobby';
 import { HistorySearchModal } from './HistorySearchModal';
 import { PathCompletionMenu } from './PathCompletionMenu';
 import { projectScreeningComposerConflict } from './project-screening-composer-group';
+import { conversationDecisionCopy } from './rich/conversation-decision.shell-copy';
+import { submitConversationAnswer } from './rich/runtime-conversation-model';
 import { useShellCopy } from './shell/shell-copy';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 import {
@@ -335,6 +337,14 @@ export function ChatInput({
   const [lobbyMode, setLobbyMode] = useState<'player' | 'god-view' | 'detective' | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useComposerKeyboardFocus(shellV2, textareaRef);
+  useEffect(() => {
+    const handler = (event: Event) => {
+      if ((event as CustomEvent<{ threadId: string }>).detail?.threadId === effectiveThreadId)
+        textareaRef.current?.focus();
+    };
+    window.addEventListener('cat-cafe:conversation-answer-bound', handler);
+    return () => window.removeEventListener('cat-cafe:conversation-answer-bound', handler);
+  }, [effectiveThreadId]);
   const menuRef = useRef<HTMLDivElement>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -416,8 +426,54 @@ export function ChatInput({
   // F080-P2: path completion
   const pathCompletion = usePathCompletion(input);
 
+  const answerCopy = useShellCopy(conversationDecisionCopy);
+  const boundAnswerSubmitting = useRef(false);
   const doSend = useCallback(() => {
     if (sendTemporarilyDisabled) return;
+    const answer = replyToMessage?.runtimeAnswerContext;
+    if (answer) {
+      if (disabled || boundAnswerSubmitting.current || !input.trim()) return;
+      if (
+        answer.cardRef.threadId !== effectiveThreadId ||
+        answer.cardRef.messageId !== replyToMessage.id ||
+        images.length ||
+        contextAttachments.length ||
+        whisperMode
+      ) {
+        useToastStore
+          .getState()
+          .addToast({ type: 'error', title: answerCopy.changed, message: answerCopy.changed, duration: 6000 });
+        return;
+      }
+      const capturedInput = input;
+      const settleAdmission = beginComposerDraftAdmission({
+        text: capturedInput,
+        images: [],
+        contextAttachments: [],
+        replyTo: replyToMessage,
+      });
+      boundAnswerSubmitting.current = true;
+      void submitConversationAnswer(answer, { kind: 'text', text: capturedInput.trim() })
+        .then(
+          () => {
+            settleAdmission(true);
+            setInput((current) => (current === capturedInput ? '' : current));
+            if (useChatStore.getState().replyToMessage?.runtimeAnswerContext?.operationId === answer.operationId)
+              clearReplyTo();
+          },
+          () => {
+            settleAdmission(false);
+            useToastStore
+              .getState()
+              .addToast({ type: 'error', title: answerCopy.changed, message: answerCopy.changed, duration: 6000 });
+          },
+        )
+        .finally(() => {
+          boundAnswerSubmitting.current = false;
+        });
+      return;
+    }
+
     if (whisperMode && whisperTargets.size === 0) return;
     const conflict = projectScreeningComposerConflict(composerAttachments(effectiveThreadId, contextAttachments));
     if (conflict) {
@@ -472,6 +528,7 @@ export function ChatInput({
     }
   }, [
     input,
+    answerCopy,
     disabled,
     onSend,
     images,

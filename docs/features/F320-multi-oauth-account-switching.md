@@ -1,6 +1,6 @@
 ---
 feature_ids: [F320]
-tips_exempt: "Specification only: multi-OAuth login, family switching and project rules have not been delivered; publish their planned tips only with the real account journey, not from this proposal."
+tips_exempt: "The delivered account entry contains contextual official-login/token instructions and capability limits; retain discovery in the existing Settings account journey. Full real-account acceptance and project rules remain open, so do not publish their planned tips as delivered capabilities."
 related_features: [F062, F136, F171, F291, F318, F319]
 topics: [accounts, oauth, credentials, provider-routing, hub-settings]
 doc_kind: spec
@@ -24,9 +24,15 @@ description_updated_at: 2026-09-24T09:38:50Z
 
 **额度功能入口**：设置 → 猫猫团队 → 账户与登录 → 展开已登录的 Codex 账号行 →「查询此账号额度」。现有 `CodexQuotaControl` 展示该身份的剩余百分比、重置时间和观测时间；未查询不代表额度为零。额度查询不是逐次现金扣费账单，A 的实际消耗仍须与调用启动快照和实际额度变化对齐。
 
-**Claude 接续提案（human537）**：You 要求独立 thread 看Ragdoll多账号如何开发，并偏好长效 token。本线已查标题清单，当前 F320 与 F318 原线程存在，未发现同标题 Claude 多账号执行 thread；据此发出 `proposal_mv81q3gh5yiwzup8`「F320 Ragdoll多账号｜长效 token 与一键切换」，提案返回 pending，不把 proposalId 冒充 threadId 或已开工。首位候选为原 Sol6.1，父 F320/Codex 责任保持。接续包优先核当前官方 CLI 的账号隔离、会话共享/续聊、现有 credential authority 与后续/在途边界，不自动激活 F318 carrier。
+## Claude 子工作交付状态（2026-10-14 UTC）
 
-2026-10-14 核 [Claude 官方认证文档](https://code.claude.com/docs/en/authentication#generate-a-long-lived-token)：`claude setup-token` 生成一年 OAuth token，供 `CLAUDE_CODE_OAUTH_TOKEN`；仅模型请求，不能读取 claude.ai connectors 或建立 Remote Control，本地 MCP 仍可用。文档的独立 `CLAUDE_CONFIG_DIR` 同时隔离设置、登录和历史，不能推断跨账号 resume 自然成立。本机 `claude --version` 为 2.1.296；文档承诺未折算为本 carrier/token 路径已验证。新接续先用 fake fixture，不让用户在聊天交 token、不替用户登录、不复制真实凭据或迁移默认 HOME；具体产品方案及适用能力由新 thread 取证后落实。
+入口沿现有「设置 → 猫猫团队 → 账户与登录」。用户亲自在官方 CLI 执行 `claude setup-token`，将所得 token 填入 Hub 密码框；应用不代登录或生成 token。各账号的秘密分别由既有 credentials authority 保存，账号列表只保存备注及非秘密状态；可只改备注、更新 token，保存不自动换号。显式一次换绑作用于启用的本地 Claude 成员；在途调用保留旧 token/执行快照，下次调用捕获新号，历史回复与 usage 不被当前绑定改写。宿主 HOME、共享配置/会话根目录和默认登录保持。这里交付的是独立私有 token 账号，并未把原 AC-A1 的独立登录目录或真人认证状态冒充已满足。
+
+官方文档说明一年 OAuth token 通过 `CLAUDE_CODE_OAUTH_TOKEN` 用于模型请求、本地 MCP，不支持 Remote Control/claude.ai connectors。原生 CLI 2.1.296 在 loopback 假服务上完成 A→B→A、同一实际 session/历史；settings 中竞争 token 会在调用前明确拒绝，SDK 空 settings 来源的原生写法也已独立核验。**bg_daemon 已实证不支持每派发换 token**，产品对托管 token 账号明确拒绝该 carrier，且不通过健康降级静默换 carrier。默认 print 路径适用；PTY 真模型回合及 SDK 真激活未验。UI 表达「Token 已保存／官方身份未验证」，不推断有效期、订阅身份或额度。
+
+Sonnet 的 typed APPROVED842（`private-source-id`）覆盖 `f1cfa15da8901ac753d8ea5813a55d66a64df7e3`，两项错号阻塞与五项补充 finding 已处理，变异复验能检出回退。合流候选 `8866c420d0baa94c07c7aab021c4dfcce3654b8c` 的作者补丁与已审版本逐字节相同；合流后 API/carrier 130/130、实际页面主线 1/1 通过，原 Web 67/67、类型/构建与原生证明沿用。[合入 evidence manifest](https://github.com/zts212653/clowder-ai/pull/5540#issuecomment-6171039782)记录 C1–C3。GitHub 无 CI checks，不称 CI 通过。
+
+`main=landed:50414181f7bab944d4b337e34d8e3fcd5074ac8c`；作者未执行 runtime 重启或真实账号切换，观察到的正式 runtime checkout 仍为 `9e20438625509a4dea7b8e9d0f19946b836a9a4c`，故不宣称正式功能已加载。子 thread 无原 work Task，`read_development_return` 无注册；不创建镜像 Task 或改父 Task 来登记 deployment wait，按已批准 final-only 路由回原线归并。正常授权加载后的真页回读、真实 token 身份/额度与远程跨账号续聊仍由父线原责任接续；本子工作不代签这些验收，F320 整体及 Phase C 保持开放。
 
 ## 当前账号页返修（2026-10-13 UTC）
 

@@ -10,8 +10,6 @@ export const nativeCopy = {
     每行一个完整的工作区绝对路径: '每行一个完整的工作区绝对路径',
     nativeLoginHelp:
       '使用此隔离 Profile 中已登录的个人 OAuth。Model 填实际 ID（如 gemini-3.8-flash-high）。首次使用前需完成该 Profile 的登录；保存设置不会启动模型。',
-    '默认只读，不能在此开启自动批准或写入权限。更换 Profile、模型、账号或批准工作区会撤销原 coding 授权。':
-      '默认只读，不能在此开启自动批准或写入权限。更换 Profile、模型、账号或批准工作区会撤销原 coding 授权。',
     'AGY Native 需要隔离 Profile 中已登录的个人 OAuth': 'AGY Native 需要隔离 Profile 中已登录的个人 OAuth',
     '隔离 Profile ID 格式无效': '隔离 Profile ID 格式无效',
     nativeModelInvalid: 'AGY Native 模型需填写实际模型 ID，例如 gemini-3.8-flash-high',
@@ -28,8 +26,6 @@ export const nativeCopy = {
     每行一个完整的工作区绝对路径: 'One absolute workspace path per line',
     nativeLoginHelp:
       'Use the personal OAuth login in this isolated Profile. Enter a physical model ID, such as gemini-3.8-flash-high. Sign in to this Profile before using it. Saving settings does not start a model.',
-    '默认只读，不能在此开启自动批准或写入权限。更换 Profile、模型、账号或批准工作区会撤销原 coding 授权。':
-      'Read-only by default. Auto-approval and write access cannot be enabled here. Changing the Profile, model, account or approved workspaces revokes the previous coding authorization.',
     'AGY Native 需要隔离 Profile 中已登录的个人 OAuth':
       'AGY Native needs a personal OAuth login in the isolated Profile.',
     '隔离 Profile ID 格式无效': 'The isolated Profile ID has an invalid format.',

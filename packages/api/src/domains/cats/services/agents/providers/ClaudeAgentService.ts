@@ -1,3 +1,8 @@
+import { applyClaudeTokenAccountEnv, redactClaudeLaunchToken } from '../../../../../config/claude-token-account.js';
+import {
+  claudeSettingSources,
+  composeClaudeTokenSettingsDocument,
+} from '../../../../../config/claude-token-settings.js';
 /**
  * Claude Agent Service
  * 使用 Claude CLI 子进程调用布偶猫 (Opus)
@@ -579,14 +584,21 @@ export class ClaudeAgentService implements AgentService {
       // repo-root carrier never loads for thread-workspace or external-project
       // cwds — this injection is the carrier of record for every managed spawn.
       const compactionPlan = options?.compactionLaunchPlan;
+      const effectiveUserSettings = options?.claudeTokenAccount
+        ? await composeClaudeTokenSettingsDocument(
+            userSettingsValue,
+            options?.workingDirectory,
+            claudeSettingSources(args),
+          )
+        : userSettingsValue;
       if (compactionPlan?.ready) {
         preCompactSettingsPath = writePreCompactSettingsToTempFile(
-          composeManagedSettingsDocument(compactionPlan, userSettingsValue, options?.workingDirectory),
+          composeManagedSettingsDocument(compactionPlan, effectiveUserSettings, options?.workingDirectory),
         );
         args.push('--settings', preCompactSettingsPath);
-      } else if (userSettingsValue !== undefined) {
+      } else if (effectiveUserSettings !== undefined) {
         // No managed carrier resolved — the user's own --settings passes through untouched.
-        args.push('--settings', userSettingsValue);
+        args.push('--settings', effectiveUserSettings);
       }
 
       const claudeCommand = resolveCliCommand('claude');
@@ -726,6 +738,7 @@ export class ClaudeAgentService implements AgentService {
           ? { rawArchivePath: this.rawArchive.getPath(options.invocationId) }
           : {}),
       };
+      applyClaudeTokenAccountEnv(envOverrides, options?.claudeTokenAccount);
       const events = options?.spawnCliOverride
         ? options.spawnCliOverride(cliOpts)
         : spawnCli(cliOpts, this.spawnFn ? { spawnFn: this.spawnFn } : undefined);
@@ -752,7 +765,11 @@ export class ClaudeAgentService implements AgentService {
       let lastAssistantHasToolUseBlock = false;
       let lastAssistantHasTextBlock = false;
       const nativeToolBoundaries = new ClaudeNativeToolBoundaryClassifier();
-      for await (const event of events) {
+      for await (const rawEvent of events) {
+        const event = redactClaudeLaunchToken(
+          rawEvent,
+          options?.claudeTokenAccount ? options.accountEnv?.CLAUDE_CODE_OAUTH_TOKEN : undefined,
+        );
         eventCount++;
         // #780: Archive raw event for post-mortem diagnostics (fire-and-forget)
         if (options?.invocationId) {

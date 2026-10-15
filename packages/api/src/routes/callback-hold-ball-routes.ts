@@ -14,21 +14,19 @@
  * holdQuotaStore is a required dependency (no in-memory fallback).
  */
 
+import { createHash } from 'node:crypto';
 import type { SchedulerAwaitStateV1, WaitOwnerFence } from '@cat-cafe/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { IBallCustodyIngest } from '../domains/ball-custody/BallCustodyIngest.js';
 import {
-  createResumableDurableManagedGateJob,
   durableManagedGateConsumerLines,
   isResumableDurableManagedGateCommand,
   projectDurableManagedGateConsumer,
 } from '../domains/ball-custody/durable-managed-gate-consumer.js';
 import {
-  cancelDurableManagedGateJob,
   DURABLE_GATE_WALL_SLA_MS,
   type DurableManagedGateJob,
-  initializeDurableManagedGateJob,
   isDurableManagedGateCommand,
   settleDurableManagedGateJobFromRunner,
 } from '../domains/ball-custody/durable-managed-gate-job.js';
@@ -50,6 +48,8 @@ import type {
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
+import { readDurableGateRecord } from '../domains/managed-job/durable-managed-gate-job-store.js';
+import { ManagedJobService } from '../domains/managed-job/ManagedJobService.js';
 import { extractHoldBallClaims } from '../infrastructure/grounding/claim-extractors.js';
 import { checkGrounding } from '../infrastructure/grounding/grounding-checker.js';
 import { groundingSampleStore } from '../infrastructure/grounding/grounding-sample-singleton.js';
@@ -273,8 +273,16 @@ const wakeWhenSchema = z
     cwd: z.string().optional(),
     timeoutMs: z.number().int().min(1_000).max(3_600_000).optional(),
     executionSlaMs: z.number().int().min(1_000).max(DURABLE_GATE_WALL_SLA_MS).optional(),
+    idempotencyKey: z.string().min(1).max(256).optional(),
+    retryOfJobId: z
+      .string()
+      .regex(/^managed-job-[a-f0-9]{40}$/u)
+      .optional(),
   })
   .strict()
+  .refine((data) => !data.retryOfJobId || (!!data.idempotencyKey && !data.executionPolicy), {
+    message: 'Explicit retry requires a new idempotency key and a durable job',
+  })
   .refine(
     (data) =>
       data.executionPolicy === undefined ||
@@ -282,11 +290,7 @@ const wakeWhenSchema = z
         !isDurableManagedGateCommand(data.command) &&
         (data.timeoutMs === undefined || data.timeoutMs <= READONLY_MAX_TIMEOUT_MS)),
     { message: 'readonly commands require bounded native execution, not a durable gate or execution SLA' },
-  )
-  .refine((data) => data.executionSlaMs === undefined || isDurableManagedGateCommand(data.command), {
-    message: 'executionSlaMs is only supported for canonical durable full-gate commands',
-    path: ['executionSlaMs'],
-  });
+  );
 
 const holdBallSchema = z
   .object({
@@ -541,19 +545,22 @@ function launchWakeWhenRunner(opts: {
       }
 
       // Two-phase start: admission resolves on spawn, commandDone on exit.
-      const { admission: spawnAdmission, completion: commandDone } = runner.start(wakeWhen.command, {
-        cwd: wakeWhen.cwd,
-        ...(wakeWhen.executionPolicy ? { executionPolicy: wakeWhen.executionPolicy } : {}),
-        timeoutMs: durableJob?.wallSlaMs ?? wakeWhen.timeoutMs,
-        ...(durableJob
-          ? {
-              maximumTimeoutMs: durableJob.wallSlaMs,
-              managedJob: {
-                ...durableJob,
-              },
-            }
-          : {}),
-      });
+      const { admission: spawnAdmission, completion: commandDone } =
+        durableJob?.recordStorage === 'sqlite_v1' && durableJob.definition
+          ? new ManagedJobService().start(durableJob.definition.principal, durableJob.jobId, runner)
+          : runner.start(wakeWhen.command, {
+              cwd: wakeWhen.cwd,
+              ...(wakeWhen.executionPolicy ? { executionPolicy: wakeWhen.executionPolicy } : {}),
+              timeoutMs: durableJob?.wallSlaMs ?? wakeWhen.timeoutMs,
+              ...(durableJob
+                ? {
+                    maximumTimeoutMs: durableJob.wallSlaMs,
+                    managedJob: {
+                      ...durableJob,
+                    },
+                  }
+                : {}),
+            });
 
       const spawnResult = await spawnAdmission;
 
@@ -574,16 +581,27 @@ function launchWakeWhenRunner(opts: {
       admitted.phase = 'running';
       resolveExternalAdmission(spawnResult);
 
-      const result = await commandDone;
+      let result = await commandDone;
+      if (durableJob?.recordStorage === 'sqlite_v1') {
+        await new ManagedJobService().reconcile();
+        const durableResult = readDurableGateRecord(durableJob)?.result;
+        if (!durableResult) throw new Error('managed_job_terminal_pending');
+        result = { ...durableResult, tailOutput: durableResult.tailOutput ?? '' };
+      }
 
       const terminalResult = {
+        ...(durableJob?.recordStorage === 'sqlite_v1' ? readDurableGateRecord(durableJob)?.result : {}),
         exitCode: result.exitCode,
         timedOut: result.timedOut,
-        cancelled: runner.state === 'cancelled',
+        cancelled:
+          durableJob?.recordStorage === 'sqlite_v1'
+            ? readDurableGateRecord(durableJob)?.result?.cancelled === true
+            : runner.state === 'cancelled',
         durationMs: result.durationMs,
         ...(result.tailOutput ? { tailOutput: result.tailOutput } : {}),
       };
-      if (durableJob) settleDurableManagedGateJobFromRunner(durableJob, terminalResult);
+      if (durableJob && durableJob.recordStorage !== 'sqlite_v1')
+        settleDurableManagedGateJobFromRunner(durableJob, terminalResult);
       const consumerProjection = durableJob
         ? projectDurableManagedGateConsumer(durableJob, wakeWhen.command, terminalResult, {
             ...(wakeWhen.cwd ? { candidateRoot: wakeWhen.cwd } : {}),
@@ -761,12 +779,12 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
           'Use `pnpm gate` directly, or a supported local Redis/data-root prefix; remove shell composition and arbitrary environment changes.',
       };
     }
-    const executionSlaMs = durableGateRequested
-      ? (wakeWhen?.executionSlaMs ?? wakeWhen?.timeoutMs ?? 3_600_000)
+    const executionSlaMs = wakeWhen
+      ? (wakeWhen.executionSlaMs ?? wakeWhen.timeoutMs ?? (durableGateRequested ? 3_600_000 : 600_000))
       : undefined;
     const wakeAfterMs = durableGateRequested
       ? DURABLE_GATE_WALL_SLA_MS
-      : (parsed.data.wakeAfterMs ?? wakeWhen?.timeoutMs ?? 600_000);
+      : (parsed.data.wakeAfterMs ?? executionSlaMs ?? 600_000);
     const { threadId, catId, userId } = actor;
     const catIdStr = catId as string;
     const triggerUserId = await resolveManagedHoldTriggerUserId({
@@ -774,6 +792,61 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       threadId,
       threadStore: deps.threadStore,
     });
+    const managedPrincipal = { userId: triggerUserId, threadId, catId: catIdStr };
+    const managedJobs = new ManagedJobService();
+    const managedSubmission =
+      wakeWhen && wakeWhen.executionPolicy !== 'read_only'
+        ? {
+            command: wakeWhen.command,
+            cwd: wakeWhen.cwd,
+            idempotencyKey:
+              wakeWhen.idempotencyKey ??
+              createHash('sha256')
+                .update(JSON.stringify([record.invocationId, wakeWhen.command, wakeWhen.cwd ?? process.cwd()]))
+                .digest('hex'),
+            executionSlaMs: executionSlaMs ?? 600_000,
+            ...(wakeWhen.retryOfJobId ? { retryOfJobId: wakeWhen.retryOfJobId } : {}),
+          }
+        : null;
+    const reuseManagedSubmission = (job: DurableManagedGateJob) => {
+      const current = managedJobs.get(managedPrincipal, job.jobId);
+      if (!current.admissionMessageId || !deps.dynamicTaskStore.getById(job.originTaskId)) {
+        reply.status(409);
+        return {
+          error: 'The original command admission has no complete visible carrier',
+          code: 'managed_job_admission_incomplete',
+          held: false,
+          jobId: job.jobId,
+          state: current.state,
+          action:
+            current.state === 'queued'
+              ? 'No worker was admitted. Retry this lookup after recovery; do not assume the command started.'
+              : 'Inspect this original result; an intentional retry requires a new idempotencyKey and retryOfJobId.',
+        };
+      }
+      return {
+        status: 'ok',
+        taskId: job.originTaskId,
+        held: ['queued', 'running', 'cancelling'].includes(current.state ?? ''),
+        wakeWhen: { command: job.definition?.command, jobId: job.jobId, state: current.state },
+        reused: true,
+      };
+    };
+    // A transport retry observes its original admission; it neither spends another hold quota nor starts another worker.
+    if (managedSubmission) {
+      try {
+        const existing = managedJobs.findSubmission(managedPrincipal, managedSubmission);
+        if (existing) {
+          return reuseManagedSubmission(existing);
+        }
+      } catch (error) {
+        reply.status(409);
+        return {
+          error: 'The idempotency key belongs to a different command',
+          code: error instanceof Error ? error.message : 'managed_job_lookup_failed',
+        };
+      }
+    }
 
     // F167 Phase O PR-O2b: shadow grounding telemetry with real claim extraction.
     // Fire-and-forget: don't await, don't let failures affect the hold_ball flow.
@@ -881,10 +954,8 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
 
     const createdAt = Date.now();
     const taskId = `hold-ball-${createdAt}-${Math.random().toString(36).slice(2, 8)}`;
-    const wakeTarget = { threadId, catId: catIdStr, userId: triggerUserId };
-    const durableJob = durableGateRequested
-      ? createResumableDurableManagedGateJob(taskId, executionSlaMs ?? 3_600_000, wakeTarget)
-      : undefined;
+    const wakeTarget = managedPrincipal;
+    let durableJob: DurableManagedGateJob | undefined;
     // P2-2 cloud review fix: for wakeWhen, the fallback reminder must fire AFTER the
     // runner's timeout + grace period, not at the same time. Otherwise both the runner
     // timeout wake and the fallback reminder can fire simultaneously (race → double wake).
@@ -917,6 +988,25 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
         code: 'HOLD_OWNER_FENCE_UNAVAILABLE',
         ...(reason ? { reason } : {}),
       };
+    }
+    if (wakeWhen && managedSubmission) {
+      try {
+        durableJob = await managedJobs.submit(managedPrincipal, {
+          ...managedSubmission,
+          originTaskId: taskId,
+          originInvocationId: record.invocationId,
+          wakeTarget,
+        });
+        if (durableJob.originTaskId !== taskId) {
+          await deps.holdQuotaStore.releaseByEventId(eventId, threadId, catIdStr);
+          return reuseManagedSubmission(durableJob);
+        }
+      } catch (error) {
+        await deps.holdQuotaStore.releaseByEventId(eventId, threadId, catIdStr);
+        const code = error instanceof Error ? error.message : 'managed_job_submission_failed';
+        reply.status(code === 'managed_job_budget_exhausted' ? 429 : 400);
+        return { error: 'Managed command was not admitted', code };
+      }
     }
     const schedulerAwait: SchedulerAwaitStateV1 = wakeWhen
       ? {
@@ -969,7 +1059,12 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
             ...(wakeWhen
               ? {
                   managedCommand: {
-                    ...createInitialManagedCommandWakeProjection(wakeWhen.command, createdAt, durableJob, wakeWhen.cwd),
+                    ...createInitialManagedCommandWakeProjection(
+                      wakeWhen.command,
+                      durableJob ? (readDurableGateRecord(durableJob)?.createdAt ?? createdAt) : createdAt,
+                      durableJob,
+                      wakeWhen.cwd,
+                    ),
                     ...(wakeWhen.executionPolicy ? { executionPolicy: wakeWhen.executionPolicy } : {}),
                   },
                 }
@@ -1023,11 +1118,11 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       );
 
       taskRunner.registerDynamic(spec, taskId);
-      if (durableJob) initializeDurableManagedGateJob(durableJob, createdAt);
     } catch (err) {
       // Best-effort cleanup: unregister + remove are no-ops if those steps weren't reached.
       taskRunner.unregister(taskId);
       dynamicTaskStore.remove(taskId);
+      if (durableJob) settleNoSpawnDurableGate(durableJob, taskId, 'hold_materialization_failed', false);
       // Compensate the exact quota reservation by eventId.
       await deps.holdQuotaStore.releaseByEventId(eventId, threadId, catIdStr);
       log.error(
@@ -1056,6 +1151,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       ...HOLD_BALL_SOURCE,
       meta: {
         managedHold: true,
+        ...(durableJob ? { jobId: durableJob.jobId, managedJobCard: true, reason } : {}),
         phase: 'waiting',
         cancelable: true,
         mode: wakeWhen ? 'command' : 'timer',
@@ -1104,10 +1200,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
         // An ambiguous/committed History outcome above must retain its reservation.
         await deps.holdQuotaStore.releaseByEventId(eventId, threadId, catIdStr);
         if (durableJob) {
-          cancelDurableManagedGateJob(durableJob, {
-            cancelledBy: 'hold_registration_rollback',
-            reason: 'waiting_history_append_failed',
-          });
+          settleNoSpawnDurableGate(durableJob, taskId, 'waiting_history_append_failed', false);
         }
         log.error(
           { threadId, catId: catIdStr, taskId, err },
@@ -1115,6 +1208,20 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
         );
         reply.status(503);
         return { error: 'Failed to persist hold waiting state', code: 'HOLD_WAITING_HISTORY_UNAVAILABLE' };
+      }
+    }
+    if (durableJob?.definition) {
+      try {
+        managedJobs.admit(durableJob.definition.principal, durableJob.jobId, storedWaitingMessage.id);
+      } catch (err) {
+        cancelManagedWakeIfTaskMatches(taskId, threadId, catIdStr);
+        taskRunner.unregister(taskId);
+        dynamicTaskStore.remove(taskId);
+        settleNoSpawnDurableGate(durableJob, taskId, 'hold_admission_failed', false);
+        await deps.holdQuotaStore.releaseByEventId(eventId, threadId, catIdStr);
+        log.error({ taskId, err }, 'Managed job admission failed before command start');
+        reply.status(503);
+        return { error: 'Failed to admit managed job', code: 'HOLD_MANAGED_JOB_ADMISSION_FAILED' };
       }
     }
     try {
@@ -1319,7 +1426,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
                     ...mc,
                     ...(commandAdmission.state === 'not_started' ? commandAdmission : {}),
                     pid: spawnResult.pid,
-                    ...(spawnResult.processIdentity && durableJob
+                    ...(spawnResult.processIdentity && durableJob && durableJob.recordStorage !== 'sqlite_v1'
                       ? { durableJob: { ...durableJob, processIdentity: spawnResult.processIdentity } }
                       : {}),
                     admissionFact,
@@ -1412,7 +1519,15 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
             timestamp: Date.now(),
             threadId,
             idempotencyKey: admissionFactIdempotencyKey,
-            source: { ...holdSource, meta: { ...holdSource.meta, phase: 'status', cancelable: false } },
+            source: {
+              ...holdSource,
+              meta: {
+                ...holdSource.meta,
+                phase: 'status',
+                cancelable: false,
+                ...(durableJob ? { managedJobCard: false, managedJobReceipt: 'admission' } : {}),
+              },
+            },
           });
           socketManager.broadcastToRoom(`thread:${threadId}`, 'connector_message', {
             threadId,
@@ -1421,7 +1536,15 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
               from: admStored.from,
               type: 'connector',
               content: admStored.content,
-              source: { ...holdSource, meta: { ...holdSource.meta, phase: 'status', cancelable: false } },
+              source: {
+                ...holdSource,
+                meta: {
+                  ...holdSource.meta,
+                  phase: 'status',
+                  cancelable: false,
+                  ...(durableJob ? { managedJobCard: false, managedJobReceipt: 'admission' } : {}),
+                },
+              },
               timestamp: admStored.timestamp,
             },
           });

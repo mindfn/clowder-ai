@@ -1,6 +1,6 @@
 import { refIdentity } from '@cat-cafe/shared';
-import { ExplorationOutcome } from './ExplorationOutcome';
-import { explorationTraceBounds } from './ExplorationTrace';
+import { ExplorationCounterexample } from './ExplorationCounterexample';
+import { ExplorationPairEvidence } from './ExplorationPairEvidence';
 import type { ExplorationComparison, ExplorationComparisonSide } from './exploration-comparison';
 import { summarizePairChanges } from './exploration-decision-model';
 import type { ExplorationReading } from './exploration-reading';
@@ -13,6 +13,7 @@ export function ExplorationPairedResults({
   reading,
   onChange,
   onRetry,
+  v2 = false,
 }: {
   programId: string;
   left: ExplorationComparisonSide;
@@ -21,6 +22,7 @@ export function ExplorationPairedResults({
   reading: ExplorationReading;
   onChange(patch: Partial<ExplorationReading>): void;
   onRetry(): void;
+  v2?: boolean;
 }) {
   const groups = summarizePairChanges(result.pairs);
   const filter = reading.caseFilter ?? 'all';
@@ -28,8 +30,6 @@ export function ExplorationPairedResults({
   const pair = cases.find((item) => item.right.caseId === reading.selectedCaseId) ?? cases[0];
   const count = (side: 'left' | 'right') =>
     result.pairs.filter((item) => item[side].result.status === 'satisfied').length;
-  const bounds =
-    pair?.left.trace && pair.right.trace ? explorationTraceBounds([pair.left.trace, pair.right.trace]) : undefined;
   const filters = ['all', 'improved', 'regressed', 'unchanged', 'unknown'] as const;
   const labels = { all: '全部', improved: '改善', regressed: '退步', unchanged: '不变', unknown: '未知' };
   return (
@@ -126,32 +126,32 @@ export function ExplorationPairedResults({
           {pair ? (
             <>
               <h3>{pair.right.label}</h3>
-              <div className="exploration-pair">
-                <ExplorationOutcome
-                  key={`a:${refIdentity(pair.left.recordRef)}`}
-                  programId={programId}
-                  label="对照"
-                  record={pair.left}
-                  experiment={left.experiment}
-                  retry={onRetry}
-                  bounds={bounds}
-                />
-                <ExplorationOutcome
-                  key={`b:${refIdentity(pair.right.recordRef)}`}
-                  programId={programId}
-                  label="本版"
-                  record={pair.right}
-                  experiment={right.experiment}
-                  retry={onRetry}
-                  bounds={bounds}
-                />
-              </div>
+              <ExplorationPairEvidence
+                key={`${refIdentity(pair.left.recordRef)}:${refIdentity(pair.right.recordRef)}`}
+                programId={programId}
+                left={pair.left}
+                right={pair.right}
+                leftExperiment={left.experiment}
+                rightExperiment={right.experiment}
+                linked={v2}
+                retry={onRetry}
+              />
             </>
           ) : (
             <p>当前筛选下没有案例。可以切回全部。</p>
           )}
         </div>
       </div>
+      {v2 && (
+        <ExplorationCounterexample
+          programId={programId}
+          left={left}
+          right={right}
+          comparison={result}
+          selectedRecord={pair?.right}
+          retry={onRetry}
+        />
+      )}
       <details className="exploration-pair-method">
         <summary>本次比较的方法与范围</summary>
         <p>{right.experiment.conditions.threshold.detail}</p>

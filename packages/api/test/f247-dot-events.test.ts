@@ -44,7 +44,6 @@ test('two simultaneous sources return independently; retries, stale credentials,
       messageStore: messages,
       threadStore: threads,
       enabled: async () => true,
-      allowedCats: async () => (await connection.status()).allowedCatIds,
       sendWebhook: async (_url, _headers, body) => {
         received.push(JSON.parse(body));
         return { status: 202, body: '{}' };
@@ -119,18 +118,16 @@ test('two simultaneous sources return independently; retries, stale credentials,
       userId: 'owner',
       catId: createCatId('codex61-sol'),
       threadId: sources[0]!.threadId,
-      content: 'granted cat',
+      content: 'ordinary housecat',
       mentions: [],
       timestamp: Date.now(),
     });
     const catDispatch = { ...sources[0]!, sourceMessageId: catSource.id, dispatchInvocationId: 'cat-dispatch' };
-    assert.equal((await bridge.dispatch(catDispatch)).kind, 'fallback');
-    await connection.setOwnerPreferences('owner', { allowedCatIds: ['codex61-sol'] });
     assert.equal((await bridge.dispatch(catDispatch)).kind, 'sent');
     const catEvent = received.at(-1)!;
     await returns.read(setup.credentialSecret, catEvent.eventId);
-    await connection.setOwnerPreferences('owner', { allowedCatIds: [] });
-    await assert.rejects(() => returns.reply(setup.credentialSecret, catEvent.eventId, 'late'), /authority_revoked/);
+    const catReply = await returns.reply(setup.credentialSecret, catEvent.eventId, 'housecat reply');
+    assert.equal(catReply.messageId, `${catSource.threadId}:${catSource.id}`);
     const self = messages.append({
       userId: 'owner',
       catId: createCatId('gpt-dot'),

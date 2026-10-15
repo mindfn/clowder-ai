@@ -788,6 +788,8 @@ export class RedisSessionChainStore implements ISessionChainStore {
       pairs.push('lastUsage', JSON.stringify(patch.lastUsage));
     }
     if (patch.externalImport !== undefined) pairs.push('externalImport', JSON.stringify(patch.externalImport));
+    if (patch.nativeSessionBinding !== undefined)
+      pairs.push('nativeSessionBinding', JSON.stringify(patch.nativeSessionBinding));
     if (patch.messageCount !== undefined) {
       pairs.push('messageCount', String(patch.messageCount));
     }
@@ -1012,6 +1014,9 @@ export class RedisSessionChainStore implements ISessionChainStore {
       status: (data.status as SessionStatus) ?? 'active',
       ...(contextHealth ? { contextHealth } : {}),
       ...(capacityPin ? { capacityPin } : {}),
+      ...(data.nativeSessionBinding
+        ? { nativeSessionBinding: JSON.parse(data.nativeSessionBinding) as SessionRecord['nativeSessionBinding'] }
+        : {}),
       ...(lastUsage ? { lastUsage } : {}),
       messageCount: parseInt(data.messageCount ?? '0', 10),
       compressionCount,

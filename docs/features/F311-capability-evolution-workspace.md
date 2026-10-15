@@ -77,7 +77,7 @@ mcp_admission_claims:
 
 > **Status**: in-progress (v6 product-experience contract; v5 final-vision phases; Gate 0A + Phase 1–3 landed; Phase 4 implementation landed; roadshow retained as Phase 1 regression; operator-selected F314/F100 full-loop AC-41–44 and AC-UX4 remain open on owner-backed asset/evidence/outcome truth) | **Product phase owner**: Maine Coon (@codex-sol, gpt-5.6-sol)（本轮 operator 指定执行） | **Architecture co-creator/reviewer**: Ragdoll (@fable5, claude-fable-5) | **Priority**: P0
 >
-> **2026-10-14 v2 用户旅程**：operator 要求在新版界面尽快走通 F311 旅程，并用 F314 事故档案建立第一条真实进化谱系。计划见 [v2 用户旅程开发计划](#v2-用户旅程开发计划2026-10-14-起)，新增 AC-UX6；S1 已合入 #5532，独立 Alpha 样本复验通过，设计确认形状并要求在 S2 补首页内容。消费者登记补丁 #5537 已独立审合；S2 准备主区及首页遗漏已合入 #5541，Alpha 与设计验收待完成，S3–S6 与 AC-UX6 仍开放。
+> **2026-10-14 v2 用户旅程**：operator 要求在新版界面尽快走通 F311 旅程，并用 F314 事故档案建立第一条真实进化谱系。计划见 [v2 用户旅程开发计划](#v2-用户旅程开发计划2026-10-14-起)，新增 AC-UX6；S1 已合入 #5532，独立 Alpha 样本复验通过，设计确认形状并要求在 S2 补首页内容。消费者登记补丁 #5537 已独立审合；S2 准备主区及首页遗漏已合入 #5541，设计已接受内容保留、两处修正并入 S3；隔离 Alpha 两样本准备旅程已通过，S3–S6 与 AC-UX6 仍开放。
 >
 >
 > **operator signoff**: 2026-08-28 [thread-id] `0001787926983474`（今年双旗舰之一，与 F310 Growing 并列）。
@@ -449,6 +449,14 @@ Meta Evolution 的正式定义为：**能力对象与改进机制的协同演进
 设置与管理 › 能力进化 → 项目页 → 准备四块 → 探索进化（真实谱系与真实证据）→ 有候选时拍板 → 后续任务里看到来源。
 
 衡量标准是他从入口走一遍，不是切片 PASS、合入或作者样本。依据见 F314 事故档案 10-08 / 10-12 两案。
+
+**S3 首份设计已接受结构，第二份作者实现中（10-14）**：设计 source `[thread-id]#private-source-id` 接受版本卡默认态、生效/阅读分开、反例不遮、条件在结果后与双联播，并复核 S2 两 P2 已兑现；要求第二份补同场景 v1–v4 走路联播、两场 Cortex、卡片封面/改动行、父边人话说明、画布点名/分组/留白及窄屏上下录像。作者原工位分支 `feat/f311-v2-public-sources` checkpoint `93d0eb631c` 已实现并推送，尚无第二份 PR / review / 浏览器结论：以正式 resolver 的真实目标 422 为 RED，新增 exact `352afab6` / 原 F311 capability 只读来源绑定，目标与 sequence 不写；足球与 signed Cortex 归档分读，两场挂同一比赛目录的实验、无版本父边，七个执行动作仍拒绝。Cortex annotation / observations 证明 sensor/state 区别，但源码、局部观察与控制组合及120/240秒观察窗也不同；实现不称“只换反馈”或单变量改善。走路文字为北极星已有录像观察，绑定 exact replay SHA 并标出处，不伪装冻结判据；旧相同 capture 的确定性回放保留原 provenance。20 条 API、23 条组件/经典契约及类型通过，精确登记 RED→GREEN 210 条，未增单元/配额/目录豁免；元数据不是所有 consumer 的执行证据。新增旅程在既有 canonical 两文件里实跑前，正式部署的 binding、实图/原件呈现、第二份独立审合与 Alpha 仍未证明。S3、S4待F314核对、S5/S6、AC-UX6保持开放。
+
+**S3 第二份浏览器首轮 14/15，继续修复（10-14）**：checkpoint `93d0eb6` 的两 canonical browser 获准执行（receipt `29067-7819104d…` released，排队12390ms、执行172121ms），托管真实 exit1、185秒。14条旧/准备旅程通过；新增真实目标快照的四段走路及 Cortex 两段播放已通过，红在拖到9.8秒后等待两段都在10秒暂停。首轮完整日志/报告/实图保留于作者 `.cat-cafe/evidence/2026-10-14-f311-v2-s3-sources/`，未盖掉红灯。新增精准回归复现“迟到的程序化 seeking 将领先录像9.97秒拉回9.8秒”，`b49b6b45ee` 标记程序化目标直到 seeked、保留用户显式拖动；24条组件/classic与类型通过，仍需真实浏览器确认这条机制解释本次暂停失败。不会放宽10秒断言，尚无第二份 PR/review/Alpha。设计原作者已在北极星 `2825a67cc5` 更正“只换局部反馈”，第二份保持已核实的源码/控制组合/时长差别，不增父边或改善结论。
+
+**S3 第二份原件跳转修复待完整复验（10-14）**：第二轮 `b49b6b45ee` 仍14/15，托管 exit1、176秒，receipt `29088-3497d9e0…` released；失败诊断显示 Cortex 两原片在拖动后回到0秒，说明上一处程序化 seek 反馈修复没有解释完整失败。同一120秒真实原片的 Chromium HTTP 对比实验确认：旧完整响应的 seekable 为0–0，拖到9.8秒被夹回0；支持 Range 的响应暴露0–120并成功跳转。checkpoint `57d60d6b48` 复用现有字节范围解析器，先授权和核完整 SHA，再切片；补齐206/416、开放/尾部范围、越权/撤回/篡改回归。17条相关API、API构建及本次200条消费者/policy/catalog检查通过；完整证据在原作者目录 `seek-http-probe.json`、`media-range-{red,green,metadata}.log`，探针receipt `29101-069750da…` released。完整两canonical browser仍需复验；10秒暂停断言保留并新增真实 seekable 断言，第二份PR/review/Alpha和AC-UX6未完成。
+
+**鸭鸭来源核验（10-14）**：Microduck 原 owner 在执行线程 `…001015-94918a97` 只读核实，真实 `352afab6` 的 target 仍是 `F311/capability:%E7%8C%AB%E7%8C%AB%E5%B8%A6%E9%B8%AD%E9%B8%AD%E5%8D%8F%E5%90%8C%E8%B8%A2%E7%90%83%E8%B5%9B`，正式 adapter/exploration/asset/preparation GET 均为对应 owner missing/unavailable；不能把对象 alias 到旧夹具的 `microduck-owner/simulator:walking`。两场 Cortex 的可用原件根是 git `35dfed114be3ca292aac304a888d4a9519d0dbea` 下 `pipeline/cortex/evidence/20260910/manifest.json` 与两个 bundle manifest，作者回读三个 SHA-256 均与 owner 回执一致。总索引与 bundle 是归档包含关系，两场是不同实验，原件未发布版本派生；父边保留未知，不画 live1→live2，不按时序挂到 v0–v8。上述来源可以作为后续只读 adapter 的原件输入，不能反推已存在绑定、正式采用或实施权限；新版实现继续，真实 capability 的版本与探索读取仍待产出。
 
 **S1 设计反馈并入 S2**（执行线程 `…000532-1942018f`）：恢复首页「新建目标」与聊天图标，沿用 `StartEvolution` 把目标草稿带到原对话、不自动发送，并修正不存在的「下方」指向；标题旁「?」收纳概念说明。项目行补「谁在做」的头像与小名（只消费可靠的 origin / 准备活动事实，无法核实则未知，不编当前执行猫）和来自 Program `updatedAt` 的「最近」。首页只显示待判断件数并跳待办的接线仍归 S5。北极星整页首页改为右侧 Workspace、聊天留左的偏差已由设计接受，不重画这项。
 

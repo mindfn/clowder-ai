@@ -5,8 +5,26 @@ import { ActionSuccessorDispatchRecovery } from '../dist/domains/ball-custody/Ac
 import { ActionSuccessorRecoverySweep } from '../dist/domains/ball-custody/ActionSuccessorRecoverySweep.js';
 import { ManagedCommandWakeRecoverySweep } from '../dist/domains/ball-custody/ManagedCommandWakeRecoverySweep.js';
 import { RedisGameStore } from '../dist/domains/cats/services/stores/redis/RedisGameStore.js';
+import { ManagedJobService } from '../dist/domains/managed-job/ManagedJobService.js';
+import { isolateManagedJobData } from './helpers/isolated-managed-job-data.js';
+
+isolateManagedJobData();
 
 test('recovery cycles coalesce census through completion and recover after a rejected cycle', async () => {
+  // Reconciliation must also tolerate a retained job whose carrier task is gone.
+  // Seed it here so this coverage does not depend on another test's ledger.
+  const jobs = new ManagedJobService();
+  const principal = { userId: 'liveness-user', threadId: 'liveness-thread', catId: 'codex' };
+  const job = await jobs.submit(principal, {
+    command: 'true',
+    cwd: process.cwd(),
+    originTaskId: 'absent-liveness-task',
+    originInvocationId: 'liveness-invocation',
+    idempotencyKey: 'retained-job',
+    executionSlaMs: 1000,
+    wakeTarget: principal,
+  });
+  jobs.cancel(principal, job.jobId);
   for (const kind of ['returns', 'dispatches', 'managed']) {
     let scans = 0;
     let release;
@@ -25,6 +43,7 @@ test('recovery cycles coalesce census through completion and recover after a rej
           ? new ActionSuccessorDispatchRecovery({ leaseStore: { listPendingDispatches: scan } })
           : new ManagedCommandWakeRecoverySweep({
               dynamicTaskStore: {
+                getById: () => undefined,
                 getAll: () => {
                   scans++;
                   return [];

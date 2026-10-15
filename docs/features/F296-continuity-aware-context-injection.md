@@ -8,7 +8,7 @@ description: "按真实 runtime continuity 区分冷启动与热续，并让上�
 description_source: human
 description_author: codex-sol
 description_updated_at: 2026-08-31T16:45:00-07:00
-tips_exempt: "Renewed 2026-10-08 for F321's one automatic first-owner-message historical clue. Source navigation and consumption remain in existing reply cue controls; discovery belongs to F321 and the existing memory-curation setting, with no separate F296 user action."
+tips_exempt: "Renewed 2026-10-14 for F325 Native missing-binding cold adoption and F321's automatic first-owner-message historical clue. Native setup and normal work are covered by the F325 member/Chat tip; source navigation remains in existing reply cue controls and F321 memory curation. These internal continuity changes add no separate F296 user action."
 ---
 
 # F296: Continuity-Aware Context Injection — 冷启动可信定向包 + 热续增量
@@ -371,6 +371,14 @@ type ContextEpochState = Readonly<{
 
 epoch 单调递增且不复用。任何 epoch 转移都不重置 message delivery cursor 或 seen cursor；它只使旧
 presentation ledger key 失效。
+
+**F325 原生载体迁移澄清（2026-10-14）**：过去 unsupported 的 scope 可能已有 epoch 而没有 binding。
+首次拿到 provider 实际 `resumed(R)` 时，该轮仍按表返回 `unknown(binding_mismatch)`、`epoch+1`、`cold`；
+仅在原 binding 缺失时把实际观察到的 R 记入该 cold 世代。正文未交付或尚未 `confirmColdConsumed`，下一轮仍 cold；
+确认 cold 已被消费后，再次实际 resume 同 R 才 hot。原本已有不同 ID 的冲突不在当轮改绑，也不伪造 fresh/replaced。
+这是复用现有 binding / coldConsumed 两阶段语义，避免永远冷重建；不新增恢复 store 或重置 cursor。
+原负责人单题校准：`[thread-id]#private-source-id`；
+回归：`f296-b1-context-epoch-owner.test.js` 的 missing→cold adoption→未消费仍 cold→消费后 hot→不同 ID 拒绝。
 
 > **Compaction 去重的认知天花板（B2a 实测边界，勿再表述为 exact-once）**：实现保留最近 64 个已消费
 > compaction event ID 并逐出更旧的。因此保证是**有界重放抑制**，不是 lifecycle 级 exact-once——

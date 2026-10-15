@@ -1,4 +1,4 @@
-import type { ApprovalHubItem, UnifiedAttentionVisibleApproval } from '@cat-cafe/shared';
+import type { ApprovalHubItem, UnifiedAttentionItemV1, UnifiedAttentionVisibleApproval } from '@cat-cafe/shared';
 import type { ApprovalRequestEvent, AuthorizeOptions } from '@/components/ApprovalHost';
 import type { DecisionAttempt } from '@/stores/approval-decision-attempts';
 import type { MailboxRead } from '../unified-mailbox-state';
@@ -60,6 +60,8 @@ export interface SessionsDeps {
 }
 
 export interface ApprovalSessions {
+  /** Current owner-matching row only (hosts without this additive reader stay read-only); a newer read, ambiguity or unavailable source closes original card writes. */
+  currentItem?(ownerUserId: string, decisionRef: string): UnifiedAttentionItemV1 | null;
   /** Start (or find) the session for an approval. Idempotent: an existing session keeps its progress and its snapshot. */
   open(seed: SessionSeed): ApprovalSession;
   get(key: string): ApprovalSession | undefined;
@@ -321,6 +323,21 @@ export function createApprovalSessions(deps: SessionsDeps): ApprovalSessions {
         return;
       }
       apply(key, { type: 'reread', readGeneration: deps.readsStarted() });
+    },
+
+    currentItem(ownerUserId, decisionRef) {
+      const { result, generation } = deps.latestRead();
+      if (
+        result.kind !== 'ok' ||
+        generation === null ||
+        generation !== deps.readsStarted() ||
+        result.read.identity.ownerUserId !== ownerUserId ||
+        result.read.consistency.state !== 'verified' ||
+        result.read.sources.needsMe.status !== 'available'
+      )
+        return null;
+      const items = result.read.items.filter((item) => item.decisionRef === decisionRef);
+      return items.length === 1 ? items[0] : null;
     },
 
     authorize(key, options) {

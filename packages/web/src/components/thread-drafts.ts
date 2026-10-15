@@ -13,6 +13,7 @@ const contextAttachmentDraftListeners = new Set<() => void>();
  * thread switching (#934).
  */
 export interface DraftReplyContext extends ReplyPreview {
+  runtimeAnswerContext?: import('@/stores/chat-types').RuntimeConversationAnswerContext;
   id: string;
   threadId: string;
 }

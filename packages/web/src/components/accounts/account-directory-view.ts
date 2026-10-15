@@ -27,7 +27,8 @@ export function accountProvider(account: ProfileItem, t = accountsCopy.zh): stri
   }
 }
 export function accountMembers(account: ProfileItem, cats: CatData[], selection?: AccountSelection): AccountMember[] {
-  if (account.clientId === 'openai' && selection) return selection.members.filter((m) => m.accountRef === account.id);
+  if (['openai', 'anthropic'].includes(account.clientId ?? '') && selection)
+    return selection.members.filter((m) => m.accountRef === account.id);
   return cats
     .filter(
       (cat) =>
@@ -46,7 +47,7 @@ export function accountMembers(account: ProfileItem, cats: CatData[], selection?
     }));
 }
 export function accountIsSelected(account: ProfileItem, cats: CatData[], selection?: AccountSelection): boolean {
-  if (account.clientId === 'openai') return selection?.accountRef === account.id;
+  if (['openai', 'anthropic'].includes(account.clientId ?? '')) return selection?.accountRef === account.id;
   const local = cats.filter(
     (cat) => cat.id !== 'gpt-pro' && cat.cli && cat.clientId === account.clientId && cat.roster?.available !== false,
   );
@@ -56,9 +57,21 @@ export function accountIsSelected(account: ProfileItem, cats: CatData[], selecti
   );
 }
 export function accountLoginReady(account: ProfileItem) {
+  if (account.claude) return account.claudeTokenStatus === 'saved';
   return account.codex ? account.codex.status === 'ready' : account.codexLoginStatus === 'ready';
 }
 export function accountStatus(account: ProfileItem, t = accountsCopy.zh, language: 'zh' | 'en' = 'zh') {
+  if (account.claude)
+    return {
+      label:
+        account.claudeTokenStatus === 'saved'
+          ? t.tokenSaved
+          : account.claudeTokenStatus === 'expired'
+            ? t.tokenExpired
+            : t.tokenMissing,
+      detail: t.tokenIdentityUnknown,
+      ready: account.claudeTokenStatus === 'saved',
+    };
   if (account.authType === 'api_key')
     return { label: account.hasApiKey ? t.keyReady : t.keyMissing, detail: '', ready: false };
   const attempt = account.codex?.attempt;

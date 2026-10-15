@@ -43,9 +43,9 @@ export function AccountRowMenu({
                 {t.loginAgain}
               </button>
             )}
-            {account.authType === 'api_key' && (
+            {(account.authType === 'api_key' || account.claude) && (
               <button type="button" disabled={busy} onClick={onEdit}>
-                {t.edit}
+                {account.claude ? t.replaceToken : t.edit}
               </button>
             )}
             <button type="button" disabled={busy || used || memberCount > 0} onClick={onDelete}>

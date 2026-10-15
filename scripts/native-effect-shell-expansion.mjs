@@ -131,7 +131,7 @@ function quoteValue(value, quote) {
 /** Every value a word can take; undefined when any part cannot be read. A binding of null means "set, unreadable". */
 export function expandAll(word, bindings, env) {
   if (word.includes(OPAQUE) || /[`*?[{]|\$\(/.test(word.replace(/\$\{[A-Za-z_]\w*\}/g, ''))) return undefined;
-  let results = [word === '~' || word.startsWith('~/') ? `${homedir()}${word.slice(1)}` : word];
+  let results = [word === '~' || word.startsWith('~/') ? `${env.HOME ?? homedir()}${word.slice(1)}` : word];
   for (let guard = 0; guard < 8 && results.some((text) => VARIABLE.test(text)); guard += 1) {
     const next = results.flatMap((text) => expandFirstVariable(text, bindings, env) ?? [null]);
     if (next.includes(null) || next.length > MAX_EXPANSIONS) return undefined;
@@ -153,7 +153,7 @@ function expandFirstVariable(text, bindings, env) {
 function variableValues(name, bindings, env) {
   if (bindings.has(name)) return bindings.get(name);
   if (bindings.has(FORGOTTEN)) return null;
-  if (name === 'HOME') return [homedir()];
+  if (name === 'HOME') return [env.HOME ?? homedir()];
   return env[name] !== undefined ? [env[name]] : null;
 }
 

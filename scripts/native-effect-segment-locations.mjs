@@ -10,7 +10,7 @@ import {
   loopBindings,
   OPAQUE,
 } from './native-effect-shell-expansion.mjs';
-import { shellWords, tokenizeSimpleShellCommand } from './native-effect-shell-tokenizer.mjs';
+import { shellInvocation, shellWords, tokenizeSimpleShellCommand } from './native-effect-shell-tokenizer.mjs';
 
 /**
  * Where can each segment of a command line run?
@@ -128,6 +128,7 @@ function segmentShape(text) {
   ).length;
   const pops = facts.boundaries.filter((boundary) => boundary.kind === 'group' && text[boundary.start] === ')').length;
   const masked = shellSubstitutions(text, OPAQUE).text;
+  const invocation = shellInvocation(segmentCommandText(masked));
   // Assignment words join adjacent quoted pieces: B='a b' is one binding, not B= plus an argv.
   const tokens = isShellBinding(masked)
     ? shellWords(masked).map(({ value }) => value)
@@ -142,6 +143,9 @@ function segmentShape(text) {
   return {
     bindingSource: text,
     tokens,
+    // Keep grouping/status syntax above, but redirections out of command argv.
+    // This also covers cd/pushd inside groups and a leading output redirection.
+    argv: invocation.syntaxComplete ? invocation.words.map(({ value }) => value) : undefined,
     pushes,
     pops,
     openers: [...openers, ...Array(innerPushes).fill('(')],
@@ -207,7 +211,8 @@ function runSegment(path, shape, inSubshell, env) {
   const outcomes = [];
   const command = shape.tokens ? peel(shape.tokens) : { words: [OPAQUE], mayNotRun: false, negated: false };
   if (command.mayNotRun) outcomes.push(entry);
-  for (const outcome of execute(entry, command.words, env, shape.bindingSource)) {
+  const argv = shape.argv ? peel(shape.argv).words : command.words;
+  for (const outcome of execute(entry, argv, env, shape.bindingSource)) {
     const status = command.negated ? (outcome.status === 'ok' ? 'fail' : 'ok') : outcome.status;
     // An explicit subshell group restores its state at the closing parenthesis,
     // not after its first command when the group happens to follow a pipe.
@@ -270,7 +275,7 @@ function changeDirectory(path, operands, env) {
   const rest = operands.filter((word) => !['-P', '-L', '--'].includes(word));
   const failed = { ...path, status: 'fail' };
   if (rest.length > 1 || rest[0] === '-') return [{ ...path, location: UNKNOWN, status: 'ok' }, failed];
-  const values = rest.length === 0 ? [homedir()] : expandAll(rest[0], path.bindings, env);
+  const values = rest.length === 0 ? [env.HOME ?? homedir()] : expandAll(rest[0], path.bindings, env);
   const relativeFromUnknown = path.location === UNKNOWN && values?.some((value) => !value.startsWith('/'));
   if (!values || relativeFromUnknown) return [{ ...path, location: UNKNOWN, status: 'ok' }, failed];
   const base = path.location ?? { logical: '/', physical: '/' };

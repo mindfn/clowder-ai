@@ -40,6 +40,19 @@ export interface AuthenticatedCompressionObservation {
   observedAt: number;
 }
 
+/** Host-verified Native launch identity; persisted with the canonical session, never the private L0 body. */
+export interface NativeSessionBinding {
+  readonly v: 1;
+  readonly carrier: 'agy_stream_json';
+  readonly cliSessionId: string;
+  readonly l0Hash: string;
+  readonly workspaceRoot: string;
+  readonly profileHome: string;
+  readonly model: string;
+  readonly permissionMode: 'request-review' | 'always-proceed';
+  readonly agentName: string;
+}
+
 export interface SessionRecord {
   readonly id: string;
   /** A one-shot scoped execution is traceable history, never a home resume candidate. */
@@ -60,6 +73,7 @@ export interface SessionRecord {
       };
   /** CLI-reported session ID (from session_init event) */
   cliSessionId?: string;
+  nativeSessionBinding?: NativeSessionBinding;
   /** User-requested adoption of an existing native history; persisted across reloads. */
   externalImport?: {
     cliSessionId: string;
