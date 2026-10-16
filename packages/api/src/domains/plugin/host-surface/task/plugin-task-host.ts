@@ -8,12 +8,12 @@ import type {
   TaskStatus,
   UpdateTaskInput,
 } from '@cat-cafe/shared';
-import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
-import { isTaskSubjectSnapshotConflictError } from '../../cats/services/stores/ports/TaskStoreContract.js';
-import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
-import { currentPluginCallContext, currentPluginOwnerRequestContext } from '../carrier/plugin-call-context.js';
-import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
-import { hostCapabilityRefusal } from './host-capability-refusal.js';
+import type { ITaskStore } from '../../../cats/services/stores/ports/TaskStore.js';
+import { isTaskSubjectSnapshotConflictError } from '../../../cats/services/stores/ports/TaskStoreContract.js';
+import type { IThreadStore } from '../../../cats/services/stores/ports/ThreadStore.js';
+import { currentPluginCallContext, currentPluginOwnerRequestContext } from '../../carrier/plugin-call-context.js';
+import { ExternalPluginRuntimeError } from '../../external-runtime/types.js';
+import { hostCapabilityRefusal } from '../host-capability-refusal.js';
 import {
   createPluginTaskWorkData,
   type PluginTaskWorkData,
@@ -60,7 +60,7 @@ export interface PluginTaskHost {
 }
 
 export interface PluginTaskHostDeps {
-  readonly artifactReader?: import('../../growing/ports/PreparedArtifactReader.js').PreparedArtifactReader;
+  readonly artifactReader?: import('../../../growing/ports/PreparedArtifactReader.js').PreparedArtifactReader;
   readonly onTaskDataChanged?: (task: TaskItem) => void;
   readonly admission?: PluginTaskAdmissionServices;
   readonly pluginInstanceId?: string;

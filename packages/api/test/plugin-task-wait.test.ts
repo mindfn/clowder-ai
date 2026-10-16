@@ -4,7 +4,7 @@ import { withBallCustodyTaskEvents } from '../src/domains/ball-custody/BallCusto
 import { resolveTypedWaitContinuation } from '../src/domains/ball-custody/TypedWaitContinuation.js';
 import { TaskStore } from '../src/domains/cats/services/stores/ports/TaskStore.js';
 import { withPluginCallContext } from '../src/domains/plugin/carrier/plugin-call-context.js';
-import { createPluginTaskHost } from '../src/domains/plugin/host-surface/plugin-task-host.js';
+import { createPluginTaskHost } from '../src/domains/plugin/host-surface/task/plugin-task-host.js';
 
 const identity = {
   invocationId: 'inv',

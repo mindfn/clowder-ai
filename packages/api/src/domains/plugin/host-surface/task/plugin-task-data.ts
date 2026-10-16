@@ -11,11 +11,11 @@ import { z } from 'zod';
 import {
   EntrustedWorkLifecycleService,
   entrustedWorkAdmissionCommandV1Schema,
-} from '../../growing/EntrustedWorkLifecycleService.js';
-import { currentPluginCallContext, currentPluginOwnerRequestContext } from '../carrier/plugin-call-context.js';
-import { currentOwnerOperation } from '../carrier/plugin-owner-operation-context.js';
-import { snapshotPluginProtocolData } from '../carrier/plugin-protocol-data.js';
-import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
+} from '../../../growing/EntrustedWorkLifecycleService.js';
+import { currentPluginCallContext, currentPluginOwnerRequestContext } from '../../carrier/plugin-call-context.js';
+import { currentOwnerOperation } from '../../carrier/plugin-owner-operation-context.js';
+import { snapshotPluginProtocolData } from '../../carrier/plugin-protocol-data.js';
+import { ExternalPluginRuntimeError } from '../../external-runtime/types.js';
 import type { PluginTaskHostDeps } from './plugin-task-host.js';
 
 const definition = z

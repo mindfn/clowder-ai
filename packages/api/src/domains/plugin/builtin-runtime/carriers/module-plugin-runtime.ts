@@ -57,14 +57,14 @@ import {
   type PluginPrivateStoragePort,
   type PluginStorageHost,
 } from '../../host-surface/plugin-private-storage.js';
-import type { PluginTaskAdmissionServices } from '../../host-surface/plugin-task-data-services.js';
-import { createPluginTaskHost, type PluginTaskHost } from '../../host-surface/plugin-task-host.js';
 import {
   createPluginThreadHost,
   createUnavailablePluginThreadHost,
   type PluginThreadHost,
 } from '../../host-surface/plugin-thread-host.js';
 import type { PluginThreadProjectionDeps } from '../../host-surface/plugin-thread-projections.js';
+import type { PluginTaskAdmissionServices } from '../../host-surface/task/plugin-task-data-services.js';
+import { createPluginTaskHost, type PluginTaskHost } from '../../host-surface/task/plugin-task-host.js';
 import type { BuiltinPluginPackageMaterializer } from '../../manager/builtin-package-materializer.js';
 import {
   type PluginRuntimeConfigurationPort,

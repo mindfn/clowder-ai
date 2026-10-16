@@ -5,8 +5,8 @@ import {
   waitTerminationReasonSchema,
 } from '@cat-cafe/shared';
 import { z } from 'zod';
-import type { ITaskStore } from '../../cats/services/stores/ports/TaskStoreContract.js';
-import type { PluginCallContext } from '../carrier/plugin-call-context.js';
+import type { ITaskStore } from '../../../cats/services/stores/ports/TaskStoreContract.js';
+import type { PluginCallContext } from '../../carrier/plugin-call-context.js';
 
 const generation = z.number().int().positive().safe();
 const identifier = z.string().min(1).max(500);

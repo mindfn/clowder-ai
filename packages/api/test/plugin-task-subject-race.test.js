@@ -8,7 +8,7 @@ import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadSt
 import { RedisTaskStore } from '../dist/domains/cats/services/stores/redis/RedisTaskStore.js';
 import { TaskKeys } from '../dist/domains/cats/services/stores/redis-keys/task-keys.js';
 import { withPluginCallContext } from '../dist/domains/plugin/carrier/plugin-call-context.js';
-import { createPluginTaskHost } from '../dist/domains/plugin/host-surface/plugin-task-host.js';
+import { createPluginTaskHost } from '../dist/domains/plugin/host-surface/task/plugin-task-host.js';
 import { assertRedisIsolationOrThrow, redisIsolationSkipReason } from './helpers/redis-test-helpers.js';
 
 const redisUrl = process.env.REDIS_URL;

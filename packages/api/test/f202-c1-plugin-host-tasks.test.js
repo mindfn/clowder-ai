@@ -8,7 +8,7 @@ import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-co
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { TaskStore } from '../dist/domains/cats/services/stores/ports/TaskStore.js';
 import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
-import { createPluginTaskHost } from '../dist/domains/plugin/host-surface/plugin-task-host.js';
+import { createPluginTaskHost } from '../dist/domains/plugin/host-surface/task/plugin-task-host.js';
 import {
   createDormantPluginRuntimeComposition,
   createPluginManagerRuntimeComposition,

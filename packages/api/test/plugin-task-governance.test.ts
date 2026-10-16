@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { TaskStore } from '../src/domains/cats/services/stores/ports/TaskStore.js';
 import { ThreadStore } from '../src/domains/cats/services/stores/ports/ThreadStore.js';
 import { withPluginCallContext } from '../src/domains/plugin/carrier/plugin-call-context.js';
-import { createPluginTaskHost } from '../src/domains/plugin/host-surface/plugin-task-host.js';
+import { createPluginTaskHost } from '../src/domains/plugin/host-surface/task/plugin-task-host.js';
 
 function fixture() {
   const taskStore = new TaskStore();

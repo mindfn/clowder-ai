@@ -1,8 +1,8 @@
 import type { CreateTaskInput } from '@cat-cafe/shared';
-import { verifyKeeperOwnership } from '../../../routes/gate-keeping-cross-store.js';
-import { checkGateKeepingGuard } from '../../../routes/gate-keeping-guard.js';
-import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
-import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
+import { verifyKeeperOwnership } from '../../../../routes/gate-keeping-cross-store.js';
+import { checkGateKeepingGuard } from '../../../../routes/gate-keeping-guard.js';
+import type { ITaskStore } from '../../../cats/services/stores/ports/TaskStore.js';
+import type { IThreadStore } from '../../../cats/services/stores/ports/ThreadStore.js';
 
 /** Host-owned task classification, never an ownership assertion supplied by a plugin. */
 export async function assertPluginTaskGovernance(

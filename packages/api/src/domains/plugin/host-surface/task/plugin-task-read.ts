@@ -1,6 +1,6 @@
 import type { PluginWaitState, TaskItem } from '@cat-cafe/shared';
-import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
-import { snapshotPluginProtocolData } from '../carrier/plugin-protocol-data.js';
+import type { IThreadStore } from '../../../cats/services/stores/ports/ThreadStore.js';
+import { snapshotPluginProtocolData } from '../../carrier/plugin-protocol-data.js';
 
 type Work = NonNullable<TaskItem['entrustedWork']>;
 

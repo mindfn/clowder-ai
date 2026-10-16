@@ -5,7 +5,7 @@ import { MessageStore } from '../src/domains/cats/services/stores/ports/MessageS
 import { TaskStore } from '../src/domains/cats/services/stores/ports/TaskStore.ts';
 import { ThreadStore } from '../src/domains/cats/services/stores/ports/ThreadStore.ts';
 import { EntrustedWorkOwnerReadService } from '../src/domains/growing/EntrustedWorkOwnerReadService.ts';
-import { createPluginTaskHost } from '../src/domains/plugin/host-surface/plugin-task-host.ts';
+import { createPluginTaskHost } from '../src/domains/plugin/host-surface/task/plugin-task-host.ts';
 
 async function fixture() {
   const tasks = new TaskStore(),

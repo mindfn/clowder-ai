@@ -6,7 +6,7 @@ import { createModuleHostInvocation } from '../src/domains/plugin/builtin-runtim
 import { currentPluginCallContext } from '../src/domains/plugin/carrier/plugin-call-context.js';
 import { DeclaredRuntimeContributions } from '../src/domains/plugin/declared/declared-runtime-contributions.js';
 import { NativePluginActions } from '../src/domains/plugin/declared/native-plugin-actions.js';
-import { createPluginTaskHost } from '../src/domains/plugin/host-surface/plugin-task-host.js';
+import { createPluginTaskHost } from '../src/domains/plugin/host-surface/task/plugin-task-host.js';
 
 const admission = (id = 'instance') => ({
   instance: {

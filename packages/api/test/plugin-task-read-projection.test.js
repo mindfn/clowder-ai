@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { withPluginCallContext } from '../src/domains/plugin/carrier/plugin-call-context.ts';
-import { createPluginTaskHost } from '../src/domains/plugin/host-surface/plugin-task-host.ts';
+import { createPluginTaskHost } from '../src/domains/plugin/host-surface/task/plugin-task-host.ts';
 
 const minimal = {
   id: 'task',

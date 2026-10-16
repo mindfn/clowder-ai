@@ -1,6 +1,6 @@
-import type { IMessageStore } from '../../cats/services/stores/ports/MessageStore.js';
-import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
-import type { PluginInventoryStore } from '../host-inventory/ports.js';
+import type { IMessageStore } from '../../../cats/services/stores/ports/MessageStore.js';
+import { ExternalPluginRuntimeError } from '../../external-runtime/types.js';
+import type { PluginInventoryStore } from '../../host-inventory/ports.js';
 
 /** Host-only stores and fences. This object never crosses the module boundary. */
 export interface PluginTaskAdmissionServices {

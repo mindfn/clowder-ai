@@ -22,8 +22,8 @@ import {
 import { createPluginMessagingHost } from '../dist/domains/plugin/host-surface/plugin-messaging-host.js';
 import { createPluginMessagingSubscriptionSession } from '../dist/domains/plugin/host-surface/plugin-messaging-subscription-host.js';
 import { createPluginStorageHost } from '../dist/domains/plugin/host-surface/plugin-private-storage.js';
-import { createPluginTaskHost } from '../dist/domains/plugin/host-surface/plugin-task-host.js';
 import { createPluginThreadHost } from '../dist/domains/plugin/host-surface/plugin-thread-host.js';
+import { createPluginTaskHost } from '../dist/domains/plugin/host-surface/task/plugin-task-host.js';
 import {
   ManifestConfigurationProjectionError,
   resolveManifestConfiguration,

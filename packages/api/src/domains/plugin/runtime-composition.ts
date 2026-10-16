@@ -1176,4 +1176,4 @@ export function createPluginManagerRuntimeComposition(
   };
 }
 
-import { createPluginTaskAdmissionServices } from './host-surface/plugin-task-data-services.js';
+import { createPluginTaskAdmissionServices } from './host-surface/task/plugin-task-data-services.js';
