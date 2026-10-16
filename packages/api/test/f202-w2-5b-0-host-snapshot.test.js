@@ -31,7 +31,14 @@ let subscriber;
 let subscriptionId;
 
 function catReply(overrides = {}) {
-  return { threadId: THREAD, userId: USER, catId: 'opus', content: 'on it', timestamp: Date.now(), ...overrides };
+  return {
+    from: { kind: 'agent', catId: 'opus' },
+    threadId: THREAD,
+    userId: USER,
+    content: 'on it',
+    timestamp: Date.now(),
+    ...overrides,
+  };
 }
 
 beforeEach(async () => {
@@ -62,7 +69,7 @@ beforeEach(async () => {
 
 describe('F202 W2-5b-0 — Host messages in the catch-up snapshot', () => {
   test("a cat's reply and a user's message are in the snapshot", async () => {
-    const user = await store.append(catReply({ catId: null, content: 'please look' }));
+    const user = await store.append(catReply({ from: { kind: 'user', userId: USER }, content: 'please look' }));
     const cat = await store.append(catReply());
 
     const { envelopes } = await messaging.snapshot(subscriber, subscriptionId);

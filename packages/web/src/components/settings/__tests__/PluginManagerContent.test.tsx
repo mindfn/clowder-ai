@@ -269,7 +269,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
     ) as HTMLElement | null;
     expect(detailIcon?.style.backgroundColor).toBe(listIcon?.style.backgroundColor);
     expect(detailIcon?.style.color).toBe(listIcon?.style.color);
-    expect(row?.querySelector('button[aria-pressed]')).toBeNull();
+    expect(row?.querySelector('button[aria-pressed]')?.getAttribute('aria-pressed')).toBe('false');
     expect(mockApiFetch.mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true);
   });
 
@@ -421,11 +421,15 @@ describe('F202 live Plugin Manager Console wiring', () => {
     await act(async () => (toggle as HTMLButtonElement | null)?.click());
     await flushEffects();
 
-    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugin-manager/plugins/dev.clowder.video-analysis/set-enabled', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ enabled: true, expectedRevision: 7 }),
-    });
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      '/api/plugin-manager/plugins/dev.clowder.video-analysis/set-enabled',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true, expectedRevision: 7 }),
+      },
+      undefined,
+    );
     expect(listReads).toBeGreaterThanOrEqual(2);
     expect(container.textContent).toContain('插件状态已变化，已刷新最新状态');
   });
@@ -456,15 +460,19 @@ describe('F202 live Plugin Manager Console wiring', () => {
     const install = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === '安装');
     await act(async () => install?.click());
     await flushEffects();
-    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugin-manager/plugins/install', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        source: { kind: 'catalog', catalogId: 'dev.clowder.video-analysis' },
-        expectedVersion: '0.1.0-alpha.0',
-        expectedDigest: digest,
-      }),
-    });
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      '/api/plugin-manager/plugins/install',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          source: { kind: 'catalog', catalogId: 'dev.clowder.video-analysis' },
+          expectedVersion: '0.1.0-alpha.0',
+          expectedDigest: digest,
+        }),
+      },
+      { mutationTimeoutMs: 600_000 },
+    );
   });
 
   it('adds a repository, then installs its plugin through the ordinary Manager button', async () => {
@@ -534,6 +542,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
         method: 'POST',
         body: JSON.stringify({ source: { kind: 'git', url: gitUrl, marketplace } }),
       }),
+      { mutationTimeoutMs: 600_000 },
     );
     expect(mockApiFetch.mock.calls.filter(([url]) => url === '/api/plugin-manager/marketplaces/refresh')).toHaveLength(
       1,
@@ -800,11 +809,15 @@ describe('F202 live Plugin Manager Console wiring', () => {
     await act(async () => toggle?.click());
     await flushEffects();
 
-    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugin-manager/plugins/dev.clowder.video-analysis/set-enabled', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ enabled: true, expectedRevision: 8 }),
-    });
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      '/api/plugin-manager/plugins/dev.clowder.video-analysis/set-enabled',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true, expectedRevision: 8 }),
+      },
+      undefined,
+    );
   });
 
   it('uses the shared Console confirmation flow before uninstalling', async () => {
@@ -826,11 +839,15 @@ describe('F202 live Plugin Manager Console wiring', () => {
     await flushEffects();
 
     expect(nativeConfirm).not.toHaveBeenCalled();
-    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugin-manager/plugins/dev.clowder.video-analysis/uninstall', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ expectedRevision: 7 }),
-    });
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      '/api/plugin-manager/plugins/dev.clowder.video-analysis/uninstall',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedRevision: 7 }),
+      },
+      undefined,
+    );
     nativeConfirm.mockRestore();
   });
 

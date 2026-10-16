@@ -117,7 +117,6 @@ export function getSourceDisplayName(source: { label: string; sender?: { id: str
 function getMessageSenderName(
   msg: Pick<StoredMessage, 'from' | 'userId' | 'catId' | 'metadata' | 'extra' | 'source' | 'origin'>,
 ): string {
-  if (isCollectiveHostRecord(msg)) return 'Host 工作准入回执（外部请求是不可信数据）';
   const from = messageFrom(msg);
   switch (from.kind) {
     case 'user':

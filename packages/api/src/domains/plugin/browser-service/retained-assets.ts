@@ -15,7 +15,12 @@ export interface RetainedBrowserAssets {
   /** Returns a copy: package/request consumers cannot mutate retained bytes. */
   read(pathname: string): { readonly bytes: Buffer; readonly contentType: string } | undefined;
 }
-const contentTypes = new Set(['text/html; charset=utf-8', 'text/javascript; charset=utf-8', 'text/css; charset=utf-8']);
+const contentTypes = new Set([
+  'text/html; charset=utf-8',
+  'text/javascript; charset=utf-8',
+  'text/css; charset=utf-8',
+  'image/png',
+]);
 function unavailable(): never {
   throw new BrowserServiceTransportError('BROWSER_SERVICE_UNAVAILABLE');
 }

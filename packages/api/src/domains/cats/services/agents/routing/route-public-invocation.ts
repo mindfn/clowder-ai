@@ -20,8 +20,6 @@ export async function* routePublicInvocation(
   if (
     !binding ||
     !options.publicInvocationExecution ||
-    options.pluginTaskBinding !== undefined ||
-    options.pluginTaskExecution !== undefined ||
     input.targetCats.length !== 1 ||
     !catId ||
     binding.carrier.targetCatId !== catId ||
@@ -54,6 +52,7 @@ export async function* routePublicInvocation(
       executionCausal: { triggerMessageId: userMessageId },
       promptMessageIds: [userMessageId],
       onPromptMessagesExposed: options.onPromptMessagesExposed,
+      onLifecycleInvocationStarted: options.onLifecycleInvocationStarted,
     },
     options,
     'public',

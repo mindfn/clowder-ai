@@ -14,26 +14,37 @@ async function fixture(t, options = {}) {
   return neutralFixture(t, { capabilities: ['thread.readContent'], ...options });
 }
 async function source(f, overrides = {}) {
-  return f.messages.append({
+  const {
+    source: presentation = {
+      connector: 'neutral',
+      label: 'Neutral',
+      icon: 'message',
+      meta: { participation: { revision: 3 } },
+    },
+    ...rest
+  } = overrides;
+  const message = f.messages.append({
     userId: f.owner,
     threadId: f.thread.id,
-    catId: null,
+    from: { kind: 'plugin', instanceId: f.installed.pluginInstanceId },
     content: 'external request',
     mentions: [],
     timestamp: 1,
-    source: { connector: 'neutral', label: 'Neutral', icon: 'message', meta: { participation: { revision: 3 } } },
     extra: {
       pluginMessage: {
         instanceId: f.installed.pluginInstanceId,
         revision: 1,
+        presentation: Object.hasOwn(overrides, 'source') ? overrides.source : presentation,
         provenance: { origin: { kind: 'external' } },
         elements: [],
         appendOps: [],
       },
       private: 'excluded',
     },
-    ...overrides,
+    ...Object.fromEntries(Object.entries(rest).filter(([key]) => key !== 'extra')),
   });
+  if (Object.hasOwn(rest, 'extra')) message.extra = rest.extra;
+  return message;
 }
 async function result(promise) {
   const r = await promise;

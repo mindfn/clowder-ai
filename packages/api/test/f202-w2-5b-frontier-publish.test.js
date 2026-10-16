@@ -6,7 +6,7 @@
  * coordinator, which writes with `appendAndObservePriorFrontier`; the proxy forwarded that method
  * untouched, so the reply reached the store and never the stream. Every package subscriber — the
  * IM connectors after cutover — would miss exactly the replies the legacy outbound hook relays.
- * `appendIfThreadFrontier` is the other frontier write on the same port and has the same hole.
+ * The retired compare-and-append port is no longer part of the main store.
  *
  * A committed frontier write publishes like any append; a frontier that moved writes nothing and
  * therefore publishes nothing; an idempotent re-resolution does not publish twice.
@@ -23,7 +23,14 @@ let stores;
 let store;
 
 function catReply(overrides = {}) {
-  return { threadId: THREAD, userId: 'user-1', catId: 'opus', content: 'on it', timestamp: Date.now(), ...overrides };
+  return {
+    from: { kind: 'agent', catId: 'opus' },
+    threadId: THREAD,
+    userId: 'user-1',
+    content: 'on it',
+    timestamp: Date.now(),
+    ...overrides,
+  };
 }
 
 async function publishedIds() {
@@ -54,17 +61,7 @@ describe('F202 W2-5b — frontier appends reach the stream', () => {
     assert.deepEqual(await publishedIds(), [first.message.id]);
   });
 
-  test('a committed compare-and-append is published; a moved frontier publishes nothing', async () => {
-    const first = await store.appendIfThreadFrontier(catReply({ content: 'first' }), null);
-    assert.equal(first.kind, 'committed');
-
-    const stale = await store.appendIfThreadFrontier(catReply({ content: 'lost the race' }), null);
-    assert.equal(stale.kind, 'frontier_advanced');
-
-    assert.deepEqual(await publishedIds(), [first.message.id]);
-  });
-
-  test('both frontier writes hold the publication span until the event is appended', async () => {
+  test('frontier observation holds the publication span until the event is appended', async () => {
     const seen = [];
     const seam = createPublishingMessageStore(new MessageStore(), {
       events: {
@@ -80,9 +77,8 @@ describe('F202 W2-5b — frontier appends reach the stream', () => {
     });
 
     await seam.appendAndObservePriorFrontier(catReply());
-    await seam.appendIfThreadFrontier(catReply(), (await seam.getLatestThreadMessageIdIncludingQueued(THREAD)) ?? null);
 
-    assert.deepEqual(seen, [true, true]);
+    assert.deepEqual(seen, [true]);
     assert.equal(stores.publications.isBusy(THREAD), false);
   });
 });

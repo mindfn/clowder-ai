@@ -21,13 +21,6 @@ import { authTerminalFromTurnExecution } from './CallbackAuthTurnExecutionProjec
 import type { AuthInvocationMigrationResult, IAuthInvocationBackend } from './IAuthInvocationBackend.js';
 import { MemoryAuthInvocationBackend } from './MemoryAuthInvocationBackend.js';
 import type { OwnerAuthProvenance } from './owner-auth-provenance.js';
-import {
-  capturePluginTaskInvocationAuth,
-  type PluginTaskCurrentnessInput,
-  type PluginTaskInvocationBinding,
-  pluginTaskCurrentnessInput,
-  pluginTaskInvocationIdentity,
-} from './plugin-task-invocation-binding.js';
 import { capturePublicInvocationAuth, type PublicInvocationAuthBinding } from './public-invocation-auth-binding.js';
 import { normalizeToolExecutionPolicy } from './tool-execution-policy.js';
 
@@ -42,7 +35,6 @@ export interface InvocationRecord {
   /** Immutable public Queue authority coordinates, persisted with credential creation. */
   readonly publicInvocationBinding?: PublicInvocationAuthBinding;
   /** Durable Host Task coordinates; inert without a Host currentness dependency. */
-  readonly pluginTaskBinding?: PluginTaskInvocationBinding;
   catId: CatId;
   /** Thread this invocation belongs to (for WebSocket room scoping) */
   threadId: string;
@@ -171,7 +163,6 @@ export class InvocationRegistry {
   private readonly turnExecutionStore?: Pick<ITurnExecutionStore, 'get'>;
   private readonly onLifecycleSignal?: (signal: CallbackAuthLifecycleSignal) => void;
   private startupRecoveryComplete: boolean;
-  private readonly assertPluginTaskCurrent?: (input: PluginTaskCurrentnessInput) => Promise<void>;
 
   constructor(options?: {
     ttlMs?: number;
@@ -180,7 +171,6 @@ export class InvocationRegistry {
     backend?: IAuthInvocationBackend;
     startupRecoveryRequired?: boolean;
     /** Host-only Task/receipt/source/installation re-read. Missing means deny private principals. */
-    assertPluginTaskCurrent?: (input: PluginTaskCurrentnessInput) => Promise<void>;
     turnExecutionStore?: Pick<ITurnExecutionStore, 'get'>;
     onLifecycleSignal?: (signal: CallbackAuthLifecycleSignal) => void;
   }) {
@@ -191,7 +181,6 @@ export class InvocationRegistry {
         ...(options?.tombstoneGcTtlMs !== undefined ? { tombstoneGcTtlMs: options.tombstoneGcTtlMs } : {}),
       });
     this.turnExecutionStore = options?.turnExecutionStore;
-    this.assertPluginTaskCurrent = options?.assertPluginTaskCurrent;
     this.onLifecycleSignal = options?.onLifecycleSignal;
     this.startupRecoveryComplete = options?.startupRecoveryRequired !== true;
   }
@@ -219,24 +208,19 @@ export class InvocationRegistry {
     ownerAuthProvenance: OwnerAuthProvenance = 'unknown',
     managedWorkBinding?: ManagedWorkBinding,
     publicInvocationBinding?: PublicInvocationAuthBinding,
-    pluginTaskBinding?: PluginTaskInvocationBinding,
   ): Promise<{ invocationId: string; callbackToken: string }> {
-    const publicIdentity = capturePluginTaskInvocationAuth(
-      capturePublicInvocationAuth({
-        userId,
-        catId,
-        threadId,
-        ownerAuthProvenance,
-        managedWorkBinding,
-        a2aTriggerMessageId,
-        originTriggerMessageId,
-        toolExecutionPolicy,
-        publicInvocationBinding,
-        pluginTaskBinding,
-      }),
-    );
+    const publicIdentity = capturePublicInvocationAuth({
+      userId,
+      catId,
+      threadId,
+      ownerAuthProvenance,
+      managedWorkBinding,
+      a2aTriggerMessageId,
+      originTriggerMessageId,
+      toolExecutionPolicy,
+      publicInvocationBinding,
+    });
     publicInvocationBinding = publicIdentity.publicInvocationBinding;
-    pluginTaskBinding = publicIdentity.pluginTaskBinding;
     toolExecutionPolicy = publicIdentity.toolExecutionPolicy;
     if (managedWorkBinding) {
       if (ownerAuthProvenance !== 'strict') {
@@ -257,7 +241,6 @@ export class InvocationRegistry {
       ownerAuthProvenance,
       ...(managedWorkBinding ? { managedWorkBinding: Object.freeze({ ...managedWorkBinding }) } : {}),
       ...(publicInvocationBinding !== undefined ? { publicInvocationBinding } : {}),
-      ...(pluginTaskBinding !== undefined ? { pluginTaskBinding } : {}),
       catId,
       threadId,
       ...(parentInvocationId ? { parentInvocationId } : {}),
@@ -265,10 +248,9 @@ export class InvocationRegistry {
       ...(originTriggerMessageId ? { originTriggerMessageId } : {}),
       ...(toolExecutionPolicy
         ? {
-            toolExecutionPolicy:
-              publicInvocationBinding || pluginTaskBinding
-                ? toolExecutionPolicy
-                : normalizeToolExecutionPolicy(toolExecutionPolicy),
+            toolExecutionPolicy: publicInvocationBinding
+              ? toolExecutionPolicy
+              : normalizeToolExecutionPolicy(toolExecutionPolicy),
           }
         : {}),
       clientMessageIds: new Set<string>(),
@@ -285,9 +267,7 @@ export class InvocationRegistry {
    * instead of regex-matching error strings. (F174 Phase A — KD-4)
    */
   async verify(invocationId: string, callbackToken: string): Promise<VerifyResult> {
-    return this.verifyPluginTask(
-      await this.repairFromCanonical(await this.backend.verify(invocationId, callbackToken)),
-    );
+    return await this.repairFromCanonical(await this.backend.verify(invocationId, callbackToken));
   }
 
   /**
@@ -350,13 +330,11 @@ export class InvocationRegistry {
    * refresh-token onRequest hook so bad-auth requests can't burn cooldown.
    */
   async peek(invocationId: string, callbackToken: string): Promise<VerifyResult> {
-    return this.verifyPluginTask(await this.repairFromCanonical(await this.backend.peek(invocationId, callbackToken)));
+    return await this.repairFromCanonical(await this.backend.peek(invocationId, callbackToken));
   }
 
   async verifyLatest(invocationId: string, callbackToken: string): Promise<VerifyResult> {
-    return this.verifyPluginTask(
-      await this.repairFromCanonical(await this.backend.verifyLatest(invocationId, callbackToken)),
-    );
+    return await this.repairFromCanonical(await this.backend.verifyLatest(invocationId, callbackToken));
   }
 
   async commitTerminal(input: AuthTerminalCommitInput): Promise<AuthTerminalCommitResult> {
@@ -378,41 +356,6 @@ export class InvocationRegistry {
 
   async migrateLegacyRecords(): Promise<AuthInvocationMigrationResult> {
     return this.backend.migrateLegacyRecords();
-  }
-
-  /** No private path can use token/running alone, including the legacy verify/peek entry points. */
-  private async verifyPluginTask(result: VerifyResult): Promise<VerifyResult> {
-    if (!result.ok || result.record.pluginTaskBinding === undefined) return result;
-    const { invocationId, callbackToken } = result.record;
-    try {
-      const identity = pluginTaskInvocationIdentity(result.record);
-      if (!this.assertPluginTaskCurrent || !this.turnExecutionStore)
-        throw new Error('Host Task currentness unavailable');
-      // Latest and canonical state fence both sides of each asynchronous Host read.
-      for (let pass = 0; pass < 2; pass++) {
-        const live = await this.repairFromCanonical(await this.backend.verifyLatest(invocationId, callbackToken));
-        if (!live.ok) return live;
-        if (!isDeepStrictEqual(identity, pluginTaskInvocationIdentity(live.record)))
-          throw new Error('Task invocation identity changed');
-        await this.assertPluginTaskCurrent(pluginTaskCurrentnessInput(live.record));
-      }
-      const after = await this.repairFromCanonical(await this.backend.verifyLatest(invocationId, callbackToken));
-      if (!after.ok) return after;
-      if (!isDeepStrictEqual(identity, pluginTaskInvocationIdentity(after.record)))
-        throw new Error('Task invocation identity changed');
-      return after;
-    } catch {
-      // Durable, monotonic poison: restoring the Task/grant cannot revive this attempt.
-      const terminal = await this.commitTerminal({
-        invocationId,
-        disposition: 'revoked',
-        endedAt: Date.now(),
-        endReason: 'plugin_task_currentness_lost',
-      });
-      return terminal.outcome === 'not_found'
-        ? { ok: false, reason: 'unknown_invocation' }
-        : { ok: false, reason: terminal.record.state as AuthTerminalDisposition };
-    }
   }
 
   private async repairFromCanonical(result: VerifyResult): Promise<VerifyResult> {

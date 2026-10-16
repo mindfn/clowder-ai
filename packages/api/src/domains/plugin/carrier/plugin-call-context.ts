@@ -1,6 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { OwnerAuthProvenance } from '../../cats/services/agents/invocation/owner-auth-provenance.js';
-import type { PluginTaskInvocationBinding } from '../../cats/services/agents/invocation/plugin-task-invocation-binding.js';
 import type { ToolExecutionPolicy } from '../../cats/services/types.js';
 import { withoutOwnerOperationContext } from './plugin-owner-operation-context.js';
 import { withoutPluginOwnerRequestContext } from './plugin-owner-request-context.js';
@@ -14,7 +13,6 @@ export interface PluginCallContext {
   readonly userId: string;
   readonly invocationId: string;
   /** Host-only authenticated lookup; never serialized into package identity or action input. */
-  readonly readTaskBinding?: () => Promise<PluginTaskInvocationBinding>;
   /** Authenticated facts, not permission inferred from a matching userId. */
   readonly ownerAuthProvenance?: OwnerAuthProvenance;
   readonly toolExecutionPolicy?: ToolExecutionPolicy;

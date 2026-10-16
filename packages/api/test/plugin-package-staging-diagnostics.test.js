@@ -39,7 +39,7 @@ try {
 logger.flush();
 `;
 
-for (const phase of ['list', 'admission']) {
+for (const phase of ['preflight', 'admission']) {
   test(`archive rejection retains ${phase} diagnostics and the existing public classification`, async () => {
     const logDir = await mkdtemp(join(tmpdir(), 'package-staging-diagnostics-'));
     try {
@@ -60,16 +60,16 @@ for (const phase of ['list', 'admission']) {
       const outcome = rows.find((row) => row.kind === 'outcome');
       assert.equal(outcome.code, 'INVALID_PACKAGE_ARCHIVE');
       assert.equal(outcome.message, 'official package archive is invalid');
-      if (phase === 'list') assert.ok(outcome.tarCode !== undefined, 'fixture must fail in the real tar subprocess');
+      if (phase === 'preflight') assert.ok(outcome.tarCode !== undefined, 'fixture must fail during gzip preflight');
       else
         assert.ok(['EEXIST', 'ENOTDIR'].includes(outcome.admissionCode), 'fixture must fail before entering staging');
       const diagnostics = rows.filter((row) => row.module === 'plugin/package-staging');
       assert.equal(diagnostics.length, 1, 'tar cause must be observable instead of disappearing behind HTTP 422');
-      assert.equal(diagnostics[0].phase, phase);
+      assert.equal(diagnostics[0].phase, phase === 'preflight' ? 'preflight' : phase);
       assert.equal(diagnostics[0].platform, process.platform);
-      const leaf = phase === 'list' ? diagnostics[0].error.cause : diagnostics[0].error;
-      assert.equal(leaf.code, phase === 'list' ? outcome.tarCode : outcome.admissionCode);
-      if (phase === 'list') assert.equal(leaf.stderr, outcome.stderr.slice(0, 2048));
+      const leaf = phase === 'preflight' ? diagnostics[0].error.cause : diagnostics[0].error;
+      assert.equal(leaf.code, phase === 'preflight' ? outcome.tarCode : outcome.admissionCode);
+      if (phase === 'preflight') assert.equal(leaf.stderr, outcome.stderr?.slice(0, 2048));
       assert.equal('stack' in diagnostics[0].error, false);
       assert.equal('stdout' in diagnostics[0].error, false);
       assert.equal(stdout.includes('must-not-leak'), false);

@@ -155,9 +155,10 @@ async function subscribe(instanceId, filter) {
 
 async function catReplies(text) {
   await messageStore.append({
+    from: { kind: 'agent', catId: DEFAULT_CAT },
     threadId: FIXED_THREAD,
     userId: 'user-1',
-    catId: DEFAULT_CAT,
+
     content: text,
     timestamp: Date.now(),
   });

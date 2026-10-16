@@ -21,7 +21,6 @@ import {
   updatePluginTaskWorkData,
 } from './plugin-task-data.js';
 import type { PluginTaskAdmissionServices } from './plugin-task-data-services.js';
-import type { PluginTaskDispatchServices } from './plugin-task-dispatch.js';
 import { assertPluginTaskGovernance } from './plugin-task-governance.js';
 import { type PluginTaskReadItem, projectOwnedPluginTasks } from './plugin-task-read.js';
 import { setPluginTaskWait } from './plugin-task-wait.js';
@@ -63,7 +62,6 @@ export interface PluginTaskHost {
 export interface PluginTaskHostDeps {
   readonly artifactReader?: import('../../growing/ports/PreparedArtifactReader.js').PreparedArtifactReader;
   readonly onTaskDataChanged?: (task: TaskItem) => void;
-  readonly dispatch?: PluginTaskDispatchServices;
   readonly admission?: PluginTaskAdmissionServices;
   readonly pluginInstanceId?: string;
   readonly pluginId: string;

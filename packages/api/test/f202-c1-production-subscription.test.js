@@ -143,16 +143,18 @@ test('production composition delivers concurrent cat replies exactly once to an 
 
   await Promise.all([
     messageStore.append({
+      from: { kind: 'agent', catId: 'opus' },
       threadId: state.threadId,
       userId: 'owner-1',
-      catId: 'opus',
+
       content: 'first reply',
       timestamp: 1,
     }),
     messageStore.append({
+      from: { kind: 'agent', catId: 'codex' },
       threadId: state.threadId,
       userId: 'owner-1',
-      catId: 'codex',
+
       content: 'second reply',
       timestamp: 2,
     }),
@@ -172,9 +174,10 @@ test('production composition delivers concurrent cat replies exactly once to an 
   const checklist = { id: 'checklist-1', kind: 'checklist', v: 1, title: 'Steps', items: [] };
   const audio = { id: 'audio-1', kind: 'audio', v: 1, url: '/api/tts/audio/private' };
   await messageStore.append({
+    from: { kind: 'agent', catId: 'opus' },
     threadId: state.threadId,
     userId: 'owner-1',
-    catId: 'opus',
+
     content: 'rich reply',
     timestamp: 3,
     extra: { rich: { v: 1, blocks: [card, audio, checklist] } },
@@ -193,9 +196,10 @@ test('production composition delivers concurrent cat replies exactly once to an 
   await runtime.lifecycleDelivery.onStreamStart(state.threadId, 'opus', invocationId);
   await runtime.lifecycleDelivery.onClosureCatchingUp(state.threadId, 'opus', invocationId);
   await messageStore.append({
+    from: { kind: 'agent', catId: 'opus' },
     threadId: state.threadId,
     userId: 'owner-1',
-    catId: 'opus',
+
     content: 'lifecycle reply',
     timestamp: 4,
     extra: { stream: { invocationId } },
@@ -212,9 +216,10 @@ test('production composition delivers concurrent cat replies exactly once to an 
   const beforeDisable = (await manager.get(pluginId)).plugin;
   await manager.setEnabled(pluginId, { enabled: false, expectedRevision: beforeDisable.lifecycleRevision });
   await messageStore.append({
+    from: { kind: 'agent', catId: 'opus' },
     threadId: state.threadId,
     userId: 'owner-1',
-    catId: 'opus',
+
     content: 'disabled reply',
     timestamp: 3,
   });

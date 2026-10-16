@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createInitialQueuedMessageCustody } from '../src/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.ts';
+import { InvocationQueue } from '../src/domains/cats/services/agents/invocation/InvocationQueue.ts';
 import { MessageStore } from '../src/domains/cats/services/stores/ports/MessageStore.ts';
 import { withPluginCallContext } from '../src/domains/plugin/carrier/plugin-call-context.ts';
 import {
@@ -9,39 +9,42 @@ import {
 } from '../src/domains/plugin/carrier/plugin-owner-request-context.ts';
 import { createPluginSourceFactsHost } from '../src/domains/plugin/host-surface/plugin-source-facts-host.ts';
 
-function fixture() {
-  const store = new MessageStore();
-  const custody = createInitialQueuedMessageCustody({
-    id: 'entry',
-    threadId: 'thread',
-    userId: 'owner',
-    ownerAuthProvenance: 'unknown',
-    source: 'connector',
-    content: 'secret queued body',
-    messageId: 'source',
-    mergedMessageIds: [],
-    targetCats: ['cat'],
-    allTargetCats: ['cat'],
-    intent: 'execute',
-    autoExecute: true,
-    status: 'queued',
-    priority: 'normal',
-    createdAt: 1000,
-  });
+async function fixture() {
+  const store = new MessageStore(),
+    queue = new InvocationQueue();
   const message = store.append({
     userId: 'owner',
     threadId: 'thread',
-    catId: null,
+    from: { kind: 'plugin', instanceId: 'instance' },
     content: 'secret queued body',
     mentions: ['cat'],
     timestamp: 1000,
-    deliveryStatus: 'queued',
-    queueCustody: custody,
-    source: {
-      connector: 'neutral',
-      meta: { participation: { connectionId: 'connection', eventId: 'event', catId: 'cat' } },
+    extra: {
+      pluginMessage: {
+        instanceId: 'instance',
+        revision: 1,
+        presentation: {
+          connector: 'neutral',
+          label: 'Neutral',
+          icon: 'message',
+          meta: { participation: { eventId: 'event' } },
+        },
+      },
+      secret: 'private',
     },
-    extra: { pluginMessage: { instanceId: 'instance', revision: 1 }, secret: 'private' },
+  });
+  const admission = await queue.enqueueExistingMessageDurable(store, message.id, {
+    userId: 'owner',
+    threadId: 'thread',
+    from: message.from,
+    sourceId: message.id,
+    messageId: message.id,
+    kind: 'conversation_input',
+    content: message.content,
+    targetCats: ['cat'],
+    intent: 'execute',
+    ownerAuthProvenance: 'unknown',
+    autoExecute: true,
   });
   const messages = { getById: async (id) => structuredClone(store.getById(id)) };
   const threads = { get: async () => ({ id: 'thread', createdBy: 'owner' }) };
@@ -50,119 +53,120 @@ function fixture() {
     ownerUserId: 'owner',
     messageStore: messages,
     threadStore: threads,
+    queue,
     assertCurrent: async (caps) => assert.deepEqual(caps, ['thread.readContent']),
   };
   const host = createPluginSourceFactsHost(deps);
   const owner = (operation, userId = 'owner') =>
     withPluginOwnerRequest(
-      {
-        pluginId: 'neutral',
-        contributionId: 'owner',
-        userId,
-        operation: 'read',
-        signal: new AbortController().signal,
-      },
+      { pluginId: 'neutral', contributionId: 'owner', userId, operation: 'read', signal: new AbortController().signal },
       () => withPluginOwnerWebhook('neutral', 'owner', 'instance', false, () => {}, operation),
     );
   const read = () => owner(() => host.sourceFacts.readProgress({ messageRef: `message:${message.id}` }));
-  return { store, message, messages, threads, deps, host, owner, read };
+  async function respond(status) {
+    const response = store.append({
+      userId: 'owner',
+      threadId: 'thread',
+      from: { kind: 'agent', catId: 'cat' },
+      content: '',
+      mentions: [],
+      timestamp: 2000,
+      lifecycle: {
+        kind: 'response',
+        orderKey: '2000:response',
+        invocationId: 'child',
+        targetId: 'cat',
+        inputEntryIds: [admission.entry.id],
+        inputMessageIds: [message.id],
+        status: 'processing',
+        startedAt: 2000,
+      },
+    });
+    const source = store.getById(message.id);
+    assert.equal(
+      store.advanceLifecycleInputDispatch(message.id, {
+        orderKey: source.lifecycle.orderKey,
+        targetId: 'cat',
+        phase: 'dispatched',
+        statusMessageId: response.id,
+        dispatchedAt: 2000,
+      }).kind,
+      'applied',
+    );
+    await queue.retireClaimedLifecycleTarget('thread', admission.entry.id, 'cat');
+    if (status !== 'processing') {
+      assert.equal(
+        store.commitLifecycleResponseTerminal(response.id, {
+          invocationId: 'child',
+          status,
+          completedAt: 3000,
+          content: '',
+          mentions: [],
+        }).kind,
+        'applied',
+      );
+      assert.equal(
+        store.advanceLifecycleInputDispatch(message.id, {
+          orderKey: source.lifecycle.orderKey,
+          targetId: 'cat',
+          phase: 'settled',
+          statusMessageId: response.id,
+          dispatchedAt: 2000,
+        }).kind,
+        'applied',
+      );
+    }
+    return response;
+  }
+  return {
+    store,
+    queue,
+    message: store.getById(message.id),
+    messages,
+    threads,
+    deps,
+    host,
+    owner,
+    read,
+    respond,
+    entry: admission.entry,
+  };
 }
-
-test('owner reads same-instance queued progress without exposing queued content or acquiring native authority', async () => {
-  const f = fixture();
+test('owner reads progress without queued body or native authority', async () => {
+  const f = await fixture();
   const value = await f.read();
-  assert.deepEqual(value, {
-    id: f.message.id,
-    userId: 'owner',
-    threadId: 'thread',
-    catId: null,
-    source: f.message.source,
-    extra: { pluginMessage: { instanceId: 'instance' } },
-    queueCustody: {
-      status: 'queued',
-      allTargetCats: ['cat'],
-      handledByCatIds: [],
-      failedByCatIds: [],
-      seenByCatIds: [],
-    },
-  });
+  assert.equal(value.content, undefined);
+  assert.deepEqual(value.queueCustody.allTargetCats, ['cat']);
+  assert.equal(value.queueCustody.status, 'queued');
   assert.ok(Object.isFrozen(value.queueCustody.allTargetCats));
   await assert.rejects(() => f.owner(() => f.host.sourceFacts.read({ messageRef: `message:${f.message.id}` })));
   await assert.rejects(() => f.owner(() => f.host.nativeContext.current()));
 });
-
-test('progress reads retain terminal custody after the real queue delivery transition', async () => {
-  const f = fixture();
-  const current = f.store.getById(f.message.id).queueCustody;
-  const transition = f.store.transitionQueueCustody(f.message.id, {
-    expectedRevision: current.revision,
-    next: {
-      ...current,
-      revision: current.revision + 1,
-      status: 'terminal',
-      pendingTargetCats: [],
-      handledByCatIds: ['cat'],
-      updatedAt: 2000,
-    },
-    deliveredAt: 2000,
-  });
-  assert.equal(transition.kind, 'updated');
-  assert.equal(transition.message.deliveryStatus, 'delivered');
-  const value = await f.read();
-  assert.deepEqual(value.queueCustody.handledByCatIds, ['cat']);
-  assert.equal(value.queueCustody.status, 'terminal');
-  assert.equal(value.content, undefined);
-});
-
-test('real Queue transitions expose started, failed and successful outcome facts without invocation witnesses', async () => {
-  for (const stage of ['started', 'failed', 'ended']) {
-    const f = fixture();
-    const current = f.store.getById(f.message.id).queueCustody;
-    const exposure = { targetCatId: 'cat', invocationId: 'private-child', seenAt: 1100 };
-    const next = {
-      ...current,
-      revision: current.revision + 1,
-      status: 'processing',
-      updatedAt: 2000,
-      bodyExposures: [exposure],
-      seenByCatIds: ['cat'],
-      seenInvocationIdByCatId: { cat: 'private-child' },
-    };
-    if (stage === 'failed') next.failedByCatIds = ['cat'];
-    if (stage === 'ended')
-      Object.assign(next, {
-        status: 'terminal',
-        pendingTargetCats: [],
-        handledByCatIds: ['cat'],
-        targetOutcomeByCatId: {
-          cat: {
-            invocationId: 'private-child',
-            disposition: 'completed_with_turn',
-            evidenceRef: { kind: 'turn_execution', invocationId: 'private-child' },
-            handledAt: 2000,
-          },
-        },
-      });
-    const transition = f.store.transitionQueueCustody(f.message.id, {
-      expectedRevision: current.revision,
-      next,
-      ...(stage === 'ended' ? { deliveredAt: 2000 } : {}),
-    });
-    assert.equal(transition.kind, 'updated');
+for (const status of ['processing', 'completed', 'failed', 'canceled', 'interrupted'])
+  test(`progress reads ${status} from main History after Queue retirement`, async () => {
+    const f = await fixture();
+    await f.respond(status);
+    assert.equal(await f.queue.getDurableEntry('thread', f.entry.id), null);
     const value = await f.read();
-    assert.deepEqual(value.queueCustody.bodyExposures, [{ targetCatId: 'cat' }]);
-    assert.deepEqual(value.queueCustody.seenByCatIds, ['cat']);
-    assert.deepEqual(value.queueCustody.failedByCatIds, stage === 'failed' ? ['cat'] : []);
+    assert.equal(value.content, undefined);
+    assert.equal(value.queueCustody.status, status === 'processing' ? 'processing' : 'terminal');
+    assert.deepEqual(value.queueCustody.handledByCatIds, status === 'completed' ? ['cat'] : []);
     assert.deepEqual(
-      value.queueCustody.targetOutcomeByCatId,
-      stage === 'ended' ? { cat: { handledAt: 2000 } } : undefined,
+      value.queueCustody.failedByCatIds,
+      ['failed', 'canceled', 'interrupted'].includes(status) ? ['cat'] : [],
     );
-    assert.ok(!JSON.stringify(value).includes('private-child'));
-  }
+    if (status === 'completed') assert.deepEqual(value.queueCustody.targetOutcomeByCatId, { cat: { handledAt: 3000 } });
+    assert.deepEqual(value.queueCustody.seenByCatIds, [], 'starting a provider does not manufacture a read receipt');
+  });
+test('progress rejects a foreign durable Queue owner', async () => {
+  const f = await fixture();
+  const row = structuredClone(f.entry);
+  row.owner = { kind: 'user', userId: 'foreign' };
+  f.queue.getDurableEntry = async () => row;
+  await assert.rejects(f.read);
 });
-
 test('progress requires current owner, grant, source, thread and queue owner; native context is insufficient', async () => {
-  const f = fixture();
+  const f = await fixture();
   assert.equal(typeof f.host.sourceFacts.readProgress, 'function');
   await assert.rejects(() => f.host.sourceFacts.readProgress({ messageRef: `message:${f.message.id}` }));
   await assert.rejects(() =>
@@ -192,16 +196,7 @@ test('progress requires current owner, grant, source, thread and queue owner; na
       m.extra.pluginMessage.instanceId = 'foreign';
     },
     (m) => {
-      m.queueCustody.ownerUserId = 'foreign';
-    },
-    (m) => {
       m.recall = { recalledAt: 1 };
-    },
-    (m) => {
-      m.queueCustody.executionScope = 'collective-participation';
-    },
-    (m) => {
-      m.queueCustody.revision = 0;
     },
   ]) {
     f.messages.getById = async (id) => {
@@ -219,19 +214,21 @@ test('progress requires current owner, grant, source, thread and queue owner; na
 test('progress is withheld on revision, lifecycle, grant or thread drift across asynchronous reads', async () => {
   for (const change of [
     (m) => {
-      m.queueCustody.entryId = 'replacement';
+      m.lifecycle.orderKey = 'replacement';
     },
     (m) => {
       m.extra.pluginMessage.revision++;
     },
     (m) => {
-      m.queueCustody.revision++;
+      m.lifecycle.dispatchRefs = [
+        { targetId: 'cat', phase: 'dispatched', statusMessageId: 'missing', dispatchedAt: 2000 },
+      ];
     },
     (m) => {
-      m.source.meta.participation.eventId = 'other';
+      m.extra.pluginMessage.presentation.meta.participation.eventId = 'other';
     },
   ]) {
-    const f = fixture();
+    const f = await fixture();
     let reads = 0;
     const get = f.messages.getById;
     f.messages.getById = async (id) => {
@@ -242,7 +239,7 @@ test('progress is withheld on revision, lifecycle, grant or thread drift across 
     await assert.rejects(f.read);
     assert.ok(reads >= 2);
   }
-  const f = fixture();
+  const f = await fixture();
   const get = f.messages.getById;
   f.messages.getById = async (id) => {
     const m = await get(id);

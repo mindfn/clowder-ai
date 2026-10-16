@@ -483,6 +483,8 @@ export interface StoredMessage {
      *  domains/messaging/envelope.ts (PluginMessageExtra); kept structural here so the
      *  cats domain does not depend on the messaging domain. */
     pluginMessage?: {
+      /** Plugin presentation is payload data, never a second sender identity. */
+      presentation?: ConnectorSource;
       instanceId: string;
       revision: number;
       provenance: Record<string, unknown>;
@@ -884,37 +886,6 @@ export function prepareQueueLedgerSourceLifecycle(
   message: StoredMessage,
   entries: readonly QueueLedgerEntry[],
 ): LifecycleStoredMessageMetadata {
-  // Scope limits execution; it is not a grant manufactured by the Queue label.
-  // Bind it to immutable History source evidence before either store commits.
-  for (const entry of entries) {
-    if (entry.execution.executionScope && !isDeepStrictEqual(entry.from, message.from)) {
-      throw new Error('Collective Queue admission sender must match its durable source');
-    }
-    if (entry.execution.executionScope === 'collective-participation') {
-      const source = collectiveSourceIdentitySchema.safeParse(message.source?.meta?.participation);
-      if (
-        !source.success ||
-        message.source?.connector !== 'collective' ||
-        message.from?.kind !== 'external' ||
-        message.from.connectorId !== 'collective' ||
-        entry.targets.length !== 1 ||
-        entry.targets[0] !== source.data.catId
-      ) {
-        throw new Error('Collective participation Queue admission requires its exact durable source and target');
-      }
-    } else if (entry.execution.executionScope === 'collective-work') {
-      const invocation = collectiveWorkInvocationV1Schema.safeParse(message.extra?.collectiveWorkInvocationV1);
-      if (
-        !invocation.success ||
-        message.from?.kind !== 'system' ||
-        message.from.service !== 'collective-work' ||
-        message.source ||
-        message.extra?.collectiveAuthorizationInvalid
-      ) {
-        throw new Error('Collective work Queue admission requires its durable invocation receipt');
-      }
-    }
-  }
   const targetIds = entries.flatMap((entry) => entry.targets);
   const dispatchedTargets = new Set(message.lifecycle?.dispatchRefs?.map((ref) => ref.targetId) ?? []);
   if (targetIds.some((targetId) => dispatchedTargets.has(targetId))) {
@@ -1809,42 +1780,6 @@ export function assertValidAppendMessageInput(msg: AppendMessageInput): void {
   assertValidStoredMessageTimestamp(msg.timestamp);
   if (msg.lifecycle !== undefined && !isLifecycleStoredMessageMetadata(msg.lifecycle)) {
     throw new TypeError('append() lifecycle metadata is invalid');
-  }
-  const ownerAdmission = msg.extra?.collectiveOwnerAdmissionV1;
-  const workInvocation = msg.extra?.collectiveWorkInvocationV1;
-  const workDelegation = msg.extra?.collectiveWorkDelegationV1;
-  if (workDelegation !== undefined && (ownerAdmission !== undefined || workInvocation !== undefined)) {
-    throw new TypeError('Collective Work Message cannot combine Host authority and home delegation carriers');
-  }
-  if (ownerAdmission !== undefined) {
-    if (msg.from.kind !== 'user' || msg.source || msg.extra?.collectiveAuthorizationInvalid) {
-      throw new TypeError('Collective owner receipts require a Host-owned user Message');
-    }
-    collectiveOwnerAdmissionV1Schema.parse(ownerAdmission);
-  }
-  if (workInvocation !== undefined) {
-    if (
-      msg.from.kind !== 'system' ||
-      msg.from.service !== 'collective-work' ||
-      msg.source ||
-      msg.extra?.collectiveAuthorizationInvalid
-    ) {
-      throw new TypeError('Collective Work invocations require the canonical system producer');
-    }
-    collectiveWorkInvocationV1Schema.parse(workInvocation);
-  }
-  if (workDelegation !== undefined) {
-    const parsed = collectiveWorkDelegationV1Schema.parse(workDelegation);
-    if (
-      msg.from.kind !== 'agent' ||
-      msg.from.catId !== parsed.ownerCatId ||
-      msg.source ||
-      msg.origin !== 'callback' ||
-      msg.extra?.collectiveAuthorizationInvalid ||
-      JSON.stringify([...msg.mentions].sort()) !== JSON.stringify([...parsed.targetCatIds].sort())
-    ) {
-      throw new TypeError('Collective Work delegation requires an exact authenticated owner callback Message');
-    }
   }
   const custody = msg.extra?.custodyOfferV1;
   if (custody) {
@@ -2803,8 +2738,10 @@ export class MessageStore {
     }
 
     const { idempotencyKey, reservedId: mediaReservedId, ...payload } = normalizedMessage;
-    if (mediaReservedId !== undefined && !/^\d{16}-\d{6,}-[0-9a-f]{8}$/.test(mediaReservedId)) throw new TypeError('reserved message id has invalid shape');
-    if (reservedId !== undefined && mediaReservedId !== undefined && reservedId !== mediaReservedId) throw new Error('reserved message id conflict');
+    if (mediaReservedId !== undefined && !/^\d{16}-\d{6,}-[0-9a-f]{8}$/.test(mediaReservedId))
+      throw new TypeError('reserved message id has invalid shape');
+    if (reservedId !== undefined && mediaReservedId !== undefined && reservedId !== mediaReservedId)
+      throw new Error('reserved message id conflict');
     reservedId ??= mediaReservedId;
     if (reservedId !== undefined && this.getById(reservedId)) throw new Error('reserved message id collision');
     void idempotencyKey;

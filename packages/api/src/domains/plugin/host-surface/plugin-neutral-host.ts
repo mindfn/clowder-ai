@@ -60,8 +60,7 @@ interface Deps {
   readonly ownerUserId: string | undefined;
   readonly threadStore: IThreadStore | undefined;
   readonly sourceStore: IFrustrationIssueStore | undefined;
-  readonly messageStore?: Pick<IMessageStore, 'getById' | 'prepareQueueAdmission' | 'initializeQueueCustody'> &
-    Partial<Pick<IMessageStore, 'appendIdempotent' | 'getByIdempotencyKey'>>;
+  readonly messageStore?: IMessageStore & Partial<Pick<IMessageStore, 'appendIdempotent' | 'getByIdempotencyKey'>>;
   readonly publicInvocations?: PluginPublicInvocationServices;
   readonly verifyPublicInvocation: PublicInvocationVerifierPort['invokePublicInvocationVerifier'];
   readonly deployment: PluginDeploymentServices | undefined;
@@ -205,6 +204,7 @@ export async function createPluginNeutralHost(deps: Deps): Promise<PluginNeutral
       assertCurrent: current,
     }),
     ...createPluginSourceFactsHost({
+      queue: deps.publicInvocations?.queue,
       pluginInstanceId: deps.pluginInstanceId,
       ownerUserId: deps.ownerUserId,
       messageStore: deps.messageStore,

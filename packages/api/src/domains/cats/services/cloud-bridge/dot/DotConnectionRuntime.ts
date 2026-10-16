@@ -1,4 +1,4 @@
-import type { BundledPluginRuntime } from '../../../../plugin/bundled-runtime-carrier.js';
+import type { BundledPluginRuntime } from '../../../../plugin/builtin-runtime/carriers/bundled-runtime-carrier.js';
 import type { DotConnectionService } from './DotConnectionService.js';
 
 export class DotConnectionRuntime implements Pick<BundledPluginRuntime, 'start' | 'stop'> {

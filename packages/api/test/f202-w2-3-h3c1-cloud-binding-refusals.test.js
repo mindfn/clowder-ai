@@ -1,3 +1,4 @@
+import './helpers/setup-cat-registry.js';
 /**
  * F202 h3c-1: the refusal contract of `PATCH /api/threads/:id/cloud-bindings`.
  *

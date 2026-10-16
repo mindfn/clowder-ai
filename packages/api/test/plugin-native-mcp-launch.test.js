@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -123,7 +123,7 @@ test('native launch resolves a frozen exact activation descriptor without trusti
   assert.equal(first.transport, 'stdio');
   assert.equal(first.command, process.execPath);
   assert.equal(first.args[1], '--fixture');
-  assert.equal(first.args[0], join(first.workingDirectory, 'dist/mcp.js'));
+  assert.equal(first.args[0], await realpath(join(first.workingDirectory, 'dist/mcp.js')));
   assert.ok(Object.isFrozen(first) && Object.isFrozen(first.args) && Object.isFrozen(first.env));
   for (const method of policy().actionMethods)
     assert.deepEqual(f.router.nativeActions.target(first.env.CLOWDER_PLUGIN_ACTION_TOKEN, method), {

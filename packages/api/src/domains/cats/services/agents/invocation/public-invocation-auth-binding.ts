@@ -42,6 +42,7 @@ function refuse(): never {
 
 /** Validate before any storage mutation; capture all public identity fields before any await. */
 export function capturePublicInvocationAuth<T extends Identity>(input: T): T {
+  if (Object.hasOwn(input, 'pluginTaskBinding')) refuse();
   if (input.publicInvocationBinding === undefined) return input;
   try {
     const value = snapshotPluginProtocolData(input.publicInvocationBinding) as PublicInvocationAuthBinding;
@@ -80,7 +81,7 @@ export function capturePublicInvocationAuth<T extends Identity>(input: T): T {
 
 /** Bound records must not expose the memory backend's mutable canonical identity. */
 export function publicInvocationRecordView(record: InvocationRecord): InvocationRecord {
-  if (record.publicInvocationBinding === undefined && record.pluginTaskBinding === undefined) return record;
+  if (record.publicInvocationBinding === undefined) return record;
   return {
     ...record,
     clientMessageIds: new Set(record.clientMessageIds),

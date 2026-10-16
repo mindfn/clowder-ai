@@ -224,14 +224,14 @@ export function isSystemPinnedQueueEntry(entry: Pick<QueueEntry, 'from' | 'sourc
  * attempt is terminal-failed. The entry itself may still carry eligible siblings
  * or remain visible to lifecycle/recovery code.
  */
-export function isOrdinaryQueueTargetEligible(entry: Pick<QueueEntry, 'status' | 'targets' | 'execution'>, catId: string): boolean {
+export function isOrdinaryQueueTargetEligible(entry: Pick<QueueEntry, 'status' | 'targets'>, catId: string): boolean {
   return (
     (entry.status === 'queued' || entry.status === 'claimed') &&
     (entry.targets.length === 0 || entry.targets.includes(catId))
   );
 }
 
-function isQueueTargetPending(entry: Pick<QueueEntry, 'status' | 'targets' | 'execution'>, catId: string): boolean {
+function isQueueTargetPending(entry: Pick<QueueEntry, 'status' | 'targets'>, catId: string): boolean {
   return entry.status !== 'terminal' && entry.targets.includes(catId);
 }
 
@@ -242,7 +242,8 @@ function isOrdinaryBodyReadEntry(entry: Pick<QueueEntry, 'sourceCategory' | 'exe
     !entry.execution.liveSessionId &&
     !entry.execution.actionSuccessorFence &&
     !entry.execution.waitContinuationCarrier &&
-    !entry.execution.executionScope
+    !entry.execution.executionScope &&
+    !entry.execution.pluginPublicInvocation
   );
 }
 

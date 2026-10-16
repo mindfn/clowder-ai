@@ -1237,10 +1237,6 @@ export class CodexAgentService implements AgentService {
     return policy.mode === 'read_only' && this.carrierMode === 'exec_json';
   }
 
-  supportsPluginTaskLaunch(): boolean {
-    return this.carrierMode === 'exec_json';
-  }
-
   freshnessCarrierCapability(
     options?: Pick<AgentServiceOptions, 'liveCompanion' | 'requiredTools'>,
   ): AgentFreshnessCarrierCapability {
@@ -1662,7 +1658,10 @@ export class CodexAgentService implements AgentService {
     // The preflight seam exists only on app_server. Fail closed instead of
     // quietly falling back to a prompt frozen before the provider verdict.
     const requiredTools = normalizeRequiredTools(options?.requiredTools);
-    const carrierMode = options?.requireExactResume || options?.liveCompanion || requiredTools.length > 0 ? 'app_server' : this.carrierMode;
+    const carrierMode =
+      options?.requireExactResume || options?.liveCompanion || requiredTools.length > 0
+        ? 'app_server'
+        : this.carrierMode;
     if (promptSource.kind === 'preflight' && carrierMode !== 'app_server') {
       throw new Error('codex_continuity_preflight_requires_app_server');
     }
@@ -1907,7 +1906,9 @@ export class CodexAgentService implements AgentService {
       if (!native && this.nativeShellSafetyCheck) {
         verifiedNativeShellCommand = await verifyReviewedNativeShellCli(this.cliCommand);
       }
-      nativeEffectGuardArgs = native ? [] : buildCodexNativeEffectGuardArgs({ nativeShellSafetyCheck: this.nativeShellSafetyCheck });
+      nativeEffectGuardArgs = native
+        ? []
+        : buildCodexNativeEffectGuardArgs({ nativeShellSafetyCheck: this.nativeShellSafetyCheck });
     } catch (error) {
       const metadata: MessageMetadata = {
         provider: 'openai',
@@ -2027,7 +2028,7 @@ export class CodexAgentService implements AgentService {
           ...dedup(modelArgs),
           ...dedup(reasoningArgs),
           ...dedup(contextWindowArgs),
-          ...(native?.kind === 'entrusted_work' ? [] : ['--sandbox', sandboxMode]),
+          ...['--sandbox', sandboxMode],
           ...(readOnly || native ? [] : ['--add-dir', '.git']),
           ...dedup(approvalArgs),
           ...dedup(appsWriteApprovalArgs),
@@ -2093,7 +2094,7 @@ export class CodexAgentService implements AgentService {
         );
       if (accountLaunch.managed || (accountLaunch.accountRef === 'codex' && accountLaunch.authMode === 'oauth'))
         assertCodexSharedStateRoots(accountLaunch.accountOwnerRoot, { launch: accountLaunch });
-      if (!scopedNative) {
+      if (!native) {
         const managedArgs = codexManagedLaunchArgs(accountLaunch, userConfigArgs);
         const promptSeparator = args.indexOf('--');
         args.splice(promptSeparator < 0 ? args.length : promptSeparator, 0, ...managedArgs);
@@ -2101,7 +2102,7 @@ export class CodexAgentService implements AgentService {
       }
       if (accountLaunch.managed) assertCodexManagedPlatformSupport(accountLaunch.credentialHome, this.cliCommand);
       const apiExecutionHome =
-        !scopedNative && authMode === 'api_key' && customBaseUrl
+        !native && authMode === 'api_key' && customBaseUrl
           ? resolveCodexApiExecutionHome(accountLaunch, customBaseUrl, options?.workingDirectory ?? process.cwd(), {
               ...process.env,
               ...options?.accountEnv,
@@ -2110,7 +2111,7 @@ export class CodexAgentService implements AgentService {
       const rawEnv = {
         ...(options?.callbackEnv ?? {}),
       };
-      const selectedApiEnv = { ...rawEnv, ...(scopedNative ? {} : options?.accountEnv) };
+      const selectedApiEnv = { ...rawEnv, ...(native ? {} : options?.accountEnv) };
       if (live) {
         delete rawEnv.CAT_CAFE_INVOCATION_ID;
         delete rawEnv.CAT_CAFE_CALLBACK_TOKEN;
@@ -2188,17 +2189,22 @@ export class CodexAgentService implements AgentService {
         codexEnv.HOME = dirname(apiExecutionHome);
         if (process.platform === 'win32') codexEnv.USERPROFILE = codexEnv.HOME;
       }
-      const finalAccountEnv = finalizeCodexAccountEnvironment(accountLaunch, {
-        env: codexEnv,
-        selectedApiEnv,
-        memberConfigArgs: userConfigArgs,
-        args: carrierMode === 'app_server' ? appServerArgs : args,
-        ...(carrierMode === 'app_server' && appServerThreadConfig ? { rpcConfig: appServerThreadConfig } : {}),
-        cwd: options?.workingDirectory ?? process.cwd(),
-        ...(homeIsolated ? { executionHome: apiExecutionHome ?? rawEnv.CODEX_HOME ?? `${rawEnv.HOME}/.codex` } : {}),
-      });
+      const finalAccountEnv = native
+        ? { ...codexEnv }
+        : finalizeCodexAccountEnvironment(accountLaunch, {
+            env: codexEnv,
+            selectedApiEnv,
+            memberConfigArgs: userConfigArgs,
+            args: carrierMode === 'app_server' ? appServerArgs : args,
+            ...(carrierMode === 'app_server' && appServerThreadConfig ? { rpcConfig: appServerThreadConfig } : {}),
+            cwd: options?.workingDirectory ?? process.cwd(),
+            ...(homeIsolated
+              ? { executionHome: apiExecutionHome ?? rawEnv.CODEX_HOME ?? `${rawEnv.HOME}/.codex` }
+              : {}),
+          });
       Object.assign(codexEnv, finalAccountEnv);
-      if (authMode === 'api_key') {
+      if (!native && authMode === 'api_key') {
+        if (!finalAccountEnv.CODEX_HOME) throw new Error('Codex account home is unavailable');
         mkdirSync(finalAccountEnv.CODEX_HOME, { recursive: true, mode: 0o700 });
       }
 
@@ -2209,7 +2215,7 @@ export class CodexAgentService implements AgentService {
         yield {
           type: 'error' as const,
           catId: this.catId,
-          error: formatCliNotFoundError(effectiveCommand),
+          error: formatCliNotFoundError(this.cliCommand),
           metadata,
           timestamp: Date.now(),
         };
@@ -3070,7 +3076,7 @@ export class CodexAgentService implements AgentService {
         }
       }
 
-      if (!native && metadata.sessionId) {
+      if (!native && metadata.sessionId && finalAccountEnv.CODEX_HOME) {
         try {
           const snapshot = await this.contextSnapshotResolver(
             metadata.sessionId,
@@ -3117,7 +3123,7 @@ export class CodexAgentService implements AgentService {
       }
 
       // F172 Phase B: Scan for generated images and publish to /uploads/
-      if (!native && metadata.sessionId) {
+      if (!native && metadata.sessionId && finalAccountEnv.CODEX_HOME) {
         try {
           const published = await scanAndPublishCodexImages({
             codexSessionId: metadata.sessionId,

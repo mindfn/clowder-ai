@@ -178,7 +178,6 @@ import {
 } from './invocation-capacity-snapshot.js';
 import { resolveManagedWorkInvocationBinding } from './managed-work-invocation-binding.js';
 import { projectNativeGoalMessage } from './native-goal-observation.js';
-import { type PluginTaskInvocationBinding, pluginTaskCurrentnessInput } from './plugin-task-invocation-binding.js';
 import {
   type ProviderPresentationAttempt,
   type ProviderPromptPresentationEnvelope,
@@ -1239,8 +1238,6 @@ export interface InvocationParams {
   /** Host-only post-CAS public launch owner; absent ports fail closed on resume. */
   readonly publicInvocationExecution?: PublicInvocationExecution;
   /** Host-derived Task coordinates and post-Queue-binding launch owner, never package input. */
-  readonly pluginTaskBinding?: PluginTaskInvocationBinding;
-  readonly pluginTaskExecution?: PublicInvocationExecution;
   readonly liveCompanion?: AgentServiceOptions['liveCompanion'];
   /** Route-owned intent projected to provider behavior only when its provenance permits it. */
   readonly routeIntent?: AgentRouteIntent;
@@ -1326,8 +1323,6 @@ export interface InvocationParams {
   readonly continuityCapsule?: RouteStateContinuityCapsule;
   /** ADR-042 hard execution boundary for automatic supplement checks. */
   readonly toolExecutionPolicy?: import('../../types.js').ToolExecutionPolicy;
-  /** F325: Host-authored exact AGY native grants; never copied from model text. */
-  readonly agyNativeScope?: AgentServiceOptions['agyNativeScope'];
   /** Typed child purpose; never inferred from prompt or logs. */
   readonly executionKind?: TurnExecutionKind;
   /** Typed causal provenance used by history, relevance, and UI projections. */
@@ -1405,7 +1400,7 @@ export interface InvocationParams {
  */
 export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationParams): AsyncIterable<AgentMessage> {
   const captured = capturePublicInvocationRegistration(deps, params);
-  if (captured.publicInvocationBinding === undefined && captured.pluginTaskBinding === undefined) {
+  if (captured.publicInvocationBinding === undefined) {
     yield* invokeSingleCatImpl(deps, captured);
     return;
   }
@@ -1430,55 +1425,13 @@ async function* invokeSingleCatImpl(
   const { catId, service, userId, threadId, isLastCat, signal: callerSignal } = params;
   let prompt = params.prompt;
   const invocationPromptAdditions: string[] = [];
+  const originTriggerMessageId = params.a2aTriggerMessageId ?? params.executionCausal?.triggerMessageId;
+  const effectiveToolExecutionPolicy = params.toolExecutionPolicy;
   const isAgyNative = usesAgyNativeCarrier(service);
-  if ((params.publicInvocationBinding !== undefined || params.pluginTaskBinding !== undefined) && isAgyNative) {
+  if (params.publicInvocationBinding !== undefined && isAgyNative) {
     throw new Error('public_execution_carrier_unavailable');
   }
-  const nativeCatConfig = catRegistry.tryGet(catId as string)?.config;
-  const nativeCodingGrant =
-    isAgyNative && params.toolExecutionPolicy?.mode !== 'read_only'
-      ? await resolveAgyNativeCodingGrant({
-          grant: nativeCatConfig?.agyProfile?.nativeCodingGrant,
-          threadId,
-          catId,
-          userId,
-          ...(deps.taskStore ? { taskStore: deps.taskStore } : {}),
-        })
-      : null;
-  if (!isAgyNative && params.agyNativeScope) throw new Error('AGY native scope requires the native AGY carrier');
-  if (nativeCodingGrant && params.agyNativeScope)
-    throw new Error('AGY native caller scope conflicts with the Task grant');
-  if (params.agyNativeScope?.writableFiles.length && !nativeCodingGrant)
-    throw new Error('AGY native writes require a live operator-issued Task grant');
-  const nativeScope = isAgyNative
-    ? nativeCodingGrant
-      ? {
-          ...nativeCodingGrant,
-          mcpTools: [
-            'cat-cafe-collab/cat_cafe_get_thread_context',
-            'cat-cafe-collab/cat_cafe_post_message',
-            'cat-cafe-collab/cat_cafe_run_task_test',
-          ],
-        }
-      : (params.agyNativeScope ?? {
-          writableFiles: [],
-          mcpTools:
-            params.toolExecutionPolicy?.mode === 'read_only' ? [] : ['cat-cafe-collab/cat_cafe_get_thread_context'],
-        })
-    : undefined;
-  if (isAgyNative && params.toolExecutionPolicy?.mode === 'callback_allowlist')
-    throw new Error('AGY native callback scope must be derived from host-authored MCP grants');
-  if (isAgyNative && params.toolExecutionPolicy?.mode === 'read_only' && nativeScope?.mcpTools.length)
-    throw new Error('Read-only AGY native invocation cannot grant MCP tools');
-  const effectiveToolExecutionPolicy =
-    isAgyNative && !params.toolExecutionPolicy
-      ? callbackPolicyForAgyNativeMcpTools(nativeScope?.mcpTools ?? [])
-      : params.toolExecutionPolicy;
-  if (params.pluginTaskBinding !== undefined) {
-    if (service.supportsPluginTaskLaunch?.() !== true) throw new Error('task_execution_carrier_unavailable');
-  } else {
-    assertToolExecutionPolicySupported(service, effectiveToolExecutionPolicy);
-  }
+  assertToolExecutionPolicySupported(service, effectiveToolExecutionPolicy);
   const freshnessCarrierCapability = service.freshnessCarrierCapability?.(
     params.liveCompanion ? { liveCompanion: params.liveCompanion } : undefined,
   ) ?? {
@@ -1493,7 +1446,7 @@ async function* invokeSingleCatImpl(
   // normal durable child invocation. The bounded Host transport branch runs
   // after invocation creation/body exposure so Queue and F167 can bind the
   // exact source to one terminal outcome.
-  const cloudOnlyConfig = nativeCatConfig;
+  const cloudOnlyConfig = catRegistry.tryGet(catId as string)?.config;
   const isCloudOnlyInvocation = cloudOnlyConfig?.provider === 'openai-chatgpt-pro';
 
   // F198 Bug #3: a bg carrier has no stable per-conversation sessionId — the
@@ -1531,7 +1484,6 @@ async function* invokeSingleCatImpl(
     params.ownerAuthProvenance,
     managedWorkBinding,
     params.publicInvocationBinding,
-    params.pluginTaskBinding,
   );
   onPublicRegistered?.(invocationId);
   let invocationHasAuthoritativeUsage = false;
@@ -2201,14 +2153,13 @@ async function* invokeSingleCatImpl(
       timestamp: Date.now(),
     };
 
-    if (params.publicInvocationBinding !== undefined || params.pluginTaskBinding !== undefined) {
-      const exactSource =
-        params.pluginTaskBinding?.triggerMessageId ?? params.publicInvocationBinding?.carrier.sourceMessageId;
+    if (params.publicInvocationBinding !== undefined) {
+      const exactSource = params.publicInvocationBinding.carrier.sourceMessageId;
       if (!params.onPromptMessagesExposed || promptMessageIds.length !== 1 || promptMessageIds[0] !== exactSource) {
         throw new Error('public_execution_exact_exposure_required');
       }
       turnExecutionCompletedSuccessfully = yield* executePublicInvocation({
-        port: params.pluginTaskBinding ? params.pluginTaskExecution : params.publicInvocationExecution,
+        port: params.publicInvocationExecution,
         invocationId,
         catId,
         sourceMessageId: exactSource,
@@ -2224,24 +2175,6 @@ async function* invokeSingleCatImpl(
           CAT_CAFE_THREAD_ID: threadId,
           CAT_CAFE_EXECUTION_ID: executionParentInvocationId,
         },
-        ...(params.pluginTaskBinding
-          ? {
-              taskBinding: params.pluginTaskBinding,
-              assertTaskCurrent: async () => {
-                const verified = await registry.verifyLatest(invocationId, callbackToken);
-                if (!verified.ok) throw new Error('task_execution_authority_expired');
-                const identity = pluginTaskCurrentnessInput(verified.record);
-                if (
-                  identity.userId !== userId ||
-                  identity.catId !== catId ||
-                  identity.threadId !== threadId ||
-                  !isDeepStrictEqual(identity.pluginTaskBinding, params.pluginTaskBinding) ||
-                  !isDeepStrictEqual(identity.toolExecutionPolicy, effectiveToolExecutionPolicy)
-                )
-                  throw new Error('task_execution_identity_changed');
-              },
-            }
-          : {}),
         expose: exposeCurrentPromptMessages,
         close: closeServiceIterator,
       });
@@ -2294,7 +2227,10 @@ async function* invokeSingleCatImpl(
       if (cloudCat?.status === 'ambiguous') {
         const detail = `Cats configured for the ${cloudProvider} provider: ${cloudCat.catIds.join(', ')} — configure exactly one`;
         outcome = { kind: 'fallback', reason: 'ambiguous-cloud-cat', detail };
-        log.warn({ catId, threadId, provider: cloudProvider, catIds: cloudCat.catIds }, `F202 cloud dispatch refused: ${detail}`);
+        log.warn(
+          { catId, threadId, provider: cloudProvider, catIds: cloudCat.catIds },
+          `F202 cloud dispatch refused: ${detail}`,
+        );
       } else if (
         deps.cloudInvokeBridge &&
         deps.cloudReturnGrantStore &&

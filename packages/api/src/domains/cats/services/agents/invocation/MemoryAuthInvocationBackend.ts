@@ -15,7 +15,6 @@ import {
   type VerifyResult,
 } from './InvocationRegistry.js';
 import { normalizeOwnerAuthProvenance } from './owner-auth-provenance.js';
-import { capturePluginTaskInvocationAuth } from './plugin-task-invocation-binding.js';
 import { capturePublicInvocationAuth, publicInvocationRecordView } from './public-invocation-auth-binding.js';
 
 const DEFAULT_MAX_RECORDS = 500;
@@ -39,7 +38,7 @@ export class MemoryAuthInvocationBackend implements IAuthInvocationBackend {
   }
 
   async create(input: AuthInvocationInput): Promise<void> {
-    input = capturePluginTaskInvocationAuth(capturePublicInvocationAuth(input));
+    input = capturePublicInvocationAuth(input);
     this.cleanupTerminalTombstones();
     if (this.records.size >= this.maxRecords) throw new AuthInvocationAdmissionError();
 

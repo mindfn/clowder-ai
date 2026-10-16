@@ -86,7 +86,7 @@ async function fixture(
       // Delay happens before the synchronous production storage callback, like a queued lock.
       await beforeCommit?.({ instance, grant });
       return work({
-        instances: { getCurrent: () => structuredClone(instance) },
+        instances: { getCurrent: () => structuredClone(instance), put: (next) => Object.assign(instance, next) },
         packages: { get: () => structuredClone(packageRecord) },
         grants: { get: () => structuredClone(grant) },
       });
@@ -100,7 +100,21 @@ async function fixture(
   const operations = new InstalledPluginOperations({
     inventory,
     configuration: disk
-      ? new HostPluginConfigurationService({ projectRoot, inventory })
+      ? new HostPluginConfigurationService({
+          projectRoot,
+          inventory,
+          lifecycle: {
+            async runWithRuntimeSuspended({ preflight, operation }) {
+              await preflight();
+              instance.runtimeState = 'stopped';
+              try {
+                await operation(structuredClone(instance));
+              } finally {
+                instance.runtimeState = 'healthy';
+              }
+            },
+          },
+        })
       : {
           readActionInput: async () => ({}),
           readOperationState: async () => {

@@ -23,6 +23,19 @@ function dispatchHarness({ grantStore } = {}) {
   const deps = {
     registry: new InvocationRegistry(),
     sessionManager: {},
+    messageStore: {
+      getById: async (id) =>
+        id === SOURCE_ID
+          ? {
+              id,
+              threadId: 'thread_t1',
+              userId: 'alice',
+              from: { kind: 'user', userId: 'alice' },
+              content: 'raw words',
+              timestamp: 1000,
+            }
+          : undefined,
+    },
     threadStore: {
       get: async () => ({ id: 'thread_t1', title: 'demo', participants: ['opus', 'cloud-alt'] }),
       getCloudCatBindings: async () => ({}),

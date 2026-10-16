@@ -1,19 +1,14 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { PluginManifest } from '@clowder-ai/plugin-contract';
-import type { InvocationQueue, QueueEntry } from '../../cats/services/agents/invocation/InvocationQueue.js';
-import { createInitialQueuedMessageCustody } from '../../cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
-import { buildQueueEntry } from '../../cats/services/agents/invocation/QueuedMessageCustodyStartupQueueEntry.js';
+import type { InvocationQueue } from '../../cats/services/agents/invocation/InvocationQueue.js';
+import { queueEntryId } from '../../cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import type { IMessageStore, StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
 import {
   assertPluginPublicInvocationCarrier,
   type PluginPublicInvocationCarrierV1,
   publicInvocationCarriersMatch,
 } from '../../cats/services/stores/ports/plugin-public-invocation-carrier.js';
-import {
-  assertQueueCustodyMessageBinding,
-  assertQueuedMessageCustody,
-} from '../../cats/services/stores/ports/queued-message-custody.js';
 import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
 import { snapshotPluginProtocolData } from '../carrier/plugin-protocol-data.js';
 import { currentPluginTransportPurpose } from '../carrier/plugin-transport-context.js';
@@ -22,6 +17,7 @@ import {
   type PublicInvocationVerifierPort,
 } from '../carrier/public-invocation-verifier.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
+import { storedPluginMessageSource } from './plugin-messaging-source.js';
 
 export interface PluginPublicInvocationInput {
   readonly messageRef: `message:${string}`;
@@ -50,7 +46,7 @@ interface Deps {
   readonly manifest: PluginManifest;
   readonly effectiveGrants: readonly string[];
   readonly ownerUserId: string | undefined;
-  readonly messages: Pick<IMessageStore, 'getById' | 'prepareQueueAdmission' | 'initializeQueueCustody'> | undefined;
+  readonly messages: IMessageStore | undefined;
   readonly threads: Pick<IThreadStore, 'get'> | undefined;
   readonly services: PluginPublicInvocationServices | undefined;
   readonly verify: PublicInvocationVerifierPort['invokePublicInvocationVerifier'];
@@ -97,13 +93,13 @@ export function createPluginPublicInvocationHost(deps: Deps): PluginPublicInvoca
           !message ||
           message.id !== id ||
           message.userId !== owner ||
-          message.catId !== null ||
+          message.from?.kind !== 'plugin' ||
+          message.from.instanceId !== deps.pluginInstanceId ||
           message.deletedAt ||
           message.recall ||
           message._tombstone ||
           message.sourceParseFailure ||
-          message.queueCustodyAdmission ||
-          !message.source?.connector ||
+          !storedPluginMessageSource(message)?.connector ||
           message.extra?.pluginMessage?.instanceId !== deps.pluginInstanceId
         )
           refuse();
@@ -133,7 +129,7 @@ export function createPluginPublicInvocationHost(deps: Deps): PluginPublicInvoca
       // Custody/delivery can advance while this call awaits; immutable message data cannot.
       function content(message: StoredMessage) {
         const {
-          queueCustody: _custody,
+          lifecycle: _lifecycle,
           deliveryStatus: _delivery,
           deliveredAt: _at,
           timelineOrderAt: _order,
@@ -149,16 +145,8 @@ export function createPluginPublicInvocationHost(deps: Deps): PluginPublicInvoca
         await current();
         const message = source(await messages!.getById(id));
         if (!isDeepStrictEqual(content(initial), content(message))) refuse();
-        if (message.queueCustody) {
-          // Normal completion retains custody on a delivered message. Read its
-          // terminal receipt without treating it as a new queued admission.
-          if (message.deliveryStatus === 'delivered' && message.queueCustody.status === 'terminal') {
-            assertQueuedMessageCustody(message.queueCustody);
-          } else {
-            assertQueueCustodyMessageBinding(message);
-          }
-          if (!publicInvocationCarriersMatch(message.queueCustody.pluginPublicInvocation, carrier)) refuse();
-        } else if (message.deliveryStatus !== undefined && message.deliveryStatus !== 'queued') refuse();
+        const row = await services!.queue.getDurableEntry(message.threadId, queueEntryId(id));
+        if (row && !publicInvocationCarriersMatch(row.execution.pluginPublicInvocation, carrier)) refuse();
         return message;
       }
       await check();
@@ -171,50 +159,36 @@ export function createPluginPublicInvocationHost(deps: Deps): PluginPublicInvoca
           },
         });
         let message = await check();
-        if (!message.queueCustody) {
-          const prepared = await messages.prepareQueueAdmission(id);
-          if (prepared.kind !== 'prepared' && prepared.kind !== 'existing') refuse();
-          message = await check();
-          const entry: QueueEntry = {
-            id: randomUUID(),
+        const entryId = queueEntryId(id);
+        // History owns adopted/terminal deliveries. A repeat call cannot recreate them.
+        if (
+          !message.lifecycle?.dispatchRefs?.length &&
+          message.deliveryStatus !== 'delivered' &&
+          message.deliveryStatus !== 'canceled'
+        ) {
+          if (!message.from) refuse();
+          const admitted = await services.queue.enqueueExistingMessageDurable(messages, id, {
             threadId: message.threadId,
             userId: owner,
-            ownerAuthProvenance: 'unknown',
-            content: message.content,
+            from: message.from,
+            sourceId: id,
             messageId: id,
-            mergedMessageIds: [],
-            source: 'connector',
+            kind: 'conversation_input',
+            content: message.content,
             targetCats: [carrier.targetCatId],
-            allTargetCats: [carrier.targetCatId],
             intent: 'execute',
-            status: 'queued',
-            createdAt: Date.now(),
+            ownerAuthProvenance: 'unknown',
             autoExecute: true,
-            priority: 'normal',
             pluginPublicInvocation: carrier,
-          };
-          const initialized = await messages.initializeQueueCustody(id, createInitialQueuedMessageCustody(entry));
-          if (initialized.kind !== 'initialized' && initialized.kind !== 'existing') refuse();
-          message = await check();
-        }
-        const custody = message.queueCustody;
-        if (!custody) refuse();
-        // Never restore or resume an already-started child, including failed/no-replay sources.
-        if (
-          custody.status === 'queued' &&
-          !custody.prestartRetirement &&
-          Object.keys(custody.awakenedInvocationIdByCatId ?? {}).length === 0
-        ) {
-          services.queue.restoreDurableEntry(buildQueueEntry([message], custody.entryId));
+          });
+          if (admitted.outcome === 'full') refuse();
           await services.resume(message.threadId, owner);
         }
         message = await check();
-        if (!message.queueCustody) refuse();
-        return Object.freeze({
-          messageRef: `message:${id}` as const,
-          entryId: message.queueCustody.entryId,
-          status: message.queueCustody.status,
-        });
+        const row = await services.queue.getDurableEntry(message.threadId, entryId);
+        const refs = message.lifecycle?.dispatchRefs ?? [];
+        const status = refs.some((ref) => ref.phase === 'dispatched') ? 'processing' : row ? 'queued' : 'terminal';
+        return Object.freeze({ messageRef: `message:${id}` as const, entryId, status });
       } finally {
         abort.abort();
       }

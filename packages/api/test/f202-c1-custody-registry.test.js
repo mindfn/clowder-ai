@@ -113,8 +113,10 @@ function nativeFixture() {
       assertCurrent: async () => {
         if (!callerCurrent) throw Error('invocation expired');
       },
-      // The native transport must replace this, never trust a supplied weaker guard.
-      assertInvocationCurrent: async () => {},
+      // Host-provided invocation-only check must not reenter the inventory lock.
+      assertInvocationCurrent: async () => {
+        if (!callerCurrent) throw Error('invocation expired');
+      },
     },
     token: () => actions.environment('instance', 'native').CLOWDER_PLUGIN_ACTION_TOKEN,
   };

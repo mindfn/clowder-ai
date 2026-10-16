@@ -106,6 +106,7 @@ export function broadcastIngress(
   input: {
     readonly threadId: string;
     readonly messageId: string;
+    readonly instanceId: string;
     readonly content: string;
     readonly source: ConnectorSource;
     readonly timestamp: number;
@@ -116,6 +117,7 @@ export function broadcastIngress(
     message: {
       id: input.messageId,
       type: 'connector' as const,
+      from: { kind: 'plugin' as const, instanceId: input.instanceId },
       content: input.content,
       source: input.source,
       timestamp: input.timestamp,
@@ -169,6 +171,7 @@ export async function deliverIngressEffectsOnce(
       broadcastIngress(ingress.deps, {
         threadId: input.threadId,
         messageId: input.messageId,
+        instanceId: input.instanceId,
         content: input.content,
         source: ingress.source,
         timestamp: input.timestamp,

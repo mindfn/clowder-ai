@@ -60,17 +60,19 @@ function harness() {
 }
 
 describe('K-2A contract-native inventory', () => {
-  it('pins the API and runtime boundary to the canonical plugin-contract beta.25 archive', () => {
+  it('pins the API and runtime boundary to the canonical plugin-contract beta.36 archive', () => {
     assert.equal(
       packageJson.dependencies['@clowder-ai/plugin-contract'],
-      'file:vendor/clowder-ai-plugin-contract-0.1.0-beta.25.tgz',
+      'file:vendor/clowder-ai-plugin-contract-0.1.0-beta.36-c1-9877be53c6db.tgz',
     );
-    const archive = readFileSync(new URL('../vendor/clowder-ai-plugin-contract-0.1.0-beta.25.tgz', import.meta.url));
+    const archive = readFileSync(
+      new URL('../vendor/clowder-ai-plugin-contract-0.1.0-beta.36-c1-9877be53c6db.tgz', import.meta.url),
+    );
     assert.equal(
       createHash('sha256').update(archive).digest('hex'),
-      '80816b015dbf035b322a60e218e298be48d889499b3a12018118bf4648e71dde',
+      '9877be53c6dbc0749126a4c61938b6f7fd6d8b09c786ad029ed71ae2021d9c29',
     );
-    assert.equal(PLUGIN_CONTRACT_PACKAGE_VERSION, '0.1.0-beta.25');
+    assert.equal(PLUGIN_CONTRACT_PACKAGE_VERSION, '0.1.0-beta.36');
     assert.equal(PLUGIN_CONTRACT_VERSION, '0.1.0');
     assert.deepEqual(PLUGIN_MANIFEST_CONTRACT_VERSIONS, [
       '0.1.0',
@@ -85,6 +87,7 @@ describe('K-2A contract-native inventory', () => {
       '0.1.0-beta.22',
       '0.1.0-beta.24',
       '0.1.0-beta.25',
+      '0.1.0-beta.36',
     ]);
   });
 

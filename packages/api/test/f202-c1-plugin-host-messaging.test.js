@@ -156,12 +156,15 @@ describe('F202 C1 — plugin Host messaging.send', () => {
     assert.equal(receipt.messageHandle.kind, 'message');
     assert.equal(typeof receipt.publishSequence, 'number');
     const stored = await messages.getById(receipt.messageId);
-    assert.deepEqual(stored.source, {
+    assert.deepEqual(stored.extra.pluginMessage.presentation, {
       connector: 'fixture-identity',
       label: 'Fixture IM',
       icon: 'fixture-icon',
       sender: { id: 'bot-7', name: 'Fixture Bot' },
     });
+    assert.deepEqual(stored.from, { kind: 'plugin', instanceId: INSTANCE_ID });
+    assert.equal(stored.source, undefined, 'plugin sender must not masquerade as external identity');
+    assert.deepEqual(broadcasts[0][2].message.from, stored.from);
     assert.deepEqual(stored.contentBlocks, contentBlocks);
     assert.deepEqual(stored.mentions, []);
     assert.equal(wakes.length, 0);
@@ -191,8 +194,8 @@ describe('F202 C1 — plugin Host messaging.send', () => {
     );
 
     const stored = await messages.getById(receipt.messageId);
-    assert.equal(stored.source.connector, 'fixture-im');
-    assert.equal(stored.source.label, 'Fixture IM');
+    assert.equal(stored.extra.pluginMessage.presentation.connector, 'fixture-im');
+    assert.equal(stored.extra.pluginMessage.presentation.label, 'Fixture IM');
     assert.deepEqual(stored.mentions, ['opus']);
     assert.deepEqual(wakes, [
       [
@@ -239,7 +242,7 @@ describe('F202 C1 — plugin Host messaging.send', () => {
       }),
     );
 
-    assert.equal((await messages.getById(receipt.messageId))?.source.connector, 'fixture-im');
+    assert.equal((await messages.getById(receipt.messageId))?.extra.pluginMessage.presentation.connector, 'fixture-im');
   });
 
   test('external provenance rejects an undeclared subscription or connector', async () => {
@@ -346,7 +349,7 @@ describe('F202 C1 — plugin Host messaging.send', () => {
       }),
     );
 
-    assert.deepEqual((await messages.getById(receipt.messageId))?.source, {
+    assert.deepEqual((await messages.getById(receipt.messageId))?.extra.pluginMessage.presentation, {
       connector: 'release-bot',
       label: 'Release Bot',
       icon: 'release-icon',
@@ -388,7 +391,7 @@ describe('F202 C1 — generic messaging.get', () => {
       timestamp: Date.now(),
       userId: OWNER,
       threadId: thread.id,
-      catId: 'codex',
+      from: { kind: 'agent', catId: 'codex' },
       content: 'result',
       mentions: [],
       origin: 'callback',
@@ -422,7 +425,7 @@ describe('F202 C1 — generic messaging.get', () => {
       timestamp: Date.now(),
       userId: OWNER,
       threadId: foreign.id,
-      catId: null,
+      from: { kind: 'user', userId: OWNER },
       content: 'owned source',
       mentions: [],
     });
@@ -451,7 +454,7 @@ describe('F202 C1 — generic messaging.get', () => {
         timestamp: Date.now(),
         userId: OWNER,
         threadId: thread.id,
-        catId: null,
+        from: { kind: 'user', userId: OWNER },
         content: 'body',
         mentions: [],
       });
@@ -469,10 +472,10 @@ describe('F202 C1 — generic messaging.get', () => {
         timestamp: Date.now(),
         userId: OWNER,
         threadId: thread.id,
-        catId: null,
+        from: { kind: 'user', userId: OWNER },
         content: 'original input',
         mentions: [],
-        ...(source ? { source } : {}),
+        ...(source ? { source, from: { kind: 'external', connectorId: source.connector } } : {}),
       });
       const original = await f.host.get(message.id);
       assert.equal(f.messages.prepareQueueAdmission(message.id).kind, 'prepared');
@@ -506,7 +509,7 @@ describe('F202 C1 — generic messaging.get', () => {
         timestamp: Date.now(),
         userId: OWNER,
         threadId: thread.id,
-        catId: null,
+        from: { kind: 'user', userId: OWNER },
         content: 'hidden input',
         mentions: [],
       });
@@ -524,7 +527,7 @@ describe('F202 C1 — generic messaging.get', () => {
       timestamp: Date.now(),
       userId: OWNER,
       threadId: thread.id,
-      catId: null,
+      from: { kind: 'user', userId: OWNER },
       content: 'original source',
       mentions: [],
     });

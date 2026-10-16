@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
-import { QueuedMessageCustodyCoordinator } from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
+import { queueEntryId } from '../dist/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import { withPluginTransportPurpose } from '../dist/domains/plugin/carrier/plugin-transport-context.js';
 import { neutralFixture } from './helpers/neutral-host-fixture.js';
 
@@ -18,15 +18,15 @@ async function fixture(t, capabilities = ['thread.readContent', 'messaging.send'
   const message = f.messages.append({
     threadId: f.thread.id,
     userId: f.owner,
-    catId: null,
+    from: { kind: 'plugin', instanceId: f.installed.pluginInstanceId },
     content: 'external source',
     mentions: [],
     timestamp: 1000,
-    source: { connector: 'neutral', meta: { eventId: 'event-1' } },
     extra: {
       pluginMessage: {
         instanceId: f.installed.pluginInstanceId,
         revision: 1,
+        presentation: { connector: 'neutral', label: 'Neutral', icon: 'message', meta: { eventId: 'event-1' } },
         provenance: { origin: { kind: 'plugin', instanceId: f.installed.pluginInstanceId } },
         elements: [],
         appendOps: [],
@@ -70,12 +70,13 @@ test('public admission binds the persisted source to neutral single-target custo
   const receipt = await f.enqueue();
   const source = f.messages.getById(f.message.id);
   assert.equal(receipt.messageRef, f.input.messageRef);
-  assert.equal(receipt.entryId, source.queueCustody.entryId);
+  const row = await f.queue.getDurableEntry(f.thread.id, receipt.entryId);
+  assert.equal(receipt.entryId, queueEntryId(source.id));
   assert.equal(receipt.status, 'queued');
-  assert.equal(source.queueCustody.ownerAuthProvenance, 'unknown');
-  assert.deepEqual(source.queueCustody.pendingTargetCats, ['cat']);
-  assert.equal(source.queueCustody.pluginPublicInvocation.sourceMessageId, source.id);
-  assert.equal(source.queueCustody.pluginPublicInvocation.pluginInstanceId, f.installed.pluginInstanceId);
+  assert.equal(row.execution.ownerAuthProvenance, 'unknown');
+  assert.deepEqual(row.targets, ['cat']);
+  assert.equal(row.execution.pluginPublicInvocation.sourceMessageId, source.id);
+  assert.equal(row.execution.pluginPublicInvocation.pluginInstanceId, f.installed.pluginInstanceId);
   assert.equal(f.verified.length, 1);
   assert.equal(f.queue.list(f.thread.id, f.owner).length, 1);
   assert.deepEqual(f.resumed, [[f.thread.id, f.owner]]);
@@ -86,15 +87,13 @@ test('public admission replay returns existing custody and never rebinds a child
   const first = await f.enqueue();
   const again = await f.enqueue();
   assert.equal(again.entryId, first.entryId);
-  const entry = f.queue.getEntrySnapshot(f.thread.id, f.owner, first.entryId);
-  const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: f.messages });
-  assert.equal((await coordinator.bindPublicInvocationChild({ entry, invocationId: 'child-1' })).kind, 'bound');
+  await bindChild(f, first.entryId, 'child-1');
   const resumeCount = f.resumed.length;
   const last = await f.enqueue();
   assert.equal(last.entryId, first.entryId);
   assert.equal(last.status, 'processing');
   assert.equal(f.resumed.length, resumeCount);
-  assert.equal(f.messages.getById(f.message.id).queueCustody.targetAttempts.length, 1);
+  assert.equal(f.messages.getById(f.message.id).lifecycle.dispatchRefs.length, 1);
 });
 
 test('public admission rejects widened methods, target and caller-owned Host coordinates before writes', async (t) => {
@@ -150,7 +149,7 @@ test('public admission concurrent retries share the durable custody winner', asy
   const results = await Promise.all([f.enqueue(), f.enqueue(), f.enqueue()]);
   assert.equal(new Set(results.map((result) => result.entryId)).size, 1);
   assert.equal(f.queue.list(f.thread.id, f.owner).length, 1);
-  assert.equal(f.messages.getById(f.message.id).queueCustody.targetAttempts.length, 1);
+  assert.equal((await f.queue.getDurableEntry(f.thread.id, results[0].entryId)).targets.length, 1);
   const before = structuredClone(f.messages.getById(f.message.id));
   await assert.rejects(() => f.enqueue({ ...f.input, authority: { ref: 'other', revision: 'route:1' } }));
   assert.deepEqual(f.messages.getById(f.message.id), before);
@@ -163,42 +162,68 @@ test('public admission uses the real isolated module verifier before Queue admis
   assert.equal(f.queue.list(f.thread.id, f.owner).length, 1);
 });
 
-test('public admission terminal replay returns the delivered custody receipt without starting again', async (t) => {
+async function bindChild(f, entryId, child) {
+  const response = f.messages.append({
+    userId: f.owner,
+    threadId: f.thread.id,
+    from: { kind: 'agent', catId: 'cat' },
+    content: '',
+    mentions: [],
+    timestamp: 2000,
+    lifecycle: {
+      kind: 'response',
+      orderKey: '2000:child',
+      invocationId: child,
+      targetId: 'cat',
+      inputEntryIds: [entryId],
+      inputMessageIds: [f.message.id],
+      status: 'processing',
+      startedAt: 2000,
+    },
+  });
+  const source = f.messages.getById(f.message.id);
+  assert.equal(
+    f.messages.advanceLifecycleInputDispatch(source.id, {
+      orderKey: source.lifecycle.orderKey,
+      targetId: 'cat',
+      phase: 'dispatched',
+      statusMessageId: response.id,
+      dispatchedAt: 2000,
+    }).kind,
+    'applied',
+  );
+  await f.queue.retireClaimedLifecycleTarget(f.thread.id, entryId, 'cat');
+  return response;
+}
+test('terminal History replay returns a receipt without recreating retired Queue work', async (t) => {
   const f = await fixture(t);
   const first = await f.enqueue();
-  const entry = f.queue.claimPublicInvocation(f.thread.id, f.owner, first.entryId);
-  assert.ok(entry);
-  const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: f.messages });
-  const bound = await coordinator.bindPublicInvocationChild({ entry, invocationId: 'finished-child' });
-  assert.equal(bound.kind, 'bound');
-  const claimed = f.queue.getEntrySnapshot(f.thread.id, f.owner, first.entryId);
+  const response = await bindChild(f, first.entryId, 'finished-child');
   assert.equal(
-    f.queue.restoreEntrySnapshotIfUnchanged(claimed, {
-      ...claimed,
-      queuedAwakenedInvocationIdByCatId: bound.custody.awakenedInvocationIdByCatId,
-      queuedAwakenedAtByCatId: bound.custody.awakenedAtByCatId,
-    }),
-    true,
+    f.messages.commitLifecycleResponseTerminal(response.id, {
+      invocationId: 'finished-child',
+      status: 'completed',
+      completedAt: 3000,
+      content: '',
+      mentions: [],
+    }).kind,
+    'applied',
   );
-  const seenAt = Date.now() + 1;
-  assert.deepEqual(f.queue.markProcessingSeen(f.thread.id, f.owner, first.entryId, ['cat'], 'finished-child', seenAt), [
-    'cat',
-  ]);
-  const processing = f.queue.getEntrySnapshot(f.thread.id, f.owner, first.entryId);
-  await coordinator.persistEntry(processing);
-  await coordinator.commitSuccessfulTargets(processing, ['cat'], 'finished-child', seenAt + 1);
-  const terminal = f.messages.getById(f.message.id);
-  assert.equal(terminal.deliveryStatus, 'delivered');
-  assert.equal(terminal.queueCustody.status, 'terminal');
-  f.queue.remove(f.thread.id, f.owner, first.entryId);
-  const resumeCount = f.resumed.length;
-  let replay;
-  await assert.doesNotReject(async () => {
-    replay = await f.enqueue();
-  }, 'terminal admission replay must return the durable receipt');
-  assert.deepEqual(replay, { ...first, status: 'terminal' });
-  assert.equal(f.resumed.length, resumeCount);
+  const source = f.messages.getById(f.message.id);
+  assert.equal(
+    f.messages.advanceLifecycleInputDispatch(source.id, {
+      orderKey: source.lifecycle.orderKey,
+      targetId: 'cat',
+      phase: 'settled',
+      statusMessageId: response.id,
+      dispatchedAt: 2000,
+    }).kind,
+    'applied',
+  );
+  const snapshot = structuredClone(source),
+    resumes = f.resumed.length;
+  assert.deepEqual(await f.enqueue(), { ...first, status: 'terminal' });
+  assert.equal(f.resumed.length, resumes);
   assert.equal(f.queue.list(f.thread.id, f.owner).length, 0);
-  assert.deepEqual(f.messages.getById(f.message.id), terminal);
-  await assert.rejects(() => f.enqueue({ ...f.input, authority: { ref: 'different', revision: 'route:1' } }));
+  assert.deepEqual(f.messages.getById(source.id), snapshot);
 });

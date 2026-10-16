@@ -61,7 +61,6 @@ export const pluginNativeActionRoutes: FastifyPluginAsync<PluginNativeActionRout
       const source = await captureTypedWaitSource(record, options.sources);
       const result = await options.actions.call(token, parsed.data.method, parsed.data.input, {
         ...fence.identity,
-        ...(fence.readTaskBinding ? { readTaskBinding: fence.readTaskBinding } : {}),
         ...(source ? { source: Object.freeze(source) } : {}),
         assertCurrent: fence.assertCurrent,
         assertInvocationCurrent: fence.assertInvocationCurrent,

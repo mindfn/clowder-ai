@@ -35,9 +35,10 @@ const USER = 'user-1';
 
 function catReply(overrides = {}) {
   return {
+    from: { kind: 'agent', catId: 'opus' },
     threadId: THREAD,
     userId: USER,
-    catId: 'opus',
+
     content: 'on it',
     timestamp: Date.now(),
     ...overrides,
@@ -83,7 +84,7 @@ describe('F202 C1 G5 — publishing message store', () => {
     // send-service already publishes these, with the watermark write that goes with it.
     await store.append(
       catReply({
-        catId: null,
+        from: { kind: 'plugin', instanceId: 'inst-1' },
         extra: {
           pluginMessage: {
             instanceId: 'inst-1',

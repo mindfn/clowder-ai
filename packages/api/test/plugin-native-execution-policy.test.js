@@ -160,7 +160,7 @@ test('native target policy is rechecked after awaited admission and after the pa
     },
   });
   const denied = await before.request();
-  assert.equal(denied.statusCode, 403, denied.body);
+  assert.equal(denied.statusCode, 409, denied.body);
   assert.equal(before.entered(), 0);
   const after = await fixture(t, {
     inHandler: async (record) => {
@@ -168,7 +168,7 @@ test('native target policy is rechecked after awaited admission and after the pa
     },
   });
   const withheld = await after.request();
-  assert.equal(withheld.statusCode, 403, withheld.body);
+  assert.equal(withheld.statusCode, 409, withheld.body);
   assert.equal(withheld.body.includes('private result'), false);
 });
 

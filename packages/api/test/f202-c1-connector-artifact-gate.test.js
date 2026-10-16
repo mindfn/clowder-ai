@@ -22,7 +22,6 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { renderAllRichBlocksPlaintext } from '../dist/infrastructure/connectors/rich-block-plaintext.js';
 import {
   admitAndLoad,
   createGateHost,
@@ -92,7 +91,7 @@ for (const release of RELEASES) {
         assert.equal(JSON.stringify(richCall.args[2]), JSON.stringify([card, checklist]), 'blocks arrive unchanged');
       } else {
         assert.equal(richCall.method, 'sendReply');
-        assert.ok(richCall.args[1].endsWith(`\n\n${renderAllRichBlocksPlaintext([card, checklist])}`));
+        assert.ok(richCall.args[1].endsWith('\n\n📋 Approval\nReview the proposal\n\n☑️ Steps\n'));
       }
     });
   });

@@ -15,6 +15,6 @@ test('production has one connector runtime owner: installed plugin composition',
     assert.equal(source.includes(retired), false, `${retired} must not start or administer a second IM implementation`);
   }
   assert.match(source, /createPluginManagerRuntimeComposition/);
-  assert.match(source, /registerGitHubRepoWebhook/);
+  assert.doesNotMatch(source, /registerGitHubRepoWebhook/);
   assert.match(source, /limbOutboundDelivery\.deliver/);
 });

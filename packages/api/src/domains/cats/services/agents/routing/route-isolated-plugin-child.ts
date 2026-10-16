@@ -1,21 +1,19 @@
-import { createModuleLogger } from '../../../../../infrastructure/logger.js';
-import type { StoredMessage } from '../../stores/ports/MessageStore.js';
+import { commitLifecycleResponseFromAppendInput } from '../../stores/ports/MessageStore.js';
 import type { AgentMessage } from '../../types.js';
 import { type InvocationParams, invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { accumulateTextAggregate } from '../text-aggregation.js';
 import type { RouteOptions, RouteStrategyDeps } from './route-helpers.js';
-
-const log = createModuleLogger('plugin-route');
 
 /** Shared terminal/output handling, after a lane has validated and built its isolated child input. */
 export async function* routeIsolatedPluginChild(
   deps: RouteStrategyDeps,
   params: InvocationParams,
   options: Pick<RouteOptions, 'beforeOutputCommit' | 'persistenceContext' | 'parentInvocationId'>,
-  lane: 'public' | 'task',
+  lane: 'public',
 ): AsyncIterable<AgentMessage> {
   const { userId, threadId, catId } = params;
   let childId: string | undefined;
+  let responseMessageId: string | undefined;
   let text = '';
   let done: AgentMessage | undefined;
   let failed = false;
@@ -25,6 +23,7 @@ export async function* routeIsolatedPluginChild(
       if (childId && childId !== event.turnInvocationId) throw new Error(`${lane}_route_child_changed`);
       childId = event.turnInvocationId;
     }
+    if (event.lifecycleResponseMessageId) responseMessageId = event.lifecycleResponseMessageId;
     if (event.type === 'text') {
       text = accumulateTextAggregate(text, event.content ?? '', event.textMode);
       continue;
@@ -40,40 +39,37 @@ export async function* routeIsolatedPluginChild(
   const child = childId ? await deps.invocationDeps.turnExecutionStore?.get(childId) : null;
   if (failed || !done || !childId || child?.status !== 'succeeded') throw new Error(`${lane}_route_child_unsuccessful`);
   signal?.throwIfAborted();
-  if (text.trim()) {
-    if (options.beforeOutputCommit && !(await options.beforeOutputCommit(catId)))
-      throw new Error(`${lane}_route_output_rejected`);
-    signal?.throwIfAborted();
-    // A Host transcript is not a plugin reply receipt. Do not attach source-response
-    // evidence: a successful plugin turn may legitimately produce no business reply.
-    let message: StoredMessage | undefined;
-    try {
-      message = await deps.messageStore.append({
-        userId,
-        threadId,
-        catId,
-        content: text,
-        timestamp: Date.now(),
-        mentions: [],
-        origin: 'stream',
-        extra: { stream: { invocationId: options.parentInvocationId ?? childId, turnInvocationId: childId } },
-      });
-    } catch (error) {
-      // Never publish an unpersisted transcript or reinterpret a completed native
-      // execution as retryable just because its optional Host transcript failed.
-      log.error({ error, threadId, invocationId: childId, lane }, 'Plugin execution transcript was not persisted');
-    }
-    if (message) {
-      options.persistenceContext?.persistedOutputMessageIds?.push(message.id);
-      yield {
-        type: 'text',
-        catId,
-        content: message.content,
-        textMode: 'replace',
-        timestamp: message.timestamp,
-        turnInvocationId: childId,
-      };
-    }
-  }
+  if (!responseMessageId) throw new Error(`${lane}_route_response_missing`);
+  if (options.beforeOutputCommit && !(await options.beforeOutputCommit(catId)))
+    throw new Error(`${lane}_route_output_rejected`);
+  signal?.throwIfAborted();
+  // Main History owns the response, including successful turns without text.
+  // A Host transcript has no plugin payload and is not a business reply receipt.
+  const message = await commitLifecycleResponseFromAppendInput(
+    deps.messageStore,
+    responseMessageId,
+    childId,
+    { status: 'completed', completedAt: Date.now() },
+    {
+      userId,
+      threadId,
+      from: { kind: 'agent', catId },
+      content: text,
+      timestamp: Date.now(),
+      mentions: [],
+      origin: 'stream',
+      extra: { stream: { invocationId: options.parentInvocationId ?? childId, turnInvocationId: childId } },
+    },
+  );
+  options.persistenceContext?.persistedOutputMessageIds?.push(message.id);
+  if (text.trim())
+    yield {
+      type: 'text',
+      catId,
+      content: message.content,
+      textMode: 'replace',
+      timestamp: message.timestamp,
+      turnInvocationId: childId,
+    };
   yield done;
 }

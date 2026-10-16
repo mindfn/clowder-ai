@@ -36,8 +36,11 @@ import { FileOutboundMediaStore } from '../messaging/outbound-media/store.js';
 import { createMessagingStores } from '../messaging/stores/factory.js';
 import type { MessagingStores } from '../messaging/stores/ports.js';
 import { createSubscriptionDelivery, type SubscriptionDelivery } from '../messaging/subscription-delivery.js';
-import { type BundledPluginRuntime, BundledPluginRuntimeCarrier } from './builtin-runtime/carriers/bundled-runtime-carrier.js';
 import { createInventoryBrowserServices } from './browser-service/composition.js';
+import {
+  type BundledPluginRuntime,
+  BundledPluginRuntimeCarrier,
+} from './builtin-runtime/carriers/bundled-runtime-carrier.js';
 import { ModulePluginRuntime } from './builtin-runtime/carriers/module-plugin-runtime.js';
 import { StaticPluginRuntime } from './builtin-runtime/carriers/static-plugin-runtime.js';
 import { PluginRuntimeCarrierRouter } from './carrier/runtime-carrier.js';
@@ -587,21 +590,23 @@ export function createDormantPluginRuntimeComposition(
     },
     {
       ownerUserId: options.threadOwnerUserId,
+      queue: options.publicInvocations?.queue,
       messageStore: options.messageStore,
       threadStore: options.threadStore,
     },
-    resolve(dirname(paths.inventorySnapshotPath), PLUGIN_HOST_ENTRIES.taskWorkspaces),
   );
   deliveryTarget.current = supervisor;
   supervisor.register(
     new BundledPluginRuntimeCarrier({
       inventory: inventoryStore,
       runtimes: [
-        ...[...(options.builtinRuntimes ?? [])].map(([pluginId, runtime]): BundledPluginRuntime => ({
-          claims: pkg => pkg.manifest.pluginId === pluginId,
-          start: (...args) => runtime.start(...args),
-          stop: (...args) => runtime.stop(...args),
-        })),
+        ...[...(options.builtinRuntimes ?? [])].map(
+          ([pluginId, runtime]): BundledPluginRuntime => ({
+            claims: (pkg) => pkg.manifest.pluginId === pluginId,
+            start: (...args) => runtime.start(...args),
+            stop: (...args) => runtime.stop(...args),
+          }),
+        ),
         ...(contentEditors ? [contentEditors] : []),
         ...(desktopWindows ? [desktopWindows] : []),
         // Last: the runtimes above implement one package the Host itself carries, so

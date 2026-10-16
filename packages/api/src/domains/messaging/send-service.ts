@@ -223,7 +223,11 @@ export class SendService {
         }
       }
 
-      if (draft.payload.elements.some(element => element.kind === 'media_ref' && element.payload.reference.startsWith('hmr_'))) {
+      if (
+        draft.payload.elements.some(
+          (element) => element.kind === 'media_ref' && element.payload.reference.startsWith('hmr_'),
+        )
+      ) {
         if (!this.deps.mediaReferences) throw new MessagingError('MEDIA_ACCESS_DENIED', 'Media access denied');
         await this.deps.mediaReferences.assertCanReference(ctx.pluginInstanceId, draft.payload.elements);
       }
@@ -235,7 +239,6 @@ export class SendService {
         content,
         mentions: wakeCatId === undefined ? [] : [wakeCatId],
         timestamp,
-        ...(source === undefined ? {} : { source }),
         ...(hostOptions?.contentBlocks === undefined ? {} : { contentBlocks: hostOptions.contentBlocks }),
         ...(audience.kind === 'whisper'
           ? { visibility: 'whisper' as const, whisperTo: audience.targets as readonly CatId[] }
@@ -247,6 +250,7 @@ export class SendService {
         idempotencyKey: `plugmsg:${encodeURIComponent(ctx.pluginInstanceId)}:${encodeURIComponent(draft.idempotencyKey)}`,
         extra: {
           pluginMessage: {
+            ...(source === undefined ? {} : { presentation: source }),
             instanceId: ctx.pluginInstanceId,
             revision: 1,
             provenance: provenance as unknown as Record<string, unknown>,

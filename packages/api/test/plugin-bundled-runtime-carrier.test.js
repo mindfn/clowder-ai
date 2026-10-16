@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { CHATGPT_DOT_PLUGIN_MANIFEST } from '../dist/domains/plugin/chatgpt-dot-manifest.js';
 
 import {
   BundledPluginRuntimeCarrier,
-  COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST,
   HostInventoryControlPlane,
   MemoryPluginInventoryStore,
   OFFICIAL_PLUGIN_CATALOG,
 } from '../dist/domains/plugin/index.js';
 
 test('bundled carrier starts and stops the bundled Connector without external process authority', async () => {
-  const entry = OFFICIAL_PLUGIN_CATALOG.find((candidate) => candidate.catalogId === 'collective-connector');
+  const entry = OFFICIAL_PLUGIN_CATALOG.find((candidate) => candidate.catalogId === 'chatgpt-dot');
   assert.ok(entry);
   const store = new MemoryPluginInventoryStore();
   const inventory = new HostInventoryControlPlane(store, {
@@ -18,7 +18,7 @@ test('bundled carrier starts and stops the bundled Connector without external pr
     now: () => 30_000,
   });
   const installed = await inventory.installPackage({
-    manifest: COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST,
+    manifest: CHATGPT_DOT_PLUGIN_MANIFEST,
     computedPackageDigest: entry.packageDigest,
     expectedPackageDigest: entry.packageDigest,
     packagePluginId: entry.pluginId,
@@ -61,7 +61,7 @@ test('bundled carrier starts and stops the bundled Connector without external pr
       instance: snapshot.instances[0],
       packageRecord: {
         ...snapshot.packages[0],
-        manifest: { ...COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST, pluginId: 'official.other-package' },
+        manifest: { ...CHATGPT_DOT_PLUGIN_MANIFEST, pluginId: 'official.other-package' },
       },
     }),
     false,

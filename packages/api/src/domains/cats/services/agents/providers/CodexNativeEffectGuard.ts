@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const CODEX_NATIVE_GUARD_HOOK_KEY = '/<session-flags>/config.toml:pre_tool_use:0:0';
@@ -14,20 +14,11 @@ export function buildCodexNativeEffectGuardArgs(options?: {
   readonly nodeExecutable?: string;
   /** Only selected after the AgentService verifies the reviewed executor artifact. */
   readonly nativeShellSafetyCheck?: boolean;
-  /** Host-created mode0600 file outside the Task sandbox. Never a package/model selector. */
-  readonly taskAdmissionFile?: string;
 }): string[] {
   const repoRoot = options?.repoRoot ?? resolveRepositoryRoot();
-  const scriptPath = join(
-    repoRoot,
-    'scripts',
-    options?.taskAdmissionFile ? 'plugin-task-effect-guard.mjs' : 'native-effect-target-guard.mjs',
-  );
+  const scriptPath = join(repoRoot, 'scripts', 'native-effect-target-guard.mjs');
   if (!existsSync(scriptPath)) throw new Error(`native_effect_guard_missing:${scriptPath}`);
-  if (options?.taskAdmissionFile !== undefined && !isAbsolute(options.taskAdmissionFile))
-    throw new Error('plugin_task_admission_file_must_be_absolute');
-  const admissionArg = options?.taskAdmissionFile ? ` ${shellQuote(realpathSync(options.taskAdmissionFile))}` : '';
-  const command = `${shellQuote(options?.nodeExecutable ?? process.execPath)} ${shellQuote(realpathSync(scriptPath))}${admissionArg}`;
+  const command = `${shellQuote(options?.nodeExecutable ?? process.execPath)} ${shellQuote(realpathSync(scriptPath))}`;
   const groups = options?.nativeShellSafetyCheck
     ? [
         { event: 'PreToolUse', key: 'pre_tool_use', matcher: 'Edit|Write' },

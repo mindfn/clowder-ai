@@ -180,11 +180,18 @@ test('history uses owner visibility, chronological order and a strict bounded sa
   const f = fixture();
   const thread = await f.host.create({ title: 'history' });
   const append = (content, extra = {}) =>
-    f.messageStore.append({ threadId: thread.id, userId: 'owner', catId: null, content, timestamp: 10, ...extra });
+    f.messageStore.append({
+      from: { kind: 'user', userId: 'owner' },
+      threadId: thread.id,
+      userId: 'owner',
+      content,
+      timestamp: 10,
+      ...extra,
+    });
   append('owner');
-  append('cat', { catId: 'a', timestamp: 20, metadata: { secret: 'never-project' } });
-  append('foreign', { userId: 'other', timestamp: 25 });
-  append('system', { userId: 'system', timestamp: 30 });
+  append('cat', { from: { kind: 'agent', catId: 'a' }, timestamp: 20, metadata: { secret: 'never-project' } });
+  append('foreign', { from: { kind: 'user', userId: 'other' }, userId: 'other', timestamp: 25 });
+  append('system', { from: { kind: 'system', service: 'test' }, userId: 'system', timestamp: 30 });
   const hidden = append('deleted', { timestamp: 40 });
   await f.messageStore.softDelete(hidden.id, 'owner');
   append('queued', { deliveryStatus: 'queued', timestamp: 50 });

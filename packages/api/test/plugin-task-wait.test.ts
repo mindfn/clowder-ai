@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { withBallCustodyTaskEvents } from '../src/domains/ball-custody/BallCustodyTaskStore.js';
 import { resolveTypedWaitContinuation } from '../src/domains/ball-custody/TypedWaitContinuation.js';
-import { WaitContinuationRetryPreflight } from '../src/domains/ball-custody/WaitContinuationRetryPreflight.js';
 import { TaskStore } from '../src/domains/cats/services/stores/ports/TaskStore.js';
 import { withPluginCallContext } from '../src/domains/plugin/carrier/plugin-call-context.js';
 import { createPluginTaskHost } from '../src/domains/plugin/host-surface/plugin-task-host.js';
@@ -87,7 +86,7 @@ for (const kind of ['pr_tracking', 'issue_tracking'] as const) {
   });
 }
 
-test('authenticated plugin wait supports exact-source continuation and outcome retry without provider state', async () => {
+test('authenticated plugin wait supports exact-source continuation and durable outcomes without provider state', async () => {
   const { store, host, native } = fixture();
   const task = await native(() =>
     host.create({ threadId: 'thread', ownerCatId: 'codex', title: 'External event', kind: 'work' }),
@@ -111,25 +110,8 @@ test('authenticated plugin wait supports exact-source continuation and outcome r
   };
   await host.setWait(task.id, { expectedGeneration: 1, generation: 1, active: null, outcome });
   assert.equal((await resolveTypedWaitContinuation({ taskStore: store, ...identity })).kind, 'reject');
-  const retry = new WaitContinuationRetryPreflight({ taskStore: store });
-  const request = {
-    requestingUserId: 'owner',
-    targetCatId: 'codex',
-    message: {
-      catId: null,
-      userId: 'owner',
-      threadId: 'thread',
-      source: {
-        connector: 'github-wait',
-        meta: {
-          waitContinuationCarrier: { v: 1, waitId: task.id, outcomeId: 'outcome', ownerFence: outcome.ownerFence },
-        },
-      },
-    },
-  };
-  assert.deepEqual(await retry.preflight(request as never), { ok: true, kind: 'wait_containing_task' });
+  assert.equal(store.get(task.id)!.pluginWait!.waitOutcome?.outcomeId, 'outcome');
   await host.setWait(task.id, { expectedGeneration: 1, generation: 2, active: {} });
-  assert.equal((await retry.preflight(request as never)).ok, false);
   assert.equal((await resolveTypedWaitContinuation({ taskStore: store, ...identity })).kind, 'reject');
   assert.equal(await host.setWait(task.id, { expectedGeneration: 1, generation: 1, active: {} }), null);
 });
@@ -180,22 +162,6 @@ test('renewal can retain the preceding outcome; exact replay never rebinds an ex
   assert.equal(renewed?.pluginWait?.registration, undefined);
   assert.equal(renewed?.pluginWait?.await?.expiresAt, undefined);
   assert.equal((await resolveTypedWaitContinuation({ taskStore: store, ...identity })).kind, 'reject');
-  const request = {
-    requestingUserId: 'owner',
-    targetCatId: 'codex',
-    message: {
-      catId: null,
-      userId: 'owner',
-      threadId: 'thread',
-      source: {
-        connector: 'github-wait',
-        meta: {
-          waitContinuationCarrier: { v: 1, waitId: task.id, outcomeId: 'old-event', ownerFence: outcome.ownerFence },
-        },
-      },
-    },
-  };
-  assert.equal((await new WaitContinuationRetryPreflight({ taskStore: store }).preflight(request as never)).ok, true);
   await host.setWait(task.id, { expectedGeneration: 2, generation: 2, active: {} });
   assert.equal(store.get(task.id)!.pluginWait!.waitOutcome, undefined, 'omission clears outcome in full snapshot');
   await assert.rejects(

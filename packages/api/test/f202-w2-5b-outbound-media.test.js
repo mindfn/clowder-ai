@@ -73,9 +73,10 @@ function build({ speechBudgetMs = 1_000, synthesizer, retentionCount } = {}) {
 
 function catReply(blocks, overrides = {}) {
   return {
+    from: { kind: 'agent', catId: 'opus' },
     threadId: THREAD,
     userId: 'user-1',
-    catId: 'opus',
+
     content: 'here you go',
     timestamp: Date.now(),
     extra: { rich: { v: 1, blocks } },

@@ -729,7 +729,13 @@ test('a real builtin module consumes thread listing, safe history, roster and ro
   const bindingStore = new MemoryConnectorThreadBindingStore();
   const existing = await threadStore.create('owner-1', 'Existing');
   await bindingStore.bind('dev.clowder.module-fixture', 'projection', existing.id, 'owner-1');
-  await messageStore.append({ threadId: existing.id, userId: 'owner-1', catId: null, timestamp: 1, content: 'hello' });
+  await messageStore.append({
+    from: { kind: 'user', userId: 'owner-1' },
+    threadId: existing.id,
+    userId: 'owner-1',
+    timestamp: 1,
+    content: 'hello',
+  });
   const grants = ['thread.write', 'thread.listMetadata', 'thread.readContent'];
   const pluginManifest = manifest({ features: [{ id: 'main', name: 'Main', resources: [], capabilities: grants }] });
   const host = hostOf([{ manifest: pluginManifest, rootDir, effectiveGrants: grants }], {
@@ -838,7 +844,7 @@ test('start receives the caller-bound Host messaging surface', async () => {
   assert.equal(stored.content, 'module hello');
   assert.equal(entry.read.id, stored.id);
   assert.equal(entry.read.content, stored.content);
-  assert.equal(stored.source.label, 'Fixture');
+  assert.equal(stored.extra.pluginMessage.presentation.label, 'Fixture');
 });
 
 test('module stop unregisters every Host messaging subscription', async () => {
@@ -1175,19 +1181,20 @@ test('real module Task data writes reach original Schedule projection and change
   const thread = threads.create('owner', 'Schedule');
   threads.addParticipants(thread.id, ['codex']);
   const source = messages.append({
+    from: { kind: 'plugin', instanceId: 'instance-0' },
     userId: 'owner',
     threadId: thread.id,
-    catId: null,
+
     content: 'Produce the report.',
     timestamp: 1,
-    source: { connector: 'plugin', label: 'Plugin', icon: 'message' },
     extra: { pluginMessage: { instanceId: 'instance-0', revision: 1, provenance: {}, elements: [], appendOps: [] } },
   });
   const artifactRef = '/uploads/module-report.md';
   messages.append({
+    from: { kind: 'agent', catId: 'codex' },
     userId: 'owner',
     threadId: thread.id,
-    catId: 'codex',
+
     content: 'Report',
     timestamp: 100,
     extra: { rich: { blocks: [{ kind: 'file', v: 1, id: 'module-report', fileName: 'report.md', url: artifactRef }] } },

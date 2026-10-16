@@ -1,9 +1,14 @@
 import { isDeepStrictEqual } from 'node:util';
+import type { InvocationQueue } from '../../cats/services/agents/invocation/InvocationQueue.js';
+import {
+  assertQueueLedgerEntry,
+  queueEntryId,
+} from '../../cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import type { IMessageStore, StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
 import type { PluginPublicInvocationCarrierV1 } from '../../cats/services/stores/ports/plugin-public-invocation-carrier.js';
-import { assertQueueCustodyMessageBinding } from '../../cats/services/stores/ports/queued-message-custody.js';
 import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
+import { storedPluginMessageSource } from '../host-surface/plugin-messaging-source.js';
 import { snapshotPluginProtocolData as snapshot } from './plugin-protocol-data.js';
 import {
   capturePublicVerification,
@@ -22,6 +27,7 @@ export interface PublicInvocationBinding {
 }
 export interface PublicInvocationSourceServices {
   readonly ownerUserId: string | undefined;
+  readonly queue?: Pick<InvocationQueue, 'getDurableEntry'>;
   readonly messageStore: Pick<IMessageStore, 'getById'>;
   readonly threadStore: Pick<IThreadStore, 'get'> | undefined;
 }
@@ -57,53 +63,69 @@ function bindingSnapshot(input: PublicInvocationBinding, owner: string | undefin
     refuse();
   return value as unknown as PublicInvocationBinding;
 }
-function sourceSnapshot(
+async function sourceSnapshot(
   message: StoredMessage | null,
   carrier: PluginPublicInvocationCarrierV1,
   binding: PublicInvocationBinding,
+  services: PublicInvocationSourceServices,
 ) {
   if (
     !message ||
     message.id !== carrier.sourceMessageId ||
     message.userId !== binding.userId ||
     message.threadId !== binding.threadId ||
-    message.catId !== null ||
+    message.from?.kind !== 'plugin' ||
+    message.from.instanceId !== carrier.pluginInstanceId ||
     typeof message.content !== 'string' ||
     message.deletedAt ||
     message.recall ||
     message._tombstone ||
     message.sourceParseFailure ||
-    message.deliveryStatus !== 'queued' ||
-    !message.source?.connector ||
+    (message.deliveryStatus !== 'queued' && message.deliveryStatus !== 'delivered') ||
+    !storedPluginMessageSource(message)?.connector ||
     message.extra?.pluginMessage?.instanceId !== carrier.pluginInstanceId ||
     message.extra.pluginMessage.revision !== carrier.sourcePluginRevision
   )
     refuse();
-  assertQueueCustodyMessageBinding(message);
-  const custody = message.queueCustody;
-  if (
-    !custody ||
-    !isDeepStrictEqual(custody.pluginPublicInvocation, carrier) ||
-    custody.entryId !== binding.entryId ||
-    custody.ownerUserId !== binding.userId ||
-    custody.status === 'terminal' ||
-    !custody.pendingTargetCats.some((catId) => catId === binding.targetCatId) ||
-    custody.failedByCatIds.some((catId) => catId === binding.targetCatId) ||
-    custody.handledByCatIds.some((catId) => catId === binding.targetCatId) ||
-    custody.withdrawnByCatIds?.some((catId) => catId === binding.targetCatId) ||
-    custody.prestartRetirement ||
-    custody.steerRequestedByCatIds?.some((catId) => catId === binding.targetCatId) ||
-    custody.steeredInvocationIdByCatId?.[binding.targetCatId] ||
-    (binding.invocationId === undefined
-      ? custody.status !== 'queued' || custody.awakenedInvocationIdByCatId?.[binding.targetCatId] !== undefined
-      : custody.status !== 'processing' ||
-        custody.awakenedInvocationIdByCatId?.[binding.targetCatId] !== binding.invocationId)
-  )
-    refuse();
+  if (binding.entryId !== queueEntryId(message.id)) refuse();
+  if (binding.invocationId === undefined) {
+    const row = await services.queue?.getDurableEntry(binding.threadId, binding.entryId);
+    if (!row) refuse();
+    assertQueueLedgerEntry(row);
+    if (
+      row.id !== binding.entryId ||
+      row.threadId !== binding.threadId ||
+      row.owner.kind !== 'user' ||
+      row.owner.userId !== binding.userId ||
+      (row.status !== 'queued' && row.status !== 'claimed') ||
+      !isDeepStrictEqual(row.execution.pluginPublicInvocation, carrier) ||
+      !row.targets.includes(binding.targetCatId) ||
+      row.retiringGroupId ||
+      message.lifecycle?.dispatchRefs?.some((ref) => ref.targetId === binding.targetCatId)
+    )
+      refuse();
+  } else {
+    const ref = message.lifecycle?.dispatchRefs?.find((ref) => ref.targetId === binding.targetCatId);
+    if (!ref || ref.phase !== 'dispatched') refuse();
+    const response = await services.messageStore.getById(ref.statusMessageId);
+    const lifecycle = response?.lifecycle;
+    if (
+      !response ||
+      response.userId !== binding.userId ||
+      response.threadId !== binding.threadId ||
+      lifecycle?.kind !== 'response' ||
+      lifecycle.invocationId !== binding.invocationId ||
+      lifecycle.targetId !== binding.targetCatId ||
+      lifecycle.status !== 'processing' ||
+      !lifecycle.inputEntryIds.includes(binding.entryId) ||
+      !lifecycle.inputMessageIds.includes(message.id)
+    )
+      refuse();
+  }
   // Mutable Queue progress is checked above, not pinned as source content. No private extra is returned.
   return snapshot({
     content: message.content,
-    source: message.source,
+    source: storedPluginMessageSource(message),
     revision: carrier.sourcePluginRevision,
   }) as VerifiedPublicInvocationSource;
 }
@@ -134,7 +156,7 @@ export async function readDurablePublicInvocationCurrent(
   };
   const read = async () => {
     await outerCurrent();
-    const source = sourceSnapshot(await messages.getById(carrier.sourceMessageId), carrier, binding);
+    const source = await sourceSnapshot(await messages.getById(carrier.sourceMessageId), carrier, binding, services!);
     await outerCurrent();
     const thread = await threads.get(binding.threadId);
     await outerCurrent();

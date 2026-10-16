@@ -22,7 +22,14 @@ async function check(store) {
   });
   const thread = await host.create({ title: 'same millisecond' });
   for (const content of ['a', 'b', 'c'])
-    await store.append({ threadId: thread.id, userId: 'owner', catId: null, content, timestamp: 100, mentions: [] });
+    await store.append({
+      from: { kind: 'user', userId: 'owner' },
+      threadId: thread.id,
+      userId: 'owner',
+      content,
+      timestamp: 100,
+      mentions: [],
+    });
   const page = await host.readMessages(thread.id, { limit: 2 });
   assert.deepEqual(
     page.map((m) => m.content),
@@ -51,18 +58,20 @@ async function check(store) {
 
   const delayedThread = await host.create({ title: 'delivery score' });
   const delayed = await store.append({
+    from: { kind: 'system', service: 'test' },
     threadId: delayedThread.id,
     userId: 'system',
-    catId: null,
+
     content: 'delayed',
     timestamp: 1,
     deliveryStatus: 'queued',
     mentions: [],
   });
   await store.append({
+    from: { kind: 'user', userId: 'owner' },
     threadId: delayedThread.id,
     userId: 'owner',
-    catId: null,
+
     content: 'earlier',
     timestamp: 100,
     mentions: [],

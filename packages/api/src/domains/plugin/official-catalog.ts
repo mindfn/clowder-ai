@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { PluginDescription, PluginIconSpec } from '@cat-cafe/shared';
 import type { Capability, PluginManifest } from '@clowder-ai/plugin-contract';
@@ -66,6 +67,10 @@ export function officialPluginCatalogEntry(
   };
 }
 
+export function bundledManifestDigest(manifest: PluginManifest): string {
+  return `sha512-${createHash('sha512').update(JSON.stringify(manifest)).digest('base64')}`;
+}
+
 export const OFFICIAL_BUNDLED_MANIFESTS: readonly PluginManifest[] = [CHATGPT_DOT_PLUGIN_MANIFEST];
 export const OFFICIAL_PLUGIN_POLICIES = [
   {
@@ -80,7 +85,6 @@ export const OFFICIAL_PLUGIN_POLICIES = [
       packageDigest: bundledManifestDigest(CHATGPT_DOT_PLUGIN_MANIFEST),
     },
     effectiveGrants: [],
-    hostSignalRoutes: [],
   },
   {
     catalogId: 'feishu-meeting-intake',

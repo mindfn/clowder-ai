@@ -1,3 +1,4 @@
+import type { PublicInvocationExecution } from './public-invocation-execution.js';
 /**
  * QueueProcessor
  * 处理 InvocationQueue 中的排队条目：自动出队 + 暂停管理。
@@ -45,6 +46,7 @@ import {
   type DeploymentWaitStartDecision,
   type DeploymentWaitStartGuard,
 } from '../../../../runtime-deployment/DeploymentWaitStartGuard.js';
+import { bindAsrPersonMemoryScenesFromQueueMessage } from '../../../../signal-intake/AsrPersonMemoryQueueCarrier.js';
 import {
   MessageBundlePromptUnavailableError,
   resolveMessageBundlePrompt,
@@ -515,6 +517,7 @@ interface ThreadMetaLike {
 }
 
 export interface QueueProcessorDeps {
+  publicInvocationExecution?: PublicInvocationExecution;
   queue: InvocationQueue;
   liveCompanionSessions?: Pick<
     import('../../../../concierge/live/LiveCompanionSessions.js').LiveCompanionSessions,
@@ -4456,6 +4459,9 @@ export class QueueProcessor {
               ...(stored.contentBlocks?.length ? { contentBlocks: stored.contentBlocks } : {}),
             });
             asrPersonMemoryScenes.push(
+              ...bindAsrPersonMemoryScenesFromQueueMessage(stored, { ownerUserId: userId, threadId }),
+            );
+            asrPersonMemoryScenes.push(
               ...(await bindAsrPersonMemoryReentryFromSchedulerMessage({
                 triggerMessage: stored,
                 ownerUserId: userId,
@@ -4614,6 +4620,16 @@ export class QueueProcessor {
         return executionResult(preRouteStatus);
       }
 
+      const publicCarrier = entry.execution.pluginPublicInvocation;
+      if (
+        publicCarrier &&
+        (!this.deps.publicInvocationExecution ||
+          targetCats.length !== 1 ||
+          targetCats[0] !== publicCarrier.targetCatId ||
+          messageIds.length !== 1 ||
+          messageIds[0] !== publicCarrier.sourceMessageId)
+      )
+        throw new Error('public_queue_execution_binding_invalid');
       routePreparationStartedAt = performance.now();
       for await (const msg of router.routeExecution(
         userId,
@@ -4626,18 +4642,30 @@ export class QueueProcessor {
           ...(entry.execution.suggestedSkill ? { promptTags: [`skill:${entry.execution.suggestedSkill}`] } : {}),
         },
         {
-          ...(liveCall ? { liveCompanion: liveCall } : {}),
+          ...(publicCarrier
+            ? {
+                publicInvocationBinding: { version: 1 as const, entryId: entry.id, carrier: publicCarrier },
+                publicInvocationExecution: this.deps.publicInvocationExecution,
+                toolExecutionPolicy: {
+                  mode: 'plugin_native' as const,
+                  pluginInstanceId: publicCarrier.pluginInstanceId,
+                  contributionId: publicCarrier.contributionId,
+                  actionMethods: publicCarrier.actionMethods,
+                },
+              }
+            : {}),
+          ...(!publicCarrier && liveCall ? { liveCompanion: liveCall } : {}),
           ownerAuthProvenance: entry.execution.ownerAuthProvenance,
           humanDispositionInvocationOrigin: 'queue_replay',
           routingQueueSource: source,
           ...(entry.execution.executionScope ? { executionScope: entry.execution.executionScope } : {}),
-          ...(memoryCueOpportunitySeeds.length > 0 ? { memoryCueOpportunitySeeds } : {}),
-          ...(asrPersonMemoryScenes.length > 0 ? { asrPersonMemoryScenes } : {}),
+          ...(!publicCarrier && memoryCueOpportunitySeeds.length > 0 ? { memoryCueOpportunitySeeds } : {}),
+          ...(!publicCarrier && asrPersonMemoryScenes.length > 0 ? { asrPersonMemoryScenes } : {}),
           ...(Object.keys(callerDispatchPromptByCat).length > 0
             ? { modeSystemPromptByCat: callerDispatchPromptByCat }
             : {}),
           turnCustodyWakeForCat: (catId: string) => retargetTurnCustodyWake(turnCustodyWake, catId),
-          ...(contentBlocks.length > 0 ? { contentBlocks } : {}),
+          ...(!publicCarrier && contentBlocks.length > 0 ? { contentBlocks } : {}),
           ...(controller.signal ? { signal: controller.signal } : {}),
           // F-parallel-cancel: each original target keeps the controller captured at
           // startAll. Canceling one cat does not abort siblings, and a later occupant

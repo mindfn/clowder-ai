@@ -242,7 +242,7 @@ function redisDouble() {
       return ['0', [...values.keys()].filter((key) => key.startsWith(prefix))];
     },
     // Only the grant store's refresh of an existing grant runs a script here: same scope → refreshed.
-    async eval(_script, _keyCount, key, threadId, userId, sourceMessageId, targetCatId) {
+    async eval(_script, _keyCount, key, _claimKey, threadId, userId, sourceMessageId, targetCatId) {
       const stored = JSON.parse(values.get(key) ?? 'null');
       if (!stored) return 0;
       const same =

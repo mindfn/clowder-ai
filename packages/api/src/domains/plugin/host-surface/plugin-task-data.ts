@@ -111,12 +111,12 @@ export async function createPluginTaskWorkData(
       !source ||
       source.id !== value.sourceMessageId ||
       source.userId !== c.userId ||
-      source.catId !== null ||
+      source.from?.kind !== 'plugin' ||
+      source.from.instanceId !== c.instanceId ||
       source.deletedAt ||
       source.recall ||
       source._tombstone ||
       source.sourceParseFailure ||
-      !source.source ||
       source.extra?.pluginMessage?.instanceId !== c.instanceId ||
       !Number.isSafeInteger(source.extra.pluginMessage.revision)
     )

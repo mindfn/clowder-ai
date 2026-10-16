@@ -1047,14 +1047,7 @@ export interface AgentServiceOptions {
    * Never a plugin or SDK DTO. */
   pluginNativeLaunch?: {
     readonly server: import('../../plugin/declared/native-mcp-types.js').NativeMcpServer;
-    readonly sandbox:
-      | { readonly kind: 'public'; readonly workspaceRoot: string }
-      | {
-          readonly kind: 'entrusted_work';
-          readonly workspaceRoot: string;
-          readonly runtimeSkillsRoot: string;
-          readonly taskBinding: import('./agents/invocation/plugin-task-invocation-binding.js').PluginTaskInvocationBinding;
-        };
+    readonly sandbox: { readonly kind: 'public'; readonly workspaceRoot: string };
     readonly assertCurrent: () => void | Promise<void>;
   };
   /** F317 Host-only continuous companion port; no model-supplied configuration. */
@@ -1315,8 +1308,6 @@ export interface AgentService {
 
   /** True only when this concrete carrier applies the requested policy before model launch. */
   supportsToolExecutionPolicy?(policy: ToolExecutionPolicy): boolean;
-  /** Host-bound Task sandbox only; never authorizes ordinary plugin_native calls. */
-  supportsPluginTaskLaunch?(): boolean;
 
   /** F254 D2: effective carrier capability for this concrete service instance. */
   freshnessCarrierCapability?(

@@ -172,3 +172,10 @@ export function pluginMessageSourceOf(
     ...(sender === undefined ? {} : { sender }),
   };
 }
+
+/** Existing SDK source projection; canonical sender remains StoredMessage.from. */
+export function storedPluginMessageSource(
+  message: import('../../cats/services/stores/ports/MessageStore.js').StoredMessage,
+): ConnectorSource | undefined {
+  return message.from?.kind === 'plugin' ? message.extra?.pluginMessage?.presentation : message.source;
+}

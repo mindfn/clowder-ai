@@ -16,10 +16,9 @@ async function fixture() {
   const source = messages.append({
     userId: 'owner',
     threadId: thread.id,
-    catId: null,
+    from: { kind: 'plugin', instanceId: 'instance' },
     content: 'Produce the report.',
     timestamp: 1,
-    source: { connector: 'plugin', label: 'Plugin', icon: 'message' },
     extra: { pluginMessage: { instanceId: 'instance', revision: 1, provenance: {}, elements: [], appendOps: [] } },
   });
   const changes = [];
@@ -34,14 +33,6 @@ async function fixture() {
     assertCurrent: async () => {},
     onTaskDataChanged: (task) => changes.push(task.id),
     admission: { messageStore: messages, isCatAvailable: (id) => id === 'codex', assertCurrent: async () => {} },
-    dispatch: new Proxy(
-      {},
-      {
-        get() {
-          throw Error('data must not access dispatch');
-        },
-      },
-    ),
   };
   const host = createPluginTaskHost(deps);
   const data = {
@@ -132,6 +123,22 @@ test('foreign source, absent grant, foreign Task and conflicting bare Task canno
   });
   await assert.rejects(f.host.upsertBySubject({ ...f.input, subjectKey: 'bare' }), /conflict|contract|entrusted/i);
   assert.equal(f.tasks.get(bare.id).entrustedWork, undefined);
+});
+
+test('Task data cannot adopt user, external or foreign-plugin messages with spoofed plugin metadata', async () => {
+  const f = await fixture();
+  for (const from of [
+    { kind: 'user', userId: 'owner' },
+    { kind: 'external', connectorId: 'plugin' },
+    { kind: 'plugin', instanceId: 'foreign' },
+  ]) {
+    const host = createPluginTaskHost({
+      ...f.deps,
+      admission: { ...f.deps.admission, messageStore: { getById: async () => ({ ...f.source, from }) } },
+    });
+    await assert.rejects(host.upsertBySubject(f.input), /source is not current/);
+  }
+  assert.equal(f.tasks.getBySubject(f.input.subjectKey), null);
 });
 
 test('ordinary native calls need no execution policy; read-only and expired calls cannot write', async () => {
@@ -275,7 +282,7 @@ async function materialFixture() {
   const publication = f.messages.append({
     userId: 'owner',
     threadId: f.thread.id,
-    catId: 'codex',
+    from: { kind: 'agent', catId: 'codex' },
     content: 'Report',
     timestamp: 100,
     extra: { rich: { blocks: [{ kind: 'file', v: 1, id: 'report', fileName: 'report.md', url: artifactRef }] } },
@@ -344,7 +351,7 @@ test('selection cannot make an unpublished or foreign-thread file appear as a pr
   f.messages.append({
     userId: 'owner',
     threadId: other.id,
-    catId: 'codex',
+    from: { kind: 'agent', catId: 'codex' },
     content: 'Other',
     timestamp: 200,
     extra: { rich: { blocks: [{ kind: 'file', v: 1, id: 'other', fileName: 'other.md', url: artifactRef }] } },

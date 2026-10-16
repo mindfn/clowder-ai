@@ -1,6 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { InvocationRecord } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
-import { capturePluginTaskInvocationAuth } from '../domains/cats/services/agents/invocation/plugin-task-invocation-binding.js';
 import { capturePublicInvocationAuth } from '../domains/cats/services/agents/invocation/public-invocation-auth-binding.js';
 import { toolExecutionPolicyDenial } from '../domains/cats/services/agents/invocation/tool-execution-policy.js';
 import type { PluginNativeActionTarget } from '../domains/cats/services/types.js';
@@ -19,12 +18,11 @@ export function captureNativeCallbackCurrentness(
   const expired = () => new NativePluginActionError(409, 'Invocation is no longer current');
   let captured: InvocationRecord;
   try {
-    captured = capturePluginTaskInvocationAuth(capturePublicInvocationAuth(record));
+    captured = capturePublicInvocationAuth(record);
   } catch {
     throw expired();
   }
   const publicBinding = captured.publicInvocationBinding;
-  const taskBinding = captured.pluginTaskBinding;
   const ownerAuthProvenance = captured.ownerAuthProvenance;
   const toolExecutionPolicy =
     captured.toolExecutionPolicy === undefined
@@ -53,7 +51,6 @@ export function captureNativeCallbackCurrentness(
     )
       throw expired();
     if (!isDeepStrictEqual(latest.publicInvocationBinding, publicBinding)) throw expired();
-    if (!isDeepStrictEqual(latest.pluginTaskBinding, taskBinding)) throw expired();
   };
   const assertRegistryCurrent = async () => {
     try {
@@ -67,7 +64,6 @@ export function captureNativeCallbackCurrentness(
       assertIdentityCurrent(current.record);
       // Revalidate the whole public identity, including policy, owner provenance and non-Work/non-A2A scope.
       if (publicBinding) capturePublicInvocationAuth(current.record);
-      if (taskBinding) capturePluginTaskInvocationAuth(current.record);
       if (toolExecutionPolicyDenial(current.record.toolExecutionPolicy, 'POST /api/plugin-runtime/action', target))
         throw new NativePluginActionError(403, 'Invocation policy denies plugin action');
     } catch (error) {
@@ -102,11 +98,5 @@ export function captureNativeCallbackCurrentness(
       throw expired();
     }
   };
-  const readTaskBinding = taskBinding
-    ? async () => {
-        await assertRegistryCurrent();
-        return taskBinding;
-      }
-    : undefined;
-  return { identity, assertCurrent, assertInvocationCurrent: assertRegistryCurrent, readTaskBinding, close };
+  return { identity, assertCurrent, assertInvocationCurrent: assertRegistryCurrent, close };
 }

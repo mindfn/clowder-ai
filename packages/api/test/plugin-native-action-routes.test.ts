@@ -77,6 +77,14 @@ test('native route authenticates separately, captures optional source, and refus
     actions,
     registry: { verify, verifyLatest: verify, isStartupRecoveryComplete: () => true } as never,
     sources: {
+      invocationTracker: {
+        getActiveSlots: () => [
+          {
+            catId: 'codex',
+            activeRun: { invocationId: 'inv', threadId: 'thread', targetId: 'codex', inputMessageIds: ['message'] },
+          },
+        ],
+      } as never,
       messageStore: {
         getById: async () => (sourceExists ? { id: 'message', threadId: 'thread', userId: 'owner' } : null),
       } as never,

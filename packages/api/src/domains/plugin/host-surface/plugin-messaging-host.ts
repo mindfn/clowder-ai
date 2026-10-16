@@ -12,7 +12,7 @@ import { MessagingError } from '../../messaging/contract/host-types.js';
 import { validateDraft } from '../../messaging/contract/validate.js';
 import type { MessagingService } from '../../messaging/messaging-service.js';
 import { hostCapabilityRefusal } from './host-capability-refusal.js';
-import { pluginMessageSourceOf } from './plugin-messaging-source.js';
+import { pluginMessageSourceOf, storedPluginMessageSource } from './plugin-messaging-source.js';
 import {
   createUnavailablePluginMessagingSubscriptionHost,
   type PluginMessagingSubscriptionHost,
@@ -312,7 +312,7 @@ function projectMessage(message: StoredMessage): PluginMessage {
     timestamp: message.timestamp,
     sourceRevision: deriveGrowingSourceMessageRevision(message),
     ...(message.contentBlocks ? { contentBlocks: message.contentBlocks } : {}),
-    ...(message.source ? { source: message.source } : {}),
+    ...(storedPluginMessageSource(message) ? { source: storedPluginMessageSource(message) } : {}),
     ...(message.origin ? { origin: message.origin } : {}),
     ...(message.replyTo ? { replyTo: message.replyTo } : {}),
     ...(message.deliveryStatus ? { deliveryStatus: message.deliveryStatus } : {}),

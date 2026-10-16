@@ -10,7 +10,7 @@
  * user → user_intent, cat → inference, origin always { kind: 'host' }.
  */
 
-import type { RichBlock } from '@cat-cafe/shared';
+import type { ConnectorSource, RichBlock } from '@cat-cafe/shared';
 import type {
   CanonicalAudience,
   EpistemicStatus,
@@ -34,6 +34,7 @@ export interface AppendOpRecord {
 
 /** Strict shape written into StoredMessage.extra.pluginMessage by SendService/AppendService. */
 export interface PluginMessageExtra {
+  readonly presentation?: ConnectorSource;
   readonly instanceId: string;
   readonly revision: number;
   readonly provenance: MessageProvenance;
@@ -198,6 +199,7 @@ function hasValidOutputWatermark(raw: Record<string, unknown>, revision: number)
 }
 
 const PLUGIN_MESSAGE_EXTRA_KEYS = [
+  'presentation',
   'instanceId',
   'revision',
   'provenance',
@@ -339,6 +341,21 @@ function hasContractValidPayload(raw: Record<string, unknown>): boolean {
 export function parsePluginMessageExtra(raw: unknown): PluginMessageExtra | null {
   if (!isRecord(raw)) return null;
   if (!hasOnlyKeys(raw, PLUGIN_MESSAGE_EXTRA_KEYS)) return null;
+  if (
+    raw.presentation !== undefined &&
+    (!isRecord(raw.presentation) ||
+      !isBoundedString(raw.presentation.connector, 256) ||
+      typeof raw.presentation.label !== 'string' ||
+      typeof raw.presentation.icon !== 'string' ||
+      (raw.presentation.url !== undefined && typeof raw.presentation.url !== 'string') ||
+      (raw.presentation.meta !== undefined && !isRecord(raw.presentation.meta)) ||
+      (raw.presentation.sender !== undefined &&
+        (!isRecord(raw.presentation.sender) ||
+          typeof raw.presentation.sender.id !== 'string' ||
+          (raw.presentation.sender.name !== undefined && typeof raw.presentation.sender.name !== 'string'))) ||
+      !hasOnlyKeys(raw.presentation, ['connector', 'label', 'icon', 'url', 'sender', 'meta']))
+  )
+    return null;
   if (!isBoundedString(raw.instanceId, 256)) return null;
   if (typeof raw.revision !== 'number' || !isWireUInt53(raw.revision, 1)) return null;
   if (!isProvenance(raw.provenance)) return null;
@@ -570,7 +587,8 @@ export function projectEnvelope(msg: StoredMessage, options: ProjectEnvelopeOpti
     ...base,
     revision: 1,
     ...(msg.replyTo === undefined && msg.catId !== null && msg.extra?.causal?.triggerThreadId === msg.threadId
-      ? { replyTo: msg.extra.causal.triggerMessageId } : {}),
+      ? { replyTo: msg.extra.causal.triggerMessageId }
+      : {}),
     actor: hostRelayedActor(msg),
     payload: {
       provenance: { origin: { kind: 'host' }, epistemicStatus: hostRelayedEpistemic(msg) },

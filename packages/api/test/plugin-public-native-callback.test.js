@@ -103,12 +103,16 @@ async function fixture(t, options = {}) {
     sources: {
       messageStore: {
         getById: async () => {
-          await options.onSource?.(state);
           return sourceExists ? { id: 'source-1', userId: 'owner', threadId: 'thread' } : null;
         },
       },
     },
-    threadStore: { get: async () => ({ createdBy: 'owner' }) },
+    threadStore: {
+      get: async () => {
+        await options.onThread?.(state);
+        return { createdBy: 'owner' };
+      },
+    },
     ...(options.missingVerifier
       ? {}
       : {
@@ -176,18 +180,18 @@ test('public callback source deletion cannot downgrade to ordinary native action
   assert.equal((await f.request()).statusCode, 409);
   assert.equal(f.entered(), 0);
 });
-test('public callback rejects binding removal during awaited source capture', async (t) => {
+test('public callback rejects binding removal during awaited thread lookup', async (t) => {
   const f = await fixture(t, {
-    onSource: async ({ record }) => {
+    onThread: async ({ record }) => {
       delete record.publicInvocationBinding;
     },
   });
   assert.equal((await f.request()).statusCode, 409);
   assert.equal(f.entered(), 0);
 });
-test('public callback rejects binding substitution during awaited source capture', async (t) => {
+test('public callback rejects binding substitution during awaited thread lookup', async (t) => {
   const f = await fixture(t, {
-    onSource: async ({ record }) => {
+    onThread: async ({ record }) => {
       record.publicInvocationBinding = { ...publicBinding(), entryId: 'substituted' };
     },
   });
@@ -221,10 +225,10 @@ test('public callback failed currentness cannot be swallowed and restored by act
   });
   assert.equal((await f.request()).statusCode, 409);
 });
-test('public callback refuses ordinary-to-public identity drift during source await', async (t) => {
+test('public callback refuses ordinary-to-public identity drift during thread lookup', async (t) => {
   const f = await fixture(t, {
     ordinary: true,
-    onSource: async ({ record }) => {
+    onThread: async ({ record }) => {
       record.publicInvocationBinding = publicBinding();
     },
   });
@@ -286,7 +290,7 @@ test('public callback verifier context expires with successful response', async 
 });
 test('public callback revalidates policy and owner scope before invoking package', async (t) => {
   const f = await fixture(t, {
-    onSource: async ({ record }) => {
+    onThread: async ({ record }) => {
       record.ownerAuthProvenance = 'owner';
     },
   });

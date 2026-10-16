@@ -31,7 +31,8 @@ import {
 } from '../dist/domains/plugin/carrier/plugin-owner-request-context.js';
 import { currentPluginTransportPurpose } from '../dist/domains/plugin/carrier/plugin-transport-context.js';
 import { PluginRuntimeCarrierRouter } from '../dist/domains/plugin/carrier/runtime-carrier.js';
-import { makeQueuedMessageCustody } from './helpers/queued-message-custody.js';
+import { queueEntryId } from '../src/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.ts';
+import { createQueueLedgerAdmission } from '../src/domains/cats/services/agents/invocation/queue-ledger/QueueLedgerAdmission.ts';
 
 const privateMethod = 'host.public-invocation.assert-current';
 const manifest = {
@@ -632,21 +633,62 @@ async function publicSourceFixture(t, options = {}) {
     timestamp: 1000,
     mentions: [],
     deliveryStatus: 'queued',
-    source: { connector: 'fixture', meta: { channel: 'public' } },
-    extra: { pluginMessage: { instanceId: 'instance', revision: 1 }, privateSecret: 'do not project' },
-    queueCustody: makeQueuedMessageCustody({
-      ownerUserId: 'owner',
-      ownerAuthProvenance: 'unknown',
-      intent: 'execute',
-      allTargetCats: ['astra'],
-      pendingTargetCats: ['astra'],
-      pluginPublicInvocation: carrier(),
-    }),
+    from: { kind: 'plugin', instanceId: 'instance' },
+    extra: {
+      pluginMessage: {
+        instanceId: 'instance',
+        revision: 1,
+        presentation: { connector: 'fixture', label: 'Fixture', icon: 'message', meta: { channel: 'public' } },
+      },
+      privateSecret: 'do not project',
+    },
   };
+  const row = createQueueLedgerAdmission({
+    sourceId: message.id,
+    messageId: message.id,
+    threadId: message.threadId,
+    owner: { kind: 'user', userId: 'owner' },
+    from: message.from,
+    kind: 'conversation_input',
+    targetCatIds: ['astra'],
+    content: message.content,
+    intent: 'execute',
+    ownerAuthProvenance: 'unknown',
+    autoExecute: true,
+    enqueuedAt: 1000,
+    pluginPublicInvocation: carrier(),
+  })[0];
+  const response = {
+    id: 'response',
+    userId: 'owner',
+    threadId: message.threadId,
+    from: { kind: 'agent', catId: 'astra' },
+    lifecycle: {
+      kind: 'response',
+      orderKey: '1001:child',
+      invocationId: 'child-1',
+      targetId: 'astra',
+      inputEntryIds: [row.id],
+      inputMessageIds: [message.id],
+      status: 'processing',
+      startedAt: 1001,
+    },
+  };
+  function bindChild() {
+    message.lifecycle = {
+      kind: 'input',
+      orderKey: '1000:source',
+      dispatchRefs: [{ targetId: 'astra', phase: 'dispatched', statusMessageId: response.id, dispatchedAt: 1001 }],
+    };
+  }
+
   const thread = { id: 'public-thread', createdBy: 'owner', participants: ['astra'] };
   const stores = {
     ownerUserId: 'owner',
-    messageStore: { getById: async (id) => (id === message.id ? structuredClone(message) : null) },
+    messageStore: {
+      getById: async (id) => structuredClone(id === message.id ? message : id === response.id ? response : null),
+    },
+    queue: { getDurableEntry: async () => structuredClone(row) },
     threadStore: { get: async (id) => (id === thread.id ? structuredClone(thread) : null) },
   };
   let entered = 0;
@@ -657,11 +699,14 @@ async function publicSourceFixture(t, options = {}) {
       return options.handler ? options.handler(input, context) : { current: true };
     },
   });
-  const binding = { entryId: 'entry-1', userId: 'owner', threadId: thread.id, targetCatId: 'astra' };
+  const binding = { entryId: queueEntryId(message.id), userId: 'owner', threadId: thread.id, targetCatId: 'astra' };
   assert.equal(typeof f.router.assertPublicInvocationCurrent, 'function', 'missing durable public currentness fence');
   return {
     ...f,
     message,
+    row,
+    response,
+    bindChild,
     thread,
     stores,
     binding,
@@ -676,7 +721,7 @@ test('public source fence verifies durable custody through the real private runt
   assert.equal(await f.check(), undefined);
   assert.equal(f.entered(), 1);
   assert.equal(f.message.deliveryStatus, 'queued');
-  assert.equal(f.message.queueCustody.status, 'queued');
+  assert.equal(f.row.status, 'queued');
 });
 
 test('public source fence rejects missing, recalled, deleted, foreign and malformed sources before package entry', async (t) => {
@@ -685,13 +730,13 @@ test('public source fence rejects missing, recalled, deleted, foreign and malfor
   for (const delta of [
     { id: 'missing' },
     { userId: 'foreign' },
-    { catId: 'astra' },
+    { from: { kind: 'agent', catId: 'astra' } },
     { threadId: 'foreign' },
     { recall: { recalledAt: 1 } },
     { deletedAt: 1 },
     { _tombstone: true },
     { sourceParseFailure: {} },
-    { source: undefined },
+    { extra: { pluginMessage: { instanceId: 'instance', revision: 1 } } },
     { deliveryStatus: 'canceled' },
     { extra: { pluginMessage: { instanceId: 'other', revision: 1 } } },
     { extra: { pluginMessage: { instanceId: 'instance', revision: 2 } } },
@@ -703,37 +748,45 @@ test('public source fence rejects missing, recalled, deleted, foreign and malfor
   assert.equal(f.entered(), 0);
 });
 
-test('public source fence rejects absent or substituted durable authority and owner lanes', async (t) => {
+test('public source fence rejects substituted Queue identity and execution authority', async (t) => {
   const f = await publicSourceFixture(t);
-  const original = structuredClone(f.message.queueCustody);
-  for (const delta of [
-    { pluginPublicInvocation: undefined },
-    { pluginPublicInvocation: { ...carrier(), authorityRevision: 'other' } },
-    { entryId: 'another-entry' },
-    { ownerUserId: 'foreign' },
-    { ownerAuthProvenance: 'owner_authenticated' },
-    { allTargetCats: ['astra', 'codex'], pendingTargetCats: ['astra', 'codex'] },
+  const original = structuredClone(f.row);
+  for (const mutate of [
+    (r) => {
+      r.execution.pluginPublicInvocation = undefined;
+    },
+    (r) => {
+      r.execution.pluginPublicInvocation.authorityRevision = 'other';
+    },
+    (r) => {
+      r.id = 'other';
+    },
+    (r) => {
+      r.owner.userId = 'foreign';
+    },
+    (r) => {
+      r.execution.ownerAuthProvenance = 'strict';
+    },
+    (r) => {
+      r.targets = ['astra', 'codex'];
+    },
   ]) {
-    f.message.queueCustody = { ...structuredClone(original), ...delta };
+    const row = structuredClone(original);
+    mutate(row);
+    f.stores.queue.getDurableEntry = async () => row;
     await assert.rejects(() => f.check());
   }
-  f.message.queueCustody = undefined;
+  f.stores.queue.getDurableEntry = async () => undefined;
   await assert.rejects(() => f.check());
   assert.equal(f.entered(), 0);
 });
-
-test('public source fence rejects terminal, failed and withdrawn targets without requeue', async (t) => {
+test('public source fence rejects retired or terminal rows without requeue', async (t) => {
   const f = await publicSourceFixture(t);
-  const original = structuredClone(f.message.queueCustody);
-  for (const delta of [
-    { status: 'terminal', pendingTargetCats: [], handledByCatIds: ['astra'] },
-    { failedByCatIds: ['astra'] },
-    { withdrawnByCatIds: ['astra'], withdrawnAtByCatId: { astra: 1001 } },
-    { pendingTargetCats: [] },
-  ]) {
-    f.message.queueCustody = { ...structuredClone(original), ...delta };
+  for (const delta of [{ status: 'terminal' }, { targets: [] }, { retiringGroupId: 'retired' }]) {
+    const row = { ...structuredClone(f.row), ...delta };
+    f.stores.queue.getDurableEntry = async () => row;
     await assert.rejects(() => f.check());
-    assert.deepEqual(f.message.queueCustody, { ...original, ...delta });
+    assert.deepEqual(row, { ...f.row, ...delta });
   }
   assert.equal(f.entered(), 0);
 });
@@ -834,22 +887,16 @@ test('public source fence captures carrier and binding before awaited reads', as
   assert.equal(await pending, undefined);
 });
 
-test('public source fence binds callbacks to the exact durable awakened child', async (t) => {
+test('public source fence binds callbacks to the exact History child', async (t) => {
   const f = await publicSourceFixture(t);
-  f.message.queueCustody.status = 'processing';
-  f.message.queueCustody.processingStartedAt = 1001;
-  f.message.queueCustody.awakenedInvocationIdByCatId = { astra: 'child-1' };
-  f.message.queueCustody.awakenedAtByCatId = { astra: 1001 };
+  f.bindChild();
   await f.check(carrier(), { ...f.binding, invocationId: 'child-1' });
   await assert.rejects(() => f.check(carrier(), { ...f.binding, invocationId: 'child-2' }));
-  await assert.rejects(() => f.check(carrier(), f.binding));
-  f.message.queueCustody.status = 'queued';
-  await assert.rejects(() => f.check(carrier(), f.binding));
+  await assert.rejects(() => f.check());
+  f.response.lifecycle.status = 'completed';
   await assert.rejects(() => f.check(carrier(), { ...f.binding, invocationId: 'child-1' }));
-  f.message.queueCustody.status = 'processing';
-  delete f.message.queueCustody.awakenedInvocationIdByCatId;
-  delete f.message.queueCustody.awakenedAtByCatId;
-  await assert.rejects(() => f.check(carrier(), f.binding));
+  f.response.lifecycle.status = 'processing';
+  f.message.lifecycle.dispatchRefs[0].phase = 'settled';
   await assert.rejects(() => f.check(carrier(), { ...f.binding, invocationId: 'child-1' }));
 });
 
@@ -910,12 +957,7 @@ test('public source fence abort settles blocked storage reads without entering t
 
 async function publicLaunchFixture(t, options = {}) {
   const f = await publicSourceFixture(t, options);
-  Object.assign(f.message.queueCustody, {
-    status: 'processing',
-    processingStartedAt: 1001,
-    awakenedInvocationIdByCatId: { astra: 'child-1' },
-    awakenedAtByCatId: { astra: 1001 },
-  });
+  f.bindChild();
   f.binding.invocationId = 'child-1';
   return f;
 }
@@ -945,7 +987,7 @@ test('public launch lease returns only frozen verified source and exact native d
   assert.ok(lease.server.env.CLOWDER_PLUGIN_ACTION_TOKEN);
   assert.equal(JSON.stringify(lease.source).includes('do not project'), false);
   await lease.assertCurrent();
-  assert.equal(f.message.queueCustody.status, 'processing');
+  assert.equal(f.response.lifecycle.status, 'processing');
 });
 
 test('public launch lease refuses queue-level and wrong-child authority', async (t) => {
@@ -954,9 +996,7 @@ test('public launch lease refuses queue-level and wrong-child authority', async 
   const { invocationId: _child, ...queued } = f.binding;
   await assert.rejects(() => resolve(carrier(), queued));
   await assert.rejects(() => resolve(carrier(), { ...f.binding, invocationId: 'child-2' }));
-  f.message.queueCustody.status = 'queued';
-  delete f.message.queueCustody.awakenedInvocationIdByCatId;
-  delete f.message.queueCustody.awakenedAtByCatId;
+  f.message.lifecycle.dispatchRefs[0].phase = 'settled';
   await assert.rejects(() => resolve(carrier(), queued));
 });
 
@@ -975,7 +1015,7 @@ test('public launch lease pins source provenance even when body and plugin revis
   const f = await publicLaunchFixture(t);
   const lease = await launchResolver(f)();
   t.after(() => lease.dispose());
-  f.message.source.meta.channel = 'private';
+  f.message.extra.pluginMessage.presentation.meta.channel = 'private';
   await assert.rejects(() => lease.assertCurrent());
 });
 

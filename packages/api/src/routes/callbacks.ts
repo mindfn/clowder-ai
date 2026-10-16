@@ -76,7 +76,7 @@ import type { QueueLedgerEntry } from '../domains/cats/services/agents/invocatio
 import { getRichBlockBuffer } from '../domains/cats/services/agents/invocation/RichBlockBuffer.js';
 import type { ThreadExecutionSituationSource } from '../domains/cats/services/agents/invocation/thread-execution-situation.js';
 import { stampVisibleTurn } from '../domains/cats/services/agents/invocation/visible-turn.js';
-import { extractTrustedImagePaths, extractImageUrls } from '../domains/cats/services/agents/providers/image-paths.js';
+import { extractImageUrls, extractTrustedImagePaths } from '../domains/cats/services/agents/providers/image-paths.js';
 import { analyzeA2AMentions } from '../domains/cats/services/agents/routing/a2a-mentions.js';
 import { resolveCatTarget } from '../domains/cats/services/agents/routing/cat-target-resolver.js';
 import { extractRichFromText } from '../domains/cats/services/agents/routing/rich-block-extract.js';
@@ -1310,7 +1310,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       ...(opts.invocationTracker ? { invocationTracker: opts.invocationTracker } : {}),
     });
   }
-  registerNativeTurnAdmissionRoute(app, registry);
+  registerNativeTurnAdmissionRoute(app);
   if (opts.namedCatContentHolder) {
     registerCallbackContentEditorRoutes(app, {
       holder: opts.namedCatContentHolder,
@@ -3137,7 +3137,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         );
       }
     }
-    const dotReplyTriggerId = record.originTriggerMessageId ?? record.a2aTriggerMessageId ?? turnExecution?.causal?.triggerMessageId;
+    const dotReplyTriggerId =
+      record.originTriggerMessageId ?? record.a2aTriggerMessageId ?? turnExecution?.causal?.triggerMessageId;
     const causalTriggerMessage = dotReplyTriggerId ? await messageStore.getById(dotReplyTriggerId) : null;
     // Callback posts are independent speech, not the execution's terminal answer.
     // Explicit @dot remains supported; automatic consultation return is attached
@@ -4474,82 +4475,84 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           filtered.map((message) => message.id),
         )
       : new Map();
-    const publishedCandidates: ThreadContextEnvelopeCandidate<Record<string, unknown>>[] = await Promise.all(filtered.map(async (item) => {
-      const imagePaths = await extractTrustedImagePaths(item.contentBlocks, uploadDir, opts.resolveTrustedImagePath);
-      const imageUrls = extractImageUrls(item.contentBlocks);
-      const queueEntry = publishedQueueEntries
-        .get(item.id)
-        ?.find(
-          (entry) =>
-            entry.status !== 'terminal' && (entry.targets.length === 0 || entry.targets.includes(principalCatId)),
-        );
-      const queuedProjection = queueEntry ? { deliveryStatus: 'queued' as const, queueEntryId: queueEntry.id } : {};
-      const anchored = anchorThreadMessage(item, {
-        effectiveThreadId,
-        speaker: getMessageSpeakerName(item),
-        keywordTerms,
-        agentKeyCatId: principal.kind === 'agent_key' ? principal.catId : undefined,
-        imagePaths,
-        imageUrls,
-      });
-      const localReviewFact = readDurableLocalReviewFact(item);
-      const localReviewProjection = localReviewFact
-        ? {
-            localReviewFact,
-            localReviewLoopBrakeOnArrival: classifyLocalReviewLoopBrake(
-              durableLocalReviewHistory
-                ?.filter(({ message }) => compareChronological(message, item) <= 0)
-                .map(({ fact }) => fact) ?? null,
-              [item.id],
-              localReviewFact.reviewSubjectRef,
-              item.mentions.length === 1 && item.mentions[0] ? item.mentions[0] : principalCatId,
-            ),
-          }
-        : {};
-      const projectedBody = projectCallbackMessageBody(item);
-      const anchorProjection: Record<string, unknown> = {
-        ...anchored,
-        from: messageFrom(item),
-        ...queuedProjection,
-        ...localReviewProjection,
-        ...(keywordTerms.length > 0 ? { relevanceScore: getKeywordScore(item) } : {}),
-      };
-      const fullProjection: Record<string, unknown> = {
-        id: item.id,
-        from: messageFrom(item),
-        threadId: effectiveThreadId,
-        timestamp: item.timestamp,
-        speaker: getMessageSpeakerName(item),
-        ...projectedBody,
-        truncated: false,
-        ...queuedProjection,
-        ...localReviewProjection,
-        ...(imagePaths.length > 0 ? { imagePaths } : {}),
-        ...(imageUrls.length > 0 ? { imageUrls } : {}),
-        ...(keywordTerms.length > 0 ? { relevanceScore: getKeywordScore(item) } : {}),
-      };
-      const oversizedProjection: Record<string, unknown> = {
-        id: item.id,
-        from: messageFrom(item),
-        threadId: effectiveThreadId,
-        timestamp: item.timestamp,
-        speaker: getMessageSpeakerName(item),
-        contentLength: projectedBody.contentLength,
-        truncated: true,
-        oversized: true,
-        drillDown: anchored.drillDown,
-        ...queuedProjection,
-        ...localReviewProjection,
-        ...(keywordTerms.length > 0 ? { relevanceScore: getKeywordScore(item) } : {}),
-      };
-      return {
-        id: item.id,
-        projection: isFullMode ? fullProjection : anchorProjection,
-        oversizedProjection: isFullMode ? oversizedProjection : anchorProjection,
-        originalChars: projectedBody.contentLength,
-        source: 'published',
-      };
-    }));
+    const publishedCandidates: ThreadContextEnvelopeCandidate<Record<string, unknown>>[] = await Promise.all(
+      filtered.map(async (item) => {
+        const imagePaths = await extractTrustedImagePaths(item.contentBlocks, uploadDir, opts.resolveTrustedImagePath);
+        const imageUrls = extractImageUrls(item.contentBlocks);
+        const queueEntry = publishedQueueEntries
+          .get(item.id)
+          ?.find(
+            (entry) =>
+              entry.status !== 'terminal' && (entry.targets.length === 0 || entry.targets.includes(principalCatId)),
+          );
+        const queuedProjection = queueEntry ? { deliveryStatus: 'queued' as const, queueEntryId: queueEntry.id } : {};
+        const anchored = anchorThreadMessage(item, {
+          effectiveThreadId,
+          speaker: getMessageSpeakerName(item),
+          keywordTerms,
+          agentKeyCatId: principal.kind === 'agent_key' ? principal.catId : undefined,
+          imagePaths,
+          imageUrls,
+        });
+        const localReviewFact = readDurableLocalReviewFact(item);
+        const localReviewProjection = localReviewFact
+          ? {
+              localReviewFact,
+              localReviewLoopBrakeOnArrival: classifyLocalReviewLoopBrake(
+                durableLocalReviewHistory
+                  ?.filter(({ message }) => compareChronological(message, item) <= 0)
+                  .map(({ fact }) => fact) ?? null,
+                [item.id],
+                localReviewFact.reviewSubjectRef,
+                item.mentions.length === 1 && item.mentions[0] ? item.mentions[0] : principalCatId,
+              ),
+            }
+          : {};
+        const projectedBody = projectCallbackMessageBody(item);
+        const anchorProjection: Record<string, unknown> = {
+          ...anchored,
+          from: messageFrom(item),
+          ...queuedProjection,
+          ...localReviewProjection,
+          ...(keywordTerms.length > 0 ? { relevanceScore: getKeywordScore(item) } : {}),
+        };
+        const fullProjection: Record<string, unknown> = {
+          id: item.id,
+          from: messageFrom(item),
+          threadId: effectiveThreadId,
+          timestamp: item.timestamp,
+          speaker: getMessageSpeakerName(item),
+          ...projectedBody,
+          truncated: false,
+          ...queuedProjection,
+          ...localReviewProjection,
+          ...(imagePaths.length > 0 ? { imagePaths } : {}),
+          ...(imageUrls.length > 0 ? { imageUrls } : {}),
+          ...(keywordTerms.length > 0 ? { relevanceScore: getKeywordScore(item) } : {}),
+        };
+        const oversizedProjection: Record<string, unknown> = {
+          id: item.id,
+          from: messageFrom(item),
+          threadId: effectiveThreadId,
+          timestamp: item.timestamp,
+          speaker: getMessageSpeakerName(item),
+          contentLength: projectedBody.contentLength,
+          truncated: true,
+          oversized: true,
+          drillDown: anchored.drillDown,
+          ...queuedProjection,
+          ...localReviewProjection,
+          ...(keywordTerms.length > 0 ? { relevanceScore: getKeywordScore(item) } : {}),
+        };
+        return {
+          id: item.id,
+          projection: isFullMode ? fullProjection : anchorProjection,
+          oversizedProjection: isFullMode ? oversizedProjection : anchorProjection,
+          originalChars: projectedBody.contentLength,
+          source: 'published',
+        };
+      }),
+    );
     const queuedCandidates: ThreadContextEnvelopeCandidate<Record<string, unknown>>[] = queuedFullMessages.map(
       (message) => {
         const anchored = anchorThreadMessage(

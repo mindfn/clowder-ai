@@ -1,6 +1,7 @@
 'use client';
 
 import { type PluginManagerInstallRequest, pluginDescriptionVariants } from '@cat-cafe/shared';
+import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { HubIcon } from '../../hub-icons';
 import { settingsResourceCardClass } from '../../SettingsResourceCard';
@@ -11,7 +12,6 @@ import { PluginListRow, PluginListSection } from './PluginManagerList';
 import { PluginMarketplaceSettings } from './PluginMarketplaceSettings';
 import { installedPluginGroups, type PluginManagerPresentation } from './plugin-manager-attention';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
-import type { ReactNode } from 'react';
 
 function PluginManagerToolbar({
   onMarketplaceChange,
@@ -35,8 +35,6 @@ function PluginManagerToolbar({
     </div>
   );
 }
-
-const DEFAULT_RECOMMENDATION_LIMIT = 3;
 
 function blockedEnableReason(plugin: PluginManagerDesignFixture) {
   if (plugin.id !== 'official.chatgpt-dot') return '请先完成右侧配置或连接，再启用。';
@@ -101,7 +99,6 @@ export function PluginManagerContent({
   selectedPluginId,
   linkedPluginId = null,
   initialDetailPluginId,
-  onGitInstall,
   onOperationChange,
   presentation = 'v1',
   onPluginSelect,
@@ -127,7 +124,6 @@ export function PluginManagerContent({
   selectedPluginId?: string | null;
   linkedPluginId?: string | null;
   initialDetailPluginId?: string | null;
-  onGitInstall?: (url: string) => Promise<void>;
   onOperationChange?: (pluginId: string) => void;
   presentation?: PluginManagerPresentation;
   onPluginSelect?: (pluginId: string | null) => void;
@@ -160,7 +156,10 @@ export function PluginManagerContent({
   const selection = usePluginSelection(visible, selectedPluginId, onPluginSelect);
   const selected = selection.selected;
   useEffect(() => {
-    if (!initialDetailOpened.current && selected && (initialDetailPluginId ?? linkedPluginId) === selected.id) { initialDetailOpened.current = true; setMobileDetailOpen(true); }
+    if (!initialDetailOpened.current && selected && (initialDetailPluginId ?? linkedPluginId) === selected.id) {
+      initialDetailOpened.current = true;
+      setMobileDetailOpen(true);
+    }
   }, [initialDetailPluginId, linkedPluginId, selected?.id]);
 
   const renderRows = (plugins: readonly PluginManagerDesignFixture[]) =>

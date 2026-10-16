@@ -43,8 +43,8 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     expect(container.textContent).not.toContain('需处理');
   });
 
-  it('limits the default recommendation shelf to three catalog candidates but searches all matches', async () => {
-    const candidates = Array.from({ length: 5 }, (_, index) => ({
+  it('shows five recommendations, expands the rest, and searches all matches', async () => {
+    const candidates = Array.from({ length: 7 }, (_, index) => ({
       ...PLUGIN_MANAGER_DESIGN_FIXTURES[2],
       id: `recommended-${index + 1}`,
       displayName: `推荐插件 ${index + 1}`,
@@ -53,7 +53,10 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
       root.render(<PluginManagerContent fixtures={[PLUGIN_MANAGER_DESIGN_FIXTURES[0], ...candidates]} />),
     );
 
-    expect(container.querySelectorAll('[data-plugin-section="recommended"] [data-plugin-id]')).toHaveLength(3);
+    expect(container.querySelectorAll('[data-plugin-section="recommended"] [data-plugin-id]')).toHaveLength(5);
+
+    await act(async () => button(container, '查看更多插件')?.click());
+    expect(container.querySelectorAll('[data-plugin-section="recommended"] [data-plugin-id]')).toHaveLength(7);
 
     const search = container.querySelector('input[aria-label="搜索插件"]') as HTMLInputElement | null;
     await act(async () => {
@@ -62,7 +65,7 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
       search?.dispatchEvent(new Event('input', { bubbles: true }));
     });
 
-    expect(container.querySelectorAll('[data-plugin-section="recommended"] [data-plugin-id]')).toHaveLength(5);
+    expect(container.querySelectorAll('[data-plugin-section="recommended"] [data-plugin-id]')).toHaveLength(7);
   });
 
   it('uses a filled accessible selection state without the persistent accent outline', async () => {
@@ -256,12 +259,23 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     expect(container.textContent).toContain('Plugin package archive failed Host verification.');
   });
 
-  it('places offline install in the page toolbar, outside the list column', async () => {
-    await act(async () => root.render(<PluginManagerContent fixtures={PLUGIN_MANAGER_DESIGN_FIXTURES} />));
+  it('places directory install and repository settings in the page toolbar', async () => {
+    await act(async () =>
+      root.render(
+        <PluginManagerContent
+          fixtures={PLUGIN_MANAGER_DESIGN_FIXTURES}
+          onDirectoryInstall={vi.fn()}
+          onMarketplaceChange={vi.fn()}
+        />,
+      ),
+    );
 
     const toolbar = container.querySelector('[data-plugin-manager-toolbar]');
     const list = container.querySelector('[data-mobile-panel="list"]');
-    expect(toolbar?.textContent).toContain('离线安装');
+    expect(toolbar?.textContent).toContain('从本地目录安装');
+    expect(toolbar?.querySelector('[aria-label="管理插件仓库"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('离线安装');
+    expect(container.textContent).not.toContain('从 Git 安装');
     expect(list?.textContent).not.toContain('离线安装');
     expect(toolbar?.className).toContain('justify-end');
   });

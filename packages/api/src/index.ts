@@ -1,5 +1,4 @@
-import { catRegistryMentionPatterns } from './infrastructure/connectors/mention-parser.js';
-import type { RepoIssueComment } from './infrastructure/connectors/github-repo-event/RepoCommentPollTaskSpec.js';
+import { AgentServiceUnavailableError } from './domains/cats/services/agents/registry/AgentServiceUnavailableError.js';
 import {
   createHostMediaPathResolver,
   hostMediaPathRootsFromEnv,
@@ -9,7 +8,8 @@ import { createListenAssetSpeech } from './domains/messaging/outbound-media/spee
 import { createPublishingMessageStore } from './domains/messaging/publishing-message-store.js';
 import { createMessagingStores } from './domains/messaging/stores/factory.js';
 import { SubscriptionDrainScheduler } from './domains/messaging/subscription-drain-scheduler.js';
-import { AgentServiceUnavailableError } from './domains/cats/services/agents/registry/AgentServiceUnavailableError.js';
+import { PLUGIN_HOST_ENTRIES, pluginHostRoot } from './domains/plugin/host-inventory/plugin-host-layout.js';
+import { catRegistryMentionPatterns } from './infrastructure/connectors/mention-parser.js';
 /**
  * Clowder AI API Server
  * 后端 API 入口
@@ -125,7 +125,6 @@ import {
 import { InvocationTracker } from './domains/cats/services/agents/invocation/InvocationTracker.js';
 import { emitLifecycleMessageUpdated } from './domains/cats/services/agents/invocation/lifecycle-message-update.js';
 import type { NativeControlReceiptPort } from './domains/cats/services/agents/invocation/NativeControlReceipt.js';
-import type { PluginTaskCurrentnessInput } from './domains/cats/services/agents/invocation/plugin-task-invocation-binding.js';
 import type {
   InvocationRecordStoreLike,
   RouterLike,
@@ -288,7 +287,6 @@ import { TasteMemoryLifecycleStore } from './domains/memory/taste/TasteMemoryLif
 import { TasteMemoryProjectionWriter } from './domains/memory/taste/TasteMemoryProjectionWriter.js';
 import { importTasteTakeawayCandidates } from './domains/memory/taste/TasteTakeawayCandidateImporter.js';
 import { tasteDocumentAnchor } from './domains/memory/taste/taste-memory-identity.js';
-import { createPluginTaskInvocationCurrentness } from './domains/plugin/host-surface/plugin-task-currentness.js';
 import { publicParticipantAvatar } from './domains/plugin/host-surface/public-participant-avatar.js';
 import { PortDiscoveryService } from './domains/preview/port-discovery.js';
 import { collectRuntimePorts } from './domains/preview/port-validator.js';
@@ -910,11 +908,6 @@ async function main(): Promise<void> {
   const onCallbackAuthLifecycleSignal = (signal: CallbackAuthLifecycleSignal): void => {
     app.log.warn({ callbackAuthLifecycle: signal }, '[api] Callback auth lifecycle divergence detected');
   };
-  let pluginTaskCurrentness: ((input: PluginTaskCurrentnessInput) => Promise<void>) | undefined;
-  const assertPluginTaskCurrent = async (input: PluginTaskCurrentnessInput): Promise<void> => {
-    if (!pluginTaskCurrentness) throw new Error('Host Task currentness is not initialized');
-    await pluginTaskCurrentness(input);
-  };
   const registryBackendKind = selectInvocationBackendKind(process.env.CAT_CAFE_INVOCATION_REGISTRY, !!redis);
   const registry =
     registryBackendKind === 'redis' && redis
@@ -925,13 +918,11 @@ async function main(): Promise<void> {
           startupRecoveryRequired: true,
           turnExecutionStore: canonicalTurnExecutionStore,
           onLifecycleSignal: onCallbackAuthLifecycleSignal,
-          assertPluginTaskCurrent,
         })
       : new InvocationRegistry({
           tombstoneGcTtlMs: configuredTombstoneGcTtlMs,
           turnExecutionStore: canonicalTurnExecutionStore,
           onLifecycleSignal: onCallbackAuthLifecycleSignal,
-          assertPluginTaskCurrent,
         });
   const turnExecutionStore = new CallbackAuthTurnExecutionLifecycle(canonicalTurnExecutionStore, registry);
   callbackAuthCapability = callbackAuthCapabilityForBackend(registryBackendKind);
@@ -1112,13 +1103,6 @@ async function main(): Promise<void> {
     | undefined;
   let taskApprovedDelegateProvider:
     | import('./domains/ball-custody/action-subject-delegate-contract.js').TaskApprovedDelegateProvider
-    | undefined;
-  // The action services initialize before the GitHub runtime configuration. The
-  // provider stays fail-closed until this late-bound server observer is ready.
-  let observeLivePrFreshness:
-    | ((
-        input: import('./domains/ball-custody/LivePrFreshnessObservation.js').LivePrFreshnessObservationInput,
-      ) => Promise<import('./domains/ball-custody/LivePrFreshnessObservation.js').LivePrFreshnessSnapshot | null>)
     | undefined;
   let actionSuccessorCompletionService:
     | import('./domains/ball-custody/ActionSuccessorCompletionService.js').ActionSuccessorCompletionService
@@ -2487,7 +2471,30 @@ async function main(): Promise<void> {
   });
   const { LiveCompanionSessions } = await import('./domains/concierge/live/LiveCompanionSessions.js');
   const { createLiveConfigChange } = await import('./domains/concierge/live/live-config-transition.js');
-  const liveCompanionSessions = new LiveCompanionSessions();
+  const { createF317MeetingSource } = await import('./domains/concierge/meeting/f317-meeting-source.js');
+  const { createRealtimeCompanionAudioSource: createF317AudioWakeSource } = await import(
+    './routes/realtime-companion-audio-source.js'
+  );
+  const { resolveAudioServiceUrl } = await import('./routes/audio-proxy.js');
+  const meetingAudioUrl = resolveAudioServiceUrl();
+  const meetingWake = createF317AudioWakeSource({ url: meetingAudioUrl });
+  const liveCompanionSessions = new LiveCompanionSessions({
+    source: createF317MeetingSource({
+      transcriptDir: process.env.TRANSCRIPT_DIR ?? join(findMonorepoRoot(), 'scripts/meeting-copilot/transcripts'),
+      audioServiceUrl: meetingAudioUrl,
+    }),
+    wakeSource: {
+      subscribe: async (threadId, callbacks) => {
+        const subscription = await meetingWake.subscribe(threadId, {
+          onTranscript: () => callbacks.onTranscript(),
+          onStopped: callbacks.onStopped,
+          onError: callbacks.onError,
+        });
+        void subscription.closed.catch((error) => callbacks.onError?.(error));
+        return { close: () => subscription.close() };
+      },
+    },
+  });
   const previousAppendListener = appendListener;
   appendListener = (message) => {
     previousAppendListener?.(message);
@@ -2689,21 +2696,8 @@ async function main(): Promise<void> {
     observationProvider: runtimeDeploymentContext?.provider ?? { observe: async () => null },
   });
   const { createPublicQueueExecution } = await import('./domains/plugin/carrier/public-queue-execution.js');
-  const { createTaskQueueRoute } = await import('./domains/plugin/carrier/task-queue-route.js');
-  const { createTaskQueueExecution } = await import('./domains/plugin/carrier/task-queue-execution.js');
-  const { createPluginTaskQueueAuthority } = await import('./domains/plugin/host-surface/plugin-task-currentness.js');
-  let taskQueueAuthority: ReturnType<typeof createPluginTaskQueueAuthority> | undefined;
   const queueProcessor = new QueueProcessor(
     {
-    taskInvocationRoute: createTaskQueueRoute(
-      invocationQueue,
-      () => {
-        if (!taskQueueAuthority) throw new Error('task_queue_authority_not_ready');
-        return taskQueueAuthority;
-      },
-      () => pluginRuntime.supervisor,
-      createTaskQueueExecution(registry, () => pluginRuntime.supervisor),
-    ),
       publicInvocationExecution: createPublicQueueExecution(registry, () => pluginRuntime.supervisor),
       queue: invocationQueue,
       liveCompanionSessions,
@@ -3838,13 +3832,28 @@ async function main(): Promise<void> {
     verdictGenerators['eval:anchor-first'] = createAnchorTelemetryGeneratorAdapter(anchorProvider);
   }
 
+  // F192 Phase H AC-H4: real GitPublisher (git worktree + gh) + per-domain generators
+  const { createGitWorktreePublisher } = await import(
+    './infrastructure/harness-eval/publish-verdict/git-worktree-publisher.js'
+  );
+  const verdictRepoFullName =
+    process.env.CAT_CAFE_VERDICT_REPO_FULL_NAME ?? process.env.CAT_CAFE_REPO_FULL_NAME ?? 'zts212653/cat-cafe';
+  const harnessGitPublisher = createGitWorktreePublisher({
+    repoRoot,
+    expectedRepoFullName: verdictRepoFullName,
+  });
+  const capabilityEvolutionMeasurementGitPublisher = createGitWorktreePublisher({
+    repoRoot,
+    expectedRepoFullName: verdictRepoFullName,
+    stageScope: 'capability-evolution-measurement',
+  });
+
   await app.register(evalHubRoutes, {
     harnessFeedbackRoot: evalHarnessFeedbackRoot,
     threadStore,
     redis: redisClient ?? undefined,
     invokeTriggerProvider: invokeTriggerHolder,
     gitPublisher: harnessGitPublisher,
-    messageStore,
     verdictGenerators,
     // 砚砚 R4 P1 + cloud R4 P1: register CallbackAuthRegistry for MCP route auth.
     callbackRegistry: registry,
@@ -4072,6 +4081,7 @@ async function main(): Promise<void> {
       ).createCapabilityEvolutionMeasurementIssuer({
         repoRoot,
         programReader: evolutionProgramService,
+        gitPublisher: capabilityEvolutionMeasurementGitPublisher,
       })
     : undefined;
   const evolutionProgramPreparationService =
@@ -4907,7 +4917,7 @@ async function main(): Promise<void> {
     taskArtifactReader: preparedArtifactReader,
     publicInvocations: {
       queue: invocationQueue,
-      resume: (threadId, userId) => queueProcessor.resumeAfterStartup(threadId, userId),
+      resume: (threadId, userId) => queueProcessor.requestDrain(threadId),
     },
     ...(actionSuccessorLeaseStore && actionSuccessorCompletionService
       ? {
@@ -4915,7 +4925,10 @@ async function main(): Promise<void> {
         }
       : {}),
     limbRegistry,
-    taskRunner: { registerPostStart: task => taskRunnerV2.registerPostStart(task), unregister: taskId => taskRunnerV2.unregister(taskId) },
+    taskRunner: {
+      registerPostStart: (task) => taskRunnerV2.registerPostStart(task),
+      unregister: (taskId) => taskRunnerV2.unregister(taskId),
+    },
     builtinRuntimes: new Map([
       [
         'official.chatgpt-dot',
@@ -5055,11 +5068,17 @@ async function main(): Promise<void> {
     invokeTrigger: {
       async trigger(threadId, catId, userId, message, messageId) {
         const stored = await messageStore.getById(messageId);
-        if (!stored || stored.from.kind !== 'plugin') throw new Error('plugin ingress message is unavailable');
+        if (!stored || stored.from?.kind !== 'plugin') throw new Error('plugin ingress message is unavailable');
         const admitted = await invocationQueue.enqueueExistingMessageDurable(messageStore, messageId, {
-          threadId, userId, content: message, from: stored.from,
-          sourceId: messageId, idempotencyKey: `plugin-ingress:${messageId}`,
-          kind: 'conversation_input', intent: 'execute', targetCats: [catId],
+          threadId,
+          userId,
+          content: message,
+          from: stored.from,
+          sourceId: messageId,
+          idempotencyKey: `plugin-ingress:${messageId}`,
+          kind: 'conversation_input',
+          intent: 'execute',
+          targetCats: [catId],
           ownerAuthProvenance: 'unknown',
         });
         return admitted.outcome === 'full' ? 'full' : 'enqueued';
@@ -5109,22 +5128,6 @@ async function main(): Promise<void> {
     getDefaultCatId,
     getMentionPatterns: catRegistryMentionPatterns,
   });
-  pluginTaskCurrentness = createPluginTaskInvocationCurrentness({
-    ownerUserId: privateUserId,
-    taskStore,
-    messageStore,
-    threadStore,
-    inventory: pluginRuntime.inventoryStore,
-    isCatAvailable: (catId) => catRegistry.getAllIds().includes(catId as CatId) && isCatAvailable(catId),
-  });
-  taskQueueAuthority = createPluginTaskQueueAuthority({
-    ownerUserId: privateUserId,
-    taskStore,
-    messageStore,
-    threadStore,
-    inventory: pluginRuntime.inventoryStore,
-    isCatAvailable: (catId) => catRegistry.getAllIds().includes(catId as CatId) && isCatAvailable(catId),
-  });
   pluginPredicateProvider = pluginRuntime.predicateProvider;
   trustedImagePathResolver = (hmrId) => pluginRuntime.mediaLedger.resolveTrustedBlobPath(hmrId);
   await app.register(mediaRoutes, { ledger: pluginRuntime.mediaLedger, ownerUserId: privateUserId });
@@ -5139,6 +5142,7 @@ async function main(): Promise<void> {
     loadMachinePluginCatalog,
     resolveLocalPluginEffectiveGrants,
   } = await import('./domains/plugin/manager/machine-catalog-provider.js');
+  const { OFFICIAL_PLUGIN_CATALOG, OFFICIAL_BUNDLED_MANIFESTS } = await import('./domains/plugin/official-catalog.js');
   const { OFFICIAL_PLUGIN_HOST_POLICIES } = await import('./domains/plugin/manager/official-plugin-host-policies.js');
   const pluginManagerHostPolicies = OFFICIAL_PLUGIN_HOST_POLICIES;
   const { GitMarketplaceRepository } = await import('./domains/plugin/manager/git-marketplace-repository.js');
@@ -5151,7 +5155,7 @@ async function main(): Promise<void> {
     ),
   });
   const marketplaceSources = new GitMarketplaceSources({
-    path: join(dirname(pluginRuntime.paths.inventorySnapshotPath), 'marketplace-sources.json'),
+    path: join(dirname(pluginRuntime.paths.inventorySnapshotPath), PLUGIN_HOST_ENTRIES.marketplaceSources),
     repository: marketplaceRepository,
     validateCatalog: validMarketplacePackages,
     environment: process.env.PLUGIN_GIT_MARKETPLACE,
@@ -5165,7 +5169,9 @@ async function main(): Promise<void> {
   const { FilesystemBuiltinPluginPackageMaterializer } = await import(
     './domains/plugin/manager/builtin-package-materializer.js'
   );
-  const { DotPluginStateProjection } = await import('./domains/cats/services/cloud-bridge/dot/DotPluginStateProjection.js');
+  const { DotPluginStateProjection } = await import(
+    './domains/cats/services/cloud-bridge/dot/DotPluginStateProjection.js'
+  );
   const pluginManagerRuntime = createPluginManagerRuntimeComposition({
     additionalStateProjection: new DotPluginStateProjection(
       () => dotConnectionService,
@@ -5207,7 +5213,7 @@ async function main(): Promise<void> {
     publicInvocations: pluginRuntime.supervisor,
     registry,
     threadStore,
-    sources: { messageStore, ...(managedHoldDispositionService ? { managedHoldDispositionService } : {}) },
+    sources: { messageStore },
   });
   const { prepareHostInitialPlugins } = await import('./domains/plugin/manager/initial-plugin-installation.js');
   let initialPlugins: Awaited<ReturnType<typeof prepareHostInitialPlugins>> | undefined;
@@ -5321,6 +5327,171 @@ async function main(): Promise<void> {
     fileQuotes: { source: workspaceContentReviews.source, messages: messageStore, threads: threadStore },
     changed: (ownerUserId, reviewId) => socketManager?.emitToUser(ownerUserId, 'artifact_review_changed', { reviewId }),
   });
+  const { DotConnectionStore } = await import('./domains/cats/services/cloud-bridge/dot/DotConnectionStore.js');
+  const { ensureDotIdentity } = await import('./domains/cats/services/cloud-bridge/dot/dot-identity.js');
+  const { registerDotConnectionRoutes } = await import('./routes/chatgpt-dot-connection-routes.js');
+  const { createDotWebhookSender } = await import('./domains/cats/services/cloud-bridge/dot/dot-webhook.js');
+  const dotWebhookSender = createDotWebhookSender(process.env.CAT_CAFE_DOT_WEBHOOK_PROXY_URL);
+  dotConnectionService = new DotConnectionService({
+    sendWebhook: dotWebhookSender,
+    store: new DotConnectionStore(resolve(pluginHostRoot(pluginProjectRoot), PLUGIN_HOST_ENTRIES.dotConnection)),
+    keys: agentKeyRegistry,
+    ensureIdentity: async () => {
+      if (ensureDotIdentity(pluginProjectRoot)) {
+        await syncAgentRegistry(reconcileCatRegistry(pluginProjectRoot, new Set()));
+        await configEventBus.emitChangeAsync({
+          source: 'cat-config',
+          scope: 'domain',
+          changedKeys: ['gpt-dot'],
+          changeSetId: `dot-identity:${Date.now()}`,
+          timestamp: Date.now(),
+        });
+      }
+    },
+    authority: async () => {
+      const inventory = await pluginRuntime.inventoryStore.snapshot();
+      const instance = inventory.instances.find(
+        (candidate) => candidate.pluginId === 'official.chatgpt-dot' && candidate.lifecycleState === 'installed',
+      );
+      return instance ? { ownerUserId: privateUserId, pluginInstanceId: instance.pluginInstanceId } : null;
+    },
+  });
+  registerDotConnectionRoutes(app, {
+    connection: dotConnectionService,
+    publicBaseUrl: () => process.env.CAT_CAFE_REMOTE_PUBLIC_BASE_URL,
+  });
+  const { DotDispatchStore } = await import('./domains/cats/services/cloud-bridge/dot/DotDispatchStore.js');
+  const { DotEventsBridge } = await import('./domains/cats/services/cloud-bridge/dot/DotEventsBridge.js');
+  const { DotReturnService } = await import('./domains/cats/services/cloud-bridge/dot/DotReturnService.js');
+  const { DotImageService } = await import('./domains/cats/services/cloud-bridge/dot/DotImageService.js');
+  const dotDispatches = new DotDispatchStore(
+    resolve(pluginHostRoot(pluginProjectRoot), PLUGIN_HOST_ENTRIES.dotDispatches),
+  );
+  dotRoundTripVerified = async () => {
+    const state = await dotConnectionService?.current();
+    if (!state || state.testEventIds.length !== 2) return false;
+    const records = await Promise.all(state.testEventIds.map((id) => dotDispatches.read(id)));
+    return records.every(
+      (record) =>
+        record?.attemptId === state.attemptId &&
+        record.agentKeyId === state.agentKeyId &&
+        record.connectionTest &&
+        !!record.sourceReadAt &&
+        !!record.replyMessageId,
+    );
+  };
+  const dotEnabled = async () =>
+    (await pluginRuntime.inventoryStore.snapshot()).instances.some(
+      (instance) =>
+        instance.pluginId === 'official.chatgpt-dot' &&
+        instance.lifecycleState === 'installed' &&
+        instance.activationState === 'enabled',
+    );
+  const { DotAskService } = await import('./domains/cats/services/cloud-bridge/dot/DotAskService.js');
+  dotAskService = new DotAskService({
+    connection: dotConnectionService,
+    messages: messageStore,
+    threads: threadStore,
+    enabled: dotEnabled,
+    post: async (secret, payload) => {
+      const result = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/post-message',
+        headers: { 'x-agent-key-secret': secret },
+        payload,
+      });
+      const body = result.json() as { messageId?: string; kind?: string };
+      if (result.statusCode !== 200 || !body.messageId)
+        throw new Error(
+          body.kind === 'dot_ask_idempotency_conflict' || body.kind === 'dot_ask_delivery_pending'
+            ? body.kind
+            : 'dot_ask_not_persisted',
+        );
+      return body;
+    },
+  });
+  dotEventsBridge = new DotEventsBridge({
+    sendWebhook: dotWebhookSender,
+    connection: dotConnectionService,
+    dispatches: dotDispatches,
+    messageStore,
+    threadStore,
+    enabled: dotEnabled,
+  });
+  dotReturnService = new DotReturnService({
+    connection: dotConnectionService,
+    dispatches: dotDispatches,
+    messages: messageStore,
+    threads: threadStore,
+    enabled: dotEnabled,
+    postReply: async ({ secret, eventId, threadId, sourceMessageId, content }) => {
+      const result = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/post-message',
+        headers: { 'x-agent-key-secret': secret, 'x-cat-cafe-dot-event-id': eventId },
+        payload: { threadId, replyTo: sourceMessageId, content },
+      });
+      const body = result.json() as { messageId?: string };
+      if (result.statusCode !== 200 || !body.messageId) throw new Error('dot_reply_not_persisted');
+      return { messageId: body.messageId };
+    },
+  });
+  const dotImages = new DotImageService({
+    directory: resolve(pluginHostRoot(pluginProjectRoot), PLUGIN_HOST_ENTRIES.dotImages),
+    returns: dotReturnService,
+    connection: dotConnectionService,
+    dispatches: dotDispatches,
+    messages: messageStore,
+    threads: threadStore,
+    emit: ({ threadId, messageId, block }) => {
+      socketManager?.broadcastAgentMessage(
+        {
+          type: 'system_info',
+          catId: createCatId('gpt-dot'),
+          content: JSON.stringify({ type: 'rich_block', block, messageId }),
+          invocationId: messageId,
+          timestamp: Date.now(),
+        },
+        threadId,
+      );
+    },
+  });
+  const { registerDotMcpRoutes } = await import('./routes/chatgpt-dot-mcp-routes.js');
+  const { registerDotImageRoutes } = await import('./routes/chatgpt-dot-image-routes.js');
+  registerDotMcpRoutes(app, {
+    connection: dotConnectionService,
+    returns: dotReturnService,
+    ask: (secret, input) => dotAskService!.ask(secret, input),
+    publishImage: (secret, input) => dotImages.publish(secret, input),
+  });
+  registerDotImageRoutes(app, dotImages);
+  const { registerDotTestRoutes } = await import('./routes/chatgpt-dot-test-routes.js');
+  const { DotConnectionTestService } = await import(
+    './domains/cats/services/cloud-bridge/dot/DotConnectionTestService.js'
+  );
+  const dotConnectionTests = new DotConnectionTestService({
+    connection: dotConnectionService,
+    dispatches: dotDispatches,
+    bridge: dotEventsBridge,
+    messages: messageStore,
+    threads: threadStore,
+    grants: cloudReturnGrantStore,
+    projectPath: pluginProjectRoot,
+  });
+  registerDotTestRoutes(app, {
+    connection: dotConnectionService,
+    dispatches: dotDispatches,
+    threads: threadStore,
+    startTest: (ownerUserId) => dotConnectionTests.run(ownerUserId),
+  });
+  // Dot resume consumes its persisted connection and source proofs, composed above.
+  const externalPluginRecovery = await pluginRuntime.recoverAfterRestart({ desktopWindowsAfter: hostListening });
+  app.log.info(
+    `[api] K-2 plugin runtime recovered ` +
+      `(sessions=${externalPluginRecovery.brokerSessions}, instances=${externalPluginRecovery.inventoryInstances}, ` +
+      `resumeRequested=${externalPluginRecovery.resumeRequested}; ` +
+      `live=${externalPluginRecovery.resumeRequested > 0 ? 'reconciling' : 'dormant'})`,
+  );
   const { storedAttachmentMediaRoutes } = await import('./routes/stored-attachment-media.js');
   await app.register(storedAttachmentMediaRoutes, {
     mediaDir: process.env.CONNECTOR_MEDIA_DIR ?? './data/connector-media',

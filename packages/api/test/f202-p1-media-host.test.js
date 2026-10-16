@@ -445,9 +445,9 @@ test('contract permission matrix includes the media.read L1 row without a Host-o
       'utf8',
     ),
   );
-  assert.equal(contractPermissionEntries().length, 23);
-  assert.equal(schema.$defs.PermissionMatrixInput.properties.entries.minItems, 23);
-  assert.equal(schema.$defs.PermissionMatrixInput.properties.entries.maxItems, 23);
+  assert.equal(contractPermissionEntries().length, 29);
+  assert.equal(schema.$defs.PermissionMatrixInput.properties.entries.minItems, 29);
+  assert.equal(schema.$defs.PermissionMatrixInput.properties.entries.maxItems, 29);
   for (const [capability, layer, firstPartyPreset] of [
     ['media.read', 'L1', true],
     ['data.directory', 'L2', false], // contract beta.24, F202 W2-3 h2

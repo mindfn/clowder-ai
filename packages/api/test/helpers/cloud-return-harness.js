@@ -1,3 +1,4 @@
+import './setup-cat-registry.js';
 /**
  * F202 W2-3 h3c-2 — both cloud return entries (the Remote MCP callback and the polled ingest) over
  * one message store and one grant store, with the cloud cat configured under any id.
@@ -50,15 +51,15 @@ function pausable(target, method) {
   let armed;
   const proxy = new Proxy(target, {
     get(object, property) {
-      if (property === method) {
-        return async (...args) => {
+      if ([].concat(method).includes(property)) {
+        return (...args) => {
           const gate = armed;
           armed = undefined;
           if (gate) {
             gate.reached.resolve();
-            await gate.released.promise;
+            return gate.released.promise.then(() => object[property](...args));
           }
-          return object[method](...args);
+          return object[property](...args);
         };
       }
       const value = Reflect.get(object, property, object);
@@ -84,7 +85,7 @@ function pausable(target, method) {
 export async function cloudReturnHarness() {
   process.env.DEFAULT_OWNER_USER_ID = 'alice';
   const { callbacksRoutes } = await import('../../dist/routes/callbacks.js');
-  const messages = pausable(new MessageStore(), 'appendIdempotent');
+  const messages = pausable(new MessageStore(), ['appendIdempotent', 'append']);
   const grants = pausable(new MemoryCloudReturnGrantStore(Date.now, { historyBoundary: 0 }), 'commit');
   const messageStore = messages.proxy;
   const grantStore = grants.proxy;
@@ -110,7 +111,14 @@ export async function cloudReturnHarness() {
   const otherThread = await threadStore.create('alice', 'h3c-2 other thread');
   let clock = 1_000;
   const append = (content, threadId = thread.id) =>
-    messageStore.append({ userId: 'alice', catId: 'codex', threadId, content, mentions: [], timestamp: clock++ });
+    messageStore.append({
+      from: { kind: 'agent', catId: 'codex' },
+      userId: 'alice',
+      threadId,
+      content,
+      mentions: [],
+      timestamp: clock++,
+    });
   const source = append('look at this');
   const unGranted = append('no grant for this one');
   const scope = (targetCatId, sourceMessageId = source.id, threadId = thread.id) => ({

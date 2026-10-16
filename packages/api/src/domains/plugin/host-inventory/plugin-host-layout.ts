@@ -18,11 +18,11 @@ export function pluginHostRoot(projectRoot: string): string {
  */
 export const PLUGIN_HOST_ENTRIES = {
   inventory: 'inventory.json',
+  marketplaceSources: 'marketplace-sources.json',
   initialInstallation: 'initial-installation.json',
   broker: 'broker.json',
   packages: 'packages',
   resources: 'resources',
-  taskWorkspaces: 'task-workspaces',
   browserEndpoints: 'browser-endpoints',
   media: 'media',
   mediaEntitlements: 'media-entitlements.json',
@@ -30,6 +30,9 @@ export const PLUGIN_HOST_ENTRIES = {
   mediaStaging: 'media-staging.json',
   mediaPostProcessing: 'media-post-processing',
   quarantines: 'quarantines.json',
+  dotConnection: 'dot-connection.json',
+  dotDispatches: 'dot-dispatches',
+  dotImages: 'dot-images',
 } as const;
 
 const HOST_ENTRY_NAMES: ReadonlySet<string> = new Set(Object.values(PLUGIN_HOST_ENTRIES));

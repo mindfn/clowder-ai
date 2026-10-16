@@ -3022,7 +3022,7 @@ export async function* routeSerial(
 
         // A2A mention detection (缅因猫 P1-3: only after full text accumulated)
         // Line-start @mention = always actionable (no keyword gate)
-        a2aMentions = isFreshnessSupplement ? [] : parseA2AMentions(storedContent, catId);
+        a2aMentions = parseA2AMentions(storedContent, catId);
 
         // clowder-ai#489: baseline counter — line-start mentions
         if (a2aMentions.length > 0) {
@@ -3060,7 +3060,6 @@ export async function* routeSerial(
         // A bounded dot consultation returns via the actual execution source;
         // plain replyTo/text cannot grant this target. Existing routing dedup merges @dot.
         if (
-          !collectiveBoundTurn &&
           !hadError &&
           !catSignal?.aborted &&
           turnTriggerMessageId &&
@@ -3070,7 +3069,13 @@ export async function* routeSerial(
             threadId,
             catId,
             replyTo: streamReplyTo,
-            extra: { causal: { kind: 'invocation_reply', triggerMessageId: turnTriggerMessageId, ...(turnTriggerThreadId ? { triggerThreadId: turnTriggerThreadId } : {}) } },
+            extra: {
+              causal: {
+                kind: 'invocation_reply',
+                triggerMessageId: turnTriggerMessageId,
+                ...(turnTriggerThreadId ? { triggerThreadId: turnTriggerThreadId } : {}),
+              },
+            },
           }))
         )
           a2aMentions = [...new Set([...a2aMentions, createCatId('gpt-dot')])];
@@ -3446,7 +3451,13 @@ export async function* routeSerial(
                   }
                 : {}),
               ...(turnTriggerMessageId
-                ? { causal: { kind: 'invocation_reply' as const, triggerMessageId: turnTriggerMessageId, ...(turnTriggerThreadId ? { triggerThreadId: turnTriggerThreadId } : {}) } }
+                ? {
+                    causal: {
+                      kind: 'invocation_reply' as const,
+                      triggerMessageId: turnTriggerMessageId,
+                      ...(turnTriggerThreadId ? { triggerThreadId: turnTriggerThreadId } : {}),
+                    },
+                  }
                 : {}),
               ...executionProjections,
               ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
@@ -3882,7 +3893,13 @@ export async function* routeSerial(
                         }
                       : {}),
                     ...(turnTriggerMessageId
-                      ? { causal: { kind: 'invocation_reply' as const, triggerMessageId: turnTriggerMessageId, ...(turnTriggerThreadId ? { triggerThreadId: turnTriggerThreadId } : {}) } }
+                      ? {
+                          causal: {
+                            kind: 'invocation_reply' as const,
+                            triggerMessageId: turnTriggerMessageId,
+                            ...(turnTriggerThreadId ? { triggerThreadId: turnTriggerThreadId } : {}),
+                          },
+                        }
                       : {}),
                     ...executionProjections,
                     ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),

@@ -1,3 +1,4 @@
+import type { PreparedArtifactReader } from '../domains/growing/ports/PreparedArtifactReader.js';
 /**
  * Task CRUD Routes (毛线球)
  *

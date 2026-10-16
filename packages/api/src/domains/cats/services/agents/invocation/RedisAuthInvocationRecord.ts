@@ -6,7 +6,6 @@ import {
   type InvocationRecord,
 } from './InvocationRegistry.js';
 import { normalizeOwnerAuthProvenance } from './owner-auth-provenance.js';
-import { capturePluginTaskInvocationAuth } from './plugin-task-invocation-binding.js';
 import { capturePublicInvocationAuth } from './public-invocation-auth-binding.js';
 import { parseToolExecutionPolicy } from './tool-execution-policy.js';
 
@@ -66,8 +65,6 @@ function hasValidPrincipalEnvelope(fields: Record<string, string>): boolean {
   switch (fields.principalKind) {
     case 'ordinary':
       return !task && !publicPlugin && !managed;
-    case 'plugin_task':
-      return task && !publicPlugin && !managed;
     case 'public_plugin':
       return publicPlugin && !task && !managed;
     case 'managed_work':
@@ -99,20 +96,6 @@ export function authRecordFromRedisHash(fields: Record<string, string>, msgs: Se
   };
   try {
     applyOptionalFields(record, fields);
-    if (Object.hasOwn(fields, 'pluginTaskBinding') || Object.hasOwn(fields, 'pluginTaskBindingVersion')) {
-      if (
-        (fields.pluginTaskBindingVersion !== '1' && fields.pluginTaskBindingVersion !== '2') ||
-        !fields.pluginTaskBinding ||
-        fields.ownerAuthProvenance !== 'unknown' ||
-        ['publicInvocationBinding', 'managedWorkId', 'managedWorkAttemptId', 'a2aTriggerMessageId'].some((k) =>
-          Object.hasOwn(fields, k),
-        )
-      )
-        return null;
-      const binding = JSON.parse(fields.pluginTaskBinding);
-      if (String(binding?.version) !== fields.pluginTaskBindingVersion) return null;
-      return capturePluginTaskInvocationAuth({ ...record, pluginTaskBinding: binding });
-    }
     if (Object.hasOwn(fields, 'publicInvocationBinding')) {
       // Do not normalize corrupt owner/partial lane fields into a valid public identity.
       if (

@@ -8,7 +8,6 @@
 import { type AgentKeyVerifyResult, type CallbackPrincipal, catRegistry } from '@cat-cafe/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { InvocationRecord, VerifyResult } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
-import { pluginTaskCurrentnessInput } from '../domains/cats/services/agents/invocation/plugin-task-invocation-binding.js';
 import { toolExecutionPolicyDenial } from '../domains/cats/services/agents/invocation/tool-execution-policy.js';
 import { cloudPrincipalStanding } from '../domains/cats/services/cloud-bridge/cloud-conversation-identity.js';
 import type { PluginNativeActionTarget } from '../domains/cats/services/types.js';
@@ -29,31 +28,12 @@ function callbackToolFromUrl(url: string): string {
   return match ? match[1] : 'unknown';
 }
 
-/** Exact Host-only Task admission probe; this is not a plugin action allowlist extension. */
-export function isPluginTaskAdmissionRequest(request: FastifyRequest): boolean {
-  return (
-    request.method === 'GET' &&
-    request.routeOptions.url === '/api/callbacks/native-turn-admission' &&
-    (request.query as { scope?: unknown } | undefined)?.scope === 'plugin_task'
-  );
-}
-
 function allowToolExecution(
   request: FastifyRequest,
   reply: FastifyReply,
   record: InvocationRecord,
   options: CallbackAuthHookOptions,
 ): boolean {
-  if (isPluginTaskAdmissionRequest(request) && record.pluginTaskBinding !== undefined) {
-    try {
-      pluginTaskCurrentnessInput(record);
-      // The route must still verifyLatest and compare this exact private identity.
-      return true;
-    } catch {
-      reply.status(403).send({ error: 'plugin_task_identity_invalid' });
-      return false;
-    }
-  }
   const denial = toolExecutionPolicyDenial(
     record.toolExecutionPolicy,
     record.toolExecutionPolicy?.mode === 'callback_allowlist' || record.toolExecutionPolicy?.mode === 'plugin_native'
