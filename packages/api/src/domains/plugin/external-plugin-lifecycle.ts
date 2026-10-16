@@ -291,17 +291,25 @@ export class ExternalPluginLifecycleService {
       } catch (error) {
         const failedAt = this.now();
         this.reportStartFailure(current, 'restart_resume', error, failedAt);
-        if (!this.restartRecoveryStopped) await this.projectResumeFailure(instanceId, startFailureRecord(error, failedAt, current.packageDigest));
+        if (!this.restartRecoveryStopped)
+          await this.projectResumeFailure(instanceId, startFailureRecord(error, failedAt, current.packageDigest));
       }
     });
   }
 
-  private reportStartFailure(instance: PluginInstanceRecord, phase: PluginStartPhase, error: unknown, at: number): void {
+  private reportStartFailure(
+    instance: PluginInstanceRecord,
+    phase: PluginStartPhase,
+    error: unknown,
+    at: number,
+  ): void {
     try {
       const { pluginId, pluginInstanceId } = instance;
       const report = pluginStartFailureReport({ pluginId, pluginInstanceId, phase, occurredAt: at, error });
       (this.options.onStartFailure ?? logPluginStartFailure)(report);
-    } catch { /* Observers cannot change lifecycle state. */ }
+    } catch {
+      /* Observers cannot change lifecycle state. */
+    }
   }
 
   private projectResumeFailure(instanceId: string, failure: ReturnType<typeof startFailureRecord>): Promise<void> {

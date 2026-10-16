@@ -40,7 +40,12 @@ export async function buildRetainedClient(outdir = path.join(root, 'dist')) {
   }
   const landing = await readFile(path.join(root, 'assets/collective-landing-A.png'));
   await writeFile(path.join(outdir, 'collective-client/collective-landing-A.png'), landing);
-  files.push({ path: '/collective-client/collective-landing-A.png', size: landing.length, sha256: hash(landing), contentType: 'image/png' });
+  files.push({
+    path: '/collective-client/collective-landing-A.png',
+    size: landing.length,
+    sha256: hash(landing),
+    contentType: 'image/png',
+  });
   const html = await readFile(path.join(root, 'src/index.html'));
   await writeFile(path.join(outdir, 'index.html'), html);
   files.push({ path: '/index.html', size: html.length, sha256: hash(html), contentType: 'text/html; charset=utf-8' });

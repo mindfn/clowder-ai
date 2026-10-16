@@ -302,7 +302,13 @@ export function PluginManagerDetailCard({
             <PluginManagerConfigurationSection
               plugin={plugin}
               presentation={presentation}
-              renderBefore={presentation === 'v2' ? operations => <PluginManagerDetailPrelude plugin={plugin} description={description} operations={operations} /> : undefined}
+              renderBefore={
+                presentation === 'v2'
+                  ? (operations) => (
+                      <PluginManagerDetailPrelude plugin={plugin} description={description} operations={operations} />
+                    )
+                  : undefined
+              }
               onOperationChange={onOperationChange}
               busy={busy}
               onSaveConfig={onSaveConfig}
@@ -310,20 +316,25 @@ export function PluginManagerDetailCard({
               saved={configurationSaved}
             />
 
-        {installed && plugin.permissions && (
-          <PluginConnectorSettings key={plugin.id} pluginId={plugin.id} pluginLabel={plugin.permissions.label} />
-        )}
+            {installed && plugin.permissions && (
+              <PluginConnectorSettings key={plugin.id} pluginId={plugin.id} pluginLabel={plugin.permissions.label} />
+            )}
 
-        {plugin.bindings !== undefined && (
-          <PluginManagerBindings
-            key={plugin.id}
-            pluginId={plugin.id}
-            bindings={plugin.bindings}
-            onChange={onOperationChange}
-          />
-        )}
+            {plugin.bindings !== undefined && (
+              <PluginManagerBindings
+                key={plugin.id}
+                pluginId={plugin.id}
+                bindings={plugin.bindings}
+                onChange={onOperationChange}
+              />
+            )}
 
-            <CapabilityDocumentation plugin={plugin} installed={installed} groups={capabilityGroups} presentation={presentation} />
+            <CapabilityDocumentation
+              plugin={plugin}
+              installed={installed}
+              groups={capabilityGroups}
+              presentation={presentation}
+            />
           </>
         )}
       </div>

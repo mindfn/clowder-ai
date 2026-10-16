@@ -34,7 +34,9 @@ function fixture() {
     grantStore,
     socketManager: { broadcastAgentMessage: (message, threadId) => broadcasts.push({ message, threadId }) },
     logger: { error() {}, warn() {} },
-    cats: { getAllConfigs: () => ({ "gpt-pro": { provider: "openai-chatgpt-pro" }, "codex-sol": { provider: "openai" } }) },
+    cats: {
+      getAllConfigs: () => ({ 'gpt-pro': { provider: 'openai-chatgpt-pro' }, 'codex-sol': { provider: 'openai' } }),
+    },
   });
   return { store, source, grantStore, broadcasts, service };
 }

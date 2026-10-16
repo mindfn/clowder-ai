@@ -1808,8 +1808,10 @@ export class RedisMessageStore {
       // APPEND_WITH_VISIBILITY_LUA will reclaim it atomically (#1210).
     }
 
-    if (msg.reservedId !== undefined && !/^\d{16}-\d{6,}-[0-9a-f]{8}$/.test(msg.reservedId)) throw new TypeError('reserved message id has invalid shape');
-    if (reservedId !== undefined && msg.reservedId !== undefined && reservedId !== msg.reservedId) throw new Error('reserved message id conflict');
+    if (msg.reservedId !== undefined && !/^\d{16}-\d{6,}-[0-9a-f]{8}$/.test(msg.reservedId))
+      throw new TypeError('reserved message id has invalid shape');
+    if (reservedId !== undefined && msg.reservedId !== undefined && reservedId !== msg.reservedId)
+      throw new Error('reserved message id conflict');
     const id = reservedId ?? msg.reservedId ?? generateSortableId(msg.timestamp);
     const { idempotencyKey, reservedId: mediaReservedId, ...payload } = msg;
     void mediaReservedId;

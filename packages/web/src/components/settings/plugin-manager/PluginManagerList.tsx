@@ -96,12 +96,19 @@ function PluginListActions({
         />
       )}
       {canUninstall && (
-        <span data-plugin-uninstall className={quietUninstall ? 'pointer-events-none opacity-0 group-hover/plugin-row:pointer-events-auto group-hover/plugin-row:opacity-100 group-focus-within/plugin-row:pointer-events-auto group-focus-within/plugin-row:opacity-100' : 'contents'}>
-        <SettingsDeleteButton
-          onClick={() => onUninstall?.()}
-          disabled={busy}
-          aria-label={`${plugin.artifact === 'quarantined' ? '移除' : '卸载'}${actionSubject}`}
-        />
+        <span
+          data-plugin-uninstall
+          className={
+            quietUninstall
+              ? 'pointer-events-none opacity-0 group-hover/plugin-row:pointer-events-auto group-hover/plugin-row:opacity-100 group-focus-within/plugin-row:pointer-events-auto group-focus-within/plugin-row:opacity-100'
+              : 'contents'
+          }
+        >
+          <SettingsDeleteButton
+            onClick={() => onUninstall?.()}
+            disabled={busy}
+            aria-label={`${plugin.artifact === 'quarantined' ? '移除' : '卸载'}${actionSubject}`}
+          />
         </span>
       )}
     </>

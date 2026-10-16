@@ -63,18 +63,22 @@ export function ContentBlocks({
               alt="附件"
               key={i}
               className="block max-w-full sm:max-w-sm rounded-lg mt-2 border border-cafe hover:opacity-90 transition-opacity"
-              onOpen={published.busy ? undefined : async (src) => {
-                if (!source && !published.isV2) {
-                  setLightboxSrc(src);
-                  return;
-                }
-                const result = await published.open(source, '图片');
-                if (result.status === 'preview' && published.isV2) {
-                  setPreviewReason(result.reason);
-                  setPreviewMediaType('image');
-                  setLightboxSrc(src);
-                }
-              }}
+              onOpen={
+                published.busy
+                  ? undefined
+                  : async (src) => {
+                      if (!source && !published.isV2) {
+                        setLightboxSrc(src);
+                        return;
+                      }
+                      const result = await published.open(source, '图片');
+                      if (result.status === 'preview' && published.isV2) {
+                        setPreviewReason(result.reason);
+                        setPreviewMediaType('image');
+                        setLightboxSrc(src);
+                      }
+                    }
+              }
             />
           );
         }

@@ -87,7 +87,11 @@ export async function prepareClaudeSdkLaunch(input: {
   // Alternate spawn transports cannot silently be ignored by this carrier.
   if (options?.spawnCliOverride) throw new Error('claude_sdk_spawn_override_unsupported');
   const readOnly = options?.toolExecutionPolicy?.mode === 'read_only';
-  const imagePaths = await extractTrustedImagePaths(options?.contentBlocks, options?.uploadDir, options?.resolveTrustedImagePath);
+  const imagePaths = await extractTrustedImagePaths(
+    options?.contentBlocks,
+    options?.uploadDir,
+    options?.resolveTrustedImagePath,
+  );
   const prompt = appendLocalImagePathHints(input.prompt, imagePaths);
   const { effectiveModel, useEnvModelOverride } = resolveClaudeModelSelection(options?.callbackEnv, input.model);
   const effort = effortValue(resolveClaudeEffortLevel(catId, effectiveModel, options?.reasoningEffortOverride));

@@ -123,7 +123,8 @@ export function useCloudBindingRecovery(identity: RecoveryIdentity) {
         ) {
           return;
         }
-        const nextState = read.kind === 'ready' ? showBound(read, binding.settleRead(ticket, read.boundConversationId)) : read;
+        const nextState =
+          read.kind === 'ready' ? showBound(read, binding.settleRead(ticket, read.boundConversationId)) : read;
         const selected = selectRecoveryConversation(nextState, identityKey, selectionRef.current);
         setState({
           readKey: recoveryReadKey,

@@ -101,7 +101,9 @@ it('an old title refresh cannot overwrite a new message identity or start its fo
   await act(async () => refreshButton()?.click());
   await render('new-source');
   const listCount = fetch.mock.calls.filter(([path]) => path === base + 'list').length;
-  await act(async () => resolveRefresh(json({ ok: true, data: { titleSync: { status: 'synced', updatedCount: 1, requestedCount: 1 } } })));
+  await act(async () =>
+    resolveRefresh(json({ ok: true, data: { titleSync: { status: 'synced', updatedCount: 1, requestedCount: 1 } } })),
+  );
   expect(container.textContent).toContain('新卡片名称');
   expect(fetch.mock.calls.filter(([path]) => path === base + 'list')).toHaveLength(listCount);
 });

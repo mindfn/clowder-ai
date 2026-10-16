@@ -259,7 +259,11 @@ function withoutCallerSignal(init?: RequestInit): RequestInit | undefined {
   return physicalInit;
 }
 
-async function performApiFetch(path: string, init?: RequestInit, timeoutMs = API_REQUEST_TIMEOUT_MS): Promise<Response> {
+async function performApiFetch(
+  path: string,
+  init?: RequestInit,
+  timeoutMs = API_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
   try {
     return await performSessionRequest(path, init, timeoutMs);
   } catch (error) {
@@ -268,7 +272,11 @@ async function performApiFetch(path: string, init?: RequestInit, timeoutMs = API
   }
 }
 
-async function performSessionRequest(path: string, init?: RequestInit, timeoutMs = API_REQUEST_TIMEOUT_MS): Promise<Response> {
+async function performSessionRequest(
+  path: string,
+  init?: RequestInit,
+  timeoutMs = API_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
   const initialSessionGate = ensureSession();
   await waitForPromiseWithSignal(initialSessionGate, init?.signal);
   const normalized = withSessionCsrf(ensureBodyForMutation(init));

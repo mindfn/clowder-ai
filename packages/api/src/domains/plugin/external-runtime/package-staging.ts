@@ -9,9 +9,9 @@ import { promisify } from 'node:util';
 import { type PluginManifest } from '@clowder-ai/plugin-contract';
 import { parse as parseYaml } from 'yaml';
 import { validateHostPluginManifest as validateManifest } from '../desktop-window-runtime/presentation-manifest.js';
+import { PLUGIN_ARCHIVE_BUDGET, preflightPluginArchive } from './archive-preflight.js';
 import { recordPackageStagingPhase } from './package-staging-diagnostics.js';
 import { sealStaticPackage } from './static-package-seal.js';
-import { PLUGIN_ARCHIVE_BUDGET, preflightPluginArchive } from './archive-preflight.js';
 import type { VerifiedPluginPackage } from './types.js';
 import { ExternalPluginRuntimeError } from './types.js';
 

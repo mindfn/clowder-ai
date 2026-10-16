@@ -8,7 +8,10 @@ import { MessageStore } from '../dist/domains/cats/services/stores/ports/Message
 import { boundedFailureDiagnostic } from './helpers/f202-cloud-failure-diagnostic.js';
 import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
-const BOUNDARY_FIXTURES = [{ id: 'long-custom-tag', expectedPath: 'composer/#node-1[0]' }, { id: 'high-child-index', expectedPath: 'composer/#node-8[10000]' }];
+const BOUNDARY_FIXTURES = [
+  { id: 'long-custom-tag', expectedPath: 'composer/#node-1[0]' },
+  { id: 'high-child-index', expectedPath: 'composer/#node-8[10000]' },
+];
 
 describe('F247 DOM fingerprint producer bounds', () => {
   it('persists representable diagnostics for long tags and high child indexes', async () => {
@@ -26,8 +29,8 @@ describe('F247 DOM fingerprint producer bounds', () => {
           extra: { stream: { invocationId: 'inv-source', turnInvocationId: 'inv-source' } },
         }),
       );
-    const diagnostic = boundedFailureDiagnostic(fixture.expectedPath);
-    assert.equal(isCloudBridgeFailureDiagnosticV1(diagnostic), true);
+      const diagnostic = boundedFailureDiagnostic(fixture.expectedPath);
+      assert.equal(isCloudBridgeFailureDiagnosticV1(diagnostic), true);
       const decision = await dispatchBoundConversationThroughHost({
         adapter: {
           async append_message() {

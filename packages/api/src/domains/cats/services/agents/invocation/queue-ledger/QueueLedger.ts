@@ -1,10 +1,10 @@
-import type { PluginPublicInvocationCarrierV1 } from '../../../stores/ports/plugin-public-invocation-carrier.js';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { CatRoutingError, MessageFrom, QueueAuthorIntent, WaitContinuationCarrierV1 } from '@cat-cafe/shared';
 import type { CallerTraceContext } from '../../../../../../infrastructure/telemetry/genai-semconv.js';
 import type { ActionSuccessorFence } from '../../../../../ball-custody/ActionSuccessorAdmissionContract.js';
 import type { CloudDispatchProvenance } from '../../../cloud-bridge/types.js';
+import type { PluginPublicInvocationCarrierV1 } from '../../../stores/ports/plugin-public-invocation-carrier.js';
 import type { ToolExecutionPolicy } from '../../../types.js';
 import type { OwnerAuthProvenance } from '../owner-auth-provenance.js';
 

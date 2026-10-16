@@ -73,7 +73,11 @@ describe('CloudBindingRecoveryCard lifecycle fences', () => {
       resolveOldPlugin = resolve;
     });
     mockApiFetch.mockImplementation((path) => {
-      if (path === '/api/plugins/official.companion.personal-chrome/actions/personalChromeAuthorizations/list' && mockApiFetch.mock.calls.length <= 2) return oldPlugin;
+      if (
+        path === '/api/plugins/official.companion.personal-chrome/actions/personalChromeAuthorizations/list' &&
+        mockApiFetch.mock.calls.length <= 2
+      )
+        return oldPlugin;
       if (path === '/api/plugins/official.companion.personal-chrome/actions/personalChromeAuthorizations/list')
         return Promise.resolve(jsonResponse(pluginState('conversation-new')));
       return Promise.resolve(jsonResponse({ bindings: {} }));
@@ -164,7 +168,8 @@ describe('CloudBindingRecoveryCard lifecycle fences', () => {
       resolvePatch = resolve;
     });
     mockApiFetch.mockImplementation(async (path, init) => {
-      if (path === '/api/plugins/official.companion.personal-chrome/actions/personalChromeAuthorizations/list') return jsonResponse(pluginState('one'));
+      if (path === '/api/plugins/official.companion.personal-chrome/actions/personalChromeAuthorizations/list')
+        return jsonResponse(pluginState('one'));
       if (path.includes('/cloud-bindings') && !init?.method) return jsonResponse({ bindings: {} });
       if (path.includes('/cloud-bindings') && init?.method === 'PATCH') return pendingPatch;
       return jsonResponse({ status: 'retry_queued' }, 202);

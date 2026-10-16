@@ -1,12 +1,12 @@
 'use client';
 
 import { useCallback, useId, useState } from 'react';
-import { cloudConversationCopy } from './cloud-conversation.shell-copy';
-import { useTrajectoryCopy } from './workspace/trajectory/use-trajectory-copy';
 import { CloudConversationLinkView, type FocusRequest } from './CloudConversationLinkView';
+import { cloudConversationCopy } from './cloud-conversation.shell-copy';
 import { useAuthorizedConversations } from './useAuthorizedConversations';
 import { useCopyChatLink } from './useCopyChatLink';
 import { useThreadCloudRoute } from './useThreadCloudRoute';
+import { useTrajectoryCopy } from './workspace/trajectory/use-trajectory-copy';
 
 /**
  * The thread's ChatGPT conversation in the thread panel, changed in place (F202 h3c-1): connect one of
@@ -41,16 +41,47 @@ function ThreadCloudConversation({ threadId, compact = false }: { threadId: stri
   if (read.kind === 'no-cloud-cat') return null;
   const candidates = authorized.read.kind === 'ready' ? authorized.read.candidates : [];
   if (compact && !choosing) {
-    const status = read.kind === 'loading' ? t.loading : read.kind === 'unauthorized' ? t.unauthorized : read.kind === 'error' ? t.error : read.binding === 'invalid' ? t.invalid : t.empty;
-    return <div className="status-v2-info-row" data-testid="cloud-conversation-link">
-      <span className="status-v2-muted">ChatGPT</span>
-      <span className="status-v2-cloud-id" title={binding?.chatUrl}>{binding?.conversationId ?? status}</span>
-      <span className="status-v2-info-actions">
-        {read.kind === 'ready' && <a href={binding?.chatUrl ?? 'https://chatgpt.com/'} target="_blank" rel="noopener noreferrer">{t.openChatGPT}</a>}
-        {binding && <button type="button" aria-label={t.copyLabel} onClick={copy.copy} aria-live="polite">{copy.state === 'copied' ? t.copied : copy.state === 'failed' ? t.copyFailed : t.copyLink}</button>}
-        {read.kind === 'ready' && <button type="button" onClick={() => { setChoosing(true); requestFocus('chooser'); }}>{binding ? t.change : t.select}</button>}
-      </span>
-    </div>;
+    const status =
+      read.kind === 'loading'
+        ? t.loading
+        : read.kind === 'unauthorized'
+          ? t.unauthorized
+          : read.kind === 'error'
+            ? t.error
+            : read.binding === 'invalid'
+              ? t.invalid
+              : t.empty;
+    return (
+      <div className="status-v2-info-row" data-testid="cloud-conversation-link">
+        <span className="status-v2-muted">ChatGPT</span>
+        <span className="status-v2-cloud-id" title={binding?.chatUrl}>
+          {binding?.conversationId ?? status}
+        </span>
+        <span className="status-v2-info-actions">
+          {read.kind === 'ready' && (
+            <a href={binding?.chatUrl ?? 'https://chatgpt.com/'} target="_blank" rel="noopener noreferrer">
+              {t.openChatGPT}
+            </a>
+          )}
+          {binding && (
+            <button type="button" aria-label={t.copyLabel} onClick={copy.copy} aria-live="polite">
+              {copy.state === 'copied' ? t.copied : copy.state === 'failed' ? t.copyFailed : t.copyLink}
+            </button>
+          )}
+          {read.kind === 'ready' && (
+            <button
+              type="button"
+              onClick={() => {
+                setChoosing(true);
+                requestFocus('chooser');
+              }}
+            >
+              {binding ? t.change : t.select}
+            </button>
+          )}
+        </span>
+      </div>
+    );
   }
   return (
     <CloudConversationLinkView

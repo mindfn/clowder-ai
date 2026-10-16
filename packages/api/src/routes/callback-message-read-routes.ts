@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
-import { extractTrustedImagePaths, extractImageUrls } from '../domains/cats/services/agents/providers/image-paths.js';
+import { extractImageUrls, extractTrustedImagePaths } from '../domains/cats/services/agents/providers/image-paths.js';
 import { getMessageSpeakerName } from '../domains/cats/services/context/ContextAssembler.js';
 import { readDurableLocalReviewFact } from '../domains/cats/services/local-review-artifact.js';
 import { messageFrom } from '../domains/cats/services/stores/message-from.js';

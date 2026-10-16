@@ -1,4 +1,3 @@
-import { pluginMcpEnvironment } from '../../../../../config/capabilities/plugin-mcp-environment.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import {
@@ -21,6 +20,7 @@ import {
   resolveMcpCommand,
   resolveMcpWorkingDir,
 } from '../../../../../config/capabilities/mcp-launch-paths.js';
+import { pluginMcpEnvironment } from '../../../../../config/capabilities/plugin-mcp-environment.js';
 import { isRetiredGithubMcpConfigEntry } from '../../../../../config/capabilities/retired-github-mcp.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 

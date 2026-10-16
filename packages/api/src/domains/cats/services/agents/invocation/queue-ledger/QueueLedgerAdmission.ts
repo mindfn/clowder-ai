@@ -1,8 +1,8 @@
-import type { PluginPublicInvocationCarrierV1 } from '../../../stores/ports/plugin-public-invocation-carrier.js';
 import type { CatRoutingError, MessageFrom, QueueAuthorIntent, WaitContinuationCarrierV1 } from '@cat-cafe/shared';
 import type { CallerTraceContext } from '../../../../../../infrastructure/telemetry/genai-semconv.js';
 import type { ActionSuccessorFence } from '../../../../../ball-custody/ActionSuccessorAdmissionContract.js';
 import type { CloudDispatchProvenance } from '../../../cloud-bridge/types.js';
+import type { PluginPublicInvocationCarrierV1 } from '../../../stores/ports/plugin-public-invocation-carrier.js';
 import type { ToolExecutionPolicy } from '../../../types.js';
 import type { OwnerAuthProvenance } from '../owner-auth-provenance.js';
 import { type QueueLedgerEntry, type QueueOwner, queueEntryId } from './QueueLedger.js';
@@ -64,7 +64,9 @@ export function createQueueLedgerAdmission(input: QueueLedgerAdmissionInput): Qu
         ...(input.routingWarnings?.length ? { routingWarnings: structuredClone(input.routingWarnings) } : {}),
       },
       execution: {
-        ...(input.pluginPublicInvocation ? { pluginPublicInvocation: structuredClone(input.pluginPublicInvocation) } : {}),
+        ...(input.pluginPublicInvocation
+          ? { pluginPublicInvocation: structuredClone(input.pluginPublicInvocation) }
+          : {}),
         intent: input.intent,
         ownerAuthProvenance: input.ownerAuthProvenance,
         ...(input.executionScope !== undefined ? { executionScope: input.executionScope } : {}),

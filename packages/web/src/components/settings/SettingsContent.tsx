@@ -336,8 +336,7 @@ export function SettingsContent({ section, initialEditCatId }: SettingsContentPr
                 ? (sectionText(section)?.description ?? meta.description)
                 : meta.description
           }
-        >
-        </SettingsPageHeader>
+        ></SettingsPageHeader>
       )}
       {isV2 && section === 'members' ? (
         <MemberCopyProvider>

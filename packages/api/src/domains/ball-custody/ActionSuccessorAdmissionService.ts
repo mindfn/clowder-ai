@@ -20,12 +20,16 @@ import {
   canonicalizeActionTerminalPredicate,
 } from './ActionTerminalPredicateCatalog.js';
 import {
+  requireAdmissionFreshness,
+  resolveAdmissionFreshness,
+  withActionPredicateAuthority,
+} from './action-predicate-authority.js';
+import {
   ActionSuccessorStandingError,
   type ActionSuccessorStandingSnapshot,
   assertActionSuccessorStanding,
   assertDelegateLineageSuccessorStanding,
 } from './action-successor-standing.js';
-import { requireAdmissionFreshness, resolveAdmissionFreshness, withActionPredicateAuthority } from './action-predicate-authority.js';
 import {
   type ActionSuccessorLease,
   type ClaimActionSuccessorInput,

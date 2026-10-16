@@ -174,11 +174,8 @@ export async function admitActionSuccessorReplacement(
   }
   if (returnedReplacement.kind === 'ordinary') assertOrdinaryReplacementRoute(current, input, claimOrigin);
   const delegateLineageReentry = isDelegateLineageReplacement(current, input, claimOrigin, returnedReplacement);
-  const { terminalPredicate, freshnessEvidenceRef, delegateEvidenceRef, providerAuthority } = await deps.resolveVerifiedPredicate(
-    input,
-    current,
-    delegateLineageReentry,
-  );
+  const { terminalPredicate, freshnessEvidenceRef, delegateEvidenceRef, providerAuthority } =
+    await deps.resolveVerifiedPredicate(input, current, delegateLineageReentry);
   const replacementInput = {
     expectedGeneration: replacement.expectedGeneration,
     holderCatIds: input.holderCatIds,
@@ -191,24 +188,25 @@ export async function admitActionSuccessorReplacement(
     ...(delegateEvidenceRef ? { delegateEvidenceRef } : {}),
     now: input.now,
   };
-  const result = await withActionPredicateAuthority(providerAuthority, () => deps.leaseStore.replace(
-    replacement.leaseId,
-    claimOrigin === 'existing_standing'
-      ? { ...replacementInput, claimOrigin, issuerStandingEvidenceRef }
-      : {
-          ...replacementInput,
-          claimOrigin,
-          predecessorCatId: input.actorCatId,
-          predecessorThreadId: input.sourceThreadId,
-          issuerStandingEvidenceRef,
-          ...(returnedReplacement.kind === 'authorized'
-            ? {
-                returnedHolderCatId: input.actorCatId,
-                returnedHolderThreadId: input.sourceThreadId,
-                returnProof: returnedReplacement.proof,
-              }
-            : {}),
-        },
+  const result = await withActionPredicateAuthority(providerAuthority, () =>
+    deps.leaseStore.replace(
+      replacement.leaseId,
+      claimOrigin === 'existing_standing'
+        ? { ...replacementInput, claimOrigin, issuerStandingEvidenceRef }
+        : {
+            ...replacementInput,
+            claimOrigin,
+            predecessorCatId: input.actorCatId,
+            predecessorThreadId: input.sourceThreadId,
+            issuerStandingEvidenceRef,
+            ...(returnedReplacement.kind === 'authorized'
+              ? {
+                  returnedHolderCatId: input.actorCatId,
+                  returnedHolderThreadId: input.sourceThreadId,
+                  returnProof: returnedReplacement.proof,
+                }
+              : {}),
+          },
     ),
   );
   if (result.outcome === 'replaced' || result.outcome === 'reattached') {

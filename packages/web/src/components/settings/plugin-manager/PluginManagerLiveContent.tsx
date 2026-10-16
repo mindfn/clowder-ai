@@ -1,13 +1,12 @@
 'use client';
 
-import type { PluginManagerPresentation } from './plugin-manager-attention';
-
 import type { PluginManagerListResponse } from '@cat-cafe/shared';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useConfirm } from '@/components/useConfirm';
 import { apiFetch } from '@/utils/api-client';
 import { PluginManagerContent } from './PluginManagerContent';
+import type { PluginManagerPresentation } from './plugin-manager-attention';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
 import {
   type ConfigurationUpdate,

@@ -256,7 +256,8 @@ describe('CloudBindingRecoveryCard', () => {
   it('continues an already persisted exact route without writing it again', async () => {
     const conversationId = 'conversation-bound';
     mockApiFetch.mockImplementation(async (path, init) => {
-      if (path === '/api/plugins/official.companion.personal-chrome/actions/personalChromeAuthorizations/list') return jsonResponse(pluginState([{ conversationId }]));
+      if (path === '/api/plugins/official.companion.personal-chrome/actions/personalChromeAuthorizations/list')
+        return jsonResponse(pluginState([{ conversationId }]));
       if (path === '/api/threads/thread-one/cloud-bindings') {
         return jsonResponse({ bindings: { 'gpt-pro': `https://chatgpt.com/c/${conversationId}` } });
       }
@@ -288,7 +289,8 @@ describe('CloudBindingRecoveryCard', () => {
     const conversationId = 'conversation-route-kept';
     let retries = 0;
     mockApiFetch.mockImplementation(async (path, init) => {
-      if (path === '/api/plugins/official.companion.personal-chrome/actions/personalChromeAuthorizations/list') return jsonResponse(pluginState([{ conversationId }]));
+      if (path === '/api/plugins/official.companion.personal-chrome/actions/personalChromeAuthorizations/list')
+        return jsonResponse(pluginState([{ conversationId }]));
       if (path.endsWith('/cloud-bindings'))
         return jsonResponse({
           bindings: init?.method === 'PATCH' ? { 'gpt-pro': `https://chatgpt.com/c/${conversationId}` } : {},

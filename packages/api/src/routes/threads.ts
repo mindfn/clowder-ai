@@ -1,4 +1,4 @@
-import { catRegistry, type CloudBindingRefusal } from '@cat-cafe/shared';
+import { type CloudBindingRefusal, catRegistry } from '@cat-cafe/shared';
 import { resolveCloudConversationCat } from '../domains/cats/services/cloud-bridge/cloud-conversation-identity.js';
 /**
  * Thread API Routes

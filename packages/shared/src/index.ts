@@ -63,6 +63,7 @@ export type {
   MessageSearchResponse,
   MessageSearchResult,
 } from './message-search.js';
+export * from './plugin-configuration-required.js';
 // Browser Preview Gateway request identity shared by API and Web.
 export * from './preview-gateway.js';
 export * from './preview-visible-page-admission.js';
@@ -121,5 +122,3 @@ export * from './types/workspace-content-review.js';
 export * from './utils/pull-request-changes-target.js';
 // Export subject key utilities (#320)
 export * from './utils/subject-key.js';
-
-export * from './plugin-configuration-required.js';
