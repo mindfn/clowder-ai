@@ -187,9 +187,19 @@ export class GitMarketplaceRepository {
       if (!exists.isDirectory() || exists.isSymbolicLink()) throw new Error('Invalid marketplace cache directory');
       const origin = (await this.git(directory, ['remote', 'get-url', 'origin'])).toString().trim();
       if (origin !== url) throw new Error('Marketplace cache origin changed');
-      if (branch && (await this.git(directory, ['symbolic-ref', '--short', 'HEAD'])).toString().trim() !== branch)
-        throw new Error('Marketplace cache branch changed');
-      await this.git(directory, ['pull', '--ff-only', '--no-rebase', '--no-recurse-submodules']);
+      const currentBranch = (await this.git(directory, ['symbolic-ref', '--short', 'HEAD'])).toString().trim();
+      if (branch && currentBranch !== branch) throw new Error('Marketplace cache branch changed');
+      // Name the verified source and selected branch explicitly. This also lets
+      // the public-test no-egress boundary verify file-backed fixture pulls.
+      await this.git(directory, [
+        'pull',
+        '--ff-only',
+        '--no-rebase',
+        '--no-recurse-submodules',
+        '--',
+        url,
+        `refs/heads/${currentBranch}`,
+      ]);
     } else {
       const staging = await mkdtemp(join(this.options.cacheRoot, '.clone-'));
       try {

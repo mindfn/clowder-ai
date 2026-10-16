@@ -57,6 +57,18 @@ async function fixture(t, prepare) {
   };
   await publish('1.0.0');
   const repository = new GitMarketplaceRepository({ cacheRoot: join(root, 'clones') });
+  const refreshErrors = new Map();
+  const refresh = repository.refresh.bind(repository);
+  repository.refresh = async (...args) => {
+    try {
+      const result = await refresh(...args);
+      refreshErrors.delete(args[0]);
+      return result;
+    } catch (error) {
+      refreshErrors.set(args[0], error);
+      throw error;
+    }
+  };
   const sources = new GitMarketplaceSources({
     path: join(root, 'sources.json'),
     repository,
@@ -74,7 +86,7 @@ async function fixture(t, prepare) {
   });
   const base = { snapshot: async () => ({ status: 'fresh', refreshedAt: 10, candidates: [] }) };
   const catalog = new GitMarketplaceCatalog({ base, sources, repository, localAdmission: admission, prepare });
-  return { root, url, publish, repository, sources, store, catalog };
+  return { root, url, publish, repository, sources, store, catalog, refreshErrors };
 }
 
 test('repository metadata, icon, directory install and later pull share the existing inventory', async (t) => {
@@ -92,7 +104,12 @@ test('repository metadata, icon, directory install and later pull share the exis
   const inventory = await f.store.snapshot();
   assert.equal(inventory.instances[0].activationState, 'disabled');
   await f.publish('1.1.0');
-  await f.sources.refresh();
+  const refreshedSources = await f.sources.refresh();
+  assert.equal(
+    refreshedSources.find((source) => source.url === f.url).status,
+    'ready',
+    f.refreshErrors.get(f.url)?.stack,
+  );
   assert.equal((await f.catalog.snapshot()).candidates[0].version, '1.1.0');
   assert.deepEqual(await f.store.snapshot(), inventory, 'discovery never upgrades the installed package');
   await assert.rejects(f.catalog.install(f.url, selection), /changed/);
@@ -133,6 +150,11 @@ test('repository API requires the existing owner/local boundary and only refresh
     headers: write,
   });
   assert.equal(refreshed.statusCode, 200);
+  assert.equal(
+    refreshed.json().sources.find((source) => source.url === f.url).status,
+    'ready',
+    f.refreshErrors.get(f.url)?.stack,
+  );
   assert.notEqual(refreshed.json().sources.find((s) => s.origin === 'user').commit, before);
   const rejected = await app.inject({
     method: 'POST',

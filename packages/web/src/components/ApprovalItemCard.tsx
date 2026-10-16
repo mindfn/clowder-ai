@@ -2,15 +2,8 @@
 
 import type { ApprovalHubItem } from '@cat-cafe/shared';
 import { GenericApprovalItemCard } from './GenericApprovalItemCard';
-import { MeetingIntakeCard } from './MeetingIntakeCard';
 
-/**
- * Feature-owned adapter dispatch for the Approval Hub.
- *
- * F292 keeps its feature-owned business adapter while both adapter paths
- * supply data and actions to the shared presentation-only ApprovalDecisionCard.
- */
+/** Render current Host approvals through the shared presentation card. */
 export function ApprovalItemCard({ item }: { item: ApprovalHubItem }) {
-  if (item.sourceFeatureId === 'F292') return <MeetingIntakeCard item={item} />;
   return <GenericApprovalItemCard item={item} />;
 }

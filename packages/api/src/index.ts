@@ -5575,7 +5575,7 @@ async function main(): Promise<void> {
     );
   }
 
-  // F246: Approval Hub — unified operator approval center, including F292 event-origin intake.
+  // F246: Approval Hub — unified operator approval center.
   const approvalProducerRegistry = new ApprovalProducerRegistry({
     F128: bindLegacyApprovalProducer(new F128ApprovalAdapter(proposalStore)),
     F139: bindLegacyApprovalProducer(new F139ApprovalAdapter(scheduleMutationProposalStore)),

@@ -235,9 +235,7 @@ function Hosted({
         onReread={() => sessions.reread(key)}
       />
       <ApprovalResultLink state={state} />
-      {showCard && shown?.decisionMode !== 'claim-select' && shown?.sourceFeatureId !== 'F292'
-        ? null
-        : originalPlaceAction}
+      {showCard && shown?.decisionMode !== 'claim-select' ? null : originalPlaceAction}
     </div>
   );
 }

@@ -160,8 +160,10 @@ test('one repository can track two branches independently across refresh and res
   assert.equal(catalogs[1].source.commit, featureCommit);
   await assert.rejects(restarted.add(f.url, 'main'), /already/i);
   await assert.rejects(restarted.add(f.url, '--upload-pack=bad'), /branch/i);
-  await f.publish('1.1.0');
-  await restarted.refresh();
+  const mainCommit = await f.publish('1.1.0');
+  const refreshed = await restarted.refresh();
+  assert.ok(refreshed.every((source) => source.status === 'ready'));
+  assert.equal((await restarted.catalogs())[0].source.commit, mainCommit);
   assert.equal((await restarted.catalogs())[1].source.commit, featureCommit);
   const bytes = await f.repository.withDirectory(
     f.url,

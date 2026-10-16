@@ -52,9 +52,9 @@ describe('F246 ApprovalProducerRegistry', () => {
 
   it('serves only registered producers when an optional plugin is absent', async () => {
     const bindings = completeBindings();
-    delete bindings.F292;
+    delete bindings.F321;
     const registry = new ApprovalProducerRegistry(Object.fromEntries(Object.entries(bindings).reverse()));
-    const registered = APPROVAL_PRODUCER_IDS.filter((id) => id !== 'F292');
+    const registered = APPROVAL_PRODUCER_IDS.filter((id) => id !== 'F321');
     assert.deepEqual(
       registry.manifest().map((entry) => entry.id),
       registered,
@@ -65,7 +65,7 @@ describe('F246 ApprovalProducerRegistry', () => {
     );
     assert.deepEqual(await registry.listPending('owner'), []);
     assert.deepEqual(await registry.listSettled('owner', 10), []);
-    assert.throws(() => registry.get('F292'), /F292.*not registered/i);
+    assert.throws(() => registry.get('F321'), /F321.*not registered/i);
   });
 
   it('fails closed when an extra binding is supplied', () => {

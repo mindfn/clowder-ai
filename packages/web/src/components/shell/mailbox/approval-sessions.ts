@@ -93,7 +93,7 @@ export function sessionKey(ownerUserId: string, address: ApprovalAddress): strin
 const REFUSAL_NOTICE = '这件事刚刚有变化，这次没有提交。已重新读取，请确认后再处理。';
 
 /** The card that reports its own request for the kinds that leave no store attempt. */
-const SELF_REPORTED_KIND = 'meeting-intake';
+const SELF_REPORTED_KIND = 'producer';
 
 const isHttpStatus = (value: unknown): value is number =>
   Number.isInteger(value) && (value as number) >= 100 && (value as number) <= 599;
