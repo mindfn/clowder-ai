@@ -18,12 +18,12 @@
         "matchedFilesHash": "3280e54b7a01d83d43912c5eb4e07126c500507e5a16f06119d705c59b3ef2bd"
       },
       "publicAudit": {
-        "reviewedOn": "2026-10-08",
+        "reviewedOn": "2026-10-15",
         "sourceHead": "adc163d5e51c40951ca219af3997f6753ab7a54b",
-        "publicHead": "3e70e1d6805be24672e8f841861f180d20b184c2",
+        "publicHead": "3c0aa0c2da08e4bfae487bb4a829a17ce2001e1d",
         "status": "resource_contract",
-        "matchedFileCount": 50,
-        "matchedFilesHash": "05c94617683df394d0dc42a1c03eb66c63ff318593cbef27054ac7a2779d41bb"
+        "matchedFileCount": 42,
+        "matchedFilesHash": "d99c055022a81ad1a1398ec392614fdd91014d262118bcfd99ec4dc2f28a48fe"
       },
       "publicAuditHistory": [
         {
@@ -33,14 +33,30 @@
           "status": "resource_contract",
           "matchedFileCount": 52,
           "matchedFilesHash": "607524b33dbe62de29f2bac9b23eff6aa9ae5f4fba94c8d59e6c7c549259c07e"
+        },
+        {
+          "reviewedOn": "2026-10-08",
+          "sourceHead": "adc163d5e51c40951ca219af3997f6753ab7a54b",
+          "publicHead": "3e70e1d6805be24672e8f841861f180d20b184c2",
+          "status": "resource_contract",
+          "matchedFileCount": 50,
+          "matchedFilesHash": "05c94617683df394d0dc42a1c03eb66c63ff318593cbef27054ac7a2779d41bb"
         }
       ],
       "inventoryRevision": {
-        "reason": "Only the already-retired F254 closure and supplement Redis suites left this existing resource inventory; no new exclusions or TTL changes.",
-        "sourceRetirement": "c94a58ac7388ba077281ab0608f2ec26a81d8551",
+        "reason": "Retain the exact Redis exclusion pattern and expiry. In addition to the two retired F254 suites, remove eight Host business-plugin suites migrated out by C1; no current test is newly excluded.",
+        "sourceRetirement": "3956401e75d692cc72c6369ab33566774f8a7d48",
         "removedFiles": [
           "test/f254-freshness-closure-redis-store.test.js",
-          "test/f254-freshness-supplement-redis-store.test.js"
+          "test/f254-freshness-supplement-redis-store.test.js",
+          "test/redis-community-bootstrap.test.js",
+          "test/redis-community-event-log.test.js",
+          "test/redis-community-pr-lifecycle.test.js",
+          "test/redis-community-projector.test.js",
+          "test/redis-f168-phase-b-awaiting-external.test.js",
+          "test/redis-pr-tracking-store.test.js",
+          "test/redis-repo-comment-cursor.test.js",
+          "test/signal-intake/redis-signal-intake.test.js"
         ]
       }
     },
