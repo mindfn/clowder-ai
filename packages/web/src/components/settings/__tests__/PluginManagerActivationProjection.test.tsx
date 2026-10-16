@@ -34,6 +34,7 @@ function project(
         version: candidate.version,
         contractVersion: '0.1.0',
         packageState: 'installed',
+        provenance: { kind: 'catalog', catalogId: candidate.catalogId, packageName: candidate.packageName },
         signalSchemas: {},
         verifiedAt: 1,
         updatedAt: 1,

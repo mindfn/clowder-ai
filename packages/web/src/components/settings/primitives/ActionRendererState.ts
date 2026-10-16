@@ -69,7 +69,6 @@ export function rowActionRequest(
 export function operationResetRequest(
   target: ActionRendererTarget,
   operationName: string,
-  _currentAction: string,
 ): { readonly url: string; readonly init: RequestInit } {
   const url = `${targetBasePath(target)}/operations/${encodeURIComponent(operationName)}/reset`;
   return { url, init: { method: 'POST' } };

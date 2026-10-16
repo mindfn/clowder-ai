@@ -1,5 +1,5 @@
 import type { Capability, PluginManifest, SignalSchemaCatalog } from '@clowder-ai/plugin-contract';
-import type { DesktopWindowFailureReason } from '../desktop-window-runtime/types.js';
+import type { DesktopWindowFailureReason } from '../desktop-window-runtime/failure-reason.js';
 
 export const PLUGIN_INVENTORY_SCHEMA_VERSION = 1 as const;
 

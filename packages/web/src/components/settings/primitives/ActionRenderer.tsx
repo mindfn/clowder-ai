@@ -139,18 +139,15 @@ function SequencedActionRenderer({
     [actions, operation.name, pendingConfigValues, target],
   );
 
-  const resetOperation = useCallback(
-    async (currentAction: string): Promise<boolean> => {
-      try {
-        const request = operationResetRequest(target, operation.name, currentAction);
-        const res = await apiFetch(request.url, request.init);
-        return res.ok;
-      } catch {
-        return false;
-      }
-    },
-    [operation.name, target],
-  );
+  const resetOperation = useCallback(async (): Promise<boolean> => {
+    try {
+      const request = operationResetRequest(target, operation.name);
+      const res = await apiFetch(request.url, request.init);
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }, [operation.name, target]);
 
   /** Transition to the next action's phase after a successful result. */
   const advanceTo = useCallback(
@@ -191,7 +188,7 @@ function SequencedActionRenderer({
         if (verdict.outcome === 'terminal') {
           stopTimers();
           if (action?.rollback) {
-            void resetOperation(action.rollback).finally(() => {
+            void resetOperation().finally(() => {
               onStatusChange?.();
             });
             setCurrentActionId(action.rollback);
@@ -222,7 +219,7 @@ function SequencedActionRenderer({
         abortedRef.current = true;
         stopTimers();
         if (action?.rollback) {
-          void resetOperation(action.rollback).finally(() => {
+          void resetOperation().finally(() => {
             onStatusChange?.();
           });
           setCurrentActionId(action.rollback);

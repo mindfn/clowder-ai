@@ -13,7 +13,7 @@ describe('ActionRenderer target requests', () => {
         body: JSON.stringify({ token: 'draft' }),
       },
     });
-    expect(operationResetRequest({ kind: 'plugin', id: 'dev.clowder.fixture' }, 'qr login', 'generate')).toEqual({
+    expect(operationResetRequest({ kind: 'plugin', id: 'dev.clowder.fixture' }, 'qr login')).toEqual({
       url: '/api/plugins/dev.clowder.fixture/operations/qr%20login/reset',
       init: { method: 'POST' },
     });

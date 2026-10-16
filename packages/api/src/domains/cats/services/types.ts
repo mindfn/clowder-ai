@@ -1046,7 +1046,7 @@ export interface AgentServiceOptions {
   /** Host-only exact descriptor plus public source/invocation currentness. Not a plugin or SDK DTO.
    * Never a plugin or SDK DTO. */
   pluginNativeLaunch?: {
-    readonly server: import('../../plugin/declared/native-mcp-launches.js').NativeMcpServer;
+    readonly server: import('../../plugin/declared/native-mcp-types.js').NativeMcpServer;
     readonly sandbox:
       | { readonly kind: 'public'; readonly workspaceRoot: string }
       | {

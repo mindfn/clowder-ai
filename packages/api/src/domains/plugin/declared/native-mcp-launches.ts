@@ -1,18 +1,12 @@
+import type { NativeMcpServer } from './native-mcp-types.js';
+
+export type { NativeMcpServer } from './native-mcp-types.js';
+
 import { isDeepStrictEqual } from 'node:util';
 import { normalizeToolExecutionPolicy } from '../../cats/services/agents/invocation/tool-execution-policy.js';
 import type { ToolExecutionPolicy } from '../../cats/services/types.js';
 import type { PluginRuntimeAdmission } from '../carrier/runtime-carrier.js';
 import { NativePluginActionError, type NativePluginActions } from './native-plugin-actions.js';
-
-/** Host materialization output, never resolved from user-editable MCP configuration. */
-export interface NativeMcpServer {
-  readonly name: string;
-  readonly command: string;
-  readonly args: readonly string[];
-  readonly env: Readonly<Record<string, string>>;
-  readonly workingDirectory: string;
-  readonly transport: 'stdio';
-}
 
 export interface DeclaredMcpLaunch {
   readonly contributionId: string;
