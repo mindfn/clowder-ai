@@ -147,19 +147,9 @@ export function PluginMarketplaceSettings({ onChange }: { onChange?: () => Promi
                     <HubIcon name="x" className="h-4 w-4" />
                   </SettingsIconButton>
                 </div>
-                <p className="mt-1 text-sm text-cafe-secondary">
-                  每次打开插件管理会自动检查仓库更新，不会自动更新已安装的插件。
-                </p>
               </div>
               <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 pt-0">
                 <ul className="divide-y divide-[var(--console-border-soft)]">
-                  <li className="space-y-2 py-3">
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium text-cafe">官方插件仓库</span>
-                      <span className="text-xs text-cafe-muted">默认</span>
-                    </div>
-                    <p className="text-xs text-cafe-secondary">使用官方主分支目录，从 npm 安装已发布版本。</p>
-                  </li>
                   {sources.map((source) => (
                     <li key={source.id} className="space-y-2 py-3">
                       <div className="flex items-center gap-2">
@@ -224,7 +214,6 @@ export function PluginMarketplaceSettings({ onChange }: { onChange?: () => Promi
                     </li>
                   ))}
                 </ul>
-                <p className="text-xs text-cafe-muted">默认和部署预置的仓库由应用配置提供，不能在这里移除。</p>
                 <form
                   ref={addForm}
                   onSubmit={(event) => {
@@ -246,9 +235,9 @@ export function PluginMarketplaceSettings({ onChange }: { onChange?: () => Promi
                   className="space-y-2"
                 >
                   <label htmlFor={`${titleId}-url`} className="text-sm font-medium text-cafe">
-                    添加仓库
+                    添加插件仓库
                   </label>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row">
                     <input
                       id={`${titleId}-url`}
                       value={url}
@@ -256,15 +245,15 @@ export function PluginMarketplaceSettings({ onChange }: { onChange?: () => Promi
                       aria-label="插件仓库地址"
                       onChange={(event) => setUrl(event.target.value)}
                       placeholder="https://git.example.com/team/plugins.git"
-                      className="min-w-0 grow rounded-lg bg-[var(--console-input-bg)] px-3 py-2 text-sm text-cafe outline-none"
+                      className="w-full min-w-0 flex-1 rounded-lg bg-[var(--console-input-bg)] px-3 py-2 text-sm text-cafe outline-none"
                     />
                     <input
                       aria-label="分支名"
                       value={branch}
                       disabled={busy}
                       onChange={(event) => setBranch(event.target.value)}
-                      placeholder="分支名（留空使用默认分支）"
-                      className="min-w-0 grow rounded-lg bg-[var(--console-input-bg)] px-3 py-2 text-sm text-cafe outline-none"
+                      placeholder="分支（可选）"
+                      className="w-full min-w-0 flex-1 rounded-lg bg-[var(--console-input-bg)] px-3 py-2 text-sm text-cafe outline-none"
                     />
                     <SettingsPrimaryButton
                       onClick={() => addForm.current?.requestSubmit()}
@@ -273,7 +262,6 @@ export function PluginMarketplaceSettings({ onChange }: { onChange?: () => Promi
                       {busy ? '检查中…' : '添加'}
                     </SettingsPrimaryButton>
                   </div>
-                  <p className="text-xs text-cafe-muted">支持 HTTPS 和 SSH 地址，使用本机 Git 的访问配置。</p>
                 </form>
                 {error && (
                   <p role="alert" className="text-sm text-conn-red-text">

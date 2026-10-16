@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { DirectoryBrowser } from '../../ThreadSidebar/DirectoryBrowser';
 import { SettingsPrimaryButton } from '../primitives/SettingsPrimaryButton';
 import { SettingsSecondaryButton } from '../primitives/SettingsSecondaryButton';
+import { PluginInstallationProgress } from './PluginInstallationProgress';
 
 const LAST_DIRECTORY_KEY = 'clowder.plugin-install.last-directory';
 
@@ -151,7 +152,7 @@ export function PluginDirectoryInstallButton({ onInstall }: { onInstall: (path: 
                     取消
                   </SettingsSecondaryButton>
                   <SettingsPrimaryButton onClick={() => void install()} disabled={busy || !selectedPath}>
-                    {busy ? '安装中…' : '安装插件'}
+                    {busy ? <PluginInstallationProgress /> : '安装插件'}
                   </SettingsPrimaryButton>
                 </div>
               </div>

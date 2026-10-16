@@ -11,6 +11,7 @@ import {
 import { SettingsDeleteButton } from '../primitives/SettingsDeleteButton';
 import { SettingsPrimaryButton } from '../primitives/SettingsPrimaryButton';
 import { SettingsText } from '../primitives/SettingsText';
+import { PluginInstallationProgress } from './PluginInstallationProgress';
 import { PluginSourceLabel } from './PluginSourceLabel';
 import { PluginVisual } from './PluginVisual';
 import { type PluginManagerPresentation, pluginAttentionReason } from './plugin-manager-attention';
@@ -71,7 +72,7 @@ function PluginListActions({
   if (canInstall) {
     return (
       <SettingsPrimaryButton onClick={() => onInstall?.()} disabled={busy}>
-        {plugin.id === 'official.chatgpt-dot' ? '开启 dot 协作' : '安装'}
+        {busy ? <PluginInstallationProgress /> : plugin.id === 'official.chatgpt-dot' ? '开启 dot 协作' : '安装'}
       </SettingsPrimaryButton>
     );
   }

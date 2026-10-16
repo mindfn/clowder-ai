@@ -77,6 +77,7 @@ it.each([
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ source: { kind: 'local-directory', path: packagePath } }),
     },
+    { mutationTimeoutMs: 600_000 },
   ]);
   expect(fetch.mock.calls.filter(([url]) => url === '/api/plugin-manager/plugins').length).toBeGreaterThan(1);
   expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -125,6 +126,7 @@ it('admits one install at a time and keeps the dialog until its result arrives',
     install.click();
   });
   expect(writes()).toHaveLength(1);
+  expect(document.querySelector('[role="status"] .animate-spin')).not.toBeNull();
   expect(button('取消').disabled).toBe(true);
   await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
   expect(document.querySelector('[role="dialog"]')).not.toBeNull();
@@ -252,4 +254,21 @@ it('preserves a Windows server path and never installs the virtual drive picker'
   expect(thisPC).toBeDefined();
   await act(async () => thisPC?.click());
   expect(button('安装插件').disabled).toBe(true);
+});
+
+it('refreshes actual inventory after a lost install response without claiming no change', async () => {
+  installResponse = async () => {
+    throw new DOMException('网络请求超时，请重试。', 'TimeoutError');
+  };
+  await open();
+  const readsBefore = fetch.mock.calls.filter(
+    ([url]) => String(url).includes('/api/plugin-manager/plugins') && url !== installEndpoint,
+  ).length;
+  await act(async () => button('安装插件').click());
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain('安装结果尚未确认');
+  expect(document.querySelector('[role="alert"]')?.textContent).not.toContain('请重试');
+  expect(
+    fetch.mock.calls.filter(([url]) => String(url).includes('/api/plugin-manager/plugins') && url !== installEndpoint)
+      .length,
+  ).toBeGreaterThan(readsBefore);
 });

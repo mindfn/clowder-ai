@@ -22,6 +22,9 @@ import {
 
 const POLL_INTERVAL_MS = 5_000;
 const EMPTY_COMPATIBILITY: readonly PluginManagerDesignFixture[] = [];
+// Dependency preparation alone may take five minutes; allow checkout and package admission as well.
+const INSTALL_TIMEOUT_MS = 10 * 60_000;
+const INSTALL_UNCONFIRMED = '安装结果尚未确认，后台可能仍在处理。请查看插件列表确认状态，避免重复安装。';
 
 export function PluginManagerLiveContent({
   presentation = 'v1',
@@ -180,11 +183,15 @@ export function PluginManagerLiveContent({
       setBusyPluginId(pluginId);
       setError(null);
       try {
-        const response = await apiFetch(path, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-        });
+        const response = await apiFetch(
+          path,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          },
+          path.endsWith('/install') ? { mutationTimeoutMs: INSTALL_TIMEOUT_MS } : undefined,
+        );
         if (!response.ok) {
           const failure = await responseError(response, `插件操作失败 (${response.status})`);
           await refresh();
@@ -197,7 +204,8 @@ export function PluginManagerLiveContent({
         }
         await refresh();
       } catch {
-        setError('插件操作失败；现有状态没有被改写。');
+        await refresh();
+        setError(path.endsWith('/install') ? INSTALL_UNCONFIRMED : '操作结果尚未确认，请查看最新插件状态。');
       } finally {
         setBusyPluginId(null);
       }
@@ -208,11 +216,21 @@ export function PluginManagerLiveContent({
   const installFromDirectory = useCallback(
     async (path: string) => {
       setError(null);
-      const response = await apiFetch('/api/plugin-manager/plugins/install', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ source: { kind: 'local-directory', path } }),
-      });
+      let response: Response;
+      try {
+        response = await apiFetch(
+          '/api/plugin-manager/plugins/install',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ source: { kind: 'local-directory', path } }),
+          },
+          { mutationTimeoutMs: INSTALL_TIMEOUT_MS },
+        );
+      } catch {
+        await refresh();
+        throw new Error(INSTALL_UNCONFIRMED);
+      }
       if (!response.ok) {
         const failure = await responseError(response, `本地插件安装失败 (${response.status})`);
         throw new Error(failure.message);

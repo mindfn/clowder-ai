@@ -9,6 +9,7 @@ import { settingsResourceCardClass, settingsResourceRowClass } from '../../Setti
 import { SettingsText } from '../primitives/SettingsText';
 import { DotConnectionDetail } from './DotConnectionDetail';
 import PluginConnectorSettings from './PluginConnectorSettings';
+import { PluginInstallationProgress } from './PluginInstallationProgress';
 import { PluginManagerBindings } from './PluginManagerBindings';
 import { PluginManagerConfigurationSection } from './PluginManagerConfigurationSection';
 import { PluginManagerDetailPrelude } from './PluginManagerDetailPrelude';
@@ -241,7 +242,7 @@ export function PluginManagerDetailCard({
               className="button-secondary"
               onClick={() => onInstallSource(selectedSource.request)}
             >
-              {installed ? '替换为此版本' : '从此来源安装'}
+              {busy ? <PluginInstallationProgress /> : installed ? '替换为此版本' : '从此来源安装'}
             </button>
           </div>
         )}
