@@ -17,6 +17,8 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { test } from 'node:test';
 import { validateManifest } from '@clowder-ai/plugin-contract';
+import { queueEntryId } from '../dist/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
+import { createQueueLedgerAdmission } from '../dist/domains/cats/services/agents/invocation/queue-ledger/QueueLedgerAdmission.js';
 import { BundledPluginRuntimeCarrier } from '../dist/domains/plugin/builtin-runtime/carriers/bundled-runtime-carrier.js';
 import { ModulePluginRuntime } from '../dist/domains/plugin/builtin-runtime/carriers/module-plugin-runtime.js';
 import { currentPluginCallContext, withPluginCallContext } from '../dist/domains/plugin/carrier/plugin-call-context.js';
@@ -31,8 +33,6 @@ import {
 } from '../dist/domains/plugin/carrier/plugin-owner-request-context.js';
 import { currentPluginTransportPurpose } from '../dist/domains/plugin/carrier/plugin-transport-context.js';
 import { PluginRuntimeCarrierRouter } from '../dist/domains/plugin/carrier/runtime-carrier.js';
-import { queueEntryId } from '../src/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.ts';
-import { createQueueLedgerAdmission } from '../src/domains/cats/services/agents/invocation/queue-ledger/QueueLedgerAdmission.ts';
 
 const privateMethod = 'host.public-invocation.assert-current';
 const manifest = {

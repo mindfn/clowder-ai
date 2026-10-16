@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { InvocationQueue } from '../src/domains/cats/services/agents/invocation/InvocationQueue.ts';
-import { MessageStore } from '../src/domains/cats/services/stores/ports/MessageStore.ts';
-import { withPluginCallContext } from '../src/domains/plugin/carrier/plugin-call-context.ts';
+import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { withPluginCallContext } from '../dist/domains/plugin/carrier/plugin-call-context.js';
 import {
   withPluginOwnerRequest,
   withPluginOwnerWebhook,
-} from '../src/domains/plugin/carrier/plugin-owner-request-context.ts';
-import { createPluginSourceFactsHost } from '../src/domains/plugin/host-surface/plugin-source-facts-host.ts';
+} from '../dist/domains/plugin/carrier/plugin-owner-request-context.js';
+import { createPluginSourceFactsHost } from '../dist/domains/plugin/host-surface/plugin-source-facts-host.js';
 
 async function fixture() {
   const store = new MessageStore(),

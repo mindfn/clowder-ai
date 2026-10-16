@@ -4,12 +4,14 @@ import { test } from 'node:test';
 import { createRedisClient } from '@cat-cafe/shared/utils';
 import { InMemoryFrustrationIssueStore } from '../dist/domains/cats/services/stores/memory/InMemoryFrustrationIssueStore.js';
 import { RedisFrustrationIssueStore } from '../dist/domains/cats/services/stores/redis/RedisFrustrationIssueStore.js';
-import { assertRedisIsolationOrThrow } from './helpers/redis-test-helpers.js';
+import { assertRedisIsolationOrThrow, redisIsolationSkipReason } from './helpers/redis-test-helpers.js';
 
 for (const backend of ['memory', 'redis']) {
   test(`${backend} source CAS checks Host cancellation before its atomic write`, async (t) => {
     let redis;
     if (backend === 'redis') {
+      const skip = redisIsolationSkipReason(process.env.REDIS_URL);
+      if (skip) return t.skip(skip);
       assertRedisIsolationOrThrow(process.env.REDIS_URL, 'F202 source cancellation');
       redis = createRedisClient({ url: process.env.REDIS_URL, keyPrefix: `f202-source-current-${randomUUID()}:` });
       t.after(() => redis.quit());

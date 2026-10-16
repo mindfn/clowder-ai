@@ -33,7 +33,7 @@ export function checkReviewRoutingSurfaces({
     ...requireTokens(handoffSkill, 'cross-cat-handoff convention', [
       'Review Completion Intent Classifier',
       'author/custody/handoff source',
-      'cat_cafe_record_external_review_verdict',
+      'github_record_external_review_verdict',
       'pending_delivery',
       'delivery proof',
       'exact target evidence',

@@ -1,11 +1,11 @@
 import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { MessageStore } from '../src/domains/cats/services/stores/ports/MessageStore.ts';
-import { TaskStore } from '../src/domains/cats/services/stores/ports/TaskStore.ts';
-import { ThreadStore } from '../src/domains/cats/services/stores/ports/ThreadStore.ts';
-import { EntrustedWorkOwnerReadService } from '../src/domains/growing/EntrustedWorkOwnerReadService.ts';
-import { createPluginTaskHost } from '../src/domains/plugin/host-surface/task/plugin-task-host.ts';
+import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { TaskStore } from '../dist/domains/cats/services/stores/ports/TaskStore.js';
+import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
+import { EntrustedWorkOwnerReadService } from '../dist/domains/growing/EntrustedWorkOwnerReadService.js';
+import { createPluginTaskHost } from '../dist/domains/plugin/host-surface/task/plugin-task-host.js';
 
 async function fixture() {
   const tasks = new TaskStore(),
@@ -142,9 +142,9 @@ test('Task data cannot adopt user, external or foreign-plugin messages with spoo
 });
 
 test('ordinary native calls need no execution policy; read-only and expired calls cannot write', async () => {
-  const { withPluginCallContext } = await import('../src/domains/plugin/carrier/plugin-call-context.ts');
+  const { withPluginCallContext } = await import('../dist/domains/plugin/carrier/plugin-call-context.js');
   const { withPluginOwnerRequest, withPluginOwnerWebhook } = await import(
-    '../src/domains/plugin/carrier/plugin-owner-request-context.ts'
+    '../dist/domains/plugin/carrier/plugin-owner-request-context.js'
   );
   const f = await fixture();
   const native = {
@@ -277,7 +277,7 @@ test('a newer source revision cannot replay the original Task admission', async 
 
 async function materialFixture() {
   const f = await fixture();
-  const { F232PreparedArtifactReader } = await import('../src/domains/growing/F232PreparedArtifactReader.ts');
+  const { F232PreparedArtifactReader } = await import('../dist/domains/growing/F232PreparedArtifactReader.js');
   const artifactRef = '/uploads/selected-report.md';
   const publication = f.messages.append({
     userId: 'owner',
@@ -329,7 +329,7 @@ test('explicit material selection uses the same Task revision and survives compl
 test('closing already selected material calls the original F232 completion reader', async () => {
   const f = await materialFixture();
   const task = await f.host.upsertBySubject(f.input);
-  const { EntrustedWorkLifecycleService } = await import('../src/domains/growing/EntrustedWorkLifecycleService.ts');
+  const { EntrustedWorkLifecycleService } = await import('../dist/domains/growing/EntrustedWorkLifecycleService.js');
   const selected = await new EntrustedWorkLifecycleService(f.tasks).update({
     taskId: task.id,
     expectedRevision: 1,

@@ -12,10 +12,11 @@ import { createPluginTaskHost } from '../dist/domains/plugin/host-surface/task/p
 import { assertRedisIsolationOrThrow, redisIsolationSkipReason } from './helpers/redis-test-helpers.js';
 
 const redisUrl = process.env.REDIS_URL;
-assertRedisIsolationOrThrow(redisUrl, 'plugin-task-subject-race');
+
 const conflict = { code: 'TASK_SUBJECT_SNAPSHOT_CONFLICT' };
 
 async function fixture(t, backend) {
+  if (backend === 'redis') assertRedisIsolationOrThrow(redisUrl, 'plugin-task-subject-race');
   const redis = backend === 'redis' ? new Redis(redisUrl, { keyPrefix: `subject-race:${randomUUID()}:` }) : null;
   if (redis) t.after(() => redis.quit());
   const store = redis ? new RedisTaskStore(redis) : new TaskStore();

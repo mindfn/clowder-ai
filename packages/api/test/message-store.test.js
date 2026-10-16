@@ -14,9 +14,19 @@ describe('MessageStore', () => {
     );
     const store = new MessageStore();
     const id = generateSortableId(Date.now());
+    const extra = {
+      pluginMessage: {
+        instanceId: 'installed-fixture',
+        revision: 1,
+        provenance: { origin: { kind: 'plugin', instanceId: 'installed-fixture' }, epistemicStatus: 'observation' },
+        elements: [{ elementId: 'body', kind: 'text', payload: { text: 'final' } }],
+        appendOps: [],
+      },
+    };
     const message = store.append({
       userId: 'u',
-      catId: null,
+      from: { kind: 'plugin', instanceId: 'installed-fixture' },
+      extra,
       threadId: 't',
       content: 'final',
       mentions: [],
@@ -31,7 +41,8 @@ describe('MessageStore', () => {
       () =>
         store.append({
           userId: 'u',
-          catId: null,
+          from: { kind: 'plugin', instanceId: 'installed-fixture' },
+          extra,
           threadId: 't',
           content: 'collision',
           mentions: [],

@@ -1,16 +1,16 @@
 import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CallbackAuthTurnExecutionLifecycle } from '../src/domains/cats/services/agents/invocation/CallbackAuthTurnExecutionLifecycle.ts';
-import { InvocationQueue } from '../src/domains/cats/services/agents/invocation/InvocationQueue.ts';
-import { InvocationRegistry } from '../src/domains/cats/services/agents/invocation/InvocationRegistry.ts';
-import { InvocationTracker } from '../src/domains/cats/services/agents/invocation/InvocationTracker.ts';
-import { QueueProcessor } from '../src/domains/cats/services/agents/invocation/QueueProcessor.ts';
-import { AgentRegistry } from '../src/domains/cats/services/agents/registry/AgentRegistry.ts';
-import { AgentRouter } from '../src/domains/cats/services/agents/routing/AgentRouter.ts';
-import { InMemoryTurnExecutionStore } from '../src/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.ts';
-import { InvocationRecordStore } from '../src/domains/cats/services/stores/ports/InvocationRecordStore.ts';
-import { MessageStore } from '../src/domains/cats/services/stores/ports/MessageStore.ts';
+import { CallbackAuthTurnExecutionLifecycle } from '../dist/domains/cats/services/agents/invocation/CallbackAuthTurnExecutionLifecycle.js';
+import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js';
+import { InvocationTracker } from '../dist/domains/cats/services/agents/invocation/InvocationTracker.js';
+import { QueueProcessor } from '../dist/domains/cats/services/agents/invocation/QueueProcessor.js';
+import { AgentRegistry } from '../dist/domains/cats/services/agents/registry/AgentRegistry.js';
+import { AgentRouter } from '../dist/domains/cats/services/agents/routing/AgentRouter.js';
+import { InMemoryTurnExecutionStore } from '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js';
+import { InvocationRecordStore } from '../dist/domains/cats/services/stores/ports/InvocationRecordStore.js';
+import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 
 async function fixture({ fail = false, silent = false } = {}) {
   const store = new MessageStore();

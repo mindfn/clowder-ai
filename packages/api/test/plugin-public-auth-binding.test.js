@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { InvocationRegistry } from '../src/domains/cats/services/agents/invocation/InvocationRegistry.ts';
-import { MemoryAuthInvocationBackend } from '../src/domains/cats/services/agents/invocation/MemoryAuthInvocationBackend.ts';
-import { RedisAuthInvocationBackend } from '../src/domains/cats/services/agents/invocation/RedisAuthInvocationBackend.ts';
-import { authRecordFromRedisHash } from '../src/domains/cats/services/agents/invocation/RedisAuthInvocationRecord.ts';
+import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js';
+import { MemoryAuthInvocationBackend } from '../dist/domains/cats/services/agents/invocation/MemoryAuthInvocationBackend.js';
+import { RedisAuthInvocationBackend } from '../dist/domains/cats/services/agents/invocation/RedisAuthInvocationBackend.js';
+import { authRecordFromRedisHash } from '../dist/domains/cats/services/agents/invocation/RedisAuthInvocationRecord.js';
 
 const binding = () => ({
   version: 1,

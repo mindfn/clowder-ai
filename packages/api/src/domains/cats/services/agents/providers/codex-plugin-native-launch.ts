@@ -2,6 +2,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, wr
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { pluginMcpEnvironment } from '../../../../../config/capabilities/plugin-mcp-environment.js';
+import { finalizeCodexAccountEnvironment } from '../../../../../config/codex-account-environment.js';
+import { codexManagedLaunchArgs } from '../../../../../config/codex-managed-launch.js';
 import type { NativeMcpServer } from '../../../../plugin/declared/native-mcp-launches.js';
 import type { AgentServiceOptions } from '../../types.js';
 import { normalizeToolExecutionPolicy } from '../invocation/tool-execution-policy.js';
@@ -82,6 +84,8 @@ export async function prepareCodexNativeLaunch(
   // Capture every mutable launch input before the first await, including credentials.
   const callbackEnv = { ...options.callbackEnv };
   const accountEnv = { ...options.accountEnv };
+  const accountLaunch = options.codexAccountLaunch ? structuredClone(options.codexAccountLaunch) : undefined;
+  const credentialHome = accountLaunch?.credentialHome ?? (process.env.CODEX_HOME || join(homedir(), '.codex'));
   if (!callbackEnv.CAT_CAFE_INVOCATION_ID || !callbackEnv.CAT_CAFE_CALLBACK_TOKEN) {
     throw new Error('plugin_native_invocation_credentials_missing');
   }
@@ -91,6 +95,7 @@ export async function prepareCodexNativeLaunch(
     workingDirectory: canonicalWorkspace,
     callbackEnv,
     accountEnv,
+    ...(accountLaunch ? { codexAccountLaunch: accountLaunch } : {}),
     toolExecutionPolicy: policy,
     cliConfigArgs: [],
   };
@@ -108,7 +113,7 @@ export async function prepareCodexNativeLaunch(
     mkdirSync(pluginHome, { mode: 0o700 });
     const env: Record<string, string> = { HOME: home, CODEX_HOME: codexHome, TMPDIR: scratch, PATH: MINIMAL_PATH };
     if (process.platform === 'win32') env.USERPROFILE = home;
-    const mode = callbackEnv.CODEX_AUTH_MODE?.trim().toLowerCase();
+    const mode = accountLaunch?.authMode ?? callbackEnv.CODEX_AUTH_MODE?.trim().toLowerCase();
     if (mode === 'api_key' || mode === 'auto') {
       for (const key of AUTH_KEYS) {
         const value = accountEnv[key] ?? callbackEnv[key];
@@ -117,7 +122,7 @@ export async function prepareCodexNativeLaunch(
     }
     if (mode !== 'api_key') {
       // Project only the existing account's auth file, never user config/rules/plugins.
-      const auth = realpathSync(join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'auth.json'));
+      const auth = realpathSync(join(credentialHome, 'auth.json'));
       if (!statSync(auth).isFile()) throw new Error('plugin_native_auth_file_unavailable');
       symlinkSync(auth, join(codexHome, 'auth.json'));
     }
@@ -193,6 +198,20 @@ export async function prepareCodexNativeLaunch(
       '--config',
       `mcp_servers.${name}.enabled=true`,
     ];
+    if (accountLaunch) {
+      args.push(...codexManagedLaunchArgs({ ...accountLaunch, sqliteHome: codexHome }, []));
+      const finalized = finalizeCodexAccountEnvironment(accountLaunch, {
+        env,
+        selectedApiEnv: accountEnv,
+        args,
+        cwd: canonicalWorkspace,
+        executionHome: codexHome,
+      });
+      for (const [key, value] of Object.entries(finalized)) {
+        if (value === null) delete env[key];
+        else env[key] = value;
+      }
+    }
     return {
       kind: 'public',
       options: captured,

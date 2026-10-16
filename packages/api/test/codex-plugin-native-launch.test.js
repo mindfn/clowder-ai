@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
+import { resolveCodexAccountLaunch } from '../dist/config/codex-account-launch.js';
 import { CodexAgentService } from '../dist/domains/cats/services/agents/providers/CodexAgentService.js';
 
 // This suite tests only the provider's launch boundary. The Host resolver and
@@ -382,7 +383,7 @@ test(
 );
 
 test(
-  'OAuth public HOME projects only auth and cleans its own files without touching the account',
+  'OAuth public HOME uses the selected account rather than ambient login and projects only auth',
   { timeout: 15000 },
   async (t) => {
     const f = await fixture(t);
@@ -391,7 +392,10 @@ test(
     await writeFile(join(accountRoot, 'auth.json'), '{}', { mode: 0o600 });
     await writeFile(join(accountRoot, 'config.toml'), 'private_fixture=true');
     const previous = process.env.CODEX_HOME;
-    process.env.CODEX_HOME = accountRoot;
+    const ambientRoot = join(f.root, 'ambient-account');
+    await mkdir(ambientRoot);
+    await writeFile(join(ambientRoot, 'auth.json'), '{"account":"ambient"}');
+    process.env.CODEX_HOME = ambientRoot;
     t.after(() => {
       if (previous === undefined) delete process.env.CODEX_HOME;
       else process.env.CODEX_HOME = previous;
@@ -399,6 +403,10 @@ test(
     const messages = await collect(
       f.service.invoke('Fixture prompt', {
         ...f.options,
+        codexAccountLaunch: resolveCodexAccountLaunch(
+          { id: 'selected-oauth', authType: 'oauth', envVars: { CODEX_HOME: accountRoot } },
+          { cwd: f.workspace },
+        ),
         callbackEnv: { ...f.options.callbackEnv, CODEX_AUTH_MODE: 'oauth' },
       }),
     );

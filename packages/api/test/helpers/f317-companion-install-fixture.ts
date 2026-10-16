@@ -16,8 +16,6 @@ import type { DesktopWindowLaunch } from '../../src/domains/plugin/desktop-windo
 import { OFFICIAL_PLUGIN_CATALOG } from '../../src/domains/plugin/official-catalog.js';
 import { OfficialPluginPackageInstaller } from '../../src/domains/plugin/official-package-installer.js';
 import { createDormantPluginRuntimeComposition } from '../../src/domains/plugin/runtime-composition.js';
-import { MemoryMeetingIntakeStore } from '../../src/domains/signal-intake/MeetingIntakeStore.js';
-import { MemorySignalRouteStore } from '../../src/domains/signal-intake/SignalRouteStore.js';
 import { sessionAuthPlugin, sessionRoute } from '../../src/infrastructure/session-auth.js';
 import {
   companionDecisionWireResponse,
@@ -115,7 +113,7 @@ export async function modernCompanionInstallFixture(
   const saved = messages.append({
     userId: owner,
     threadId: 'home',
-    catId: null,
+    from: { kind: 'user', userId: owner },
     content: 'preserved',
     mentions: [],
     timestamp: 1,
@@ -126,8 +124,6 @@ export async function modernCompanionInstallFixture(
   let denyClose = false;
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot: f.root,
-    routes: new MemorySignalRouteStore(),
-    intakes: new MemoryMeetingIntakeStore(),
     messageStore: messages,
     // Normal deterministic tests use an explicitly trusted fixture catalog. The
     // opt-in registry journey uses the production digest catalog without overrides.

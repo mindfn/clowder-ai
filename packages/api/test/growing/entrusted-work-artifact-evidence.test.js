@@ -2,7 +2,7 @@ import '../helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
-import { TaskStore } from '../../src/domains/cats/services/stores/ports/TaskStore.ts';
+import { TaskStore } from '../../dist/domains/cats/services/stores/ports/TaskStore.js';
 import { assertRedisIsolationOrThrow, redisIsolationSkipReason } from '../helpers/redis-test-helpers.js';
 
 for (const mode of ['memory', 'redis'])
@@ -16,7 +16,7 @@ for (const mode of ['memory', 'redis'])
         if (mode !== 'redis') return;
         assertRedisIsolationOrThrow(process.env.REDIS_URL, 'artifact-evidence');
         const { createRedisClient } = await import('@cat-cafe/shared/utils');
-        ({ RedisTaskStore: Store } = await import('../../src/domains/cats/services/stores/redis/RedisTaskStore.ts'));
+        ({ RedisTaskStore: Store } = await import('../../dist/domains/cats/services/stores/redis/RedisTaskStore.js'));
         redis = createRedisClient({ url: process.env.REDIS_URL, keyPrefix: `artifact-evidence-${randomUUID()}:` });
       });
       after(async () => {

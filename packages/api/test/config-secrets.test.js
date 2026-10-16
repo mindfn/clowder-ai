@@ -123,7 +123,7 @@ describe('POST /api/config/secrets', () => {
     });
     assert.equal(res.statusCode, 400);
     const body = JSON.parse(res.body);
-    assert.ok(body.error.includes('not in connector secrets allowlist'));
+    assert.ok(body.error.includes('not in Host secrets allowlist'));
   });
 
   it('rejects when no session identity', async () => {
@@ -316,7 +316,7 @@ describe('POST /api/config/secrets', () => {
     assert.equal(process.env.VAPID_PUBLIC_KEY, 'cli_xyz');
     assert.equal(process.env.VAPID_PRIVATE_KEY, 'sec_xyz');
     assert.equal(captured.length, 1);
-    assert.deepEqual(captured[0].changedKeys.sort(), ['VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY']);
+    assert.deepEqual(captured[0].changedKeys.sort(), ['VAPID_PRIVATE_KEY', 'VAPID_PUBLIC_KEY']);
   });
 
   it('deletes var when value is null', async () => {

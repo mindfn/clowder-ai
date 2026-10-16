@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import Fastify from 'fastify';
-import { InvocationRegistry } from '../src/domains/cats/services/agents/invocation/InvocationRegistry.ts';
-import { currentPluginCallContext } from '../src/domains/plugin/carrier/plugin-call-context.ts';
-import { NativePluginActions } from '../src/domains/plugin/declared/native-plugin-actions.ts';
-import { pluginNativeActionRoutes } from '../src/routes/plugin-native-action-routes.ts';
+import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js';
+import { currentPluginCallContext } from '../dist/domains/plugin/carrier/plugin-call-context.js';
+import { NativePluginActions } from '../dist/domains/plugin/declared/native-plugin-actions.js';
+import { pluginNativeActionRoutes } from '../dist/routes/plugin-native-action-routes.js';
 
 const publicBinding = () => ({
   version: 1,

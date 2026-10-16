@@ -4,9 +4,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
-import { InvocationRegistry } from '../src/domains/cats/services/agents/invocation/InvocationRegistry.ts';
-import { invokeSingleCat } from '../src/domains/cats/services/agents/invocation/invoke-single-cat.ts';
-import { InMemoryTurnExecutionStore } from '../src/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.ts';
+import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js';
+import { invokeSingleCat } from '../dist/domains/cats/services/agents/invocation/invoke-single-cat.js';
+import { InMemoryTurnExecutionStore } from '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js';
 
 let auditDir;
 let previousAuditDir;

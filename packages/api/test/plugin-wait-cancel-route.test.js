@@ -10,9 +10,9 @@ import { tasksRoutes } from '../dist/routes/tasks.js';
 import { assertRedisIsolationOrThrow, redisIsolationSkipReason } from './helpers/redis-test-helpers.js';
 
 const redisUrl = process.env.REDIS_URL;
-assertRedisIsolationOrThrow(redisUrl, 'plugin-wait-cancel-route');
 
 async function fixture(t, backend, kind = 'pr_tracking', pending = false) {
+  if (backend === 'redis') assertRedisIsolationOrThrow(redisUrl, 'plugin-wait-cancel-route');
   const redis = backend === 'redis' ? new Redis(redisUrl, { keyPrefix: `cancel-wait:${randomUUID()}:` }) : null;
   if (redis) t.after(() => redis.quit());
   const store = redis ? new RedisTaskStore(redis) : new TaskStore();

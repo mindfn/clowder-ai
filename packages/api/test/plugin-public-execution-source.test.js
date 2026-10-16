@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { executePublicInvocation } from '../src/domains/cats/services/agents/invocation/public-invocation-execution.ts';
+import { executePublicInvocation } from '../dist/domains/cats/services/agents/invocation/public-invocation-execution.js';
 
 function fixture() {
   const seen = [];

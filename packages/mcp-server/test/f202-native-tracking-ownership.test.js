@@ -8,9 +8,9 @@ test('Host MCP leaves tracking tools to installed native contributions', async (
   const server = createServer();
   try {
     for (const name of [
-      'cat_cafe_register_pr_tracking',
-      'cat_cafe_register_issue_tracking',
-      'cat_cafe_unregister_tracking',
+      'cat_cafe_register_pr_tracking', // mcp-cutover-negative-reference: absence
+      'cat_cafe_register_issue_tracking', // mcp-cutover-negative-reference: absence
+      'cat_cafe_unregister_tracking', // mcp-cutover-negative-reference: absence
     ]) {
       assert.equal(Object.hasOwn(server._registeredTools, name), false, `${name} has a legacy Host owner`);
     }

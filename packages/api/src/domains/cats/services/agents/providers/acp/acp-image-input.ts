@@ -51,6 +51,10 @@ export async function readAcpImageBlocks(
       if (!image.url.startsWith('/uploads/')) throw invalid();
       try {
         root = await realpath(getDefaultUploadDir(uploadDir ?? process.env.UPLOAD_DIR));
+      } catch {
+        throw new AcpImageInputError('image_input_unavailable', '图片附件无法读取，请重新上传。');
+      }
+      try {
         path = resolve(root, decodeURIComponent(image.url.slice('/uploads/'.length)));
       } catch {
         throw invalid();

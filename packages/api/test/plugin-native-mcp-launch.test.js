@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { validateManifest } from '@clowder-ai/plugin-contract';
-import { PluginRuntimeCarrierRouter } from '../src/domains/plugin/carrier/runtime-carrier.js';
+import { PluginRuntimeCarrierRouter } from '../dist/domains/plugin/carrier/runtime-carrier.js';
 
 const policy = (overrides = {}) => ({
   mode: 'plugin_native',

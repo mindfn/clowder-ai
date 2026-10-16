@@ -1,11 +1,11 @@
 import '../helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { prepareDevelopmentWorkTransition } from '../../src/domains/cats/services/stores/ports/DevelopmentWorkTransition.ts';
-import { createEntrustedTaskItem } from '../../src/domains/cats/services/stores/ports/TaskItemFactory.ts';
-import { TaskStore } from '../../src/domains/cats/services/stores/ports/TaskStore.ts';
-import { hydrateTask, serializeTask } from '../../src/domains/cats/services/stores/redis/RedisTaskCodec.ts';
-import { EntrustedWorkLifecycleService } from '../../src/domains/growing/EntrustedWorkLifecycleService.ts';
+import { prepareDevelopmentWorkTransition } from '../../dist/domains/cats/services/stores/ports/DevelopmentWorkTransition.js';
+import { createEntrustedTaskItem } from '../../dist/domains/cats/services/stores/ports/TaskItemFactory.js';
+import { TaskStore } from '../../dist/domains/cats/services/stores/ports/TaskStore.js';
+import { hydrateTask, serializeTask } from '../../dist/domains/cats/services/stores/redis/RedisTaskCodec.js';
+import { EntrustedWorkLifecycleService } from '../../dist/domains/growing/EntrustedWorkLifecycleService.js';
 
 async function fixture() {
   const store = new TaskStore();

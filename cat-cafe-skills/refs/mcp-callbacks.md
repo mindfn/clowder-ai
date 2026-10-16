@@ -23,8 +23,8 @@ HTTP callback route 是 MCP tool 的底层实现和维护者调试面，不是 s
 | 建毛线球任务 | `cat_cafe_create_task` | `POST /api/callbacks/create-task` |
 | 更新任务状态 | `cat_cafe_update_task` | `POST /api/callbacks/update-task` |
 | 列任务 | `cat_cafe_list_tasks` | `GET /api/callbacks/list-tasks` |
-| assigned cat 接/退 community route | `cat_cafe_validate_community_route` | `POST /api/community-issues/:id/validate-route` |
-| 记录 external review verdict + delivery | `cat_cafe_record_external_review_verdict` | `POST /api/callbacks/record-external-review-verdict` |
+| assigned cat 接/退 community route | `github_community_validate_route` | 已安装 GitHub 插件原生 action，输入 `{id, payload}` |
+| 记录 external review verdict + delivery | `github_record_external_review_verdict` | 已安装 GitHub 插件原生 action，按当前工具 schema 提交 |
 | 搜证据 | `cat_cafe_search_evidence` | `GET /api/callbacks/search-evidence` |
 | 写长期记忆 | `cat_cafe_retain_memory_callback` | `POST /api/callbacks/retain-memory` |
 | 创建 rich block | `cat_cafe_create_rich_block` | `POST /api/callbacks/create-rich-block` |
@@ -54,7 +54,7 @@ MCP 工具会从 invocation credentials 或 agent-key sidecar 自动处理认证
 | shared Antigravity MCP 缺凭证 | 传 `agentKeyCatId`，让工具选择对应猫的 sidecar key |
 | 工具目录完全没有对应能力 | 按 F223 追踪 execution surface 缺口，不把 HTTP route 当主路径 |
 
-`routeAcceptance=pending` 只能由真实 assigned cat 调 `cat_cafe_validate_community_route` 变更；不要把 callback token 暴露给 `curl`，也不要由 case owner 冒充目标猫直写 API。
+`routeAcceptance=pending` 只能由真实 assigned cat 调 `github_community_validate_route` 变更；不要把 callback token 暴露给 `curl`，也不要由 case owner 冒充目标猫直写 API。
 
 ## Notes
 

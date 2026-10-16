@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { MemoryAuthInvocationBackend } from '../src/domains/cats/services/agents/invocation/MemoryAuthInvocationBackend.ts';
-import { authRecordFromRedisHash } from '../src/domains/cats/services/agents/invocation/RedisAuthInvocationRecord.ts';
+import { MemoryAuthInvocationBackend } from '../dist/domains/cats/services/agents/invocation/MemoryAuthInvocationBackend.js';
+import { authRecordFromRedisHash } from '../dist/domains/cats/services/agents/invocation/RedisAuthInvocationRecord.js';
 
 const principal = {
   invocationId: 'retired-task',
