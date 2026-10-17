@@ -208,6 +208,38 @@ The accepted Train B direction does not approve the aggregate migration or commi
 - Declarative UI contributions target only Host-owned registered slots and commands. A slot lands together
   with the acceptance that plugin disable/uninstall removes both its button/icon and command handler.
 
+#### C2 UI packaging and request forwarding (operator clarification, 2026-10-17)
+
+Source: `thread_mu8dg6h7l2x4ohsk#0001792235065915-010420-85bd8cc9`,
+`#0001792235141810-010424-81b92693`, `#0001792235297969-010435-613d073e`;
+documentation update requested in `#0001792235309117-010437-1ac14ddb`, with the manifest exclusion
+confirmed in `#0001792235339466-010438-b00f5542`.
+
+- Plugin-specific pages, frames/elements and their business handlers belong in the plugin package.
+  Host supplies registered UI slots and the generic embedding/lifecycle mechanism, rather than retaining
+  a separate Host page implementation for each plugin.
+- Page requests enter a generic Plugin Manager forwarding endpoint. Manager resolves the installed plugin
+  instance and invokes its single request entry; the plugin dispatches the action/path internally.
+  Host does not maintain a per-plugin business endpoint or action registry. A URL such as
+  `/plugins/:pluginId/actions/:action` illustrates the direction, not an implemented or frozen wire contract;
+  instance selection must remain unambiguous where multiple instances exist.
+- Host supplies authenticated caller context, instance access checks, enabled/current lifecycle checks
+  and request cancellation. The plugin validates operation inputs and business permissions. Forwarding
+  reaches the plugin's intentional request handler, not arbitrary internal methods selected by a string.
+  This owner-facing channel does not make external callbacks anonymous or replace their verification.
+- **Plugin-internal page endpoints/actions must not be individually listed in `plugin.yaml` or registered
+  as Host contributions.** They are the plugin's implementation details. The manifest retains Host-facing
+  UI entry/slot, permission and discoverable/schedulable capability declarations (including MCP, skills,
+  schedules and limbs). Host-dispatched UI slot commands remain distinct from internal business actions.
+- With the Community page migrated and its real user journeys verified, retire the C1
+  `community-http-01..29` forwarding declarations and their obsolete adapters. Removing declarations before
+  switching their consumers breaks C1; hiding them in the ordinary capability view is presentation cleanup,
+  not C2 completion. Acceptance includes a new plugin-internal action working without a Host route/registry
+  or manifest change, correct instance/authorization routing, and disable/uninstall revoking both UI and
+  invocation.
+
+This records the accepted C2 direction; it does not implement C2 or extend the current C1 cutover.
+
 ### Train C1 / C2 — where the plan and the status truth live (updated 2026-09-23)
 
 - **Host-side C1 ledger (decision entry; single source of truth for every Host slice, its acceptance and
