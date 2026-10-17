@@ -107,7 +107,8 @@ for (const failingMode of ['-tzf', '-tvzf']) {
       const sourceRoot = join(root, 'source');
       await fs.mkdir(join(sourceRoot, 'package'), { recursive: true });
       await fs.writeFile(join(sourceRoot, 'package', 'fixture.txt'), 'listing lifetime fixture');
-      await realExecFileAsync('tar', ['-czf', join(artifactRoot, 'package.tgz'), '-C', sourceRoot, 'package']);
+      // Relative operands also work with Windows Git GNU tar, which treats C: as a remote host.
+      await realExecFileAsync('tar', ['-czf', 'artifact/package.tgz', '-C', 'source', 'package'], { cwd: root });
       const bytes = await fs.readFile(join(artifactRoot, 'package.tgz'));
       const packageDigest = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
       const children = [];

@@ -9,6 +9,9 @@
  * reconciliation are in f202-w2-6-official-connector-grants.test.js.
  */
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { HostInventoryControlPlane, MemoryPluginInventoryStore } from '../dist/domains/plugin/index.js';
 import { OFFICIAL_PLUGIN_CATALOG } from '../dist/domains/plugin/official-catalog.js';
@@ -82,22 +85,28 @@ test('a catalog update re-bounds the grant by the new release request, both ways
   );
 });
 
-test('a bundled catalog package is bounded by its own manifest request the same way', async () => {
-  // The Collective Connector ships inside the Host and requests no capability at all.
-  const bundled = OFFICIAL_PLUGIN_CATALOG.find((entry) => entry.distribution === 'bundled');
+test('a bundled catalog package is bounded by its own manifest request the same way', async (t) => {
+  // Dot ships as a registered archive and requests no capability at all.
+  const bundled = OFFICIAL_PLUGIN_CATALOG.find((entry) => entry.catalogId === 'chatgpt-dot');
+  assert.equal(bundled.distribution, 'bundled');
+  assert.equal(bundled.bundledFormat, 'archive');
+  const packagesRoot = await mkdtemp(join(tmpdir(), 'grant-bound-bundled-'));
+  t.after(() => rm(packagesRoot, { recursive: true, force: true }));
   const entry = { ...bundled, effectiveGrants: ['plugin.config.read'] };
   const store = new MemoryPluginInventoryStore();
   const inventory = new HostInventoryControlPlane(store, { createInstanceId: () => 'pi_bundled', now: () => 1 });
   const installer = new OfficialPluginPackageInstaller({
     inventory,
-    packagesRoot: '/nonexistent-bundled-packages-root',
+    packagesRoot,
     catalog: [entry],
-    fetchArchive: async () => assert.fail('a bundled package is never fetched'),
   });
 
   await installer.install(entry.catalogId, releaseFence(entry));
 
-  assert.deepEqual((await store.snapshot()).grants[0].effectiveGrants, []);
+  const snapshot = await store.snapshot();
+  assert.equal(snapshot.packages[0].packageDigest, entry.packageDigest);
+  assert.deepEqual(snapshot.grants[0].requestedCapabilities, []);
+  assert.deepEqual(snapshot.grants[0].effectiveGrants, []);
 });
 
 test('the inventory still refuses a candidate carrying a grant its package does not request', async () => {
