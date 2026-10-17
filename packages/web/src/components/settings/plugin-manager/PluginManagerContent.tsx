@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { HubIcon } from '../../hub-icons';
 import { settingsResourceCardClass } from '../../SettingsResourceCard';
 import { SettingsText } from '../primitives/SettingsText';
+import { SettingsPageHeader, type SettingsPageHeaderProps } from '../SettingsPageHeader';
 import { PluginDirectoryInstallButton } from './PluginDirectoryInstallButton';
 import { PluginManagerDetailCard } from './PluginManagerDetailCard';
 import { PluginListRow, PluginListSection } from './PluginManagerList';
@@ -91,6 +92,7 @@ function usePluginSelection(
 
 export function PluginManagerContent({
   fixtures,
+  pageHeader,
   catalogStatus = 'fresh',
   catalogMessage,
   loading = false,
@@ -116,6 +118,7 @@ export function PluginManagerContent({
   renderCompatibilityDetail,
 }: {
   fixtures: readonly PluginManagerDesignFixture[];
+  pageHeader?: Omit<SettingsPageHeaderProps, 'children'>;
   catalogStatus?: 'fresh' | 'stale' | 'degraded' | 'unavailable';
   catalogMessage?: string;
   loading?: boolean;
@@ -195,7 +198,13 @@ export function PluginManagerContent({
 
   return (
     <section data-testid="plugin-manager" className="flex h-full min-h-0 flex-1 flex-col gap-3.5 overflow-hidden">
-      <PluginManagerToolbar onMarketplaceChange={onMarketplaceChange} onDirectoryInstall={onDirectoryInstall} />
+      {pageHeader ? (
+        <SettingsPageHeader {...pageHeader}>
+          <PluginManagerToolbar onMarketplaceChange={onMarketplaceChange} onDirectoryInstall={onDirectoryInstall} />
+        </SettingsPageHeader>
+      ) : (
+        <PluginManagerToolbar onMarketplaceChange={onMarketplaceChange} onDirectoryInstall={onDirectoryInstall} />
+      )}
 
       {catalogStatus !== 'fresh' && (
         <div className="flex items-start gap-2 rounded-xl bg-conn-amber-bg px-3 py-2.5">

@@ -7,10 +7,11 @@ import { PluginManagerLiveContent } from './plugin-manager/PluginManagerLiveCont
 import { resolvePluginManagerDesignGate } from './plugin-manager/plugin-manager-design-gate';
 import { PLUGIN_MANAGER_DESIGN_FIXTURES } from './plugin-manager/plugin-manager-fixtures';
 import { SettingsText } from './primitives/SettingsText';
+import { SettingsPageHeader, type SettingsPageHeaderProps } from './SettingsPageHeader';
 
 export { resolvePluginManagerDesignGate } from './plugin-manager/plugin-manager-design-gate';
 
-export function PluginsContent() {
+export function PluginsContent({ pageHeader }: { pageHeader?: Omit<SettingsPageHeaderProps, 'children'> } = {}) {
   const presentation = useShellPresentation() === 'v2' ? 'v2' : 'v1';
   const [designGate, setDesignGate] = useState({
     resolved: false,
@@ -24,19 +25,23 @@ export function PluginsContent() {
 
   if (!designGate.resolved) {
     return (
-      <SettingsText as="p" variant="sm" tone="muted">
-        加载插件中...
-      </SettingsText>
+      <>
+        {pageHeader && <SettingsPageHeader {...pageHeader} />}
+        <SettingsText as="p" variant="sm" tone="muted">
+          加载插件中...
+        </SettingsText>
+      </>
     );
   }
   if (designGate.enabled) {
     return (
       <PluginManagerContent
+        pageHeader={pageHeader}
         presentation={presentation}
         fixtures={PLUGIN_MANAGER_DESIGN_FIXTURES}
         catalogStatus={designGate.degradedCatalog ? 'degraded' : 'fresh'}
       />
     );
   }
-  return <PluginManagerLiveContent presentation={presentation} />;
+  return <PluginManagerLiveContent presentation={presentation} pageHeader={pageHeader} />;
 }

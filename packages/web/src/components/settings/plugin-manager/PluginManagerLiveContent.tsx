@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useConfirm } from '@/components/useConfirm';
 import { apiFetch } from '@/utils/api-client';
+import type { SettingsPageHeaderProps } from '../SettingsPageHeader';
 import { PluginManagerContent } from './PluginManagerContent';
 import type { PluginManagerPresentation } from './plugin-manager-attention';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
@@ -27,10 +28,12 @@ const INSTALL_UNCONFIRMED = '安装结果尚未确认，后台可能仍在处理
 
 export function PluginManagerLiveContent({
   presentation = 'v1',
+  pageHeader,
   compatibilityFixtures = EMPTY_COMPATIBILITY,
   renderCompatibilityDetail,
 }: {
   presentation?: PluginManagerPresentation;
+  pageHeader?: Omit<SettingsPageHeaderProps, 'children'>;
   compatibilityFixtures?: readonly PluginManagerDesignFixture[];
   renderCompatibilityDetail?: (pluginId: string, plugin: PluginManagerDesignFixture) => ReactNode | undefined;
 } = {}) {
@@ -284,6 +287,7 @@ export function PluginManagerLiveContent({
 
   return (
     <PluginManagerContent
+      pageHeader={pageHeader}
       presentation={presentation}
       initialDetailPluginId={initialDetailPluginId}
       fixtures={[...fixtures, ...compatibilityPresentation]}

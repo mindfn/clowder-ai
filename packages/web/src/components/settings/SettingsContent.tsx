@@ -187,6 +187,18 @@ export function SettingsContent({ section, initialEditCatId }: SettingsContentPr
 
   const meta = SETTINGS_SECTIONS.find((item) => item.id === section) ?? SETTINGS_SECTIONS[0];
 
+  const pageHeader = {
+    title: section === 'accounts' ? accountsText.title : (sectionText(section)?.title ?? meta.label),
+    subtitle:
+      section === 'accounts'
+        ? isV2
+          ? undefined
+          : accountsText.subtitle
+        : isV2
+          ? (sectionText(section)?.description ?? meta.description)
+          : meta.description,
+  };
+
   const content = (() => {
     switch (meta.id) {
       case 'members':
@@ -303,7 +315,7 @@ export function SettingsContent({ section, initialEditCatId }: SettingsContentPr
       case 'mcp':
         return <McpManageContent />;
       case 'plugins':
-        return <PluginsContent />;
+        return <PluginsContent pageHeader={pageHeader} />;
       case 'concierge':
         return <ConciergeSettingsContent />;
       default:
@@ -328,20 +340,7 @@ export function SettingsContent({ section, initialEditCatId }: SettingsContentPr
 
   return (
     <>
-      {!(isV2 && section === 'members') && (
-        <SettingsPageHeader
-          title={section === 'accounts' ? accountsText.title : (sectionText(section)?.title ?? meta.label)}
-          subtitle={
-            section === 'accounts'
-              ? isV2
-                ? undefined
-                : accountsText.subtitle
-              : isV2
-                ? (sectionText(section)?.description ?? meta.description)
-                : meta.description
-          }
-        ></SettingsPageHeader>
-      )}
+      {section !== 'plugins' && !(isV2 && section === 'members') && <SettingsPageHeader {...pageHeader} />}
       {isV2 && section === 'members' ? (
         <MemberCopyProvider>
           {content}

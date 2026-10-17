@@ -67,6 +67,17 @@ it('uses the real Manager endpoint and v2 attention presentation from the persis
   expect(host.querySelector('[data-plugin-scroll-region="detail"]')).not.toBeNull();
 });
 
+it('places the page title and install controls in a single header in the live v2 page', async () => {
+  writeShellPresentation('v2');
+  await act(async () => root.render(<PluginsContent pageHeader={{ title: '插件集成', subtitle: '管理插件' }} />));
+  await vi.waitFor(() => expect(host.querySelector('[data-plugin-manager-toolbar]')).not.toBeNull());
+  const toolbar = host.querySelector('[data-plugin-manager-toolbar]');
+  const header = toolbar?.parentElement?.parentElement;
+  expect(header?.querySelector('h2')?.textContent).toBe('插件集成');
+  expect(header?.textContent).toContain('从本地目录安装');
+  expect(host.querySelectorAll('h2')).toHaveLength(1);
+});
+
 it('uses the installed Manager in both shells without a second legacy plugin page', async () => {
   await render();
   await vi.waitFor(() => expect(host.querySelector('[data-plugin-id="official.failed-start"]')).not.toBeNull());
