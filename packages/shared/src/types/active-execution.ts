@@ -36,6 +36,8 @@ export interface ActiveExecutionProjection {
   readonly turnInvocationId?: string;
   readonly threadId: string;
   readonly threadTitle: string | null;
+  /** Owning project from the readable thread; supplied by all-project snapshots. */
+  readonly projectPath?: string;
   readonly catId: string;
   readonly kind: ActiveExecutionKind;
   /** Allowlisted category only; raw managed-command text never crosses this boundary. */
@@ -46,7 +48,10 @@ export interface ActiveExecutionProjection {
   readonly inputCapabilities?: LifecycleInputCapabilities;
 }
 
-export interface ActiveExecutionListResponse {
-  readonly projectPath: string;
-  readonly executions: ActiveExecutionProjection[];
-}
+export type ActiveExecutionListResponse =
+  | { readonly scope?: 'project'; readonly projectPath: string; readonly executions: ActiveExecutionProjection[] }
+  | {
+      readonly scope: 'all';
+      readonly executions: ActiveExecutionProjection[];
+      readonly unavailableProjectPaths?: readonly string[];
+    };

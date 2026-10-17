@@ -5,6 +5,7 @@ import {
   readCompanionDraftSubmissions,
   readStoredCompanionDelivery,
 } from '../companion-submission-state.js';
+import { type MessageEvidenceProjection, projectMessageEvidence } from '../message-evidence-projection.js';
 import type { UserMentionHandlingRef } from '../ports/MessageStore.js';
 import { messageIdempotencyScope } from '../ports/MessageStore.js';
 import {
@@ -15,6 +16,7 @@ import {
 import { withOwnerUncertaintyIndex } from './owner-uncertainty-lua.js';
 import { readOwnerUncertainty } from './owner-uncertainty-read.js';
 import { recordRedisCompanionAcceptance } from './redis-companion-acceptance.js';
+import { evidenceMessageHash, MESSAGE_EVIDENCE_FIELDS } from './redis-message-evidence-fields.js';
 import {
   HANDLE_USER_MENTIONS_LUA,
   MIGRATE_HANDLED_USER_MENTIONS_LUA,
@@ -2742,6 +2744,23 @@ export class RedisMessageStore {
     );
   }
 
+  /** Memory indexing needs visible text/block inputs, never tool-event payloads. */
+  async getThreadEvidenceProjection(
+    threadId: string,
+    limit?: number,
+    userId?: string,
+  ): Promise<MessageEvidenceProjection[]> {
+    return projectMessageEvidence(
+      await this.fetchVisibleDesc(
+        MessageKeys.thread(threadId),
+        limit ?? DEFAULT_LIMIT,
+        userId ? (message) => message.userId === userId || isSystemUserMessage(message) : undefined,
+        resolveThreadMessageVisibility(undefined, userId),
+        true,
+      ),
+    );
+  }
+
   getThreadReplyProjection(
     threadId: string,
     userId: string,
@@ -3344,6 +3363,7 @@ export class RedisMessageStore {
     n: number,
     extraFilter?: (msg: StoredMessage) => boolean,
     visibilityFilter: (msg: StoredMessage) => boolean = isDelivered,
+    evidenceOnly = false,
   ): Promise<StoredMessage[]> {
     const CHUNK = Math.max(n, 50);
     const result: StoredMessage[] = []; // Collects in desc order (newest first)
@@ -3354,7 +3374,7 @@ export class RedisMessageStore {
       if (ids.length === 0) break; // Sorted set exhausted
 
       // Hydrate in desc order (don't reverse — preserve newest-first)
-      const messages = await this.hydrateMessages(ids);
+      const messages = await this.hydrateMessages(ids, evidenceOnly ? { evidenceOnly: true } : undefined);
       for (const msg of messages) {
         if (!visibilityFilter(msg)) continue;
         if (extraFilter && !extraFilter(msg)) continue;
@@ -4141,11 +4161,12 @@ export class RedisMessageStore {
   /** Hydrate message IDs into full StoredMessage objects */
   private async hydrateMessages(
     ids: string[],
-    options?: { includeDeleted?: boolean; strict?: boolean; humanOnly?: true },
+    options?: { includeDeleted?: boolean; strict?: boolean; humanOnly?: true; evidenceOnly?: true },
   ): Promise<StoredMessage[]> {
     const pipeline = this.redis.multi();
     for (const id of ids) {
       if (options?.humanOnly) pipeline.eval(HUMAN_SOURCE_HASH_LUA, 1, MessageKeys.detail(id));
+      else if (options?.evidenceOnly) pipeline.hmget(MessageKeys.detail(id), ...MESSAGE_EVIDENCE_FIELDS);
       else pipeline.hgetall(MessageKeys.detail(id));
     }
     let span: MessageReadSpan | undefined;
@@ -4176,7 +4197,11 @@ export class RedisMessageStore {
           if (options?.strict) throw new Error('Owner uncertainty hydration failed');
           continue;
         }
-        const d = options?.humanOnly ? humanSourceHash(data) : (data as Record<string, string>);
+        const d = options?.humanOnly
+          ? humanSourceHash(data)
+          : options?.evidenceOnly
+            ? evidenceMessageHash(data)
+            : (data as Record<string, string>);
         if (!d) continue;
         if (!d.id) continue;
 

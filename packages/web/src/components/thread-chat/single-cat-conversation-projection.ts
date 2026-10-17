@@ -176,12 +176,13 @@ function sortExecutionInputs(executions: readonly ExecutionSeed[]): void {
 }
 
 function withoutProjectionIndexes(input: IndexedInput): SingleCatConversationInput {
-  return {
+  const projected: SingleCatConversationInput = {
     message: input.message,
     evidence: input.evidence,
-    ...(input.readAt === undefined ? {} : { readAt: input.readAt }),
     source: input.source,
   };
+  if ('readAt' in input) projected.readAt = input.readAt;
+  return projected;
 }
 
 function executionBlock(execution: ExecutionSeed, catId: string): SingleCatConversationBlock {

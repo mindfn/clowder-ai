@@ -472,7 +472,8 @@ ensure_runtime_clean() {
       git -C "$RUNTIME_DIR" stash push -m "lock-drift-pre-sync-stash" -- pnpm-lock.yaml
       return 0
     fi
-    die "runtime worktree has local changes: tracked content does not exactly match frozen target '$EXPECTED_TARGET_SHA'; commit/stash first"
+    printf '%s\n' "$dirty" >&2
+    die "runtime worktree has local changes relative to its current HEAD (before sync to frozen target '$EXPECTED_TARGET_SHA'); commit/stash first"
   fi
 }
 

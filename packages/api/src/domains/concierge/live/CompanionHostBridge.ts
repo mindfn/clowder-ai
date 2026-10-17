@@ -20,6 +20,7 @@ import {
 import { CompanionF221Trial } from './CompanionF221Trial.js';
 import { readCompanionDecisions } from './companion-decision-read.js';
 import { CompanionBridgeError, CompanionOwnerClient } from './companion-owner-client.js';
+import type { DesktopAppAssistOwner } from './host/companion-app-assist-owner.js';
 import { CompanionConversationHistory } from './host/companion-conversation-history.js';
 import { readCompanionConversation } from './host/companion-conversation-read.js';
 import { readModernCompanionTranscript, sendCompanionText } from './host/companion-modern-live.js';
@@ -45,6 +46,7 @@ type Options = ConstructorParameters<typeof CompanionOwnerClient>[0] & {
   readonly verifyConversationThread?: (threadId: string) => Promise<boolean>;
   readonly work?: CompanionWorkPort;
   readonly disableCompanion?: () => Promise<void>;
+  readonly appAssist?: DesktopAppAssistOwner;
   readonly openConversation: (threadId: string) => Promise<boolean>;
   readonly canOpenDecision?: (destination: CompanionDecisionDestination) => Promise<boolean>;
   readonly openDecision?: (destination: CompanionDecisionDestination) => Promise<boolean>;
@@ -56,6 +58,7 @@ type Options = ConstructorParameters<typeof CompanionOwnerClient>[0] & {
   ) => Promise<LivePresentationReply>;
 };
 export class CompanionHostBridge {
+  readonly appAssist?: DesktopAppAssistOwner;
   private readonly client: CompanionOwnerClient;
   private readonly f221: CompanionF221Trial;
   private readonly unified: CompanionUnifiedDecisions;
@@ -67,6 +70,7 @@ export class CompanionHostBridge {
   private generation = 0;
   private closed = false;
   constructor(private readonly options: Options) {
+    this.appAssist = options.companionContract === '0.1.0-beta.29' ? options.appAssist : undefined;
     this.client = new CompanionOwnerClient({
       ...options,
       assertCurrent: () => this.assertCurrent(),
@@ -193,7 +197,7 @@ export class CompanionHostBridge {
         return { kind: 'navigation', delivery: opened ? 'requested' : 'unconfirmed' };
       }
       case 'decisions.read':
-        return ['0.1.0-beta.24', '0.1.0-beta.25', '0.1.0-beta.27', '0.1.0-beta.28'].includes(
+        return ['0.1.0-beta.24', '0.1.0-beta.25', '0.1.0-beta.27', '0.1.0-beta.28', '0.1.0-beta.29'].includes(
           this.options.companionContract ?? '',
         )
           ? this.unified.read(command.offset, command.limit)
@@ -297,6 +301,7 @@ export class CompanionHostBridge {
         return { kind: 'ok' };
       // These belong to the trusted window executor, never a Host effect endpoint.
       case 'screen.pick':
+      case 'app-assist.settle':
       case 'view.resize':
       case 'view.layout':
       case 'view.drag':
@@ -371,7 +376,7 @@ export class CompanionHostBridge {
       nativeActivity,
       nativeWork,
       liveTransport: { kind: 'gpt_live_v3', verifiedModel: null },
-      ...(['0.1.0-beta.27', '0.1.0-beta.28'].includes(this.options.companionContract ?? '')
+      ...(['0.1.0-beta.27', '0.1.0-beta.28', '0.1.0-beta.29'].includes(this.options.companionContract ?? '')
         ? { meeting: { kind: 'unconfirmed', sharing: false, paused: false, sourceLabel: null } as const }
         : {}),
     };

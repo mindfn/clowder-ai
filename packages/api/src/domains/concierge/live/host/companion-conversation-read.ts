@@ -1,8 +1,9 @@
-import { catRegistry, companionIdentitySnapshotV1Schema } from '@cat-cafe/shared';
+import { companionIdentitySnapshotV1Schema } from '@cat-cafe/shared';
 import { z } from 'zod';
 import type { HostCompanionReply as CompanionReply } from '../../../plugin/desktop-window-runtime/companion-private-wire.js';
 import { CompanionBridgeError, type CompanionOwnerClient } from '../companion-owner-client.js';
 import { clipLiveText } from '../live-text-budget.js';
+import { companionAuthorName } from './companion-author-name.js';
 
 const savedCompanionIdentity = z.object({
   liveCompanion: z.object({ identity: companionIdentitySnapshotV1Schema }),
@@ -56,9 +57,7 @@ export async function readCompanionConversation(options: {
       id: message.id,
       role: message.type,
       text,
-      name: message.catId
-        ? (catRegistry.tryGet(message.catId)?.config.displayName ?? message.catId).slice(0, 256)
-        : '你',
+      name: companionAuthorName(message.catId),
       ...(companionIdentity ? { companionIdentity } : {}),
     });
   }

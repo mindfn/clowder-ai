@@ -67,7 +67,18 @@ describe('projectAppendedInputReceipts', () => {
         ],
       },
     };
-    expect(dispatchReadText(appendedInputReadDisplay(source, response), true)).toBe('已送出，没确认收到');
+    expect(dispatchReadText(appendedInputReadDisplay(source, response), true)).toBe('正在核对收到没…');
+    if (source.lifecycle?.kind !== 'input' || !source.lifecycle.appendFailures?.[0]) {
+      throw new Error('The original input must retain its exact handoff failure');
+    }
+    const checked: ChatMessage = {
+      ...source,
+      lifecycle: {
+        ...source.lifecycle,
+        appendFailures: [{ ...source.lifecycle.appendFailures[0], checkedAt: appended.timestamp + 2 }],
+      },
+    };
+    expect(dispatchReadText(appendedInputReadDisplay(checked, response), true)).toBe('已送出，没确认收到');
   });
   it('projects only inputs added after the initial dispatch input', () => {
     expect(projectAppendedInputReceipts(response, [appended, initial])).toEqual([appended]);

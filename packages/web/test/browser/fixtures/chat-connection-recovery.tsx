@@ -58,6 +58,33 @@ function Conversation() {
 function ScrollConversation({ activeThread }: { activeThread: string }) {
   const { scrollContainerRef, messagesEndRef, handleScroll, jumpToLatest, messages } = useChatHistory(activeThread);
   useEffect(() => {
+    if (!new URLSearchParams(location.search).has('revalidateAtScroll')) return;
+    const viewport = scrollContainerRef.current;
+    let armed = false;
+    let count = 0;
+    const arm = (event: WheelEvent) => {
+      if (event.isTrusted && event.deltaY < 0) armed = true;
+    };
+    const revalidate = (event: Event) => {
+      if (!armed || event.target !== viewport || !viewport) return;
+      armed = false;
+      // Native pixels have moved, but React has not recorded the scroll yet.
+      // Commit an ordinary same-height transport update at that boundary.
+      flushSync(() => {
+        useChatStore.getState().patchThreadMessage(activeThread, 'scroll-80', {
+          content: `Streaming update ${++count}`,
+        });
+      });
+      viewport.dataset.revalidationCount = String(count);
+    };
+    viewport?.addEventListener('wheel', arm);
+    window.addEventListener('scroll', revalidate, true);
+    return () => {
+      viewport?.removeEventListener('wheel', arm);
+      window.removeEventListener('scroll', revalidate, true);
+    };
+  }, [activeThread, scrollContainerRef]);
+  useEffect(() => {
     if (!new URLSearchParams(location.search).has('streamAtWheel')) return;
     const viewport = scrollContainerRef.current;
     // A deterministic transport scheduling boundary: a provider update commits
@@ -77,6 +104,16 @@ function ScrollConversation({ activeThread }: { activeThread: string }) {
     <>
       <button type="button" onClick={jumpToLatest}>
         Latest
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          useChatStore.getState().patchThreadMessage(activeThread, 'scroll-80', {
+            content: 'A passive update after the reader stopped scrolling.',
+          });
+        }}
+      >
+        Passive update
       </button>
       <button
         type="button"

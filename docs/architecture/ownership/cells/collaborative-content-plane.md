@@ -16,6 +16,12 @@ code_anchors:
   - packages/api/src/domains/cats/services/cloud-bridge/dot/DotImageService.ts
   - packages/api/src/routes/chatgpt-dot-image-routes.ts
   - packages/api/src/domains/collaborative-content/runtime-composition.ts
+  - packages/api/src/domains/collaborative-content/collective-artifact/markdown-owner.ts
+  - packages/api/src/domains/collaborative-content/collective-artifact/markdown-reviews.ts
+  - packages/api/src/domains/collaborative-content/collective-artifact/markdown-modifications.ts
+  - packages/api/src/domains/collaborative-content/collective-artifact/published-media-owner.ts
+  - packages/api/src/domains/collaborative-content/collective-artifact/media-reviews.ts
+  - packages/api/src/domains/collaborative-content/collective-artifact/custody-transfer-owner.ts
   - packages/api/src/domains/collaborative-content/workspace-editor-service.ts
   - packages/api/src/domains/collaborative-content/editor-session-service.ts
   - packages/api/src/domains/collaborative-content/patch-service.ts
@@ -60,6 +66,7 @@ cited_by:
   - {feature: F309, date: 2026-09-20, delta: "Phase U — shared landing and canonical discussion, explicit request saga, file candidate decisions, and native control receipts; no second file/media/Task/Queue owner"}
   - {feature: F309, date: 2026-10-02, delta: "Studio K1/K2 — revision-bound Cat ContextAttachments enter through Hub action transport; F309 derives one request from the current Human message and projects immutable Host receipts; F063 remains source/writeback owner and Queue only carries verified conflict/unknown continuation"}
   - {feature: F326, date: 2026-10-07, delta: "Phase A consumer — F138 owns immutable project scope and JSON/CAS/receipts; F309 extends the shared artifact ledger with project targets and append-only history; renderer stays external"}
+  - {feature: F290, date: 2026-10-17, delta: "W4 branch adapts the same retained Markdown/media owners and review ledger to exact Collective scopes; version-bound proposals, Human dispositions and recovery preserve canonical receipts. Not yet merged or accepted."}
 ---
 
 # Collaborative Content Plane
@@ -92,9 +99,18 @@ This boundary also governs F290 W4 shared Markdown. F290 authenticates Collectiv
 membership/visibility context, but does not store Markdown bytes. A canonical Markdown content owner holds the
 same `contentRef`, bytes, opaque owner version, mutation/undo receipts and final action authorization. F309 owns
 the read/annotation/proposal/disposition/version lifecycle around that owner; F307 only mounts the owner surface.
-No currently shipped path satisfies this full boundary: the existing Workspace editor and named-cat service are
-DOCX-only and fenced to one Host `ownerUserId`; F063 Markdown is owner-local worktree SHA CAS, not cross-Human
-content authority.
+The W4 branch adapts the same retained content owner, workspace review store and modification journal to an
+owner-admitted Collective scope. The Service authenticates independent Humans and revalidates exact public source,
+membership, resource action, version and custody generation; the owner can still deny every read or effect. Human
+proposal adoption serializes proposal state and owner version, then returns the canonical receipt. The original
+private Host routes keep their own `ownerUserId` fence. This branch evidence does not claim a shipped or accepted
+path; F063 Markdown remains owner-local worktree SHA CAS, and no public Office editor is added.
+
+Retained PNG/MP4 use the original F138 media owner and this same review ledger through a distinct source kind.
+Only read, history and annotation actions are admitted. Current versions accept new anchors; retained historical
+versions are read-only with fresh-authorized replies. F307 mounts the existing review canvas/comments through a
+versioned public reference; metadata stays on the authenticated Collective transport and bytes use the local Host
+session proxy. No private owner identity, token or source locator crosses the iframe boundary.
 
 ## Phase U request and result boundaries
 

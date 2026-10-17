@@ -76,7 +76,7 @@ interface ApprovalHubState {
   /** F246 Phase B: reject an inlineApprovable dispatch proposal */
   rejectProposal: (proposalId: string, feedback?: HumanDispositionFeedbackInput) => Promise<boolean>;
   /** F276: approve an exact subset of the proposal's remaining drafts. */
-  approvePersonMemory: (proposalId: string, selectedDraftIds: string[]) => Promise<void>;
+  approvePersonMemory: (proposalId: string, selectedDraftIds: string[], undoReceiptRequestId?: string) => Promise<void>;
   /** F276: keep a proposal owner-visible without authorizing recall or materialization. */
   notNowPersonMemory: (proposalId: string) => Promise<void>;
   /** F276: cancel an unmaterialized proposal without creating rejection suppression. */
@@ -94,6 +94,9 @@ interface ApprovalHubState {
   /** AC-D5: batch reject all selected items */
   batchReject: () => Promise<BatchItemResult[]>;
 }
+
+// Pending readers share the latest in-flight owner refresh; this promise is synchronization, not another snapshot.
+let latestPendingRead: Promise<void> | undefined;
 
 export const useApprovalHubStore = create<ApprovalHubState>((set, get) => ({
   items: [],
@@ -114,27 +117,37 @@ export const useApprovalHubStore = create<ApprovalHubState>((set, get) => ({
 
   fetchPending: async () => {
     const requestVersion = get().pendingRequestVersion + 1;
-    const itemsAtRequest = get().items;
-    set({ pendingRequestVersion: requestVersion, isLoading: true, pendingReadAvailable: false, error: null });
-    try {
-      // A refresh can follow a proposal event or decision while an earlier
-      // read is still in flight. Join the bounded trailing generation so its
-      // pre-change snapshot cannot satisfy the new refresh.
-      const res = await apiFetch('/api/approval-hub/pending', undefined, { afterCurrentGet: true });
-      if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
-      const data = (await res.json()) as { items: ApprovalHubItem[]; count: number };
-      if (get().pendingRequestVersion !== requestVersion) return;
-      // A decision may have removed or updated an item after this GET began.
-      // Re-read canonical state rather than restoring the pre-decision snapshot.
-      if (get().items !== itemsAtRequest) return get().fetchPending();
-      set({ items: data.items, count: data.count, isLoading: false, pendingReadAvailable: true });
-    } catch (err) {
-      if (get().pendingRequestVersion !== requestVersion) return;
-      set({
-        error: err instanceof Error ? err.message : 'Unknown error',
-        isLoading: false,
-        pendingReadAvailable: false,
-      });
+    const read = (async () => {
+      const itemsAtRequest = get().items;
+      set({ pendingRequestVersion: requestVersion, isLoading: true, pendingReadAvailable: false, error: null });
+      try {
+        // A refresh can follow a proposal event or decision while an earlier
+        // read is still in flight. Join the bounded trailing generation so its
+        // pre-change snapshot cannot satisfy the new refresh.
+        const res = await apiFetch('/api/approval-hub/pending', undefined, { afterCurrentGet: true });
+        if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
+        const data = (await res.json()) as { items: ApprovalHubItem[]; count: number };
+        if (get().pendingRequestVersion !== requestVersion) return;
+        // A decision may have removed or updated an item after this GET began.
+        // Re-read canonical state rather than restoring the pre-decision snapshot.
+        if (get().items !== itemsAtRequest) return get().fetchPending();
+        set({ items: data.items, count: data.count, isLoading: false, pendingReadAvailable: true });
+      } catch (err) {
+        if (get().pendingRequestVersion !== requestVersion) return;
+        set({
+          error: err instanceof Error ? err.message : 'Unknown error',
+          isLoading: false,
+          pendingReadAvailable: false,
+        });
+      }
+    })();
+    if (get().pendingRequestVersion === requestVersion) latestPendingRead = read;
+    let observed = read;
+    await observed;
+    // An earlier physical response cannot complete a caller while a newer canonical read is still pending.
+    while (latestPendingRead && latestPendingRead !== observed) {
+      observed = latestPendingRead;
+      await observed;
     }
   },
 

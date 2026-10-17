@@ -1,0 +1,245 @@
+import type { ApprovalHubItem, RichCardBlock } from '@cat-cafe/shared';
+import React, { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { approvalRow, okRead } from '@/components/shell/mailbox/__tests__/mailbox-fixtures';
+import { createApprovalSessions } from '@/components/shell/mailbox/approval-sessions';
+import { MailboxRow } from '@/components/shell/mailbox/MailboxRow';
+import { useApprovalHubStore } from '@/stores/approvalHubStore';
+import { apiFetch } from '@/utils/api-client';
+import { RichBlocks } from '../RichBlocks';
+
+vi.mock('@/utils/api-client', () => ({ apiFetch: vi.fn() }));
+let root: Root, container: HTMLDivElement, item: ApprovalHubItem, block: RichCardBlock;
+let phase: 'open' | 'accepted' | 'rejected', owner: string, failedRead: boolean, proof: boolean;
+let deadSource: boolean, duplicateSource: boolean;
+const coordinate = { threadId: 'repair-thread', messageId: 'original-repair-card' };
+beforeEach(() => {
+  vi.stubGlobal('React', React);
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  container = document.createElement('div');
+  document.body.append(container);
+  root = createRoot(container);
+  deadSource = false;
+  duplicateSource = false;
+  phase = 'open';
+  owner = 'owner-1';
+  failedRead = false;
+  proof = true;
+  item = {
+    proposalId: 'eval-repair-original',
+    sourceFeatureId: 'F266',
+    ownerUserId: owner,
+    requesterCatId: 'codex61-sol',
+    summary: 'Eval repair · original evidence reader',
+    createdAt: Date.now(),
+    inlineApprovable: true,
+    decisionMode: 'approve-reject',
+    resolution: 'open',
+    materialization: { state: 'not_started' },
+    detail: {
+      expectedChange: 'Repair the original evidence reader',
+      costAndRollback: 'One review; revert this change',
+      withdrawalCondition: 'Withdraw if the exact target changes',
+      ownerRef: { ownerFeatureId: 'F188', ownerStateRef: 'owner:evidence-reader' },
+      ownerAuthorizationRef: { ownerFeatureId: 'F188', ownerStateRef: 'authorization:evidence-reader' },
+      targetVersionRef: {
+        ownerFeatureId: 'F188',
+        ownerStateRef: 'asset:evidence-reader',
+        assetKind: 'feature_component',
+        assetId: 'F188:evidence-reader',
+        version: 'exact-original-version',
+      },
+    },
+    navigation: {
+      state: 'anchored',
+      originRef: { kind: 'message', threadId: coordinate.threadId, messageId: 'owner-source' },
+      approvalCardRef: coordinate,
+    },
+  };
+  block = {
+    id: `eval-repair-proposal-${item.proposalId}`,
+    kind: 'card',
+    v: 1,
+    title: item.summary,
+    bodyMarkdown: String(item.detail.expectedChange),
+    tone: 'warning',
+    fields: [
+      { label: '成本与回滚', value: String(item.detail.costAndRollback) },
+      { label: '撤回条件', value: String(item.detail.withdrawalCondition) },
+      { label: '精确目标', value: 'exact-original-version' },
+    ],
+    actions: [
+      { label: '批准', action: 'eval-repair:approve', payload: { proposalId: item.proposalId } },
+      { label: '拒绝', action: 'eval-repair:reject', payload: { proposalId: item.proposalId } },
+    ],
+    meta: { approval: { producerId: 'F266', canonicalProposalId: item.proposalId } },
+  };
+  vi.mocked(apiFetch).mockImplementation(async (path, init) => {
+    if (failedRead) return Response.json({ error: 'unavailable' }, { status: 503 });
+    if (String(path) === '/api/session') return Response.json({ userId: owner });
+    if (init?.method === 'POST') {
+      phase = String(path).endsWith('/approve') ? 'accepted' : 'rejected';
+      return Response.json({ status: phase, materialization: { status: 'materialized' } });
+    }
+    if (String(path).startsWith('/api/messages?'))
+      return Response.json({
+        messages: deadSource
+          ? []
+          : [
+              {
+                id: coordinate.messageId,
+                catId: 'codex61-sol',
+                timestamp: item.createdAt,
+                extra: { rich: { blocks: duplicateSource ? [block, block] : [block] } },
+              },
+            ],
+        hasMore: false,
+      });
+    if (String(path).includes('/approval-hub/pending'))
+      return Response.json({ items: phase === 'open' ? [item] : [], count: phase === 'open' ? 1 : 0 });
+    if (String(path).includes('/approval-hub/settled'))
+      return Response.json({
+        items:
+          phase === 'open'
+            ? []
+            : [
+                {
+                  ...item,
+                  resolution: phase,
+                  materialization: proof
+                    ? { state: 'succeeded', effectProofRef: 'custody:original-repair' }
+                    : { state: 'outcome_unknown' },
+                  decidedAt: Date.now(),
+                  decidedBy: owner,
+                  detail: { ...item.detail, ...(proof ? { canonicalEffectProofRef: 'custody:original-repair' } : {}) },
+                },
+              ],
+      });
+    const read = okRead(phase === 'open' ? [approvalRow(item)] : []);
+    return Response.json(read.kind === 'ok' ? read.read : null);
+  });
+  useApprovalHubStore.setState({
+    items: [],
+    pendingReadAvailable: false,
+    error: null,
+    decisionAttempts: {},
+    deciding: {},
+    isLoading: false,
+  });
+});
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+  vi.unstubAllGlobals();
+  vi.mocked(apiFetch).mockReset();
+});
+async function render(entrance: 'Chat' | 'Inbox', original = block) {
+  const row = approvalRow(item);
+  const sessions = createApprovalSessions({
+    readsStarted: () => 1,
+    refetch: () => {},
+    refreshStore: () => useApprovalHubStore.getState().fetchPending(),
+    storeItems: () => useApprovalHubStore.getState().items,
+    attempts: () => useApprovalHubStore.getState().decisionAttempts,
+    latestRead: () => ({ result: okRead([row]), generation: 1 }),
+    now: Date.now,
+  });
+  await act(async () =>
+    root.render(
+      entrance === 'Chat' ? (
+        <RichBlocks blocks={[original]} publication={{ ...coordinate, messageRevision: 'v1' }} />
+      ) : (
+        <MailboxRow
+          item={row}
+          rowKey="repair"
+          stale={false}
+          expanded={false}
+          hosted={{ sessions, ownerUserId: 'owner-1' }}
+          readCurrent
+          onToggle={() => {}}
+          onOpen={() => {}}
+        />
+      ),
+    ),
+  );
+}
+it.each([
+  'Chat',
+  'Inbox',
+] as const)('shows the original repair content and submits through its original %s writer', async (entrance) => {
+  await render(entrance);
+  const cost = Array.from(container.querySelectorAll('p')).find((e) => e.textContent === item.detail.costAndRollback);
+  expect(cost).not.toBeUndefined();
+  expect(cost?.closest('details')).toBeNull();
+  expect(container.textContent).toContain('Withdraw if the exact target changes');
+  expect(container.textContent).not.toContain('原提议未说明原因');
+  const approve = container.querySelector<HTMLButtonElement>('[data-testid="approve-btn"]');
+  expect(approve?.disabled).toBe(false);
+  await act(async () => approve?.click());
+  expect(
+    vi
+      .mocked(apiFetch)
+      .mock.calls.filter(([, init]) => init?.method === 'POST')
+      .map(([path]) => path),
+  ).toEqual(['/api/eval-repair-proposals/eval-repair-original/approve']);
+});
+it('keeps a canonical cold result on the original Chat card without allowing another decision', async () => {
+  phase = 'accepted';
+  await render('Chat');
+  expect(container.textContent).toContain('修复工作已发起');
+  expect(container.textContent).not.toContain('任务已完成');
+  expect(container.querySelector('[data-testid="approve-btn"]')).toBeNull();
+});
+it.each([
+  'owner',
+  'source',
+  'target',
+  'actions',
+  'card',
+  'read',
+  'deleted',
+  'duplicate',
+] as const)('refuses a changed %s before the original Chat write', async (reason) => {
+  await render('Chat');
+  const approve = container.querySelector<HTMLButtonElement>('[data-testid="approve-btn"]');
+  expect(approve).not.toBeNull();
+  if (reason === 'owner') owner = 'foreign-owner';
+  if (reason === 'source') item = { ...item, requesterCatId: 'another-cat' };
+  if (reason === 'target')
+    item = {
+      ...item,
+      detail: {
+        ...item.detail,
+        targetVersionRef: { ...(item.detail.targetVersionRef as Record<string, unknown>), version: 'changed-version' },
+      },
+    };
+  if (reason === 'actions')
+    block = {
+      ...block,
+      actions: [
+        ...(block.actions ?? []),
+        { label: 'Other', action: 'eval-repair:approve', payload: { proposalId: 'another' } },
+      ],
+    };
+  if (reason === 'card')
+    item = {
+      ...item,
+      navigation: { ...item.navigation, approvalCardRef: { ...coordinate, messageId: 'another-card' } },
+    } as ApprovalHubItem;
+  if (reason === 'read') failedRead = true;
+  if (reason === 'deleted') deadSource = true;
+  if (reason === 'duplicate') duplicateSource = true;
+  if (reason === 'actions') await render('Chat');
+  await act(async () => approve?.click());
+  expect(vi.mocked(apiFetch).mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+});
+
+it('does not claim repair delivery from acceptance without its canonical custody proof', async () => {
+  phase = 'accepted';
+  proof = false;
+  await render('Chat');
+  expect(container.textContent).toContain('效果暂未确认');
+  expect(container.textContent).not.toContain('修复工作已发起');
+  expect(container.querySelector('[data-testid="approve-btn"]')).toBeNull();
+});

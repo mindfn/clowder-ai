@@ -151,6 +151,16 @@ function isNearBottom(el: { scrollTop: number; scrollHeight: number; clientHeigh
   return el.scrollHeight - el.clientHeight - el.scrollTop <= SCROLL_BOTTOM_THRESHOLD_PX;
 }
 
+function hasNativeUpwardMovement(
+  el: { scrollTop: number; scrollHeight: number; clientHeight: number },
+  startTop: number,
+): boolean {
+  // A shrinking card can clamp the old bottom upward before wheel pixels arrive.
+  // Only movement beyond that now-valid starting position consumes the input.
+  const clampedStartTop = Math.min(startTop, Math.max(0, el.scrollHeight - el.clientHeight));
+  return el.scrollTop < clampedStartTop;
+}
+
 /**
  * Decide the bottom-follow anchor from a scroll observation. Geometry alone cannot distinguish
  * user scrolling from smooth-follow or layout corrections, so leaving bottom follow requires an
@@ -163,9 +173,23 @@ export function resolveScrollAnchor(
   prev: SavedScrollState | null,
   userScrolledUp = false,
 ): SavedScrollState['anchor'] {
+  if (prev && userScrolledUp && hasNativeUpwardMovement(el, prev.top)) return 'offset';
+  // A small upward gesture can stop inside the bottom proximity band. Keep its
+  // reading intent until movement toward the bottom, rather than treating a
+  // later same-position layout observation as a request to follow again.
+  if (
+    prev?.anchor === 'offset' &&
+    el.scrollTop <= prev.top &&
+    el.scrollTop < Math.max(0, el.scrollHeight - el.clientHeight)
+  )
+    return 'offset';
   if (isNearBottom(el)) return 'bottom';
-  if (prev?.anchor !== 'bottom') return 'offset';
-  return userScrolledUp && el.scrollTop < prev.top ? 'offset' : 'bottom';
+  return prev?.anchor === 'bottom' ? 'bottom' : 'offset';
+}
+
+function hasUnrecordedUserScroll(el: HTMLElement, saved: SavedScrollState, userScrolling: boolean): boolean {
+  const recordedTop = Math.min(saved.top, Math.max(0, el.scrollHeight - el.clientHeight));
+  return userScrolling && el.scrollTop !== recordedTop;
 }
 
 function rememberScrollState(threadId: string, el: HTMLElement, userScrolledUp = false, preserveOffsetAnchor = false) {
@@ -779,7 +803,7 @@ export function useChatHistory(threadId: string) {
           clearUserScrollIntent();
           return;
         }
-        if (el.scrollTop < input.startTop) return;
+        if (hasNativeUpwardMovement(el, input.startTop)) return;
         if (--framesRemaining > 0) {
           input.observationFrame = requestAnimationFrame(observeMovement);
           return;
@@ -1029,6 +1053,9 @@ export function useChatHistory(threadId: string) {
       // was queued. Reflow must align the current position, not rewind it.
       const saved = readChatScrollState(scheduledForThread);
       if (!el || !saved || useChatStore.getState().currentThreadId !== scheduledForThread) return;
+      // Native pixels can precede their scroll event. Let that event record the
+      // new reading anchor before a passive reflow writes the previous one.
+      if (hasUnrecordedUserScroll(el, saved, userScrollIntentRef.current)) return;
       const beforeCorrection = captureRestoreWritePosition(
         el,
         useChatStore.getState().getThreadState(scheduledForThread).messages,
@@ -2047,6 +2074,7 @@ export function useChatHistory(threadId: string) {
     // replace bottom-follow with a reading anchor. Streaming must not reclaim
     // that pending movement through this synchronous timeline writer.
     if (saved.anchor === 'bottom' && userScrollIntentRef.current && userScrollUpRef.current) return;
+    if (hasUnrecordedUserScroll(el, saved, userScrollIntentRef.current)) return;
 
     const anchor: TimelineScrollAnchor | undefined =
       saved.anchor === 'bottom'
@@ -2370,7 +2398,7 @@ export function useChatHistory(threadId: string) {
       // A queued layout scrollend can precede the new wheel's compositor scroll.
       // Keep upward intent until its movement, or a newer input, is observed.
       const input = userScrollInputRef.current;
-      if (userScrollUpRef.current && input && el.scrollTop >= input.startTop) {
+      if (userScrollUpRef.current && input && !hasNativeUpwardMovement(el, input.startTop)) {
         return;
       }
       clearUserScrollIntent();

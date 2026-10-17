@@ -55,6 +55,7 @@ export * from './explicit-stop-intent.js';
 export * from './ignored-item-preference.js';
 // Export shared text helpers
 export * from './markdown-readable-text.js';
+export * from './message-bundle-projection.js';
 export * from './message-output-layout.js';
 export type {
   MessageNavigationAdmission,

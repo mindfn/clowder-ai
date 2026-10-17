@@ -13,6 +13,10 @@ exports.default = async function afterPack(context) {
 
   const productFilename = context.packager.appInfo.productFilename;
   const resourcesDir = path.join(context.appOutDir, `${productFilename}.app`, 'Contents', 'Resources');
+  require('./scripts/build-app-assist.cjs').buildAppAssist(
+    path.join(resourcesDir, 'app', 'plugin-window', 'native', 'app-assist'),
+    context.arch === 3 ? 'arm64' : context.arch === 1 ? 'x64' : 'unsupported',
+  );
   const projectRoot = path.resolve(__dirname, '..');
   const deployRoot = path.join(projectRoot, 'bundled', 'deploy');
 

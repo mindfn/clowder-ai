@@ -56,7 +56,7 @@
 }
 
 [data-shell="v2"] .home-dot[data-tone="wait"] {
-  background: var(--shell-critical);
+  background: var(--semantic-warning);
 }
 
 [data-shell="v2"] .home-card-title {
@@ -222,41 +222,6 @@
 }
 
 /* 等待与接回 */
-[data-shell="v2"] .home-wait-row {
-  padding: 8px 0;
-  border-top: 1px solid var(--shell-hairline);
-}
-
-[data-shell="v2"] .home-wait-main {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-[data-shell="v2"] .home-wait-title {
-  font-weight: 600;
-  color: var(--shell-ink);
-}
-
-[data-shell="v2"] .home-wait-copy {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-[data-shell="v2"] .home-wait-summary {
-  color: var(--shell-muted);
-}
-
-[data-shell="v2"] .home-wait-details {
-  margin-top: 4px;
-  color: var(--shell-muted);
-}
-
-[data-shell="v2"] .home-wait-details > summary {
-  cursor: pointer;
-}
-
 [data-shell="v2"] .home-wait-line {
   display: block;
   margin-top: 2px;

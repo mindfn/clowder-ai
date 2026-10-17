@@ -27,6 +27,13 @@ code_anchors:
   - packages/collective-service/src/collaboration-agent-acceptance.ts
   - packages/collective-service/src/collaboration-agent-continuation.ts
   - packages/collective-service/src/work-source-context.ts
+  - packages/collective-service/src/artifact-authority.ts
+  - packages/collective-service/src/artifact-relay.ts
+  - packages/collective-service/src/artifact-custody.ts
+  - packages/collective-service/src/artifact-media-relay.ts
+  - packages/collective-client/src/SharedArtifactReading.tsx
+  - packages/collective-connector/src/artifact-owner-relay.ts
+  - packages/collective-connector/src/artifact-media-relay.ts
   - packages/collective-service/src/collaboration-work.ts
   - packages/collective-service/src/collaboration-revision.ts
   - packages/collective-service/src/collaboration-vote.ts
@@ -79,6 +86,7 @@ cited_by:
   - {feature: F290, date: 2026-09-27, delta: owner-admitted private Work can be delegated to explicitly named home Cats while Task ownership and exact Channel return authority remain unchanged}
   - {feature: F290, date: 2026-09-28, delta: accountable Human feedback resumes the same admitted Task for a versioned result round; prior results and feedback remain in Work history and only the current result may be accepted}
   - {feature: F290, date: 2026-09-30, delta: registered owner delegation is separate from matter address; real Cat commitment and durable Host admission consume independent current execution authority on the same immutable Work/Task}
+  - {feature: F290, date: 2026-10-17, delta: "W4 branch supplies fresh Artifact domain constraints, content-free version/access/custody records and bounded owner relays; content/review owners remain canonical. Implementation is not yet merged or accepted."}
 ---
 
 # Collective Runtime
@@ -119,6 +127,7 @@ connection health and pairing/revoke controls; Channel, identity and membership 
 - Adding a Service-routed Cat Agent signal, typed target, Host ingress route or endpoint/session provenance.
 - Changing owner admission, private Work execution binding, same-thread home delegation or exact result-return authority.
 - Changing result feedback, revision rounds, current-result acceptance or Host Task resumption from Service Work truth.
+- Changing shared Artifact source/version/access, owner custody handoff, or bounded Markdown/media owner transport.
 
 ## Extend By
 
@@ -149,6 +158,11 @@ connection health and pairing/revoke controls; Channel, identity and membership 
   a fresh exact source and grant revision, then reuses the same Task; old callbacks and sealed operations cannot cross epochs.
 - Treat delivery, public commitment, actual Host Task, execution, progress, result publication and Human Work acceptance as
   separate facts. Record and recover cross-boundary admission before executing; progress is not a result or closure.
+- Shared Artifacts retain exact public source, content identity, immutable version and Work linkage. The Service owns
+  current membership/access/custody constraints; the retained content owner owns bytes and final authorization. Metadata
+  owner RPC and binary ranges remain transient and bounded, with fresh validation before disclosure. Neither a patch
+  receipt nor Human content adoption completes a Work. Handoff activates one exact destination only after durable source
+  preparation, target readiness and owner installation; prior owner generations cannot resume effects.
 - Private delegated execution remains unknown owner provenance and consumes only its protected Work binding. Callback/native
   guards own scoped enforcement; the Collective Service does not grant a local owner session or general private history.
 - The existing document producer binds immutable Markdown bytes to Task/execution/result scope. Canonical Artifact-ref

@@ -123,6 +123,8 @@ CAS、可见 attribution、owner receipt 与 undo，且用户可随时收回权�
 
 ## Current State / 现状基线
 
+下列5603/5628及5667/5669段保留各自验收/接收时状态；其中正式runtime待加载的描述不覆盖上述当前g12加载事实。
+
 以下5603前序过程快照按发生时状态保留；其中OPEN/待review/待Alpha不覆盖上述当前结论。
 
 | 证据 | 已成立 | 尚未成立 |

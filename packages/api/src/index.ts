@@ -1385,30 +1385,8 @@ async function main(): Promise<void> {
     embed: { embedMode: resolvedEmbedMode },
     privateUserId,
     // Phase E-2: message passage indexing — provide a callback that reads thread messages
-    messageListFn: async (threadId: string, limit?: number) => {
-      const messages = await messageStore.getByThread(threadId, limit ?? 2000, privateUserId);
-      return messages
-        .filter((m: { origin?: string }) => m.origin !== 'briefing') // F148 Phase E (AC-E2): exclude briefing from evidence index
-        .map(
-          (m: {
-            id: string;
-            content: string;
-            catId?: string | null;
-            threadId: string;
-            timestamp: number;
-            contentBlocks?: readonly unknown[];
-            extra?: { rich?: { blocks?: readonly unknown[] } };
-          }) => ({
-            id: m.id,
-            content: m.content,
-            catId: m.catId ?? undefined,
-            threadId: m.threadId,
-            timestamp: m.timestamp,
-            contentBlocks: m.contentBlocks,
-            richBlocks: m.extra?.rich?.blocks,
-          }),
-        );
-    },
+    messageListFn: (threadId: string, limit?: number) =>
+      messageStore.getThreadEvidenceProjection(threadId, limit ?? 2000, privateUserId),
     // Phase E-1: thread summary indexing — provide a callback that lists all threads
     threadListFn: async () => {
       const threads = await threadStore.list('default-user');
@@ -4919,6 +4897,7 @@ async function main(): Promise<void> {
     './domains/plugin/desktop-window-runtime/electron-executor.js'
   );
   const { CompanionHostBridge } = await import('./domains/concierge/live/CompanionHostBridge.js');
+  const { CompanionAppAssistOwner } = await import('./domains/concierge/live/host/companion-app-assist-owner.js');
   const { CompanionWorkOverview } = await import('./domains/concierge/live/work/companion-work-overview.js');
   const { resolveCompanionWorkPublication } = await import(
     './domains/concierge/live/host/home/companion-work-publication.js'
@@ -5058,6 +5037,16 @@ async function main(): Promise<void> {
           }
         : undefined;
       return new CompanionHostBridge({
+        ...(companionContract === '0.1.0-beta.29'
+          ? {
+              appAssist: new CompanionAppAssistOwner({
+                store: redis ? conciergeConfigStoreShared : undefined,
+                ownerUserId: privateUserId,
+                timeZone: () => getCoCreatorConfig().timeZone,
+                assertCurrent: assertWorkCurrent,
+              }),
+            }
+          : {}),
         messages: messageStore,
         verifyConversationThread: (threadId) => conciergeThreadServiceShared.isCurrent(privateUserId, threadId),
         observeVoice: (observation) => liveCompanionSessions.observeVoice(privateUserId, observation),

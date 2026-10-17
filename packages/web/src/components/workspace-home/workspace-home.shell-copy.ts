@@ -23,6 +23,16 @@ export const homeCopy = defineShellCopy(
       live: {
         title: '正在发生',
         scope: (count: number) => `所有对话 · ${count} 件在跑`,
+        partialScope: (count: number) => `所有对话 · 已确认 ${count} 件在跑`,
+        currentProject: '当前项目',
+        uncategorized: '未分类',
+        projectCount: (count: number) => `${count} 件`,
+        projectRunning: (count: number, time: string) => `${count} 件在跑 · 最长 ${time}`,
+        confirmedCount: (count: number) => (count > 0 ? `已确认 ${count} 件` : '待确认'),
+        projectLabel: (name: string, count: number, collapsed: boolean) =>
+          `${name}，${count} 件在跑，${collapsed ? '已收起' : '已展开'}`,
+        projectUnavailable: '这个项目的运行情况暂时读不到',
+        foldFailed: '项目分组偏好暂时无法同步，请重试。',
         here: '当前对话',
         replying: '回复中',
         waitingBackground: '等待后台完成',
@@ -31,8 +41,8 @@ export const homeCopy = defineShellCopy(
         stop: '停止',
         liveRun: '实时运行',
         background: (label: string) => `后台任务 · ${label}`,
-        loading: '正在同步项目里的运行状态…',
-        unverified: '当前无法验证项目里的运行状态，请稍后重试。',
+        loading: '正在同步所有对话的运行状态…',
+        unverified: '当前无法验证运行状态，请稍后重试。',
         stale: '同步暂时失败，以上为最近一次已验证状态。',
       },
       // The design's name for each managed-command kind ("全量门禁" is an internal word: it reads 完整检查).
@@ -46,7 +56,15 @@ export const homeCopy = defineShellCopy(
       },
       wait: {
         title: '等待与接回',
-        scope: (count: number) => `全局 · ${count}`,
+        scope: (count: number) => `所有对话 · ${count} 件`,
+        updateShort: '等正式环境更新',
+        projectCount: (count: number) => `${count} 件`,
+        unknownShort: '条件待确认',
+        readyShort: '可以接回',
+        updateCount: (count: number) => `${count} 件在等正式环境更新`,
+        longest: (duration: string) => `最久 ${duration}`,
+        projectLabel: (name: string, count: number, collapsed: boolean) =>
+          `${name}，${count} 件等待与接回，${collapsed ? '已收起' : '已展开'}`,
         empty: '暂无待跟进事项',
         emptyHint: '猫会在原任务里登记“版本就绪后接我回来”，这里会替你记住来源和下一步。',
         loading: '正在读取等待更新的事项…',
@@ -151,6 +169,16 @@ export const homeCopy = defineShellCopy(
       live: {
         title: 'Happening now',
         scope: (count: number) => `All conversations · ${count} running`,
+        partialScope: (count: number) => `All conversations · ${count} confirmed running`,
+        currentProject: 'Current project',
+        uncategorized: 'Uncategorized',
+        projectCount: (count: number) => `${count} running`,
+        projectRunning: (count: number, time: string) => `${count} running · longest ${time}`,
+        confirmedCount: (count: number) => (count > 0 ? `${count} confirmed` : 'Unverified'),
+        projectLabel: (name: string, count: number, collapsed: boolean) =>
+          `${name}, ${count} running, ${collapsed ? 'collapsed' : 'expanded'}`,
+        projectUnavailable: "Can't read run status for this project right now",
+        foldFailed: "Couldn't sync project display preferences. Try again.",
         here: 'Current conversation',
         replying: 'Replying',
         waitingBackground: 'Waiting on background work',
@@ -159,8 +187,8 @@ export const homeCopy = defineShellCopy(
         stop: 'Stop',
         liveRun: 'Live run',
         background: (label: string) => `Background task · ${label}`,
-        loading: 'Syncing run status for this project…',
-        unverified: "Can't verify run status for this project right now. Try again shortly.",
+        loading: 'Syncing run status across conversations…',
+        unverified: "Can't verify run status right now. Try again shortly.",
         stale: "Couldn't sync. Showing the last verified status.",
       },
       activity: {
@@ -173,7 +201,15 @@ export const homeCopy = defineShellCopy(
       },
       wait: {
         title: 'Waiting to resume',
-        scope: (count: number) => `Everywhere · ${count}`,
+        scope: (count: number) => `All conversations · ${count} items`,
+        updateShort: 'Waiting for live update',
+        projectCount: (count: number) => `${count} ${count === 1 ? 'item' : 'items'}`,
+        unknownShort: 'Condition unconfirmed',
+        readyShort: 'Ready to resume',
+        updateCount: (count: number) => `${count} waiting for live update`,
+        longest: (duration: string) => `longest ${duration}`,
+        projectLabel: (name: string, count: number, collapsed: boolean) =>
+          `${name}, ${count} waiting items, ${collapsed ? 'collapsed' : 'expanded'}`,
         empty: 'Nothing waiting',
         emptyHint:
           'When a cat asks to resume once a new version is running, it shows up here with its source and next step.',
@@ -279,6 +315,13 @@ export const homeCopy = defineShellCopy(
       'live.scope': [[1], [12]],
       'live.background': [['Full check'], ['Tests']],
       'wait.scope': [[1], [7]],
+      'wait.projectCount': [[1], [4]],
+      'wait.updateCount': [[1], [14]],
+      'wait.longest': [['23 hours']],
+      'wait.projectLabel': [
+        ['cat-planet', 4, true],
+        ['cat-cafe', 1, false],
+      ],
       'wait.waited': [['3 minutes'], ['1 day']],
       'wait.awaitingRevision': [
         ['aaaaaaaa', 'API'],

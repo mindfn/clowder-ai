@@ -24,6 +24,12 @@ const frozenCatalog = JSON.parse(
   await readFile(new URL('./fixtures/f317-manager-companion-catalog.json', import.meta.url), 'utf8'),
 );
 const sri = (bytes) => `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
+export const publishedLetterContract = (version) =>
+  version === '0.1.0-alpha.24'
+    ? '0.1.0-beta.27'
+    : ['0.1.0-alpha.30', '0.1.0-alpha.31'].includes(version)
+      ? '0.1.0-beta.29'
+      : '0.1.0-beta.28';
 
 export async function managerEntryFixture(
   t,
@@ -43,10 +49,14 @@ export async function managerEntryFixture(
     '0.1.0-alpha.24': process.env.F317_VERIFIED_PRESENTATION_ARCHIVE,
     '0.1.0-alpha.25': process.env.F317_VERIFIED_LETTER_ARCHIVE,
     '0.1.0-alpha.26': process.env.F317_VERIFIED_ALPHA26_ARCHIVE,
+    '0.1.0-alpha.27': process.env.F317_VERIFIED_ALPHA27_ARCHIVE,
+    '0.1.0-alpha.28': process.env.F317_VERIFIED_ALPHA28_ARCHIVE,
+    '0.1.0-alpha.29': process.env.F317_VERIFIED_ALPHA29_ARCHIVE,
+    '0.1.0-alpha.30': process.env.F317_VERIFIED_ALPHA30_ARCHIVE,
+    '0.1.0-alpha.31': process.env.F317_VERIFIED_ALPHA31_ARCHIVE,
   };
   const actual = plugin.versions.every((release) => Boolean(archivePaths[release.version]));
   for (const release of plugin.versions) {
-    const letter = release.version !== '0.1.0-alpha.24';
     const archivePath = archivePaths[release.version];
     let bytes;
     if (actual) {
@@ -62,7 +72,9 @@ export async function managerEntryFixture(
         description: plugin.description,
         icon: plugin.icon,
       };
-      manifest.contributions[0].bridgeVersion = letter ? '1.5.0' : '1.4.0';
+      const contract = publishedLetterContract(release.version);
+      manifest.contributions[0].bridgeVersion =
+        contract === '0.1.0-beta.29' ? '1.6.0' : contract === '0.1.0-beta.28' ? '1.5.0' : '1.4.0';
       await mkdir(join(source, 'package/renderer/skins'), { recursive: true });
       await writeFile(join(source, 'package/manifest.json'), JSON.stringify(manifest));
       await writeFile(join(source, 'package/renderer/index.html'), windowHtml);
@@ -77,7 +89,7 @@ export async function managerEntryFixture(
   const companionArchives = plugin.versions.map((release) => ({
     version: release.version,
     packageDigest: release.artifact.integrity,
-    contract: release.version === '0.1.0-alpha.24' ? '0.1.0-beta.27' : '0.1.0-beta.28',
+    contract: publishedLetterContract(release.version),
   }));
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot: root,
@@ -142,9 +154,10 @@ export async function managerEntryFixture(
     assert.equal(pkg?.version, version);
     assert.equal(
       resolveCompanionArchiveContract(pkg, actual ? undefined : companionArchives),
-      version === '0.1.0-alpha.24' ? '0.1.0-beta.27' : '0.1.0-beta.28',
+      publishedLetterContract(version),
     );
     assert.equal(instance.activationState, 'disabled');
+    assert.equal(instance.runtimeState, 'stopped');
     return instance;
   };
   return {

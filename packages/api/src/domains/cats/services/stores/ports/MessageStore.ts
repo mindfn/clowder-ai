@@ -7,6 +7,7 @@ import {
   readCompanionDraftSubmissions,
   type StoredCompanionDeliveryReceipt,
 } from '../companion-submission-state.js';
+import { type MessageEvidenceProjection, projectMessageEvidence } from '../message-evidence-projection.js';
 /**
  * Message Store
  * 内存消息存储，供 MCP 回传工具 get_thread_context / get_pending_mentions 使用
@@ -3200,6 +3201,10 @@ export class MessageStore {
       matches.push(msg);
     }
     return matches.reverse();
+  }
+
+  getThreadEvidenceProjection(threadId: string, limit?: number, userId?: string): MessageEvidenceProjection[] {
+    return projectMessageEvidence(this.getByThread(threadId, limit, userId));
   }
 
   getByThreadIncludingQueued(threadId: string, limit?: number, userId?: string): StoredMessage[] {

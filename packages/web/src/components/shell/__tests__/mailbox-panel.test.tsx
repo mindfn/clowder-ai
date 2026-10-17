@@ -28,7 +28,7 @@ vi.mock('@/stores/chatStore', () => ({
 }));
 vi.mock('@/stores/approvalHubStore', () => {
   // The rail button follows approval decisions through the store (getState/subscribe); nothing is decided in this suite.
-  const state = { fetchPending: data.approvalRefresh, items: [], decisionAttempts: {} };
+  const state = { fetchPending: data.approvalRefresh, items: [], decisionAttempts: {}, deciding: {}, error: null };
   const useApprovalHubStore = (s: (v: typeof state) => unknown) => s(state);
   useApprovalHubStore.getState = () => state;
   useApprovalHubStore.subscribe = () => () => undefined;
@@ -38,6 +38,16 @@ vi.mock('@/stores/approvalHubStore', () => {
 // that it hands the helper the action and the page it is on.
 vi.mock('../mailbox/open-exact-place', () => ({ openExactPlace: data.navigate }));
 vi.mock('@/hooks/useCatNameResolver', () => ({ useCatNameResolver: () => (catId: string) => `猫:${catId}` }));
+vi.mock('@/hooks/useCatData', () => ({
+  useCatData: () => ({
+    getCatById: (catId: string) => ({
+      displayName: `猫:${catId}`,
+      nickname: `猫:${catId}`,
+      avatar: '',
+      color: { primary: 'var(--shell-ink)', secondary: 'var(--shell-paper)' },
+    }),
+  }),
+}));
 vi.mock('../use-unified-attention', () => ({ useUnifiedAttention: () => data.view }));
 
 import { MailboxButton } from '../MailboxButton';
@@ -51,18 +61,20 @@ const source = (overrides: Partial<UnifiedAttentionSourceRead> = {}): UnifiedAtt
   ...overrides,
 });
 
+// These panel-chrome cases exercise a generic row; native F128/family cards own their own headings.
 const approvalItem = (id: string, summary = `审批 ${id}`): UnifiedAttentionItemV1 => ({
-  decisionRef: `approval:F128:${id}`,
+  decisionRef: `approval:F292:${id}`,
   kind: 'approval',
   summary,
   approval: {
     proposalId: id,
-    sourceFeatureId: 'F128',
+    sourceFeatureId: 'F292',
     resolution: 'open',
     materialization: { state: 'not_started' },
     requesterCatId: 'opus',
     summary,
     detail: {},
+    navigation: { state: 'legacy_unanchored', legacySourceThreadId: null, legacySourceMessageId: null },
     createdAt: Date.now() - 2 * 3600_000,
   } as never,
   linkedNeedsMe: [],
@@ -469,7 +481,7 @@ describe('F322 待办 (the mailbox) on the unified read', () => {
         expect(rows()[0].textContent).not.toMatch(/由 .* 发起/);
       });
 
-      it('names the proposing cat once: a title that already leads with that name gets it in bold instead of a second copy', () => {
+      it('keeps the original family heading without a second generic approval toggle', () => {
         // F225 (session handoff): the summary is "Session handoff: <catId> → …" and the title cleaner turns the id into the name.
         const handoff = approvalItem('h', 'Session handoff: opus → codex: 交接说明');
         (handoff.approval as { sourceFeatureId: string; requesterCatId: string }).sourceFeatureId = 'F225';
@@ -487,10 +499,13 @@ describe('F322 待办 (the mailbox) on the unified read', () => {
         expect(occurrences(handoffText, '猫:opus')).toBe(1);
         expect(handoffText).toContain('猫:opus → codex: 交接说明');
         expect(rows()[0].querySelector('.font-semibold')?.textContent?.trim()).toBe('猫:opus');
-        const assignmentText = header(1)?.textContent ?? '';
-        expect(occurrences(assignmentText, '猫:opus')).toBe(1);
-        expect(assignmentText).toContain('派给 猫:codex：写文档');
-        expect(rows()[1].querySelector('.font-semibold')?.textContent?.trim()).toBe('猫:opus');
+        // F193 now renders the same original family card as Chat. Its own heading replaces the legacy row toggle.
+        expect(header(1)).toBeNull();
+        expect(occurrences(rows()[1].textContent ?? '', '猫:opus')).toBe(1);
+        expect(rows()[1].querySelector('[data-testid="approval-item-w"]')?.textContent).toContain('写文档');
+        const reject = rows()[1].querySelector<HTMLButtonElement>('[data-testid="reject-btn"]');
+        expect(reject).not.toBeNull();
+        expect(reject?.disabled).toBe(true); // no original publication proof in this panel-only fixture
       });
 
       it('a work row shows the owning cat’s avatar and "<cat> 的受托工作「…」" only from what the contract names', () => {

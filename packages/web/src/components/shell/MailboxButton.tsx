@@ -97,7 +97,8 @@ export function MailboxButton() {
     (place: OriginalPlace) => {
       setOpen(false);
       if (place.kind === 'exact') {
-        openExactPlace(place.actionRef, pathname);
+        if (place.host === 'workspace') openInChat(() => openExactPlace(place.actionRef, pathname));
+        else openExactPlace(place.actionRef, pathname);
         return;
       }
       if (place.destination === 'approval') {

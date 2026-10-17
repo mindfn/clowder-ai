@@ -34,7 +34,8 @@ vi.mock('@/stores/chatStore', () => ({
   useChatStore: (s: (v: { setWorkspaceMode: () => void }) => unknown) => s({ setWorkspaceMode: vi.fn() }),
 }));
 vi.mock('@/stores/approvalHubStore', () => ({
-  useApprovalHubStore: (s: (v: { fetchPending: () => void }) => unknown) => s({ fetchPending: vi.fn() }),
+  useApprovalHubStore: (s: (v: { fetchPending: () => void; decisionAttempts: Record<string, never> }) => unknown) =>
+    s({ fetchPending: vi.fn(), decisionAttempts: {} }),
 }));
 vi.mock('../mailbox/open-exact-place', () => ({ openExactPlace: data.navigate }));
 vi.mock('@/hooks/useCatNameResolver', () => ({ useCatNameResolver: () => (catId: string) => `猫:${catId}` }));
@@ -59,6 +60,7 @@ function fakeSessions(initial: ApprovalSession[] = []) {
   let version = 0;
   const fake = {
     open: vi.fn(),
+    currentItem: () => null,
     get: (key: string) => list.find((session) => session.key === key),
     list: () => list,
     subscribe: (listener: () => void) => {
@@ -135,6 +137,14 @@ describe('the 待办 panel and the approvals it can host', () => {
   });
 
   describe('which rows host the original card', () => {
+    it('keeps the native new-conversation card available without expanding the row', async () => {
+      const native = approvalRow(storeItem({ inlineApprovable: false }));
+      show(okRead([native]));
+      await openPanel();
+      expect($('mailbox-item')?.getAttribute('data-expanded')).toBe('false');
+      expect($('hosted-card-stub')?.getAttribute('data-owner')).toBe(OWNER);
+      expect($('hosted-card-stub')?.getAttribute('data-ref')).toBe(native.decisionRef);
+    });
     it('an open, decidable approval hosts it in the expanded row, for the read’s verified owner', async () => {
       show(okRead([row]));
       await openPanel();

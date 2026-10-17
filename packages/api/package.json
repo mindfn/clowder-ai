@@ -62,6 +62,7 @@
     "@clowder-ai/plugin-contract-beta25": "npm:@clowder-ai/plugin-contract@0.1.0-beta.25",
     "@clowder-ai/plugin-contract-beta27": "npm:@clowder-ai/plugin-contract@0.1.0-beta.27",
     "@clowder-ai/plugin-contract-beta28": "npm:@clowder-ai/plugin-contract@0.1.0-beta.28",
+    "@clowder-ai/plugin-contract-beta29": "npm:@clowder-ai/plugin-contract@0.1.0-beta.29",
     "@clowder-ai/plugin-sdk": "0.1.0-beta.17",
     "@fastify/cookie": "9",
     "@fastify/cors": "^9.0.0",

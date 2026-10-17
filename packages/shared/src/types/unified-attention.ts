@@ -147,6 +147,11 @@ export const unifiedAttentionChoiceRequestSchema = z
         threadId: z.string().trim().min(1),
         messageId: z.string().trim().min(1),
         blockId: z.string().trim().min(1),
+        blockDigest: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
+        publishedAt: z.number().int().nonnegative().safe().optional(),
       })
       .strict(),
   })

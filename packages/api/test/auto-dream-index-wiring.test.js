@@ -17,7 +17,11 @@ describe('F255 production bootstrap wiring', () => {
     assert.match(source, /const privateUserId = \(process\.env\.CAT_CAFE_USER_ID \?\? 'default-user'\)\.trim\(\);/);
     assert.match(source, /await app\.register\(sessionRoute, \{ ownerUserId: privateUserId \}\);/);
     assert.match(source, /privateUserId,\n\s+\/\/ Phase E-2/);
-    assert.match(source, /messageStore\.getByThread\(threadId, limit \?\? 2000, privateUserId\)/);
+    assert.match(
+      source,
+      /messageStore\.getThreadEvidenceProjection\(threadId, limit \?\? 2000, privateUserId\)/,
+      'background indexing must retain the startup owner when reading the evidence projection',
+    );
     assert.match(source, /privateOwnerUserId: privateUserId/);
   });
 

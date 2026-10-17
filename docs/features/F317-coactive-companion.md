@@ -4,12 +4,12 @@ related_features: [F229, F258, F195, F202, F246, F295, F306, F309, F310]
 topics: [coactive, realtime, desktop-companion, gpt-live]
 doc_kind: spec
 created: 2026-09-15
-updated: 2026-10-16
+updated: 2026-10-17
 description: "让具名家猫通过实时感知与交谈、持续深思和行动，陪人跨应用共看、共听、互相指点，并接续共同经历。"
 description_source: model
 description_author: codex-astra
 description_updated_at: 2026-09-15T08:29:30Z
-tips_exempt: "Renewed 2026-10-16: parent verified the production Manager list/detail and real registry alpha.25 install on isolated named Alpha after PR5654. Actual Electron covers compose, lost-receipt recovery without duplicate execution, processing/completed separation, full long-body read and retain; B published alpha.26 for the confirmed lost-older-intent race, Host admission merged as PR5657 and parent verified the real named Alpha25-to-26 upgrade retaining the instance and disabled state. The actual native rerun failed at history entry: the visible list starts at scrollTop=0 and upward wheel produces no transcript scroll/older request. Original B is investigating; the parent separately corrected its one-page-versus-all-history test oracle. Whole native acceptance remains open. Daily boot35 still has alpha.24 crashed/revision104, observed before the new release and not attributed to it. No daily restart, upgrade, model/media activation or human trial is inferred; original human acceptance and 24–25/31 remain open."
+tips_exempt: "Renewed 2026-10-17: public alpha31 fix and Host5687/908a74dc are independently verified. Named Alpha dffba092 normal30-to31 upgrade preserves the original disabled/stopped instance; API/Web200, canonical stop0 and six ports clear. Targeted S8 real-Electron continuous offer check is submitted under resource32912, observed queued with no native result yet. Earlier S7 behavior and compact layout remain supported by byte continuity; alpha30 flicker stays historical evidence. Runtime g12 waits for actual908a74dc containment on API/Web, baselineboot36. No automatic daily activation; packaged TCC, real-human and overall AC remain open."
 mcp_admission_status: accepted
 mcp_admission_ref: "file:docs/features/F317-coactive-companion.md"
 mcp_admission_claims:
@@ -38,12 +38,13 @@ Owner thread：`[thread-id]`；总任务沿用 `private-source-id`（按 `relate
 本线程设计交接1016由 `private-source-id` 更正为整组，父已直接核人类原话。
 先承接26输入、27已发送、28发送未确认、29完整回复、30留住与上翻的完整往返，见S6；
 24–25轻量通话与31主动凑近也已认可方向，分别见S7/S8，不再列为“人未点评”。
-原Task33负责能力核对、A/Host与B/公共包安排及组合验收；26–30代码已合入，隔离Alpha的alpha.25正式入口已走通，原生输入/递信/长回信/留住已有实物证据；历史修复包alpha.26与Host准入已合入，父在原Alpha正常25→26升级通过，完整原生复验仍未通过历史入口/上翻，已回原B核修；日常真人体验保持开放。
-31排在26–30之后，先核前台程序名采集、默认关闭的逐类许可和每日频率；方向认可不自动启用采集或媒体。
+原Task33负责能力核对、A/Host与B/公共包安排及组合验收。alpha.28/Host#5668配对、正常Alpha升级与父r7受控原生完整旅程已核；B补验三帧关闭X、命中、回最新及保锚通过。3168已纠正补验sent阶段实际window-hide，观测patch原哈希与父check-only应用均核实，证据校正收口。原r8细因保持unknown，不继续当作renderer故障；24–25公共renderer已随PR88/alpha.29交付，父已独立核实包/审查/合入tree/发布；原A Task3350已交Host#5673/4439587，父独立核五个合入blob与Argon批准版一致。named Alpha10c447正常28→29升级已通过并保原实例停用，S7受控原生行为通过、八张实图已看、资源32629完整释放。alpha29的25大卡片偏差已由原Studio3439定四项、父3446补证前缀；现alpha30父run3已对齐412×116三行条/独立气泡/共享单行并完成S7，底边名牌上翻符合约定。旧26–30七项不重开；31已正常升级到修复包，连续呈现原生复验、真人和整体AC独立开放。
 设计 `37f8181e09` 已定气泡复用交互chat局部视图、保留12–14字幕入口、两种信分开及有界历史读取。
 把原发送绑定恢复、来源确认完成才收信、绑定正文版本的有界续读纳入原A/B首个合同单元；
 17项核心与33项公开包检查只是既有基线；本轮新行为的实装验证与限制见下方交付记录，实物验收仍待完成。
 实际合入并加载后回原设计线逐组对真桌面，再交You；既有Phase/AC与原真人体验不因此关闭。
+
+**24–25轻量通话公共renderer已发布，父待配对验收（2026-10-17 02:52 UTC）**：公开[PR88](https://github.com/zts212653/clowder-ai-plugins/pull/88)已 squash 合入`83aff5695b`并实发Companion alpha.29；Kimi批准exact `6239396709`，无P1/P2。默认通话仅保留气泡与连接/麦克风真相，hover、点击或键盘显完整控件与一行输入，移开或Esc收起；焦点、草稿、控件hover和共享/选屏锁阻止自动收起，显隐不触发任何媒体动作。237/237 unit、15/15 browser、静态检查、fresh consumer与main两job均绿；registry `next=alpha.29`、`latest=alpha.1`，12,531,211字节、SHA-1/SRI及SHA-256 `12188410eb4d0daf4e225bb202ac9bc994f13cb8af5e5e82f7c00236176c82b3`与评审前两次冻结打包逐字节一致。核心Host显式归档准入当前仍止于alpha.28；正式准入、named Alpha真实Electron 24–25、设计回线和本人体验尚未执行，本记录不关闭S7、Phase/AC、31或真人验收。
 
 **上一轮宿主加载记录（2026-10-13 13:36 UTC）**：source1351 的前台岗位、分段计时、受限原生 subagent 及使用记录、本人 Task 操作与迟到回告已随核心 #5439 / #5454 合入；公开 #76 / #78 / #79 已合入并实际发布 contract beta.27、SDK beta.23、companion alpha.24（含状态点呼吸）。部署回调已到：日常 boot25 / `e026e368c4` 包含最终 #5454，API/Web 就绪；插件恢复 running，但实际安装仍为 alpha.21。这是当次观察，不作为本轮 alpha.25 已加载或升级的证明。开发交付和宿主加载均不关闭真人验收或完整 Phase。详见下方「前台 harness 优化」的交付记录。
 
@@ -195,7 +196,7 @@ F322 的“窄屏小把手”不再作为终态工作实施。当前遮挡证据
 | S5 | 桌面、记忆与协作的一段完整经历 | operator与当前具名猫 | 点猫直接语音 → 说“看这里”并共享明确桌面/窗口 → 问“这和上次的方案哪里不一样” → 猫用真实记忆搜索并回读原文，关联当前画面解释 → 人继续说/指并纠正 → 需要时把原话和来源送到已有 owner thread，接回追问/结果 → 暂停或断线后回到同一交流和未完工作 | 用户不用手工截屏搬运、找 thread 或转述；实际屏幕来源/时间、检索参数与源锚点、工具回执、跨线程原文及真实可听回复可对账；只讨论而不派工也可结束 |
 | S6 | 1.16猫旁文字与回复的一次完整往返（26–30） | operator与猫 | 未通话时点聊天 → 猫旁一行输入 → 后台接受后递信、显示已发送；未确认则退信并保留草稿、同ID重试 → 与这次发送可信关联的回复回来才收信 → 在气泡里读完整回复、留住、往上翻、回到最新 | 用户文字与语音转写不折叠；无关助手消息不能收掉信；已发送不冒充执行完成；圈/关闭/滚动实际可操作、长文和更早历史可读、新消息不拉走阅读位置；以真实Host/公开包配对和真桌面26–30对稿举证。能力核对和视觉收敛中的差异须先解决，不借本单元隐藏原麦克风/共享控制或新增主动采集。 |
 | S7 | 1.16轻量通话（24–25） | operator与猫 | 通话时常见猫、名牌和气泡 → 指向或点猫显示控件/输入 → 移开或Esc收起；输入/焦点/控件交互中不自动收起 | 麦克风状态一直可辨；共享中通话条、共享目标与停止共享常驻；hover只显示，不授权开通话/选屏；完整占位、键盘与直接挂断可用。方向已认可，须在26–30共用视图稳定后验证。 |
-| S8 | 1.16按明确偏好主动凑近（31） | operator与猫 | 主人主动打开默认关闭的开关 → 猫只依据前台程序名问一句 → 不理则收回；同程序每天最多一次 → 人点击后进入原通话和选屏流程 | 先核最窄名称采集及Host许可，不能顺带取窗口标题、URL、文档或屏幕内容；关闭后停采集/提示，未点击不启媒体，点击也不绕过原选屏/系统权限。沿F229安静默认与逐类opt-in，频率跨重启不重置，不借名牌开关扩大授权；排在26–30之后，未实现/未启用。 |
+| S8 | 1.16按明确偏好主动凑近（31） | operator与猫 | 主人主动打开默认关闭的开关 → 猫只依据前台程序名问一句 → 不理则收回；同程序每天最多一次 → 人点击后进入原通话和选屏流程 | 先核最窄名称采集及Host许可，不能顺带取窗口标题、URL、文档或屏幕内容；关闭后停采集/提示，未点击不启媒体，点击也不绕过原选屏/系统权限。沿F229安静默认与逐类opt-in，频率跨重启不重置，不借名牌开关扩大授权；原A/B正式实现已交付，父正常Alpha30→31升级通过；定向原生连续呈现复验已提交，日常未启用、真人/安装版TCC未验。 |
 
 ### 2026-09-24 现场反馈：三部分整合交付
 

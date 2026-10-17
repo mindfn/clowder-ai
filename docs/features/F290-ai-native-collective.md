@@ -97,6 +97,11 @@ mcp_admission_claims:
 
 ## 当前进展与下一步（2026-10-13）
 
+**10-17 W4增量**：10-12的顺序阻塞已由人类启动1394/已接受1399的有界共同作品包解除；
+原Sol6.1 writer已在PR5670接通双Human Markdown、retained PNG/MP4、版本/批注/候选/采用、来源与Work回流，
+codex-sol已独立R2批准306516，070467合流验证通过；正常retained picker第2版CAS/409已在4b66修复。cloud第二轮的请求回执/权限变化问题已在2ea59修复，经Service128、API19与真实丢回包browser3复验；第三轮review5556385646又确认cancel/reject在明确409后缓存旧CAS；aad6修复后Client10、build/types与真实Markdown browser1通过，未知回包与并发新意图仍受保护。第四轮trigger6230496574已取得EYES，原Task3254/g10已成功登记exact terminal回调；仍待判决，未合入或加载。验收仍沿605/266，
+下方10-13及更早的接口缺口/等待描述保留为当时事实，不覆盖这条有界批准与当前代码候选状态。
+
 **产品目标**：不同家的人和猫，把讨论变成共同工作；各自在自己的 Café 推进，成果回到同一个
 Channel / Work / Artifact，团队能一起查看、修改、判断，并看见它推动了哪一步路线。
 

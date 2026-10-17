@@ -81,6 +81,31 @@ describe('ScrollToBottomButton', () => {
     expect(endEl.scrollIntoView).not.toHaveBeenCalled();
   });
 
+  it('renders the v2 rail control as a compact icon without a native tooltip', async () => {
+    const { ScrollToBottomButton } = await import('@/components/ScrollToBottomButton');
+
+    defineNumberProp(scrollEl, 'scrollTop', 0);
+    act(() => {
+      root.render(
+        React.createElement(ScrollToBottomButton, {
+          scrollContainerRef: { current: scrollEl },
+          messagesEndRef: { current: endEl },
+          onJumpToLatest,
+          placement: 'rail',
+        }),
+      );
+    });
+
+    const button = container.querySelector('button[aria-label="到最新"]');
+    expect(button).toBeTruthy();
+    expect(button?.classList.contains('absolute')).toBe(true);
+    expect(button?.classList.contains('h-7')).toBe(true);
+    expect(button?.classList.contains('w-7')).toBe(true);
+    expect(button?.querySelector('svg[aria-hidden="true"]')).toBeTruthy();
+    expect(button?.getAttribute('title')).toBeNull();
+    expect(button?.textContent?.trim()).toBe('');
+  });
+
   it('recomputes visibility when thread/content changes without scroll events (cloud P2)', async () => {
     const { ScrollToBottomButton } = await import('@/components/ScrollToBottomButton');
 

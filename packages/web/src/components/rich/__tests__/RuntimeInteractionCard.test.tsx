@@ -70,6 +70,22 @@ describe('RuntimeInteractionCard', () => {
     expect([...container.querySelectorAll('button')].some((button) => !button.disabled)).toBe(false);
   });
 
+  it('keeps the original request title once in its hosted mailbox presentation', async () => {
+    vi.mocked(apiFetch).mockResolvedValue(okJson({ interaction: record(approvalRequest()) }));
+    await act(async () =>
+      root.render(
+        <RuntimeInteractionCard
+          block={block}
+          messageId={messageId}
+          host={{ ownerUserId: 'user-1', revision: 2000, cardRef, readCurrent: true }}
+          presentation="mailbox"
+        />,
+      ),
+    );
+    expect([...container.querySelectorAll('h3')].map((heading) => heading.textContent)).toEqual(['Run tests?']);
+    expect([...container.querySelectorAll('button')].some((button) => !button.disabled)).toBe(true);
+  });
+
   it('hydrates exact approval decisions and submits through the canonical card ref', async () => {
     vi.mocked(apiFetch)
       .mockResolvedValueOnce(okJson({ interaction: record(approvalRequest()) }))

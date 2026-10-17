@@ -60,6 +60,7 @@ cited_by:
   - {feature: F299, date: 2026-08-26, delta: update — invocation and Agent Run records/lifecycle remain source-owned while Workbench consumes typed descriptors}
   - {feature: F307, date: 2026-08-26, delta: update — application-level working-set, typed tab/split/sidecar topology and restore owner}
   - {feature: F307, date: 2026-10-02, delta: update — generation-fenced Artifact split/full-window presentation and owner-scoped opaque return references remain transient inside the single F307 store}
+  - {feature: F290, date: 2026-10-17, delta: "W4 branch mounts the existing F309 retained-media review through independent versioned public refs and a context-fenced iframe RPC; exact Channel/Topic return preserves the same frame. Not yet merged or accepted."}
   - {feature: F306, date: 2026-08-27, delta: "Phase B in-context runtime interaction card — approval/question/elicitation share one canonical thread surface; Approval Hub is navigation-only and stale controls are inert."}
   - {feature: F310, date: 2026-08-31, delta: "Phase A boundary — global Needs Me and product Schedule are sibling read projections over producer-owned truth; this cell owns projection/dedupe/exact-return only, never custody lifecycle, business eligibility, or a second store."}
   - {feature: F310, date: 2026-10-14, delta: "Mention lifecycle consumes F069/F072 durable visibility reads and records viewed/replied handling provenance; F322 retains personal Ignore/UI custody."}

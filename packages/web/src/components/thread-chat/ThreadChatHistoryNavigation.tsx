@@ -18,11 +18,7 @@ export function ThreadChatHistoryNavigation({
   return (
     <>
       {presentation === 'v2' ? (
-        // Keep the reading viewport stable when the button appears or disappears.
-        // Resizing it during a jump can move the source of an open annotation.
-        <div className="flex min-h-[3.125rem] shrink-0 justify-end">
-          <ScrollToBottomButton {...bottomProps} placement="flow" />
-        </div>
+        <ScrollToBottomButton {...bottomProps} placement="rail" />
       ) : (
         <ScrollToBottomButton {...bottomProps} />
       )}

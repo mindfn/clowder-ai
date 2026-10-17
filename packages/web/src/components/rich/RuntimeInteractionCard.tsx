@@ -1,9 +1,12 @@
 'use client';
 
 import type { RuntimeInteractionRecord, RuntimeInteractionResponse } from '@cat-cafe/shared';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import type { RichCardBlock } from '@/stores/chat-types';
 import { apiFetch } from '@/utils/api-client';
+import { mailboxRuntimeCopy } from '../shell/mailbox/mailbox-runtime.shell-copy';
+import { useShellCopy } from '../shell/shell-copy';
+import { useShellPresentation } from '../shell/shell-presentation';
 import { CLASSIC_RUNTIME_INTERACTION_COPY, type RuntimeInteractionCopy } from './RuntimeInteractionCopy';
 import { RuntimeInteractionDecisionActions } from './RuntimeInteractionDecisionActions';
 import { RuntimeInteractionElicitationForm } from './RuntimeInteractionElicitationForm';
@@ -23,13 +26,20 @@ export function RuntimeInteractionCard({
   block,
   messageId,
   host,
-  copy = CLASSIC_RUNTIME_INTERACTION_COPY,
+  copy: suppliedCopy,
+  presentation,
+  secondaryActions,
 }: {
   block: RichCardBlock;
   messageId?: string;
   host?: RuntimeInteractionHostRead;
   copy?: RuntimeInteractionCopy;
+  presentation?: 'mailbox';
+  secondaryActions?: ReactNode;
 }) {
+  const shellCopy = useShellCopy(mailboxRuntimeCopy);
+  const isV2 = useShellPresentation() === 'v2';
+  const copy = suppliedCopy ?? (isV2 ? shellCopy : CLASSIC_RUNTIME_INTERACTION_COPY);
   const interactionId = String(block.meta?.interactionId ?? '');
   const [record, setRecord] = useState<RuntimeInteractionRecord | null>(null);
   const [loading, setLoading] = useState(true);
@@ -125,18 +135,22 @@ export function RuntimeInteractionCard({
 
   return (
     <section
-      className="rounded-2xl border border-cafe bg-cafe-surface p-3 shadow-sm"
+      className={
+        presentation === 'mailbox' ? 'space-y-3' : 'rounded-2xl border border-cafe bg-cafe-surface p-3 shadow-sm'
+      }
       data-testid="runtime-interaction-card"
     >
       <header className="mb-3 flex items-start gap-2">
         <div className="min-w-0">
-          <p className="text-micro font-medium text-[var(--semantic-info)]">
-            {
-              copy.kind[
-                record?.request.kind === 'conversation_decision' ? 'unknown' : (record?.request.kind ?? 'unknown')
-              ]
-            }
-          </p>
+          {presentation !== 'mailbox' && (
+            <p className="text-micro font-medium text-[var(--semantic-info)]">
+              {
+                copy.kind[
+                  record?.request.kind === 'conversation_decision' ? 'unknown' : (record?.request.kind ?? 'unknown')
+                ]
+              }
+            </p>
+          )}
           <h3 className="text-sm font-semibold">{record?.request.title ?? block.title}</h3>
           {record?.request.description ? (
             <p className="mt-1 whitespace-pre-wrap break-words text-xs text-cafe-muted">{record.request.description}</p>
@@ -159,9 +173,15 @@ export function RuntimeInteractionCard({
           record={record}
           disabled={submitting || (host !== undefined && (!hostAligned || loading))}
           copy={copy}
+          presentation={presentation}
+          secondaryActions={secondaryActions}
           onSubmit={(response) => void submit(response)}
           onReject={() => void reject()}
         />
+      ) : null}
+      {(!record || record.status !== 'pending' || !canonical || record.request.kind !== 'question') &&
+      secondaryActions ? (
+        <div className="flex items-center">{secondaryActions}</div>
       ) : null}
     </section>
   );
@@ -173,8 +193,12 @@ function PendingSurface({
   onSubmit,
   onReject,
   copy,
+  presentation,
+  secondaryActions,
 }: {
   copy: RuntimeInteractionCopy;
+  presentation?: 'mailbox';
+  secondaryActions?: ReactNode;
   record: RuntimeInteractionRecord;
   disabled: boolean;
   onSubmit: (response: RuntimeInteractionResponse) => void;
@@ -190,11 +214,20 @@ function PendingSurface({
         onSubmit={onSubmit}
         onReject={onReject}
         copy={copy.form}
+        presentation={presentation}
+        secondaryActions={secondaryActions}
       />
     );
   }
   if (request.kind === 'elicitation') {
-    return <RuntimeInteractionElicitationForm request={request} disabled={disabled} onSubmit={onSubmit} />;
+    return (
+      <RuntimeInteractionElicitationForm
+        request={request}
+        disabled={disabled}
+        onSubmit={onSubmit}
+        copy={copy.elicitation}
+      />
+    );
   }
   return (
     <RuntimeInteractionDecisionActions

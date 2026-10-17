@@ -5,6 +5,10 @@ import { validateCompanionCommand as validateUnifiedCommand } from '@clowder-ai/
 import { validateCompanionCommand as validateWorkCommand } from '@clowder-ai/plugin-contract-beta25';
 import { validateCompanionCommand as validatePresentationCommand } from '@clowder-ai/plugin-contract-beta27';
 import { validateCompanionCommand as validateLetterCommand } from '@clowder-ai/plugin-contract-beta28';
+import {
+  validateCompanionCommand as validateAppAssistCommand,
+  validateCompanionReply as validateAppAssistReply,
+} from '@clowder-ai/plugin-contract-beta29';
 import type { CompanionArchiveContract } from './published-companion-v2.js';
 
 // The trusted CJS desktop kernel imports this compiled ESM Host boundary. Package
@@ -18,7 +22,13 @@ export function companionCommandValidator(contract: CompanionArchiveContract['co
   if (contract === '0.1.0-beta.25') return validateWorkCommand;
   if (contract === '0.1.0-beta.27') return validatePresentationCommand;
   if (contract === '0.1.0-beta.28') return validateLetterCommand;
+  if (contract === '0.1.0-beta.29') return validateAppAssistCommand;
   throw new Error('Unsupported companion contract');
+}
+
+export function appAssistReplyValidator(contract: CompanionArchiveContract['contract']) {
+  if (contract !== '0.1.0-beta.29') throw new Error('Unsupported app-assist contract');
+  return validateAppAssistReply;
 }
 
 /** This Host consumer admits one declarative companion body. Package code never

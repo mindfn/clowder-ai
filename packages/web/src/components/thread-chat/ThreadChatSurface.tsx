@@ -285,6 +285,7 @@ export function ThreadChatSurface({
         aria-hidden={composerOnly || undefined}
         data-thread-chat-history
       >
+        {/* The v2 right rail fits the 28px latest control beside the message piano with clear reading separation. */}
         <main
           ref={scrollContainerRef}
           onScroll={handleScroll}
@@ -292,8 +293,8 @@ export function ThreadChatSurface({
           className={
             composerPresentation === 'v2'
               ? compact
-                ? 'min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] pl-3 pr-[42px] py-3'
-                : 'min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] p-4 pr-10'
+                ? 'min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] py-3 pl-3 pr-[4.5rem]'
+                : 'min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] p-4 pr-[4.5rem]'
               : compact
                 ? 'h-full overflow-y-auto [overflow-anchor:none] px-3 py-3'
                 : 'h-full overflow-y-auto [overflow-anchor:none] p-4'

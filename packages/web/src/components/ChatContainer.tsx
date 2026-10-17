@@ -32,6 +32,7 @@ import { useSidebarStore } from '@/stores/sidebarStore';
 import { useTaskStore } from '@/stores/taskStore';
 import { apiFetch } from '@/utils/api-client';
 import { captureChatReadingBeforeLayoutChange } from '@/utils/chat-layout-change';
+import { notifyHandledMentionRead } from '@/utils/mention-read-receipt';
 import { invalidateSidebarProjection } from '@/utils/sidebar-thread-snapshot';
 import { AgentHookHealthNotice, shouldRenderAgentHookHealthNotice } from './AgentHookHealthNotice';
 import { BootcampListModal } from './BootcampListModal';
@@ -947,6 +948,7 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
         const payload = (await res.json()) as { caughtUp?: unknown };
         const caughtUp = payload.caughtUp === true;
         settleUnreadAck(threadId, caughtUp);
+        if (caughtUp) notifyHandledMentionRead(payload);
         if (!caughtUp) useSidebarProjectionStore.getState().clearSidebarCommand(threadId, 'attention');
         void invalidateSidebarProjection();
       })

@@ -68,6 +68,17 @@ describe('Workspace v3 Home content', () => {
       activeInvocations: {},
       hasActiveInvocation: false,
       targetCats: [],
+      threads: [
+        {
+          id: 'thread-here',
+          title: '完整的当前对话名称',
+          projectPath: '/project',
+          createdBy: 'user',
+          createdAt: 1,
+          lastActiveAt: 1,
+          participants: [],
+        },
+      ],
     });
     data.artifacts = [
       imageArtifact,
@@ -118,6 +129,24 @@ describe('Workspace v3 Home content', () => {
       imageArtifact.url,
     );
   });
+  it('anchors the conversation sections with icons and shows the conversation title once above them', async () => {
+    await render();
+    expect(host.querySelector('[data-testid="home-conversation-scope"]')?.textContent).toBe(
+      '这条对话完整的当前对话名称',
+    );
+    const sections = [...host.querySelectorAll('section[aria-labelledby]')];
+    expect(
+      sections
+        .find((section) => section.getAttribute('aria-labelledby') === 'home-status-title')
+        ?.querySelector('header svg'),
+    ).not.toBeNull();
+    const works = sections.find((section) => section.getAttribute('aria-labelledby') === 'home-works-title');
+    expect(works?.querySelector('header svg')).not.toBeNull();
+    expect(works?.querySelector('header')?.textContent).toContain('2 件');
+    expect(works?.querySelector('header')?.textContent).not.toContain('这条对话');
+    expect(host.querySelector('[data-testid="workspace-home-status-summary"] .home-live-sub')).not.toBeNull();
+  });
+
   it('produces the status owner title in the current language while keeping the canonical destination', async () => {
     writeShellLanguage('en');
     props.onSelectDestination.mockClear();

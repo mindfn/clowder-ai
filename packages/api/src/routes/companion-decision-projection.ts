@@ -142,6 +142,7 @@ export function projectCompanionDecisions(
     ...(personal ? { personalPreferences: personal.state } : {}),
   };
   const { sourceStates, complete, consistent, status } = summarizeSources(sources, unified.reasons);
+  const exact = complete && consistent;
   const selectedItems = personalProjection.pageItems;
   const { approvalItems, otherNeedsMe } = legacyVectors(selectedItems);
   return {
@@ -163,12 +164,17 @@ export function projectCompanionDecisions(
       decisionQualifiedCount: personalProjection.attentionItems.length,
       hasStructuredChoices: sources.structuredChoices !== undefined,
     }),
-    ...(userMentions?.counts ? { mentionCounts: userMentions.counts, mentionPeriod: userMentions.period } : {}),
+    ...(userMentions?.counts
+      ? {
+          ...(exact ? { mentionCounts: userMentions.counts } : {}),
+          mentionPeriod: userMentions.period,
+        }
+      : {}),
     ...(personalProjection.view
       ? {
           personalView: {
             ...personalProjection.view,
-            ...(complete && consistent ? personalProjection.counts : {}),
+            ...(exact ? personalProjection.counts : {}),
           },
         }
       : {}),
@@ -176,8 +182,8 @@ export function projectCompanionDecisions(
     observedAt,
     approvalCoverage: 'all_registered_F246_producers' as const,
     needsMeCoverage: 'current_linked_F310_five_producers' as const,
-    ...(sources.approvals.status === 'available' ? { approvalCount: approvalItems.length } : {}),
-    ...(sources.needsMe.status === 'available'
+    ...(exact ? { approvalCount: approvalItems.length } : {}),
+    ...(exact
       ? {
           needsMeCount: new Set(needsMe.map((read) => read.envelope.subjectRef)).size,
           otherNeedsMeCount: otherNeedsMe.length,

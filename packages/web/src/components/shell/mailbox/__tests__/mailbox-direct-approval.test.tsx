@@ -55,6 +55,13 @@ async function mountOriginalProposal(extra: Record<string, unknown> = {}) {
   useApprovalHubStore.setState({ items: [item], deciding: {}, decisionAttempts: {}, count: 1 });
   network.fetch.mockImplementation(async (path: string) => {
     if (path === '/api/approval-hub/pending') return Response.json({ items: [item], count: 1 });
+    if (path === `/api/threads/${detail.parentThreadId}`)
+      return Response.json({
+        id: detail.parentThreadId,
+        title: '已核实的父对话',
+        projectPath: detail.projectPath,
+        createdBy: OWNER,
+      });
     if (path === '/api/proposals/p-1')
       return Response.json({
         proposal: {
@@ -92,12 +99,12 @@ async function mountOriginalProposal(extra: Record<string, unknown> = {}) {
   return { container, detail };
 }
 
-it('expands a non-inline F128 decision into its original reason, executor and effect, without offering a list detour', async () => {
+it('hosts the original F128 reason, executor and create action without offering a list detour', async () => {
   const { container, detail } = await mountOriginalProposal();
   expect(container.textContent).toContain(detail.reason);
-  expect(container.textContent).toContain('执行者');
-  expect(container.textContent).toContain('同意后');
-  expect(container.querySelector('[data-testid="approve-btn"]')?.textContent).toBe('同意');
+  expect(container.textContent).toContain('谁来做');
+  expect(container.querySelector('[data-testid="proposal-actions"]')).not.toBeNull();
+  expect(container.querySelector('[data-testid="approve-btn"]')?.textContent).toBe('同意并创建');
   expect(container.textContent).not.toContain('打开审批列表');
   expect(container.textContent).not.toContain('原处暂不可定位');
 });
@@ -116,8 +123,16 @@ it('shows the actual parent and complete source of the development authority bei
     subjectTaskId: 'task:work:exact-approval-work',
     subjectTaskTitle: '审批实施',
   });
-  expect(container.textContent).toContain('parent-contract');
-  expect(container.textContent).toContain('审批实施 (task:work:exact-approval-work)');
+  expect(container.textContent).toContain('已核实的父对话');
+  expect(container.textContent).not.toContain('parent-contract');
+  const technical = [...container.querySelectorAll('details')].find(
+    (node) => node.querySelector('summary')?.textContent === '技术详情',
+  );
+  expect(technical?.open).toBe(false);
+  await act(async () => technical?.querySelector('summary')?.click());
+  expect(technical?.open).toBe(true);
+  expect(technical?.textContent).toContain('审批实施');
+  expect(technical?.textContent).toContain('task:work:exact-approval-work');
   expect(container.textContent).toContain(fullScope.acceptedSourceRef);
   expect(container.textContent).toContain(fullScope.featureRef);
   expect(container.textContent).toContain(fullScope.phaseKey);
@@ -128,7 +143,7 @@ it.each([
   'standalone',
 ])('shows the original resolver default for %s with no explicit reporting mode', async (declaredWorkMode) => {
   const { container } = await mountOriginalProposal({ declaredWorkMode, reportingMode: undefined });
-  expect(container.textContent).toContain('回报：不回报');
+  expect(container.textContent).toContain(' · 不回报');
   expect(container.textContent).not.toContain('autonomous');
 });
 it('cannot submit a partially readable development scope without its exact accepted source', async () => {
@@ -136,7 +151,7 @@ it('cannot submit a partially readable development scope without its exact accep
   const incomplete = { featureRef, phaseKey, workUnitRef, acceptedRevision };
   const { container } = await mountOriginalProposal({ approvedDevelopmentScope: incomplete });
   const approve = container.querySelector<HTMLButtonElement>('[data-testid="approve-btn"]');
-  expect(approve?.disabled).toBe(true);
+  expect(approve).toBeNull();
   await act(async () => approve?.click());
   expect(network.fetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
 });

@@ -1,6 +1,7 @@
 import type { UnifiedAttentionItemV1 } from '@cat-cafe/shared';
 import { describe, expect, it } from 'vitest';
 import { resolveOriginalPlace } from '../original-place';
+import { reviewItem } from './mailbox-review-fixtures';
 
 const work = (kind: 'judgment' | 'repair', receipt: Record<string, unknown>): UnifiedAttentionItemV1 => ({
   decisionRef: 'd:1',
@@ -35,6 +36,34 @@ const anchored = {
 
 describe('where a 待办 row can really take you, decided only from what the read carries', () => {
   describe('等你判断 / 需要修复', () => {
+    it('opens the exact F309 workspace review from its verified original prepared-artifact coordinate', () => {
+      const item = reviewItem();
+      const linked = item.linkedNeedsMe[0];
+      const reviewId = `review-${'a'.repeat(64)}`;
+      item.decisionRef = `f309.content_review:${reviewId}`;
+      linked.receipt.producer.subjectRef = reviewId;
+      linked.receipt.producer.ownerRef = `content-review:${reviewId}`;
+      linked.receipt.action = {
+        actionRef: `content-review:${reviewId}`,
+        expectedProducerRevision: linked.receipt.producer.revision,
+      };
+      linked.ownerRead.work = { title: 'Original artwork', ownerCatId: 'codex-astra', threadId: 'review-thread' };
+      linked.ownerRead.preparedArtifact = {
+        artifactRef: '/uploads/sample.png',
+        artifactRevision: '1',
+        completenessRef: 'receipt:original',
+        previewRef: `content-review:${reviewId}:round:1`,
+        openInWorkspaceRef: `workspace:content-review:review-thread:${reviewId}`,
+      };
+      expect(resolveOriginalPlace(item)).toEqual({
+        kind: 'exact',
+        host: 'workspace',
+        actionRef: `workspace:content-review:review-thread:${reviewId}`,
+      });
+      linked.ownerRead.preparedArtifact.openInWorkspaceRef = `workspace:content-review:another-thread:${reviewId}`;
+      expect(resolveOriginalPlace(item)).toEqual({ kind: 'list', destination: 'needs-me' });
+    });
+
     it('a standalone native question opens its canonical Thread card', () => {
       const item: UnifiedAttentionItemV1 = {
         decisionRef: 'f306.runtime_interaction:standalone-1',

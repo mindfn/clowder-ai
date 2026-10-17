@@ -14,6 +14,8 @@ export function activeExecutionKey(
 interface ActiveExecutionState {
   anchorThreadId: string | null;
   projectPath: string | null;
+  scope: 'project' | 'all';
+  unavailableProjectPaths: readonly string[];
   executionsByKey: Record<string, ActiveExecutionProjection>;
   cancelPendingByKey: Record<string, true>;
   hydration: 'idle' | 'loading' | 'ready' | 'error';
@@ -31,6 +33,8 @@ interface ActiveExecutionState {
 const INITIAL_STATE = {
   anchorThreadId: null,
   projectPath: null,
+  scope: 'project' as const,
+  unavailableProjectPaths: [] as readonly string[],
   executionsByKey: {},
   cancelPendingByKey: {},
   hydration: 'idle' as const,
@@ -43,13 +47,13 @@ export const useActiveExecutionStore = create<ActiveExecutionState>((set, get) =
   beginHydration(anchorThreadId, projectPath) {
     const current = get();
     const requestVersion = current.requestVersion + 1;
-    const projectChanged = current.projectPath !== projectPath;
+    const projectChanged = current.projectPath !== projectPath && current.scope !== 'all';
     set({
       anchorThreadId,
       projectPath,
       requestVersion,
       hydration: projectChanged || current.hydration === 'idle' ? 'loading' : current.hydration,
-      ...(projectChanged || projectPath === null
+      ...(projectChanged || (projectPath === null && current.scope !== 'all')
         ? { executionsByKey: {}, cancelPendingByKey: {}, hydrationError: null }
         : {}),
     });
@@ -62,7 +66,9 @@ export const useActiveExecutionStore = create<ActiveExecutionState>((set, get) =
       response.executions.map((execution) => [activeExecutionKey(execution), execution]),
     );
     set({
-      projectPath: response.projectPath,
+      projectPath: response.scope === 'all' ? current.projectPath : response.projectPath,
+      scope: response.scope ?? 'project',
+      unavailableProjectPaths: response.scope === 'all' ? (response.unavailableProjectPaths ?? []) : [],
       executionsByKey,
       cancelPendingByKey: Object.fromEntries(
         Object.keys(current.cancelPendingByKey)

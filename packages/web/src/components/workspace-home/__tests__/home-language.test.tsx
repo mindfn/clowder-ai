@@ -227,17 +227,17 @@ describe('F322 AC-B6–B8 · the Workspace home speaks the chosen language', () 
       await renderHome();
       const rows = qa('[data-testid="workspace-deployment-wait-item"]').map((row) => row.textContent ?? '');
       // ready first, then unknown, then waiting — the order is the state's, not the language's
-      expect(rows[0]).toContain('Waiting for 2 hours · Sol');
+      expect(rows[0]).toContain('2 hours');
       expect(rows[0]).toContain('Running version includes dddddddd; API ready');
       expect(rows[0]).toContain('Ready to resume: Verify it in the original conversation');
       expect(rows[1]).toContain("Haven't confirmed the live environment meets this condition");
       expect(rows[1]).toContain('Waiting for a restart and API to be ready');
-      expect(rows[2]).toContain('Wait time unknown · Owner not confirmed');
+      expect(rows[2]).toContain('Wait time unknown');
       expect(rows[2]).toContain("Can't tell yet whether the condition is met");
       expect(rows[2]).toContain('After resuming: Confirm the next step in the original task');
-      expect(rows[3]).toContain('Waiting for the live version to include this fix · Waiting for 3 hours · Sol');
+      expect(rows[3]).toContain('Waiting for live update');
       expect(rows[3]).toContain('Waiting until the running version includes bbbbbbbb and API + WEB are ready');
-      expect(q('#home-wait-title')?.parentElement?.textContent).toContain('Everywhere · 4');
+      expect(q('#home-wait-title')?.parentElement?.textContent).toContain('All conversations · 4 items');
       expect(q('[data-testid="deployment-candidate-preview"]')?.textContent).toBe(
         'A newer version is on main; after the live update, 2 items will resume · 1 more item to confirm',
       );

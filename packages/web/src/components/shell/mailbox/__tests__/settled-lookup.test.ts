@@ -32,6 +32,20 @@ beforeEach(() => {
 });
 
 describe('lookupSettled', () => {
+  it.each(['threadId', 'messageId'])('rejects an exact proposal result whose original %s changed', async (key) => {
+    const ref = { threadId: 'original-thread', messageId: 'original-message' };
+    answer({
+      items: [
+        row({
+          sourceFeatureId: 'F193',
+          navigation: { state: 'anchored', approvalCardRef: { ...ref, [key]: 'foreign' } },
+        }),
+      ],
+    });
+    await expect(lookupSettled({ ...ask, sourceFeatureId: 'F193', approvalCardRef: ref })).resolves.toEqual({
+      kind: 'unavailable',
+    });
+  });
   it('asks the settled history for a bounded window, after any write that is still settling', async () => {
     answer({ items: [], count: 0 });
     await lookupSettled(ask);

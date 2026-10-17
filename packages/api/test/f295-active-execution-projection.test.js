@@ -273,6 +273,69 @@ describe('F295 active execution projection', () => {
     await app?.close();
   });
 
+  it('discovers all visible projects and unassigned work without widening thread access', async () => {
+    deps._threads.get('thread-b').projectPath = '/project/planet';
+    for (const [id, createdBy, projectPath] of [
+      ['unassigned', USER_ID, 'default'],
+      ['hidden-system', 'system', '/project/planet'],
+      ['foreign-user', 'other-user', '/project/planet'],
+    ]) {
+      deps._threads.set(id, { id, title: id, createdBy, projectPath });
+      deps._executions.set(`${id}:kimi`, {
+        executionId: `inv-${id}`,
+        startedAt: 400,
+        activeRun: fixtureActiveRun(id, 'kimi', `inv-${id}`, 400),
+      });
+    }
+    // A foreign-owned hash cannot become readable through candidate enumeration.
+    deps._indexedThreadIds.add('foreign-user');
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/executions/active?scope=all',
+      headers: { 'x-cat-cafe-user': USER_ID },
+    });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().scope, 'all');
+    assert.deepEqual(
+      response.json().executions.map(({ threadId, projectPath }) => [threadId, projectPath]),
+      [
+        ['thread-a', '/project/cafe'],
+        ['thread-b', '/project/planet'],
+        ['thread-b', '/project/planet'],
+        ['unassigned', 'default'],
+      ],
+    );
+    const crossProject = response.json().executions.find((row) => row.executionId === 'inv-b');
+    const canceled = await app.inject({
+      method: 'POST',
+      url: `/api/threads/thread-b/executions/live/${crossProject.executionId}/cancel`,
+      headers: { 'x-cat-cafe-user': USER_ID },
+      payload: { catId: 'kimi' },
+    });
+    assert.equal(canceled.statusCode, 200);
+    assert.equal(deps._executions.has('thread-a:kimi'), true);
+    assert.equal(deps._executions.has('thread-b:kimi'), false);
+    assert.equal(deps._managedTasks[0].params.holdLifecycle.managedCommand.state, 'command_running');
+  });
+
+  it('returns an honest empty global snapshot for an unknown user and requires identity', async () => {
+    const empty = await app.inject({
+      method: 'GET',
+      url: '/api/executions/active?scope=all',
+      headers: { 'x-cat-cafe-user': 'empty-user' },
+    });
+    assert.equal(empty.statusCode, 200);
+    assert.deepEqual(empty.json(), { scope: 'all', executions: [] });
+    const anonymous = await app.inject({ method: 'GET', url: '/api/executions/active?scope=all' });
+    assert.equal(anonymous.statusCode, 401);
+    const mixed = await app.inject({
+      method: 'GET',
+      url: '/api/executions/active?scope=all&projectPath=%2Fproject%2Fcafe',
+      headers: { 'x-cat-cafe-user': USER_ID },
+    });
+    assert.equal(mixed.statusCode, 400);
+  });
+
   it('keeps one production execution-owner service wired into queue routes', () => {
     const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
     assert.match(source, /const cliExecutionOwnerService = createCliExecutionOwnerService\(\{ log: app\.log \}\)/);

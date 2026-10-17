@@ -216,7 +216,7 @@ describe('what the canonical re-read proved', () => {
           terminal: { resolution: 'accepted', decidedAt: Date.UTC(2026, 9, 1, 8, 30), decidedBy: 'You' },
         },
       });
-      expect(describeReconcile(withMeta.state).line).toMatch(/^已同意 · .+ · You$/);
+      expect(describeReconcile(withMeta.state, { ownerUserId: 'You' }).line).toMatch(/^已同意 · .+ · 你$/);
       const timeOnly = gone({ settled: { kind: 'found', terminal: { resolution: 'rejected', decidedAt: 1_000_000 } } });
       expect(describeReconcile(timeOnly.state).line).toMatch(/^已拒绝 · [^·]+$/);
       const bare = gone({ settled: { kind: 'found', terminal: { resolution: 'rejected' } } });

@@ -5,6 +5,7 @@ import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
+import { runMessageBundleNextJourney } from './f294-message-bundle-next.mjs';
 import { runActionOwnerNextJourney } from './f322-action-owner-next.mjs';
 import { registerCrossThreadLetterJourneys } from './f322-cross-thread-letter.journey.mjs';
 import { runNativeReplyNextJourney } from './f322-native-reply-next.mjs';
@@ -101,6 +102,10 @@ function fixtureAssetResponse(url) {
 }
 
 function fixtureApiResponse(pathname) {
+  // These fixture replies have no additional inputs during generation (#5614).
+  if (/^\/api\/threads\/thread-replies\/messages\/[^/]+\/generation-messages$/.test(pathname)) {
+    return { messageIds: [], hasAppendedInputs: false, complete: true };
+  }
   switch (pathname) {
     case '/api/message-bundles/c-bundle':
       return {
@@ -117,7 +122,7 @@ function fixtureApiResponse(pathname) {
             kind: 'message',
             messageId: id,
             sourceThreadId: 'c-original',
-            author: { kind: 'cat', catId: 'opus' },
+            from: { kind: 'agent', catId: 'opus' },
             timestamp: 1791210000000,
             readableContent: `${id.toUpperCase()} authorized source`,
           })),
@@ -646,7 +651,11 @@ test('v2 reading actions remain transient and forwarding keeps the ordered autho
     await actions.getByRole('button', { name: '更多消息操作' }).click();
     await actions.getByRole('menu', { name: '更多消息操作', exact: true }).waitFor();
     assert.equal(await actions.getByRole('menuitem', { name: '复制消息 ID' }).count(), 1);
-    assert.equal(await actions.getByRole('menuitem').count(), 1, 'More keeps only Copy ID; actions live on the dock');
+    assert.deepEqual(
+      await actions.getByRole('menuitem').allTextContents(),
+      ['从这里分支', '复制消息 ID'],
+      'More keeps the existing branch and ID actions; reading actions live on the dock',
+    );
     assert.equal(await actions.getByRole('separator').count(), 0);
     await actions.getByRole('button', { name: '多选消息' }).click();
     assert.equal(await host.getByRole('checkbox', { checked: true }).count(), 1);
@@ -679,7 +688,7 @@ test('v2 reading actions remain transient and forwarding keeps the ordered autho
     assert.ok((await card.innerText()).includes('THIRD authorized source'));
     const overflow = await host.evaluate((el) => ({ width: el.clientWidth, scroll: el.scrollWidth }));
     assert.ok(overflow.scroll <= overflow.width);
-    assert.deepEqual(errors, []);
+    assert.deepEqual(errors, [], JSON.stringify({ unexpected }));
     assert.deepEqual(unexpected, []);
     await page.close();
   }
@@ -804,6 +813,14 @@ for (const [width, base, presentation] of [
 }
 
 // Registered F322 reply journey; no extra browser unit or parallel admission.
+test(
+  'native message bundle: original crash route, canonical sender, reload and contained bad reads',
+  { timeout: 300000 },
+  async () => {
+    await runMessageBundleNextJourney(browser, evidenceDir);
+  },
+);
+
 test(
   'native output: actual Next host preserves answer/process, source selection, history and classic',
   { timeout: 300000 },

@@ -221,7 +221,7 @@ export function WorkspaceContentReviewProjection({
               : null
             : target
         }
-        allowNewRequest={!imageChatPrimary && source.kind !== 'text'}
+        allowNewRequest={source.kind === 'evolution' || (!imageChatPrimary && source.kind !== 'text')}
         chatRequest={source.kind === 'text' ? { content: sourceText, revision: sourceTextRevision } : undefined}
         disabled={
           !canWrite ||
