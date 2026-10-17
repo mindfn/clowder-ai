@@ -5,7 +5,7 @@
 
 import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { describe, mock, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -489,6 +489,10 @@ describe('SystemPromptBuilder', () => {
     assert.ok(opencodeId.includes('### 执行纪律'), 'OpenCode workflow should include execution discipline');
     assert.ok(opencodeId.includes('出口一问'), 'OpenCode workflow should include exit check (出口一问)');
     assert.ok(opencodeId.includes('OMOC Sisyphus'), 'OpenCode workflow should keep golden-chinchilla governance');
+    for (const prompt of [opusId, codexId, opencodeId, buildStaticIdentity('gemini25')]) {
+      assert.match(prompt, /常规 reviewer（缅因猫、kimi 或 gemini-argon；Argon 只审不写）/);
+      assert.doesNotMatch(prompt, /常规 reviewer（[^）]*Sonnet/);
+    }
   });
 
   test('buildStaticIdentity is deterministic', async () => {
@@ -1339,8 +1343,8 @@ describe('SystemPromptBuilder', () => {
         { catId: 'codex', lastMessageAt: 1000, messageCount: 3 },
       ],
     });
-    assert.match(ctx, /最近活跃：布偶猫\(opus\)\n|最近活跃：布偶猫\(opus\)$/, 'Should inject displayName(id) format');
-    assert.ok(!ctx.includes('最近活跃：缅因猫(codex)'), 'Self (codex) should not appear as most recently active');
+    assert.match(ctx, /最近发言：布偶猫\(opus\)\n|最近发言：布偶猫\(opus\)$/, 'Should inject displayName(id) format');
+    assert.ok(!ctx.includes('最近发言：缅因猫(codex)'), 'Self (codex) should not appear as most recent speaker');
   });
 
   test('buildInvocationContext skips self in activity list', async () => {
@@ -1358,7 +1362,7 @@ describe('SystemPromptBuilder', () => {
       ],
     });
     // opus is self and most-recent, should be skipped; codex is next
-    assert.match(ctx, /最近活跃：缅因猫\(codex\)\n|最近活跃：缅因猫\(codex\)$/, 'Should inject displayName(id) format');
+    assert.match(ctx, /最近发言：缅因猫\(codex\)\n|最近发言：缅因猫\(codex\)$/, 'Should inject displayName(id) format');
   });
 
   test('buildInvocationContext omits hint when activeParticipants absent', async () => {
@@ -1369,7 +1373,7 @@ describe('SystemPromptBuilder', () => {
       teammates: [],
       mcpAvailable: false,
     });
-    assert.ok(!ctx.includes('最近活跃'), 'Should not inject when no activeParticipants');
+    assert.ok(!ctx.includes('最近发言'), 'Should not inject when no activeParticipants');
   });
 
   test('buildInvocationContext omits hint when only self has activity', async () => {
@@ -1386,7 +1390,7 @@ describe('SystemPromptBuilder', () => {
         { catId: 'codex', lastMessageAt: 0, messageCount: 0 },
       ],
     });
-    assert.ok(!ctx.includes('最近活跃'), 'Should not inject when no non-self participant has activity');
+    assert.ok(!ctx.includes('最近发言'), 'Should not inject when no non-self participant has activity');
   });
 
   test('buildSystemPrompt size with activeParticipants stays under full runtime prompt budget after Magic Words + runtime prompt growth', async () => {
@@ -1935,7 +1939,7 @@ describe('SystemPromptBuilder', () => {
 
   // --- 回归测试：maine-coon prompt 必须包含 A2A 执行纪律 ---
 
-  test('maine-coon prompt contains execution discipline keywords', async () => {
+  test('maine-coon prompt keeps execution discipline without blanket silence', async () => {
     const build = await getBuilder();
     const prompt = build({
       catId: 'codex',
@@ -1943,19 +1947,29 @@ describe('SystemPromptBuilder', () => {
       teammates: [],
       mcpAvailable: false,
     });
-    assert.ok(prompt.includes('静默执行'), 'maine-coon prompt must include 静默执行');
-    assert.ok(prompt.includes('声明'), 'maine-coon prompt must include 声明 ≠ 执行');
+    assert.ok(!prompt.includes('静默执行'), 'work must not suppress human-facing progress');
+    assert.ok(prompt.includes('声明 = 执行'), 'progress statements must still be backed by action');
     // F064 球权模型: 空气传球 警告并入 "A2A 球权检查" invocation context（矛盾 push back 语义）
     assert.ok(prompt.includes('push back'), 'maine-coon prompt must include push back (phantom handoff guard)');
     assert.ok(prompt.includes('出口一问'), 'maine-coon prompt must include 出口一问');
   });
 
-  test('maine-coon workflow contains A2A state transition keywords', async () => {
+  test('maine-coon prompt separates A2A routing from human-facing progress', async () => {
     const { buildStaticIdentity } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
     const codexId = buildStaticIdentity('codex');
-    assert.ok(codexId.includes('BLOCKED'), 'codex prompt must include BLOCKED state');
-    assert.ok(codexId.includes('REVIEW READY'), 'codex prompt must include REVIEW READY state');
-    assert.ok(codexId.includes('DONE'), 'codex prompt must include DONE state');
+    assert.ok(codexId.includes('跨猫路由只在需要对方行动或状态迁移时发送'));
+    const sourceRules = readFileSync(
+      resolve(dirname(CAT_TEMPLATE_PATH), 'cat-cafe-skills/refs/shared-rules.md'),
+      'utf8',
+    );
+    const progressBoundary = sourceRules.match(/人或队友发起任务，进度都对人可见/)?.[0];
+    assert.ok(progressBoundary, 'the source must declare the human progress boundary');
+    assert.ok(codexId.includes(progressBoundary));
+    assert.ok(codexId.includes('先用本轮正文说明要做什么，再调用工具'));
+    assert.ok(codexId.includes('工作中更新关键发现、阻碍与下一步'));
+    assert.ok(codexId.includes('进度说明无需 @ 或唤醒队友'));
+    assert.ok(!codexId.includes('只发状态迁移消息'));
+    assert.ok(codexId.includes('serial/handoff 场景且需要对方行动 → @ 对应猫'));
   });
 
   // ─── F129 Pack Block Injection ──────────────────────────────────────

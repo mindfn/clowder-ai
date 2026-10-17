@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { getSessionInfo } from '@anthropic-ai/claude-agent-sdk';
+import { humanSessionFirstLine } from '@cat-cafe/shared';
 import type { LocalSessionMetadata } from '../../types.js';
 
 const execFileAsync = promisify(execFile);
@@ -65,7 +66,7 @@ export async function inspectClaudeLocalSession(sessionId: string): Promise<Loca
   return {
     sessionId: info.sessionId,
     clientId: 'anthropic',
-    firstPrompt: (info.firstPrompt ?? info.summary).slice(0, 500),
+    firstPrompt: humanSessionFirstLine(info.firstPrompt ?? ''),
     projectPath: info.cwd,
     lastActivityAt: info.lastModified,
     turnCount: null,

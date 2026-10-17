@@ -40,7 +40,7 @@ async function fixture(t: Parameters<Parameters<typeof test>[1]>[0]) {
     messages.append({
       userId: scope.userId,
       threadId: thread.id,
-      catId: null,
+      from: { kind: 'user', userId: scope.userId },
       content: text,
       mentions: [],
       timestamp: Date.now(),

@@ -55,7 +55,7 @@ export interface ContentLandingCapabilities {
   historyReadOnly: boolean;
 }
 export interface ContentReviewWorkflow {
-  mediaSource?: { src: string | null; error: string | null };
+  mediaSource?: { src: string | null; downloadSrc?: string | null; error: string | null };
   panel?: ReactNode;
   annotationMaxLength?: number;
   modification?: ReactNode;

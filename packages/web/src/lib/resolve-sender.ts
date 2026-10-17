@@ -6,20 +6,26 @@
  *
  * Usage:
  *   const sender = resolveSender(senderCatId, getCatById, coCreator);
- *   // sender.label  → "@宪宪" | "始皇帝" | "@unknown-cat"
+ *   // sender.label  → "宪宪" | "始皇帝" | "unknown-cat"
  *   // sender.color  → resolved primary color (the identity fill), always non-null
  *   // sender.textColor → the colour to write text in: the readable name role for the co-creator, else the cat colour
  *   //                    (a cat's name role too, when the caller asks for it: `{ nameRole: true }`, new shell only)
  */
 
+import {
+  type ConnectorIconSpec,
+  type ConnectorSource,
+  getConnectorDefinition,
+  type MessageFrom,
+} from '@cat-cafe/shared';
 import type { CoCreatorConfig } from '@/components/config-viewer-types';
 import type { CatData } from '@/hooks/useCatData';
 import { formatCatDisplayName } from '@/lib/cat-display-name';
-import { catColorVar } from '@/lib/cat-slug';
+import { catColorVar, catSlug } from '@/lib/cat-slug';
 import { CO_CREATOR_COLOR, UNKNOWN_CAT_COLOR } from '@/lib/color-defaults';
 
 export interface SenderMeta {
-  /** Display label: "@猫名" for cats, co-creator name for user, "@rawId" for unknown */
+  /** Display name only; routing @handles belong to message content, not this label. */
   label: string;
   /** Resolved primary color — always a valid hex string. An identity fill, which may be dark in a dark theme. */
   color: string;
@@ -29,8 +35,55 @@ export interface SenderMeta {
    * always uses the shared name role, which the theme keeps readable.
    */
   textColor: string;
-  /** true when sender is the co-creator (senderCatId was null) */
+  /** true when the canonical sender is the co-creator */
   isCoCreator: boolean;
+  avatar?: string;
+  icon?: ConnectorIconSpec;
+  fallbackIcon?: string;
+}
+
+export interface MessageSenderIdentity {
+  from?: MessageFrom;
+  source?: ConnectorSource;
+}
+
+/** Display projection only. Source labels describe transport, never grant actor identity or authority. */
+export function resolveMessageSender(
+  message: MessageSenderIdentity,
+  getCatById: (id: string) => CatData | undefined,
+  coCreator: CoCreatorConfig,
+  options: ResolveSenderOptions = {},
+): SenderMeta {
+  const from = message.from;
+  if (from?.kind === 'user')
+    return { ...resolveSender(null, getCatById, coCreator, options), avatar: coCreator.avatar };
+  const catId = from?.kind === 'agent' ? from.catId : undefined;
+  if (catId) return { ...resolveSender(catId, getCatById, coCreator, options), avatar: getCatById(catId)?.avatar };
+  const source =
+    from && (from.kind !== 'external' || message.source?.connector === from.connectorId) ? message.source : undefined;
+  const connectorId = from?.kind === 'external' ? from.connectorId : source?.connector;
+  const definition = connectorId ? getConnectorDefinition(connectorId) : undefined;
+  const sourceName = source?.label || definition?.displayName || connectorId;
+  const actor = from?.kind === 'external' ? from.sender : undefined;
+  const actorName = actor?.name || actor?.id;
+  const label = sourceName
+    ? actorName
+      ? `${sourceName} · ${actorName}`
+      : sourceName
+    : from?.kind === 'plugin'
+      ? `Plugin · ${from.instanceId}`
+      : from?.kind === 'system'
+        ? from.service
+        : '未知来源';
+  const color = definition?.themeColor ?? '#64748B';
+  return {
+    label,
+    color,
+    textColor: color,
+    isCoCreator: false,
+    icon: definition?.icon ?? (source?.icon ? undefined : { type: 'svg', iconId: 'robot' }),
+    ...(source?.icon ? { fallbackIcon: source.icon } : {}),
+  };
 }
 
 export interface ResolveSenderOptions {
@@ -41,6 +94,18 @@ export interface ResolveSenderOptions {
    * gets the hex it always got. An unknown id has no token to point at and keeps its fallback hex.
    */
   nameRole?: boolean;
+}
+
+/** Identity marks follow the sender's current theme, like the classic message navigator. */
+export function messageSenderThemeColor(
+  message: MessageSenderIdentity,
+  sender: SenderMeta,
+  getCatById: (id: string) => CatData | undefined,
+): string {
+  if (sender.isCoCreator) return `var(--color-cocreator-primary, ${sender.color})`;
+  const catId = message.from?.kind === 'agent' ? message.from.catId : undefined;
+  const cat = catId ? getCatById(catId) : undefined;
+  return cat && catSlug(cat.id) === cat.id ? `var(--color-${cat.id}-primary, ${sender.color})` : sender.color;
 }
 
 /**
@@ -70,7 +135,7 @@ export function resolveSender(
   const cat = getCatById(senderCatId);
   if (cat) {
     return {
-      label: `@${formatCatDisplayName(cat)}`,
+      label: formatCatDisplayName(cat),
       color: cat.color.primary,
       textColor: options.nameRole ? catColorVar(cat.id, 'text') : cat.color.primary,
       isCoCreator: false,
@@ -79,7 +144,7 @@ export function resolveSender(
 
   // Unknown cat ID
   return {
-    label: `@${senderCatId}`,
+    label: senderCatId,
     color: UNKNOWN_CAT_COLOR.primary,
     textColor: UNKNOWN_CAT_COLOR.primary,
     isCoCreator: false,

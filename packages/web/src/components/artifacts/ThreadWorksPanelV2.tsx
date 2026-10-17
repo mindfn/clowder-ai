@@ -2,6 +2,8 @@
 
 import { type GlobalArtifactDTO, projectThreadWorks, type ThreadArtifactDTO } from '@cat-cafe/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useArtworkLightboxScope } from '@/components/content-review/ArtworkLightboxScope';
+import { useArtifactLightbox } from '@/components/content-review/useArtifactLightbox';
 import { useShellCopy } from '@/components/shell/shell-copy';
 import { pushThreadRouteWithHistory } from '@/components/ThreadSidebar/thread-navigation';
 import { artifactObjectId } from '@/components/workbench/real-surface-adapters';
@@ -38,6 +40,8 @@ const matches = (artifact: Work, filter: Filter) =>
 /** The existing artifact-list owner and origin schema, with the original content open callback. */
 export function ThreadWorksPanelV2({ threadId, width, onClose, onSelectArtifact, initialView }: WorksPanelProps) {
   const t = useShellCopy(worksPanelCopy);
+  const floating = useArtifactLightbox(threadId);
+  const floatingScope = useArtworkLightboxScope();
   const cardCopy = useShellCopy(workspaceV3Copy);
   const { getCatById } = useCatData();
   const [scope, setScope] = useState(initialView?.scope ?? 'thread');
@@ -120,8 +124,11 @@ export function ThreadWorksPanelV2({ threadId, width, onClose, onSelectArtifact,
           : {}),
       },
     };
-    if (onSelectArtifact) onSelectArtifact(artifact, origin);
-    else useChatStore.getState().openPublishedArtifact(threadId, artifact, origin);
+    const openWorkspace = () => {
+      if (onSelectArtifact) onSelectArtifact(artifact, origin);
+      else useChatStore.getState().openPublishedArtifact(threadId, artifact, origin);
+    };
+    if (!floating.open(artifact, origin)) openWorkspace();
   };
   const jump = (artifact: Work) => {
     if (!artifact.sourceMessageId) {
@@ -143,7 +150,8 @@ export function ThreadWorksPanelV2({ threadId, width, onClose, onSelectArtifact,
   };
   const select = (artifact: Work) => {
     setNotice(undefined);
-    if (artifact.type === 'image' && artifact.url) setSelected(artifact);
+    if (floatingScope && (artifact.type === 'image' || artifact.type === 'video') && artifact.url) open(artifact);
+    else if (artifact.type === 'image' && artifact.url) setSelected(artifact);
     else if (artifact.type === 'widget') jump(artifact);
     else open(artifact);
   };
@@ -244,6 +252,7 @@ export function ThreadWorksPanelV2({ threadId, width, onClose, onSelectArtifact,
         {notice && <output className="text-xs">{notice}</output>}
       </header>
       <div ref={scroll} className="v2-works-scroll">
+        {floating.error && <p role="alert">{floating.error}</p>}
         {!active.loading && !active.error && complete && !visible.length && <p className="text-xs">{t.empty}</p>}
         {!active.loading &&
           !active.error &&

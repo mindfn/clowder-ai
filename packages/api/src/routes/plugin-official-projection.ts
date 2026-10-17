@@ -1,6 +1,6 @@
 import type { PluginInstanceRecord, PluginInventorySnapshot } from '../domains/plugin/host-inventory/types.js';
+import { compareOfficialPluginVersions } from '../domains/plugin/manager/official-catalog-provider.js';
 import type { OfficialPluginCatalogEntry } from '../domains/plugin/official-catalog.js';
-import { compareOfficialPluginVersions } from '../domains/plugin/official-catalog-provider.js';
 import type { OfficialPluginMeetingIntakePort } from '../domains/plugin/official-plugin-meeting-intake-port.js';
 
 function projectInstance(instance: PluginInstanceRecord | undefined, snapshot: PluginInventorySnapshot) {

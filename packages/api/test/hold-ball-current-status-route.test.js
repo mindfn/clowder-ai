@@ -9,6 +9,9 @@
  */
 
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { beforeEach, describe, test } from 'node:test';
 import Fastify from 'fastify';
 
@@ -262,7 +265,7 @@ describe('F167 #1449 Slice 1: GET /api/callbacks/hold-ball/current', () => {
     assert.equal(body.lifecycle, undefined, 'must not leak lifecycle');
   });
 
-  test('non-owner collaborator sees only summary lifecycle (mode+status)', async () => {
+  test('non-owner collaborator sees only summary lifecycle (mode+status)', async (t) => {
     // Hold created by original-user/codex on a non-default thread
     const thread = await threadStore.create('test-user', 'collab-thread');
     const task = makeHoldTask('hold-ball-collab-001', thread.id, 'codex', {
@@ -312,7 +315,113 @@ describe('F167 #1449 Slice 1: GET /api/callbacks/hold-ball/current', () => {
     // Owner projection: no userId for non-full visibility
     assert.equal(body.owner.catId, 'codex');
     assert.equal(body.owner.userId, undefined, 'non-full visibility must not expose userId');
+
+    // Job cancellation is principal-scoped even when the surrounding hold is
+    // visible to a collaborator. Both read surfaces must match DELETE.
+    const { ManagedJobService } = await import('../dist/domains/managed-job/ManagedJobService.js');
+    const root = await mkdtemp(join(tmpdir(), 'managed-job-access-'));
+    const priorRoot = process.env.CAT_CAFE_DATA_DIR;
+    process.env.CAT_CAFE_DATA_DIR = root;
+    t.after(async () => {
+      if (priorRoot === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+      else process.env.CAT_CAFE_DATA_DIR = priorRoot;
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    });
+    const service = new ManagedJobService(root);
+    const job = await service.submit(
+      { userId: 'original-user', catId: 'codex', threadId: thread.id },
+      {
+        command: 'node --version',
+        cwd: process.cwd(),
+        originInvocationId: 'job-owner',
+        originTaskId: task.id,
+        executionSlaMs: 10000,
+        idempotencyKey: 'cancel-permission',
+        wakeTarget: { threadId: thread.id, catId: 'codex', userId: 'original-user' },
+      },
+    );
+    service.admit({ userId: 'original-user', catId: 'codex', threadId: thread.id }, job.jobId, 'visible-job-card');
+    task.params.holdLifecycle.managedCommand = {
+      state: 'command_running',
+      command: 'node --version',
+      startedAt: Date.now(),
+      jobId: job.jobId,
+    };
+    for (const url of ['/api/callbacks/hold-ball/current', `/api/callbacks/hold-ball/${task.id}/status`]) {
+      const response = await app.inject({ method: 'GET', url, headers });
+      assert.equal(response.statusCode, 200);
+      const status = response.json();
+      assert.equal(status.cancelable, false, url);
+      if (url.endsWith('/status')) assert.equal(status.access.canCancel, false);
+    }
+    assert.equal(
+      (await app.inject({ method: 'DELETE', url: `/api/callbacks/hold-ball/${task.id}`, headers })).statusCode,
+      403,
+    );
+    const internal = await registry.create('scheduler', 'codex', thread.id);
+    const internalRead = await app.inject({
+      method: 'GET',
+      url: `/api/callbacks/hold-ball/${task.id}/status?tailBytes=100`,
+      headers: { 'x-invocation-id': internal.invocationId, 'x-callback-token': internal.callbackToken },
+    });
+    assert.equal(internalRead.statusCode, 403, 'internal actor cannot borrow a different stored job owner');
   });
+
+  for (const actorUserId of ['scheduler', 'system']) {
+    test(`internal ${actorUserId} invocation retains its thread-owned job read/cancel authority`, async (t) => {
+      const thread = await threadStore.create('test-user', 'internal-owner-job');
+      const task = makeHoldTask(`hold-ball-internal-${actorUserId}`, thread.id, 'codex', {
+        params: {
+          triggerUserId: 'test-user',
+          holdLifecycle: { mode: 'wake_when', status: 'active', createdBy: 'hold-ball:codex' },
+        },
+      });
+      const deps = makeStubDeps([task], { [thread.id]: 'test-user' });
+      const app = await createApp(deps);
+      const root = await mkdtemp(join(tmpdir(), 'managed-internal-access-'));
+      const priorRoot = process.env.CAT_CAFE_DATA_DIR;
+      process.env.CAT_CAFE_DATA_DIR = root;
+      t.after(async () => {
+        await app.close();
+        if (priorRoot === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+        else process.env.CAT_CAFE_DATA_DIR = priorRoot;
+        await rm(root, { recursive: true, force: true });
+      });
+      const { ManagedJobService } = await import('../dist/domains/managed-job/ManagedJobService.js');
+      const service = new ManagedJobService(root);
+      const principal = { userId: 'test-user', catId: 'codex', threadId: thread.id };
+      const job = await service.submit(principal, {
+        command: 'node --version',
+        cwd: process.cwd(),
+        originInvocationId: 'internal-owner',
+        originTaskId: task.id,
+        executionSlaMs: 10000,
+        idempotencyKey: actorUserId,
+        wakeTarget: principal,
+      });
+      service.admit(principal, job.jobId, `visible-${actorUserId}-job`);
+      task.params.holdLifecycle.managedCommand = {
+        state: 'command_running',
+        command: 'node --version',
+        startedAt: Date.now(),
+        jobId: job.jobId,
+      };
+      const auth = await registry.create(actorUserId, 'codex', thread.id);
+      const headers = { 'x-invocation-id': auth.invocationId, 'x-callback-token': auth.callbackToken };
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/callbacks/hold-ball/${task.id}/status?tailBytes=100`,
+        headers,
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      assert.equal(response.json().access.role, 'trigger_principal');
+      assert.equal(response.json().job.jobId, job.jobId);
+      const cancelled = await app.inject({ method: 'DELETE', url: `/api/callbacks/hold-ball/${task.id}`, headers });
+      assert.equal(cancelled.statusCode, 200, cancelled.body);
+      assert.equal(service.get(principal, job.jobId).state, 'cancelled');
+    });
+  }
 
   // ── P1-2 RED tests: retired-with-running-managed-command observability ──
 

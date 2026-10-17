@@ -14,6 +14,11 @@ export function getDefaultUploadDir(configuredUploadDir?: string): string {
   return configuredUploadDir ? resolve(configuredUploadDir) : MODULE_DEFAULT_UPLOAD_DIR;
 }
 
+/** Shared connector download/HTTP/read root; preserve the existing cwd-relative default. */
+export function getDefaultConnectorMediaDir(configuredMediaDir?: string): string {
+  return resolve(configuredMediaDir ?? './data/connector-media');
+}
+
 const INTERNAL_ROUTE_PREFIXES = ['/uploads/', '/api/connector-media/', '/api/tts/audio/'];
 
 export function resolveInternalRouteUrl(url: string): string {

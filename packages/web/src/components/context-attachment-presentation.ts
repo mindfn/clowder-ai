@@ -20,7 +20,7 @@ function originalPresentation(attachment: ContextAttachment): { title: string; d
     case 'media':
       return {
         title: attachment.title,
-        detail: `${attachment.mediaType === 'image/png' ? '图片' : '视频'} · ${attachment.selections.length ? `${attachment.selections.length}处选区` : '整件作品'}`,
+        detail: `${attachment.mediaType === 'video/mp4' ? '视频' : '图片'} · ${attachment.selections.length ? `${attachment.selections.length}处选区` : '整件作品'}`,
       };
     case 'workspace_file':
       return {

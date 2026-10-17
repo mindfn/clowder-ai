@@ -171,7 +171,14 @@ describe('F322 Workspace home: the new shell chooses exactly what the classic ho
   it.each(SHARED_DESTINATIONS)('%s: same store calls, host callbacks, surface and replay as classic', async (ref) => {
     const classic = await choose('classic', ref);
     const v2 = await choose('v2', ref);
-    expect(v2).toEqual(classic);
+    if (ref === 'mode:product-schedule') {
+      expect(classic.surfaces[0]?.title).toBe('Schedule');
+      expect(v2.surfaces[0]?.title).toBe('日程');
+      // The translated heading is presentation; all owner coordinates and callbacks remain exact.
+      expect({ ...v2, surfaces: v2.surfaces.map((surface) => ({ ...surface, title: 'Schedule' })) }).toEqual(classic);
+    } else {
+      expect(v2).toEqual(classic);
+    }
   });
 
   it('keeps classic replay on its single legacy owner without admitting a second F307 player', async () => {

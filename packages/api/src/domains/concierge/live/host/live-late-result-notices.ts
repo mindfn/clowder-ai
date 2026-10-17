@@ -1,5 +1,6 @@
 import { type CatId, createCatId } from '@cat-cafe/shared';
 import type { CodexLiveNativeClient } from '../../../cats/services/agents/providers/CodexLiveRunPort.js';
+import { messageFrom } from '../../../cats/services/stores/message-from.js';
 import type { IMessageStore, StoredMessage } from '../../../cats/services/stores/ports/MessageStore.js';
 import { canViewMessage } from '../../../cats/services/stores/visibility.js';
 import { liveMessageDigest } from '../live-transcript.js';
@@ -61,7 +62,7 @@ export class LiveLateResultNotices {
     for (const row of rows) {
       const info = row.extra?.systemInfo?.payload;
       if (
-        row.catId === 'system' &&
+        messageFrom(row).kind === 'system' &&
         info?.kind === 'live_result_notice' &&
         info.phase === 'reminder_committed' &&
         typeof info.resultMessageId === 'string'
@@ -86,7 +87,7 @@ export class LiveLateResultNotices {
     for (const row of rows) {
       const info = row.extra?.systemInfo?.payload;
       if (
-        row.catId !== 'system' ||
+        messageFrom(row).kind !== 'system' ||
         info?.kind !== 'live_result_notice' ||
         info.phase !== 'deferred' ||
         typeof info.resultMessageId !== 'string' ||
@@ -197,7 +198,7 @@ export class LiveLateResultNotices {
     const stored = await this.deps.store.appendIdempotent({
       userId: this.deps.scope.userId,
       threadId: this.deps.scope.threadId,
-      catId: createCatId('system'),
+      from: { kind: 'system', service: 'live-companion' },
       content:
         phase === 'deferred'
           ? `此前结果已保存，换题后尚未回告。[查看原结果](/thread/${encodeURIComponent(this.deps.scope.threadId)}?message=${encodeURIComponent(result.id)})`

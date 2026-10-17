@@ -94,6 +94,7 @@ export function readbackResponse(request, trace, message) {
             avatar: '/avatars/codex.png',
             color: { primary: '#5B8C5A', secondary: '#eeeeee' },
             mentionPatterns: ['@codex'],
+            carrier: 'cli',
             clientId: 'openai',
             defaultModel: 'gpt-6.1-sol',
             roster: { available: true },

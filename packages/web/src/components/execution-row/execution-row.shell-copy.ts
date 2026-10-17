@@ -4,7 +4,7 @@ export const executionRowCopy = defineShellCopy(
   {
     zh: {
       status: {
-        working: (who: string, clock: string, tail: string): string => `${who} 正在回话${clock}${tail}`,
+        working: (who: string, clock: string, tail: string): string => `${who} 处理中${clock}${tail}`,
         running: (count: number, tail: string): string => `${count} 项运行中${tail}`,
         managed: (who: string, activity: string, clock: string, tail: string): string =>
           `${who} 在跑${activity}${clock}${tail}`,
@@ -23,7 +23,7 @@ export const executionRowCopy = defineShellCopy(
         quietUnknown: '没有动静',
       },
       compact: {
-        working: '正在回话',
+        working: '处理中',
         managed: (activity: string): string => `在跑${activity}`,
         stopping: '正在停止',
         silent: '没动静',
@@ -51,7 +51,6 @@ export const executionRowCopy = defineShellCopy(
       forceResetReason: {
         silent_turn: '这一轮已经一段时间没有动静',
         unverified_legacy: '本轮没有留下可核对的终态，可能已经结束',
-        processing_stuck: '有一条消息的处理卡住了，没有猫在接它',
       },
       pauseReason: { canceled: '当前调用已取消', failed: '当前调用失败' },
       stale: '状态暂不可核对',
@@ -80,7 +79,7 @@ export const executionRowCopy = defineShellCopy(
     },
     en: {
       status: {
-        working: (who: string, clock: string, tail: string): string => `${who} replying${clock}${tail}`,
+        working: (who: string, clock: string, tail: string): string => `${who} working${clock}${tail}`,
         running: (count: number, tail: string): string => `${count} running${tail}`,
         managed: (who: string, activity: string, clock: string, tail: string): string =>
           `${who} running ${activity.toLowerCase()}${clock}${tail}`,
@@ -99,7 +98,7 @@ export const executionRowCopy = defineShellCopy(
         quietUnknown: 'No activity',
       },
       compact: {
-        working: 'Replying',
+        working: 'Working',
         managed: (activity: string): string => `Running ${activity.toLowerCase()}`,
         stopping: 'Stopping',
         silent: 'Quiet',
@@ -127,7 +126,6 @@ export const executionRowCopy = defineShellCopy(
       forceResetReason: {
         silent_turn: 'This turn has shown no activity for a while',
         unverified_legacy: 'This turn left no verifiable final state and may have ended',
-        processing_stuck: 'A message is stuck with no cat handling it',
       },
       pauseReason: { canceled: 'The current invocation was cancelled', failed: 'The current invocation failed' },
       stale: 'State cannot be verified',

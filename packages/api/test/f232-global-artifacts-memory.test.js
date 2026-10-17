@@ -137,7 +137,7 @@ test('paged artifact projection exactly preserves legacy equal-time ref ties, le
     records.push(
       store.append({
         userId: 'alice',
-        catId: 'opus-48',
+        from: { kind: 'agent', catId: 'opus-48' },
         threadId: 'T',
         content: `unused-content-${index}`,
         mentions: [],
@@ -157,7 +157,7 @@ test('paged artifact projection exactly preserves legacy equal-time ref ties, le
   }
   const privateRecord = store.append({
     userId: 'bob',
-    catId: 'opus-48',
+    from: { kind: 'agent', catId: 'opus-48' },
     threadId: 'T',
     content: 'private',
     mentions: [],

@@ -38,6 +38,8 @@ export const routingPreviewReasonSchema: z.ZodType<RoutingPreviewReason> = z.uni
 export interface RoutingPreviewResponse {
   targetCats: CatId[];
   reason: RoutingPreviewReason;
+  /** Known recipients skipped because they cannot run, never because they are busy. */
+  unavailableTargets?: CatId[];
 }
 
 export const routingPreviewResponseSchema: z.ZodType<RoutingPreviewResponse, z.ZodTypeDef, unknown> = z
@@ -47,5 +49,10 @@ export const routingPreviewResponseSchema: z.ZodType<RoutingPreviewResponse, z.Z
       .max(50)
       .transform((catIds) => catIds as CatId[]),
     reason: routingPreviewReasonSchema,
+    unavailableTargets: z
+      .array(z.string().trim().min(1))
+      .max(50)
+      .transform((ids) => ids as CatId[])
+      .optional(),
   })
   .strict();

@@ -31,7 +31,7 @@ for (const history of ['recent_replier', 'previous_user_mentions']) {
       if (history === 'previous_user_mentions')
         f.messages.append({
           userId: 'operator',
-          catId: null,
+          from: { kind: 'user', userId: 'operator' },
           threadId: f.thread.id,
           content: '@codex 先看别的事',
           mentions: [other],
@@ -65,7 +65,7 @@ for (const history of ['recent_replier', 'previous_user_mentions']) {
 
       const unaddressed = f.messages.append({
         userId: 'operator',
-        catId: null,
+        from: { kind: 'user', userId: 'operator' },
         threadId: f.thread.id,
         content: draft,
         mentions: before.targetCats,
@@ -87,7 +87,7 @@ for (const history of ['recent_replier', 'previous_user_mentions']) {
       assert.deepEqual(delivery.targetCats, [createCatId('codex-astra')]);
       const message = f.messages.append({
         userId: 'operator',
-        catId: null,
+        from: { kind: 'user', userId: 'operator' },
         threadId: f.thread.id,
         content: payload.content,
         mentions: delivery.targetCats,

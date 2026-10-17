@@ -37,6 +37,7 @@ import { readMessagePassageState } from './message-passage-state.js';
 import { normalizeMessageSearchDates } from './message-search-dates.js';
 import { applyMMR } from './mmr.js';
 import { type PassageVectorStore, parsePassageVectorKey, passageVectorKey } from './PassageVectorStore.js';
+import { withProjectionCheckpoints } from './projection-checkpoints.js';
 import { publishEntityMentions, recoverEntityMentionProjections } from './publish-entity-mentions.js';
 import { applyPullOnlyDownrank } from './pull-only-ranking.js';
 import { computeRecencyDecay } from './recency-decay.js';
@@ -1789,6 +1790,20 @@ export class SqliteEvidenceStore implements IEvidenceStore {
   /** Serialize an arbitrary write through the single-writer queue (F163 AC-A5). */
   runExclusive<T>(fn: () => T | Promise<T>): Promise<T> {
     return this.writeQueue.enqueue(fn);
+  }
+
+  /** A bounded indexing transaction must not run bulk WAL backfill on the API
+   * thread. Retain its queue slot until the existing maintenance process drains
+   * the batch, then restore the connection policy before the next writer. */
+  runCheckpointedBatch<T>(fn: () => T | Promise<T>): Promise<T> {
+    return this.runExclusive(async () => {
+      if (!this.usesIsolatedProcesses()) return fn();
+      let result!: T;
+      await withProjectionCheckpoints(this.getDb(), this.dbPath, async () => {
+        result = await fn();
+      });
+      return result;
+    });
   }
 
   /** Retain the canonical writer queue until maintenance commits or its child closes. */

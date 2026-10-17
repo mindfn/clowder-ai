@@ -26,14 +26,14 @@ describe('F280 register_issue_tracking public contract', () => {
     try {
       const { handleRegisterIssueTracking } = await import('../dist/tools/callback-tools.js');
       await handleRegisterIssueTracking({
-        repoFullName: 'zts212653/cat-cafe',
+        repoFullName: 'zts212653/clowder-ai',
         issueNumber: 1227,
         when: [{ kind: 'issue_author_commented' }],
         nextStep: 'Inspect the author reply.',
         expiresAt: 1_785_500_000_000,
       });
       assert.deepEqual(requestBody, {
-        repoFullName: 'zts212653/cat-cafe',
+        repoFullName: 'zts212653/clowder-ai',
         issueNumber: 1227,
         when: [{ kind: 'issue_author_commented' }],
         nextStep: 'Inspect the author reply.',
@@ -73,7 +73,7 @@ describe('F280 register_issue_tracking public contract', () => {
     try {
       const { handleRegisterIssueTracking } = await import('../dist/tools/callback-tools.js');
       await handleRegisterIssueTracking({
-        repoFullName: 'zts212653/cat-cafe',
+        repoFullName: 'zts212653/clowder-ai',
         issueNumber: 861,
         when: [{ kind: 'issue_comment_added' }],
         nextStep: 'Continue.',
@@ -179,7 +179,7 @@ describe('F280 register_issue_tracking public contract', () => {
     };
     try {
       await handleRegisterIssueTracking({
-        repoFullName: 'zts212653/cat-cafe',
+        repoFullName: 'zts212653/clowder-ai',
         issueNumber: 1392,
         when: named,
         nextStep: 'Read the maintainer reply.',

@@ -14,7 +14,7 @@ describe('MemoryPrTrackingStore', () => {
 
   it('registers and retrieves a PR entry', () => {
     const input = {
-      repoFullName: 'zts212653/cat-cafe',
+      repoFullName: 'zts212653/clowder-ai',
       prNumber: 42,
       catId: 'opus',
       threadId: 'thread-1',
@@ -23,13 +23,13 @@ describe('MemoryPrTrackingStore', () => {
 
     const entry = store.register(input);
 
-    assert.strictEqual(entry.repoFullName, 'zts212653/cat-cafe');
+    assert.strictEqual(entry.repoFullName, 'zts212653/clowder-ai');
     assert.strictEqual(entry.prNumber, 42);
     assert.strictEqual(entry.catId, 'opus');
     assert.strictEqual(entry.threadId, 'thread-1');
     assert.strictEqual(typeof entry.registeredAt, 'number');
 
-    const found = store.get('zts212653/cat-cafe', 42);
+    const found = store.get('zts212653/clowder-ai', 42);
     assert.deepStrictEqual(found, entry);
   });
 

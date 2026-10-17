@@ -16,7 +16,7 @@ export function ExecutionRowActions({
 }) {
   const { model, forceReset } = controller;
   const resetDetail = model.forceReset.map((reason) => words.forceResetReason[reason]).join(' · ');
-  const resumeLabel = model.resumeOnRow === 'continue' ? words.actions.continue : words.actions.recover;
+  const resumeLabel = words.actions.recover;
 
   return (
     <>
@@ -51,7 +51,7 @@ export function ExecutionRowActions({
             className="shell-focusable inline-flex flex-none items-center gap-1 rounded-md bg-[var(--semantic-success)] px-2 py-1 text-[var(--cafe-surface)] hover:opacity-90"
           >
             <ExecutionRowActionIcon
-              kind={model.resumeOnRow === 'continue' ? 'continue' : 'recover'}
+              kind={'recover'}
               className={`${styles.actionIcon} h-4 w-4`}
               testId="execution-row-resume-icon"
             />

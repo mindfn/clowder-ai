@@ -38,6 +38,7 @@ export async function homeWorkFixture(realSource = false) {
     verifyNativeBinding: async () => true,
     publish() {},
   });
+  await sessions.claim(call.id, 'owner', threadId, [catId]);
   await call.configure({
     CAT_CAFE_API_URL: 'http://127.0.0.1:5491',
     CAT_CAFE_USER_ID: 'owner',
@@ -59,13 +60,12 @@ export async function homeWorkFixture(realSource = false) {
       return {};
     },
   });
-  sessions.claim(call.id, 'owner', threadId, [catId]);
   await call.start('offer');
   const artifact = { contentRef: `prepared-media:${'a'.repeat(64)}`, ownerRevision: 2 };
   const published = messages.append({
     userId: 'owner',
     threadId,
-    catId: createCatId('sonnet'),
+    from: { kind: 'agent', catId: createCatId('sonnet') },
     content: '已交付回家清单第2版',
     mentions: [],
     timestamp: Date.now(),
@@ -89,7 +89,7 @@ export async function homeWorkFixture(realSource = false) {
     messages.append({
       userId: 'owner',
       threadId,
-      catId: createCatId('sonnet'),
+      from: { kind: 'agent', catId: createCatId('sonnet') },
       content: '私密作品',
       mentions: [],
       timestamp: Date.now(),

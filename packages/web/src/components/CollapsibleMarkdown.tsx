@@ -56,6 +56,7 @@ export function CollapsibleMarkdown({
       </div>
       <button
         type="button"
+        data-reading-disclosure
         onClick={toggle}
         className="mt-1 text-xs text-cafe-muted hover:text-cafe-primary transition-colors"
       >

@@ -1,10 +1,21 @@
 /** Read-only, one hash snapshot: never transfer an excluded cat's body/tool/extra payload. */
 export const HUMAN_SOURCE_HASH_LUA = `
-local catId = redis.call('HGET', KEYS[1], 'catId')
-if not catId or catId == '' then
+local fromRaw = redis.call('HGET', KEYS[1], 'from')
+local excluded = false
+if fromRaw then
+  local ok, from = pcall(cjson.decode, fromRaw)
+  -- Unknown/malformed values go through the normal strict hydrator.
+  if ok and type(from) == 'table' then
+    excluded = from.kind == 'agent' or from.kind == 'system' or from.kind == 'external' or from.kind == 'plugin'
+  end
+else
+  local catId = redis.call('HGET', KEYS[1], 'catId')
+  excluded = catId and catId ~= ''
+end
+if not excluded then
   return redis.call('HGETALL', KEYS[1])
 end
-local fields = {'id', 'catId', 'deletedAt', 'queueCustody', 'queueCustodyAdmission'}
+local fields = {'id', 'userId', 'threadId', 'timestamp', 'from', 'catId', 'source', 'origin', 'deletedAt', 'lifecycle'}
 local result = {}
 for _, field in ipairs(fields) do
   local value = redis.call('HGET', KEYS[1], field)

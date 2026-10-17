@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
+import { adaptInvocationQueue } from '../helpers/message-from-fixtures.js';
 import '../helpers/setup-cat-registry.js';
 import { buildActionSuccessorFence } from '../../dist/domains/ball-custody/ActionSuccessorAdmissionContract.js';
 import { ActionSuccessorProjectionRetirementService } from '../../dist/domains/ball-custody/ActionSuccessorProjectionRetirementService.js';
@@ -78,7 +79,7 @@ test('a canceled queued Task runner cannot borrow a replacement slot before prov
   };
   const records = new InvocationRecordStore();
   const tracker = new InvocationTracker();
-  const queue = new InvocationQueue();
+  const queue = adaptInvocationQueue(new InvocationQueue());
   const beforeRunning = deferred();
   const releaseRunning = deferred();
   let parentId;
@@ -147,6 +148,7 @@ test('a canceled queued Task runner cannot borrow a replacement slot before prov
         assert.equal(snapshot.projection.state, 'queued');
         lease.dispatchDeliveryState = 'delivered';
         queue.enqueue({
+          kind: 'private_input',
           ownerAuthProvenance: 'unknown',
           threadId: 'thread-admission',
           userId: 'operator',
@@ -157,7 +159,7 @@ test('a canceled queued Task runner cannot borrow a replacement slot before prov
           autoExecute: false,
           actionSuccessorFence: buildActionSuccessorFence(lease, lease.dispatchId),
         });
-        const entry = queue.markProcessing('thread-admission', 'operator');
+        const entry = await claimOnlyTarget(queue, 'thread-admission');
         assert.ok(entry);
         runnerOutcome = processor.executeEntry(entry).then(
           (value) => ({ value }),
@@ -186,7 +188,11 @@ test('a canceled queued Task runner cannot borrow a replacement slot before prov
   assert.deepEqual(result.execution.stop.executionRefs, [parentId]);
   assert.equal(records.get(parentId)?.status, 'queued');
   assert.equal(controller.signal.aborted, true);
-  assert.equal(queue.list('thread-admission', 'operator').length, 0);
+  assert.equal(
+    queue.list('thread-admission', 'operator').length,
+    1,
+    'terminal retirement must not steal the runner’s reversible claim',
+  );
 
   const replacement = records.create({
     threadId: 'thread-admission',
@@ -212,6 +218,7 @@ test('a canceled queued Task runner cannot borrow a replacement slot before prov
   const outcome = await runnerOutcome;
   assert.equal(outcome.error, undefined);
   assert.equal(outcome.value?.status, 'canceled_by_user');
+  assert.equal(queue.list('thread-admission', 'operator').length, 0, 'the canceled runner retires its own claim');
   assert.equal(providerCalls, 0, 'cancel must fence the pre-running admitted carrier before provider execution');
   assert.notEqual(passedSignal, replacementController.signal, 'the old runner cannot inherit its replacement signal');
   assert.equal(replacementController.signal.aborted, false);
@@ -220,10 +227,11 @@ test('a canceled queued Task runner cannot borrow a replacement slot before prov
 });
 
 test('a queued runner keeps its original signal when replacement happens inside the route boundary', async () => {
-  const queue = new InvocationQueue();
+  const queue = adaptInvocationQueue(new InvocationQueue());
   const tracker = new InvocationTracker();
   const records = new InvocationRecordStore();
   const entry = queue.enqueue({
+    kind: 'private_input',
     ownerAuthProvenance: 'unknown',
     threadId: 'thread-route-signal',
     userId: 'operator',
@@ -233,7 +241,7 @@ test('a queued runner keeps its original signal when replacement happens inside 
     intent: 'execute',
     autoExecute: false,
   }).entry;
-  const processing = queue.markProcessing('thread-route-signal', 'operator');
+  const processing = await claimOnlyTarget(queue, 'thread-route-signal');
   assert.equal(processing?.id, entry.id);
 
   let providerCalls = 0;
@@ -285,3 +293,14 @@ test('a queued runner keeps its original signal when replacement happens inside 
   assert.equal(replacementController?.signal.aborted, false);
   assert.equal(tracker.getExecutionId('thread-route-signal', 'codex-sol'), replacementId);
 });
+
+async function claimOnlyTarget(queue, threadId) {
+  const entry = queue.list(threadId, 'operator')[0];
+  assert.ok(entry);
+  const claimed = await queue.markProcessingGroupAcrossUsersDurable(
+    threadId,
+    { entryId: entry.id, targetCats: ['codex-sol'] },
+    [entry.id],
+  );
+  return claimed?.entry;
+}

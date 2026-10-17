@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
+import { adaptInvocationQueue } from '../helpers/message-from-fixtures.js';
 import '../helpers/setup-cat-registry.js';
 import { InvocationQueue } from '../../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { InvocationTracker } from '../../dist/domains/cats/services/agents/invocation/InvocationTracker.js';
@@ -18,7 +19,7 @@ function deferred() {
 
 async function runPreemptedParent(preemptAt) {
   const threadId = `thread-preempted-${preemptAt}-${randomUUID()}`;
-  const queue = new InvocationQueue();
+  const queue = adaptInvocationQueue(new InvocationQueue());
   const tracker = new InvocationTracker();
   const records = new InvocationRecordStore();
   const beforeRunning = deferred();
@@ -78,6 +79,7 @@ async function runPreemptedParent(preemptAt) {
   });
 
   queue.enqueue({
+    kind: 'private_input',
     ownerAuthProvenance: 'unknown',
     threadId,
     userId: 'operator',
@@ -87,7 +89,7 @@ async function runPreemptedParent(preemptAt) {
     intent: 'execute',
     autoExecute: false,
   });
-  const entry = queue.markProcessing(threadId, 'operator');
+  const entry = await claimOnlyTarget(queue, threadId);
   assert.ok(entry);
   const pending = processor.executeEntry(entry);
 
@@ -116,3 +118,14 @@ test('in-route replacement keeps the same preempted terminal status', async () =
   const result = await runPreemptedParent('inside_route');
   assert.equal(result.status, 'canceled');
 });
+
+async function claimOnlyTarget(queue, threadId) {
+  const entry = queue.list(threadId, 'operator')[0];
+  assert.ok(entry);
+  const claimed = await queue.markProcessingGroupAcrossUsersDurable(
+    threadId,
+    { entryId: entry.id, targetCats: ['codex-sol'] },
+    [entry.id],
+  );
+  return claimed?.entry;
+}

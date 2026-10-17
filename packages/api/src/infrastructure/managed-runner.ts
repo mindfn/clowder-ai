@@ -305,13 +305,14 @@ export class ManagedRunner {
         }) as typeof logStream.write;
 
       // Timeout handler
-      this._timeoutTimer = setTimeout(() => {
-        if (this._state !== 'running') return;
-        log.info({ pid: this._pid, command, timeoutMs }, 'ManagedRunner: timeout reached, sending SIGTERM');
-        this._state = 'timed_out';
-        const gracefulTermination = this._killProcessGroup('SIGTERM');
-        this._armKillEscalation(gracefulTermination, 'ManagedRunner: SIGKILL after grace period');
-      }, timeoutMs);
+      if (opts?.managedJob?.recordStorage !== 'sqlite_v1')
+        this._timeoutTimer = setTimeout(() => {
+          if (this._state !== 'running') return;
+          log.info({ pid: this._pid, command, timeoutMs }, 'ManagedRunner: timeout reached, sending SIGTERM');
+          this._state = 'timed_out';
+          const gracefulTermination = this._killProcessGroup('SIGTERM');
+          this._armKillEscalation(gracefulTermination, 'ManagedRunner: SIGKILL after grace period');
+        }, timeoutMs);
 
       // `close` waits for stdout/stderr to drain before the tail is read.
       child.on('close', (code, signal) => {
@@ -403,7 +404,7 @@ export class ManagedRunner {
     if (this._state !== 'running' || !this._child) return;
 
     log.info({ pid: this._pid }, 'ManagedRunner: cancel requested, sending SIGTERM');
-    if (this._managedJob?.recovery)
+    if (this._managedJob)
       admitDurableGateCancellationRequest(this._managedJob, {
         requestedAt: Date.now(),
         cancelledBy: 'managed-runner',
@@ -471,7 +472,12 @@ export class ManagedRunner {
 
     try {
       // A recovery-aware owner publishes its attempt intent before signalling children.
-      process.kill(signal === 'SIGTERM' && this._managedJob?.recovery ? this._pid : -this._pid, signal);
+      process.kill(
+        signal === 'SIGTERM' && (this._managedJob?.recovery || this._managedJob?.recordStorage === 'sqlite_v1')
+          ? this._pid
+          : -this._pid,
+        signal,
+      );
     } catch (err) {
       // Process group may already be gone — that's fine
       log.debug({ pid: this._pid, signal, err }, 'ManagedRunner: kill process group failed (may already be gone)');

@@ -12,22 +12,30 @@ import { captureNamedAlphaRedisIdentity, verifyNamedAlphaRedisIdentity } from '.
 
 const cli = join(dirname(fileURLToPath(import.meta.url)), 'preview-process.mjs');
 
-function listenerProbeFixture(directory, port, mode) {
+function identityProbeFixture(directory, port, pidFile, mode) {
   if (!mode) return null;
-  const bin = join(directory, 'listener-probe-bin');
+  const bin = join(directory, 'identity-probe-bin');
   mkdirSync(bin);
-  const armed = join(directory, 'listener-probe-armed');
-  const observed = join(directory, 'listener-probe-timeouts');
-  const native = execFileSync('which', ['lsof'], { encoding: 'utf8' }).trim();
+  const armed = join(directory, 'identity-probe-armed');
+  const observed = join(directory, 'identity-probe-failures');
+  const argv = mode.startsWith('argv-');
+  const command = argv ? 'ps' : 'lsof';
+  const native = execFileSync('which', [command], { encoding: 'utf8' }).trim();
   writeFileSync(
-    join(bin, 'lsof'),
+    join(bin, command),
     `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);
-if (args.includes('-iTCP:${port}') && fs.existsSync(${JSON.stringify(armed)}) &&
-    (${JSON.stringify(mode)} === 'always' || !fs.existsSync(${JSON.stringify(observed)}))) {
-  fs.appendFileSync(${JSON.stringify(observed)}, 'timeout\\n');
-  setTimeout(() => process.exit(1), 10000);
+const target = ${
+      argv
+        ? `args.includes('command=') && fs.existsSync(${JSON.stringify(pidFile)}) &&
+  args[args.indexOf('-p') + 1] === fs.readFileSync(${JSON.stringify(pidFile)}, 'utf8').trim()`
+        : `args.includes('-iTCP:${port}')`
+    };
+if (target && fs.existsSync(${JSON.stringify(armed)}) &&
+    (${JSON.stringify(mode)}.endsWith('always') || !fs.existsSync(${JSON.stringify(observed)}))) {
+  fs.appendFileSync(${JSON.stringify(observed)}, ${JSON.stringify(argv ? 'argv unavailable\n' : 'timeout\n')});
+  ${argv ? "process.stdout.write('(redis-server)\\n');" : 'setTimeout(() => process.exit(1), 10000);'}
 } else {
   const result = require('node:child_process').spawnSync(${JSON.stringify(native)}, args, { stdio: 'inherit' });
   process.exit(result.status ?? 1);
@@ -38,7 +46,7 @@ if (args.includes('-iTCP:${port}') && fs.existsSync(${JSON.stringify(armed)}) &&
   return { bin, armed, observed };
 }
 
-for (const [verificationFails, earlyWrapper, missingResult, pnpmWrapper, listenerTimeoutMode] of [
+for (const [verificationFails, earlyWrapper, missingResult, pnpmWrapper, identityFailureMode] of [
   [false, false, false],
   [true, false, false],
   [false, true, false],
@@ -46,11 +54,13 @@ for (const [verificationFails, earlyWrapper, missingResult, pnpmWrapper, listene
   [false, true, true],
   [false, false, false, true],
   [true, false, false, true],
-  [false, false, false, false, 'once'],
-  [false, false, false, false, 'always'],
+  [false, false, false, false, 'listener-once'],
+  [false, false, false, false, 'listener-always'],
+  [false, false, false, false, 'argv-once'],
+  [false, false, false, false, 'argv-always'],
 ]) {
-  const cleanupRefused = verificationFails || listenerTimeoutMode === 'always';
-  test(`canonical preview stop ${cleanupRefused ? 'reports refused Redis cleanup and retains ownership' : 'saves Redis and releases the producer lease'}${earlyWrapper ? ' after an early wrapper exit' : ''}${missingResult ? ' but rejects an unpublished owner result' : ''}${pnpmWrapper ? ' through real pnpm' : ''}${listenerTimeoutMode ? ` after ${listenerTimeoutMode} lsof timeout` : ''}`, async (t) => {
+  const cleanupRefused = verificationFails || identityFailureMode?.endsWith('always');
+  test(`canonical preview stop ${cleanupRefused ? 'reports refused Redis cleanup and retains ownership' : 'saves Redis and releases the producer lease'}${earlyWrapper ? ' after an early wrapper exit' : ''}${missingResult ? ' but rejects an unpublished owner result' : ''}${pnpmWrapper ? ' through real pnpm' : ''}${identityFailureMode ? ` after ${identityFailureMode}` : ''}`, async (t) => {
     const disposals = [];
     const f = namedAlphaFixture({ after: (fn) => disposals.push(fn) });
     const sockets = [];
@@ -89,7 +99,7 @@ for (const [verificationFails, earlyWrapper, missingResult, pnpmWrapper, listene
     const pidFile = join(directory, `redis-${ports[4]}.pid`);
     const registry = join(f.directory, 'leases');
     const driver = join(f.directory, 'driver.sh');
-    const probe = listenerProbeFixture(f.directory, ports[4], listenerTimeoutMode);
+    const probe = identityProbeFixture(f.directory, ports[4], pidFile, identityFailureMode);
     writeFileSync(
       join(f.directory, 'server.cjs'),
       `require('node:http').createServer((q,s)=>s.end('alpha fixture')).listen(${ports[0]},'127.0.0.1');`,
@@ -159,7 +169,7 @@ setInterval(()=>{},1000);`,
     verifyNamedAlphaRedisIdentity(raw, proof);
     assert.equal(readdirSync(registry).length, 1, 'producer registered its own Redis lease');
     const stopped = run('stop');
-    if (probe) assert.ok(existsSync(probe.observed), 'exercise an actual timed-out native listener probe');
+    if (probe) assert.ok(existsSync(probe.observed), 'exercise the native identity probe failure');
     if (cleanupRefused) {
       assert.equal(stopped.status, 1, stopped.stderr || stopped.stdout);
       verifyNamedAlphaRedisIdentity(raw, proof);

@@ -8,7 +8,7 @@ import type {
   ValueConfigField,
 } from '@cat-cafe/shared';
 import { resourceCapId } from '../PluginRegistry.js';
-import type { PluginManagerCompatibilityPort } from '../plugin-manager-service.js';
+import type { PluginManagerCompatibilityPort } from './plugin-manager-service.js';
 
 export type PluginManagerCompatibilitySource = 'repository-local' | 'connector';
 type CompatibilityConfigField = ValueConfigField & {

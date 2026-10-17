@@ -14,7 +14,8 @@ vi.mock('../useArtifactReview', () => ({
   useArtifactReview: (reviewId: string) => mocks.controller(reviewId),
   reviewDraftPrefix: (user: string, id: string) => `cat-cafe:review:${user}:${id}:`,
 }));
-vi.mock('../useReviewMediaSource', () => ({
+vi.mock('../useReviewMediaSource', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../useReviewMediaSource')>()),
   useReviewMediaSource: () => ({ src: 'blob:original-owner-media', error: null }),
 }));
 vi.mock('@/utils/api-client', () => ({
@@ -28,6 +29,7 @@ vi.mock('@/utils/api-client', () => ({
                 id: 'codex-astra',
                 displayName: '小星星',
                 mentionPatterns: ['@codex-astra'],
+                carrier: 'cli',
                 clientId: 'openai',
                 defaultModel: 'gpt-6-astra',
                 color: { primary: '#000', secondary: '#fff' },

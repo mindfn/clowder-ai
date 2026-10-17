@@ -1,5 +1,30 @@
 [
   {
+    "id": "feature-f328-tripo-background-review",
+    "kind": "feature",
+    "sourceRef": {
+      "path": "docs/features/F328-tripo-studio-plugin.md",
+      "anchor": "## User Journey"
+    },
+    "structureSource": {
+      "path": "packages/api/src/domains/plugin/manager/host-official-catalog.ts",
+      "anchor": "official.tripo-studio"
+    },
+    "bodySource": {
+      "path": "docs/features/F328-tripo-studio-plugin.md",
+      "anchor": "## User Journey"
+    },
+    "contexts": ["concierge_open", "feature_dev"],
+    "audience": ["cvo"],
+    "body": "想让猫比较 Tripo 白模？安装并启用 Tripo Studio 插件，把模型分享链接和保存目录发给猫，就能在后台采集旋转视角，不用逐张截图。分享页无需登录；截图和正式导出状态会分开说明。",
+    "action": {
+      "type": "open_capability_surface",
+      "label": "查看 Tripo 插件",
+      "surfaceId": "settings.plugins"
+    },
+    "owner": "codex61-sol"
+  },
+  {
     "id": "feature-f326-screening-exceptions",
     "kind": "feature",
     "sourceRef": {
@@ -44,11 +69,11 @@
     },
     "contexts": ["concierge_open"],
     "audience": ["cvo"],
-    "body": "想把 Claude Code 或 Codex 里已有的会话接到猫咖？先在原工具里关掉它，再点新对话输入框下面的「接上已有的会话」，选同工具的猫，再选最近的会话；找不到时可以贴会话 ID。不用先发一句；已经接过的可以直接打开原对话。",
+    "body": "想把本机已有的 Claude Code、Codex 或 OpenCode 会话接到猫咖？先在原工具里关掉它，再点新对话输入框下面的「接上本机已有的会话」，选同工具的猫，再选最近的会话；找不到时可以贴会话 ID。不用先发一句；已经接过的可以直接打开原对话。",
     "action": {
       "type": "open_concierge_draft",
       "label": "了解怎样接上原会话",
-      "draftPrompt": "请带我从新对话页接上一个 Claude Code 或 Codex 里已有的会话，说明怎样选猫、找会话 ID，以及正在运行或已经接过时怎样处理。"
+      "draftPrompt": "请带我从新对话页接上一个本机已有的会话，说明当前支持哪些工具、怎样选猫和找会话 ID，以及正在运行或已经接过时怎样处理。"
     },
     "owner": "codex61-sol"
   },
@@ -899,32 +924,32 @@
     "owner": "codex-sol"
   },
   {
-    "id": "feature-f210-agy-gemini-default",
+    "id": "feature-f325-native-work",
     "kind": "feature",
     "sourceRef": {
-      "path": "docs/features/F210-antigravity-cli-migration.md",
-      "anchor": "AGY model-flag refresh"
+      "path": "docs/features/F325-antigravity-native-parity.md",
+      "anchor": "### Primary Journey:"
     },
     "structureSource": {
-      "path": "docs/features/F210-antigravity-cli-migration.md",
-      "anchor": "Current local Antigravity CLI exposes `--model`"
+      "path": "packages/api/src/domains/cats/services/agents/providers/agy-native/AgyNativeAgentService.ts",
+      "anchor": "AgyNativeAgentService"
     },
     "bodySource": {
-      "path": "docs/features/F210-antigravity-cli-migration.md",
-      "anchor": "Gemini-family cats after the Gemini CLI consumer deadline"
+      "path": "docs/features/F325-antigravity-native-parity.md",
+      "anchor": "### Primary Journey:"
     },
-    "contexts": ["feature_dev", "review"],
-    "audience": ["developer", "maintainer"],
-    "body": "Gemini-family cats now default to AGY with runtime-owned --model; if a run still shows gemini --acp, reload or migrate the runtime catalog.",
+    "contexts": ["concierge_open", "feature_dev"],
+    "audience": ["cvo", "developer"],
+    "body": "想让烁烁在项目里查记忆、改代码和跑测试？在「成员与运行时」配置 Google 账号与 Native 入口，再回到项目对话叫它。长命令会显示独立任务卡，等待时可以继续聊；需要中止长任务时点卡片的停止按钮。",
     "action": {
       "type": "open_source",
-      "label": "打开 F210",
+      "label": "查看烁烁的使用路径",
       "sourceRef": {
-        "path": "docs/features/F210-antigravity-cli-migration.md",
-        "anchor": "AGY model-flag refresh"
+        "path": "docs/features/F325-antigravity-native-parity.md",
+        "anchor": "### Primary Journey:"
       }
     },
-    "owner": "codex"
+    "owner": "codex-astra"
   },
   {
     "id": "feature-f242-convention-graph",
@@ -1413,24 +1438,24 @@
     "id": "feature-per-target-message-receipt",
     "kind": "feature",
     "sourceRef": {
-      "path": "docs/features/F264-per-target-message-receipt.md",
-      "anchor": "状态机基准"
+      "path": "docs/features/F117-message-delivery-lifecycle.md",
+      "anchor": "Phase M: 追加、读取与执行归属"
     },
     "structureSource": {
-      "path": "docs/features/F264-per-target-message-receipt.md",
-      "anchor": "operator UX 放行"
+      "path": "docs/features/F117-message-delivery-lifecycle.md",
+      "anchor": "Unified State Model"
     },
     "bodySource": {
-      "path": "docs/features/F264-per-target-message-receipt.md",
-      "anchor": "Terminal-Consumption Visible Receipt（2026-07-31）"
+      "path": "docs/features/F117-message-delivery-lifecycle.md",
+      "anchor": "Phase M: 追加、读取与执行归属"
     },
     "contexts": ["thinking", "long_running"],
     "audience": ["cvo"],
-    "body": "跨线程消息没有猫正文也不等于没唤醒：看原消息下方「系统回执」，能分清已送达、已唤醒、正文已读、静默消费或失败回队列。",
+    "body": "回复中追加的输入仍归入原回复。支持读取回执的成员，会显示补充消息是否已读；已投递和已读是两件事，刷新后仍可查看同一条消息的状态。",
     "action": {
       "type": "open_concierge_draft",
       "label": "回执怎么看",
-      "draftPrompt": "请告诉我跨线程消息下方的已送达、已唤醒、静默消费和失败回队列分别是什么意思。"
+      "draftPrompt": "请告诉我在哪里查看追加消息的原回复归属和读取回执，以及已投递和已读有什么区别。"
     },
     "owner": "codex-sol"
   },
@@ -1438,24 +1463,24 @@
     "id": "feature-author-message-disposition",
     "kind": "feature",
     "sourceRef": {
-      "path": "docs/features/F264-per-target-message-receipt.md",
-      "anchor": "Author-Declared Message Disposition（2026-08-04）"
+      "path": "docs/features/F047-queue-steer.md",
+      "anchor": "Queue Steer"
     },
     "structureSource": {
-      "path": "docs/discussions/2026-08-04-f264-author-declared-message-disposition.md",
-      "anchor": "产品判词"
+      "path": "docs/decisions/043-queue-durable-single-ledger.md",
+      "anchor": "D5 — Steer"
     },
     "bodySource": {
-      "path": "docs/features/F264-per-target-message-receipt.md",
-      "anchor": "Author-Declared Message Disposition（2026-08-04）"
+      "path": "docs/features/F047-queue-steer.md",
+      "anchor": "Acceptance Criteria"
     },
     "contexts": ["thinking", "long_running"],
     "audience": ["cvo"],
-    "body": "猫正在工作时，新消息可以选择「接着当前工作」或「作为下一件工作」；单次选择优先于本对话与全局偏好，猫空闲时则直接开始普通新回合。",
+    "body": "消息默认可以「排队等待」或「立即发送，引导回复」；对队列消息使用 Steer 时，可为每位成员分别选择「立即发送，引导回复」或「立即发送，中断回复」。",
     "action": {
       "type": "open_concierge_draft",
       "label": "消息去向怎么选",
-      "draftPrompt": "请告诉我猫工作期间的「接着当前工作」和「作为下一件工作」分别适合什么情况，以及单次、对话和全局偏好如何继承。"
+      "draftPrompt": "请告诉我「排队等待」「立即发送，引导回复」分别适合什么情况，以及 Steer 时怎样按成员选择引导回复或中断回复。"
     },
     "owner": "codex-sol"
   },
@@ -2933,5 +2958,55 @@
       "draftPrompt": "请带我在桌面工作区的产物入口查找这条对话已经生成的内容，说明怎样按类型或名字片段筛选并回到原消息。"
     },
     "owner": "codex61-sol"
+  },
+  {
+    "id": "feature-f314-mistake-lineage",
+    "kind": "feature",
+    "sourceRef": {
+      "path": "docs/features/F314-development-episode-alignment-experiment.md",
+      "anchor": "F314"
+    },
+    "structureSource": {
+      "path": "packages/web/src/components/capability-evolution/exploration/ExplorationHistory.tsx",
+      "anchor": "ExplorationHistory"
+    },
+    "bodySource": {
+      "path": "packages/web/src/components/capability-evolution/exploration/ExplorationHistory.tsx",
+      "anchor": "一路走来踩过的坑、当时怎么改、后来怎样了。"
+    },
+    "contexts": ["thinking", "feature_dev", "concierge_open"],
+    "audience": ["cvo", "developer"],
+    "body": "在开发交付进化项目里打开“探索进化”，可以从最早一步沿谱系阅读错题：踩了什么坑、当时怎么应对、后来怎样。点“下一步”继续，或点“看原案例”在 Workspace 读原文。",
+    "action": {
+      "type": "open_concierge_draft",
+      "label": "阅读错题谱系",
+      "draftPrompt": "请打开现有开发交付进化项目的探索进化，带我读已有错题的应对与后续结果；沿用已有项目。"
+    },
+    "owner": "codex-astra"
+  },
+  {
+    "id": "feature-f314-history-update",
+    "kind": "feature",
+    "sourceRef": {
+      "path": "docs/features/F314-development-episode-alignment-experiment.md",
+      "anchor": "F314"
+    },
+    "structureSource": {
+      "path": "packages/web/src/components/capability-evolution/exploration/ExplorationHistoryPublication.tsx",
+      "anchor": "ExplorationHistoryPublicationNotice"
+    },
+    "bodySource": {
+      "path": "packages/web/src/components/capability-evolution/exploration/ExplorationHistoryPublication.tsx",
+      "anchor": "历史内容已有更新，当前阅读内容保留。"
+    },
+    "contexts": ["thinking", "feature_dev", "concierge_open"],
+    "audience": ["cvo", "developer"],
+    "body": "谱系有新版时，可以先读完眼前这一步，再点“查看新版”。猫发布历史内容不会改变项目阶段或正式采用；发布失败时继续保留上一份完整稿。",
+    "action": {
+      "type": "open_concierge_draft",
+      "label": "查看历史更新",
+      "draftPrompt": "请在现有开发交付进化项目里查看错题谱系的最新内容；保留我当前阅读位置，需要换稿时提示我。"
+    },
+    "owner": "codex-astra"
   }
 ]

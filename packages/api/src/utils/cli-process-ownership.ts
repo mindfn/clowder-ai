@@ -158,7 +158,7 @@ function parseSnapshotLine(line: string, includeEnvironment: boolean): UnixProce
   const pid = Number(parts[0]);
   const ppid = Number(parts[1]);
   const pgid = Number(parts[2]);
-  if (!isPositiveSafeInteger(pid) || !isPositiveSafeInteger(ppid) || !isPositiveSafeInteger(pgid)) return null;
+  if (!isPositiveSafeInteger(pid) || !isNamespaceCoordinate(ppid) || !isNamespaceCoordinate(pgid)) return null;
   return {
     pid,
     ppid,
@@ -187,6 +187,12 @@ function isPositiveSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 }
 
+// A parent or process group outside the current PID namespace is observed as 0.
+// This is an observation coordinate, never authority to signal group 0.
+function isNamespaceCoordinate(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -196,8 +202,8 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function parseProcessIdentity(value: unknown): UnixProcessIdentity | null {
   const record = asRecord(value);
   if (!record) return null;
-  if (!isPositiveSafeInteger(record.pid) || !isPositiveSafeInteger(record.ppid)) return null;
-  if (!isPositiveSafeInteger(record.pgid) || typeof record.startedAt !== 'string' || !record.startedAt.trim()) {
+  if (!isPositiveSafeInteger(record.pid) || !isNamespaceCoordinate(record.ppid)) return null;
+  if (!isNamespaceCoordinate(record.pgid) || typeof record.startedAt !== 'string' || !record.startedAt.trim()) {
     return null;
   }
   return {
@@ -471,7 +477,7 @@ function signalSafeOwnedGroups(
 ): Set<number> {
   const signaled = new Set<number>();
   for (const target of targets) {
-    if (target.pid !== target.pgid) continue;
+    if (!isPositiveSafeInteger(target.pgid) || target.pid !== target.pgid) continue;
     const members = groupMembers.get(target.pgid) ?? [];
     if (members.length === 0 || members.some((pid) => !ownedPids.has(pid))) continue;
     if (trySignal(kill, -target.pgid, signal)) for (const pid of members) signaled.add(pid);
@@ -485,6 +491,7 @@ export function signalOwnedUnixProcesses(
   signal: NodeJS.Signals,
   kill: (pid: number, signal: NodeJS.Signals) => void = process.kill,
 ): number {
+  targets = targets.filter((target) => isPositiveSafeInteger(target.pid));
   const ownedPids = new Set(targets.map((target) => target.pid));
   const groupMembers = groupProcessIds(snapshot);
   const signaled = signalSafeOwnedGroups(targets, groupMembers, ownedPids, signal, kill);

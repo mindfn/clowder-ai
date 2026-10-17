@@ -159,6 +159,7 @@ function createFixtureApi({
       response.writeHead(result.status ?? 200, {
         'cache-control': 'private, no-store',
         'content-type': result.contentType ?? 'application/json',
+        ...result.headers,
       });
       response.end(result.binary ? result.body : JSON.stringify(result.body));
     } catch (error) {

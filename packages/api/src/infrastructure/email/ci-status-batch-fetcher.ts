@@ -291,6 +291,11 @@ export async function fetchPrCiStatuses(
   return results;
 }
 
+// This includes the shared credential queue. Six enabled pollers can occupy
+// more than 5s before a healthy CI batch starts; the caller's gate signal still
+// bounds the complete admission, including all batches, to its own deadline.
+const CI_COLLECTION_REQUEST_TIMEOUT_MS = 10_000;
+
 /** Shared production/default wiring: bounded admission, per-PR failure details,
  * and the same current credential resolver for both reads. */
 export function createCiCollectionReaders(
@@ -304,10 +309,15 @@ export function createCiCollectionReaders(
         ...transport,
         ghToken: getToken(),
         signal,
-        timeoutMs: 5_000,
+        timeoutMs: CI_COLLECTION_REQUEST_TIMEOUT_MS,
         deferFailureDetails: true,
       }),
     enrichFailureDetails: (poll: CiPollResult, signal: AbortSignal) =>
-      enrichPrCiFailure(poll, log, { ...transport, ghToken: getToken(), signal, timeoutMs: 5_000 }),
+      enrichPrCiFailure(poll, log, {
+        ...transport,
+        ghToken: getToken(),
+        signal,
+        timeoutMs: CI_COLLECTION_REQUEST_TIMEOUT_MS,
+      }),
   };
 }

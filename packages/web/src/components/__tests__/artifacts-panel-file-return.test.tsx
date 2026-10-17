@@ -6,6 +6,8 @@ import { useChatStore } from '@/stores/chatStore';
 import { ArtifactsPanel } from '../ArtifactsPanel';
 import type { ArtifactListView } from '../artifacts/artifact-list-state';
 
+const rows = vi.hoisted(() => ({ image: undefined as GlobalArtifactDTO | undefined }));
+
 const artifact: GlobalArtifactDTO = {
   type: 'code',
   name: 'proposal.ts',
@@ -21,9 +23,12 @@ vi.mock('@/hooks/useThreadArtifacts', () => ({
   useThreadArtifacts: () => ({ artifacts: [], loading: false, error: false }),
 }));
 vi.mock('@/hooks/useGlobalArtifacts', () => ({
-  useGlobalArtifacts: () => ({ artifacts: [artifact], loading: false, error: false }),
+  useGlobalArtifacts: () => ({ artifacts: [rows.image ?? artifact], loading: false, error: false }),
 }));
-vi.mock('../content-review/usePublishedContent', () => ({ usePublishedContent: () => ({ open: vi.fn() }) }));
+vi.mock('../content-review/usePublishedContent', async (original) => ({
+  ...(await original<typeof import('../content-review/usePublishedContent')>()),
+  usePublishedContent: () => ({ open: vi.fn() }),
+}));
 vi.mock('../artifacts/ArtifactDetailView', () => ({ ArtifactDetailView: () => <div data-testid="weak-preview" /> }));
 const view: ArtifactListView = {
   scope: 'global',
@@ -36,7 +41,34 @@ const view: ArtifactListView = {
 const container = document.createElement('div');
 const root = createRoot(container);
 beforeEach(() => {
+  rows.image = undefined;
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+});
+
+it.each([
+  'jpg',
+  'webp',
+])('the standalone %s list keeps the exact publication and list return in the original owner pipeline', async (extension) => {
+  rows.image = {
+    ...artifact,
+    type: 'image',
+    name: `original.${extension}`,
+    ref: undefined,
+    url: `/uploads/original.${extension}`,
+    sourceMessageId: 'original-message',
+    publicationItem: { kind: 'rich-file', blockId: 'original-file' },
+  };
+  useChatStore.setState({ currentThreadId: 'list-host-thread', workspaceOpenRequest: null });
+  await act(async () =>
+    root.render(<ArtifactsPanel threadId="list-host-thread" initialView={{ ...view, filter: 'all', query: '' }} />),
+  );
+  act(() => container.querySelector<HTMLElement>('[data-artifact-row]')?.click());
+  expect(container.querySelector('[data-testid="weak-preview"]')).toBeNull();
+  expect(useChatStore.getState().workspaceOpenRequest?.target).toMatchObject({
+    kind: 'artifact',
+    artifact: { threadId: 'original-thread' },
+    navigationOrigin: { kind: 'artifact-list', threadId: 'list-host-thread' },
+  });
 });
 afterEach(() => {
   act(() => root.render(null));

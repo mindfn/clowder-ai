@@ -32,7 +32,7 @@ export async function persistLiveUserText(
   const stored = await store.appendIdempotent({
     userId: binding.userId,
     threadId: binding.threadId,
-    catId: null,
+    from: { kind: 'user', userId: binding.userId },
     content: text,
     mentions: [],
     timestamp: Date.now(),
@@ -88,7 +88,7 @@ export async function persistLiveTranscriptItem(
   const result = await store.appendIdempotent({
     userId: binding.userId,
     threadId: binding.threadId,
-    catId,
+    from: catId === null ? { kind: 'user', userId: binding.userId } : { kind: 'agent', catId },
     content: item.text,
     mentions: [],
     timestamp: Date.now(),

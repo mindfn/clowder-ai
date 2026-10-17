@@ -18,6 +18,10 @@ import type { QueueProcessor } from '../domains/cats/services/agents/invocation/
 import type { TaskProgressStore } from '../domains/cats/services/agents/invocation/TaskProgressStore.js';
 import { collectRecentGlobalWorkCandidates } from '../domains/cats/services/agents/routing/recent-global-work-reader.js';
 import {
+  type PrTitleReader,
+  readArtifactPrTitles,
+} from '../domains/cats/services/agents/routing/thread-artifact-pr-titles.js';
+import {
   aggregateProjectedThreadArtifacts,
   collectAllThreadMessages,
   collectThreadMessageArtifacts,
@@ -25,9 +29,6 @@ import {
 } from '../domains/cats/services/agents/routing/thread-artifacts-aggregator.js';
 import { threadWorksPrs } from '../domains/cats/services/agents/routing/thread-works-prs.js';
 import { resolveBootcampWorkspaceRoot } from '../domains/cats/services/bootcamp/workspace-root.js';
-import { recordFreshnessClosureTransition } from '../domains/cats/services/freshness/closure/freshness-closure-telemetry.js';
-import { projectFreshnessClosure } from '../domains/cats/services/freshness/glass-box/FreshnessOutputCommitCoordinator.js';
-import { projectFreshnessSupplementForHistory } from '../domains/cats/services/freshness/glass-box/freshness-supplement-history-projection.js';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import { isHomeSession } from '../domains/cats/services/session/session-scope.js';
 import type { TranscriptWriter } from '../domains/cats/services/session/TranscriptWriter.js';
@@ -465,6 +466,8 @@ interface ThreadIndexBuilder {
 }
 
 export interface ThreadsRoutesOptions {
+  /** Presentation metadata for already owner-scoped, formally attached PR works. */
+  prTitleReader?: PrTitleReader;
   threadStore: IThreadStore;
   /**
    * F297 Phase B: batched active-execution presence for the Sidebar snapshot (C10).
@@ -482,7 +485,6 @@ export interface ThreadsRoutesOptions {
   /** Optional: cascade delete delivery cursors when thread is deleted */
   deliveryCursorStore?: DeliveryCursorStore;
   /** F254 Phase E: cascade persistent catch responsibility with thread deletion. */
-  freshnessClosureStore?: import('../domains/cats/services/freshness/closure/FreshnessClosureStore.js').FreshnessClosureStore;
   /** F254 Phase E: explicit blocked-closure retry uses the unified queue. */
   invocationQueue?: InvocationQueue;
   queueProcessor?: QueueProcessor;
@@ -1219,90 +1221,6 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
   });
 
   // F254 Phase E: rebuildable Hub projection for F5/reconnect recovery.
-  app.get('/api/threads/:id/freshness-closures', async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const thread = await threadStore.get(id);
-    if (!thread || thread.deletedAt) {
-      reply.status(404);
-      return { error: 'Thread not found' };
-    }
-    const userId = resolveUserId(request, { defaultUserId: 'default-user' }) ?? 'default-user';
-    const closures = ((await opts.freshnessClosureStore?.listActiveByThread(id)) ?? []).filter(
-      (closure) => closure.userId === userId,
-    );
-    const supplements = ((await opts.freshnessClosureStore?.listSupplementsByThread(id)) ?? []).filter(
-      (supplement) => supplement.userId === userId,
-    );
-    return {
-      closures: closures.map((closure) => projectFreshnessClosure(closure)),
-      supplements: await Promise.all(
-        supplements.map((supplement) => projectFreshnessSupplementForHistory(supplement, opts.messageStore)),
-      ),
-    };
-  });
-
-  app.post('/api/threads/:id/freshness-closures/:closureId/retry', async (request, reply) => {
-    const { id, closureId } = request.params as { id: string; closureId: string };
-    const userId = resolveStrictUserId(request);
-    if (!userId) {
-      reply.status(401);
-      return { error: 'Authentication required' };
-    }
-    const closure = await opts.freshnessClosureStore?.get(closureId);
-    if (!closure || closure.threadId !== id || closure.userId !== userId) {
-      reply.status(404);
-      return { error: 'Freshness closure not found' };
-    }
-    if (closure.status !== 'blocked') {
-      reply.status(409);
-      return { error: 'Freshness closure is not blocked', status: closure.status };
-    }
-    if (!opts.invocationQueue || !opts.queueProcessor || !opts.freshnessClosureStore) {
-      reply.status(503);
-      return { error: 'Freshness retry unavailable' };
-    }
-    const nextEpoch = closure.retryEpoch + 1;
-    const enqueue = opts.invocationQueue.enqueue({
-      threadId: id,
-      userId,
-      ownerAuthProvenance: 'strict',
-      content: `[Freshness Catch Closure ${closure.id}] 显式重试；正文由执行前 closure truth 注入。`,
-      source: 'agent',
-      sourceCategory: 'freshness',
-      targetCats: [closure.catId],
-      callerCatId: closure.catId,
-      autoExecute: true,
-      priority: 'normal',
-      intent: 'execute',
-      idempotencyKey: `freshness-closure:${closure.id}:retry:${nextEpoch}`,
-      freshnessClosureId: closure.id,
-      freshnessRequiredFrontierMessageId: closure.requiredFrontierMessageId,
-    });
-    if (enqueue.outcome === 'full') {
-      reply.status(409);
-      return { error: 'Invocation queue is full' };
-    }
-    const retried = await opts.freshnessClosureStore.retry(closure.id, {
-      actorId: userId,
-      evidenceRef: `api:retry:${Date.now()}`,
-      now: Date.now(),
-    });
-    recordFreshnessClosureTransition('retried');
-    const projection = projectFreshnessClosure(retried);
-    opts.socketManager?.broadcastAgentMessage(
-      {
-        type: 'system_info',
-        catId: retried.catId as CatId,
-        content: JSON.stringify(projection),
-        timestamp: projection.updatedAt,
-      },
-      id,
-    );
-    void opts.queueProcessor.tryAutoExecute(id);
-    reply.status(202);
-    return { closure: projection };
-  });
-
   // PATCH /api/threads/:id - 更新标题/置顶/收藏
   app.patch('/api/threads/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
@@ -1578,7 +1496,6 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
 
       // B-4: Cascade delete guide session to prevent stale sessions on deleted threads
       void opts.guideSessionStore?.delete(id).catch(() => {});
-      await opts.freshnessClosureStore?.deleteByThread(id);
 
       // I-2: Audit thread deletion for traceability (best-effort, don't block response)
       const userId = resolveUserId(request, {});
@@ -1706,11 +1623,14 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       threadId,
       projectAppliedWorkspaceReceipts(messages),
     );
-    const artifacts = aggregateProjectedThreadArtifacts({
-      messageArtifacts: [...projectMessageArtifacts(messages), ...acceptedFiles.artifacts],
-      prTasks,
-      fileLedger: worksView ? [] : fileLedger,
-    });
+    const artifacts = await readArtifactPrTitles(
+      aggregateProjectedThreadArtifacts({
+        messageArtifacts: [...projectMessageArtifacts(messages), ...acceptedFiles.artifacts],
+        prTasks,
+        fileLedger: worksView ? [] : fileLedger,
+      }),
+      worksView ? opts.prTitleReader : undefined,
+    );
     const projected = await projectGlobalArtifactWorkLineage(
       opts.artifactWorkLineage,
       userId,
@@ -1817,7 +1737,8 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       rawQuery as { type?: string; cat?: string; q?: string | string[] },
     );
 
-    const projected = await projectGlobalArtifactWorkLineage(opts.artifactWorkLineage, userId, all);
+    const titled = await readArtifactPrTitles(all, worksView ? opts.prTitleReader : undefined);
+    const projected = await projectGlobalArtifactWorkLineage(opts.artifactWorkLineage, userId, titled);
     return worksView
       ? {
           ...projected,

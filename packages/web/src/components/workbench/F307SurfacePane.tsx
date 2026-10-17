@@ -6,7 +6,7 @@ import { FocusModeButton } from '@/components/workspace/FocusModeButton';
 import { WorkspaceFocusExitButton } from '@/components/workspace/WorkspaceFocusShell';
 import { resolveArtifactReviewTarget } from './artifact-review-surface';
 import { resolvePublicationTarget } from './publication-surface';
-import { isVoiceDestinationSurface } from './real-surface-adapters';
+import { isVoiceDestinationSurface, resolveWorkspaceDestinationTarget } from './real-surface-adapters';
 import { WorkspaceChatWorkSurface } from './WorkspaceChatWorkScope';
 import { promoteWorkspacePreview } from './WorkspacePreviewIntent';
 import { workspaceChromeCopy } from './workspace-chrome.shell-copy';
@@ -57,18 +57,25 @@ interface F307SurfacePaneProps {
 }
 
 export function F307SurfacePane(props: F307SurfacePaneProps) {
-  // Audit row44 (review R2): the voice pane's accessible name is a v2 display projection — the real
-  // consumption point is the article's aria-label, and only the v2 voice surface gets a localized one.
-  // Classic and every other surface keep the stored title and read nothing new.
-  if (useShellPresentation() === 'v2' && isVoiceDestinationSurface(props.surface)) {
-    return <V2VoiceSurfacePane {...props} />;
+  // Canonical host names are display projections, including restored descriptors.
+  // Classic and other owners keep their stored title; no owner/key changes on locale switches.
+  const localizedHost =
+    isVoiceDestinationSurface(props.surface) ||
+    resolveWorkspaceDestinationTarget(props.surface)?.destinationRef === 'host:status';
+  if (useShellPresentation() === 'v2' && localizedHost) {
+    return <V2LocalizedHostPane {...props} />;
   }
   return <SurfacePaneBody {...props} />;
 }
 
-function V2VoiceSurfacePane(props: F307SurfacePaneProps) {
+function V2LocalizedHostPane(props: F307SurfacePaneProps) {
   const t = useShellCopy(workspaceChromeCopy);
-  return <SurfacePaneBody {...props} accessibleName={t.voiceSurface.label} />;
+  return (
+    <SurfacePaneBody
+      {...props}
+      accessibleName={isVoiceDestinationSurface(props.surface) ? t.voiceSurface.label : t.statusSurface.label}
+    />
+  );
 }
 
 function SurfacePaneBody({
@@ -109,7 +116,9 @@ function SurfacePaneBody({
           <span className="h-4 w-4 shrink-0 text-cafe-muted">
             <SurfaceGlyph type={surface.type} />
           </span>
-          <span className="min-w-0 flex-1 truncate text-xs font-semibold text-cafe">{surface.title}</span>
+          <span className="min-w-0 flex-1 truncate text-xs font-semibold text-cafe">
+            {accessibleName ?? surface.title}
+          </span>
           <span className="truncate text-micro text-cafe-muted">{surface.context}</span>
           {onToggleArtifactWorkFullWindow ? (
             <button

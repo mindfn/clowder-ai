@@ -29,6 +29,41 @@ const MESSAGE_BUNDLE = {
 };
 
 describe('durable message extra carriers survive Redis round-trips', () => {
+  it('preserves exact conversation-return provenance and drops malformed coordinates', async () => {
+    const { serializeExtra, safeParseExtra } = await import(
+      '../dist/domains/cats/services/stores/redis/redis-message-parsers.js'
+    );
+    const runtimeInteractionReturn = {
+      interactionId: 'conversation-1',
+      operationId: 'operation-1',
+      author: 'owner',
+      requesterCatId: 'codex-sol',
+      cardMessageId: 'card-message-1',
+    };
+    assert.deepEqual(
+      safeParseExtra(serializeExtra({ runtimeInteractionReturn }))?.runtimeInteractionReturn,
+      runtimeInteractionReturn,
+    );
+    const malformed = safeParseExtra(
+      serializeExtra({
+        runtimeInteractionReturn: { ...runtimeInteractionReturn, operationId: '' },
+        targetCats: ['codex-sol'],
+      }),
+    );
+    assert.equal(malformed?.runtimeInteractionReturn, undefined);
+    assert.deepEqual(malformed?.targetCats, ['codex-sol']);
+    const runtimeInteractionCard = {
+      version: 1,
+      interactionId: 'conversation-1',
+      blockId: 'decision-block',
+      requestKind: 'conversation_decision',
+    };
+    assert.deepEqual(
+      safeParseExtra(serializeExtra({ runtimeInteractionCard }))?.runtimeInteractionCard,
+      runtimeInteractionCard,
+    );
+  });
+
   it('preserves the local-review original rich request digest while discarding malformed digests', async () => {
     const { serializeExtra, safeParseExtra } = await import(
       '../dist/domains/cats/services/stores/redis/redis-message-parsers.js'
@@ -135,6 +170,38 @@ describe('durable message extra carriers survive Redis round-trips', () => {
     assert.equal(malformed?.evolutionPreparationSubmissionV1, undefined);
     assert.deepEqual(malformed?.targetCats, ['codex-sol']);
   });
+  it('F311 preserves an exact-use source and fails closed on mutable provenance', async () => {
+    const { serializeExtra, safeParseExtra } = await import(
+      '../dist/domains/cats/services/stores/redis/redis-message-parsers.js'
+    );
+    const source = {
+      schemaVersion: 1,
+      programId: 'evolution-program:ba0f4524e49cc879279164d5b272cf8c',
+      assetVersionRef: {
+        ownerFeatureId: 'F100',
+        ownerStateRef: 'skill:cat-cafe-skills/request-review/SKILL.md',
+        version: 'a'.repeat(64),
+        assetKind: 'skill',
+        assetId: 'cat-cafe-skills/request-review/SKILL.md',
+      },
+      receiptRef: {
+        ownerFeatureId: 'F100',
+        ownerStateRef: 'request-review-use:receipt-1',
+      },
+      use: 'applied',
+      recordedAt: '2026-10-14T17:00:00.000Z',
+    };
+    assert.deepEqual(safeParseExtra(serializeExtra({ evolutionUseSourceV1: source }))?.evolutionUseSourceV1, source);
+
+    const malformed = safeParseExtra(
+      serializeExtra({
+        evolutionUseSourceV1: { ...source, assetVersionRef: { ...source.assetVersionRef, version: undefined } },
+        targetCats: ['codex-sol'],
+      }),
+    );
+    assert.equal(malformed?.evolutionUseSourceV1, undefined);
+    assert.deepEqual(malformed?.targetCats, ['codex-sol']);
+  });
   it('F293 preserves bounded routing receipt source refs and rejects malformed protocol data', async () => {
     const { serializeExtra, safeParseExtra } = await import(
       '../dist/domains/cats/services/stores/redis/redis-message-parsers.js'
@@ -179,7 +246,7 @@ describe('durable message extra carriers survive Redis round-trips', () => {
           verdict,
           clientMessageId: `local-review-verdict-roundtrip-${verdict}`,
           reviewedHeadSha: 'a'.repeat(40),
-          reviewSubjectRef: 'pr:zts212653/cat-cafe#4255',
+          reviewSubjectRef: 'pr:zts212653/clowder-ai#4255',
           acceptedSourceRef: 'docs/features/F314-development-episode-alignment-experiment.md',
           acceptedRevision: 'b'.repeat(40),
         },
@@ -213,7 +280,7 @@ describe('durable message extra carriers survive Redis round-trips', () => {
           verdict: 'approved',
           clientMessageId: 'partial-anchor-local-review-verdict',
           reviewedHeadSha: 'a'.repeat(40),
-          reviewSubjectRef: 'pr:zts212653/cat-cafe#4255',
+          reviewSubjectRef: 'pr:zts212653/clowder-ai#4255',
         },
         targetCats: ['opus5'],
       }),
@@ -233,7 +300,7 @@ describe('durable message extra carriers survive Redis round-trips', () => {
           verdict: 'approved',
           clientMessageId: 'malformed-anchor-local-review-verdict',
           reviewedHeadSha: 'a'.repeat(40),
-          reviewSubjectRef: 'pr:zts212653/cat-cafe#4255',
+          reviewSubjectRef: 'pr:zts212653/clowder-ai#4255',
           acceptedSourceRef: 'docs/features/F314-development-episode-alignment-experiment.md',
           acceptedRevision: 'not-a-git-oid',
         },

@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useShellCopy } from '@/components/shell/shell-copy';
+import { useArtworkLightboxScope, useFloatingArtworkPresentation } from './ArtworkLightboxScope';
 import styles from './image-artwork.module.css';
 import { imageArtworkCopy } from './image-artwork.shell-copy';
 import type { ReviewCanvasMode } from './ReviewCanvasToolbar';
@@ -14,6 +16,7 @@ export function ImageArtworkControls({
   onModeChange,
   viewport,
   src,
+  download,
   discussionCount,
   onOpenDiscussion,
   wholeWorkAction,
@@ -25,12 +28,49 @@ export function ImageArtworkControls({
   onModeChange: (mode: ReviewCanvasMode) => void;
   viewport: ReturnType<typeof useArtworkViewport>;
   src: string | null;
+  download?: { src: string | null; filename: string };
   discussionCount: number;
   onOpenDiscussion: () => void;
   wholeWorkAction?: ReactNode;
   children: ReactNode;
 }) {
   const t = useShellCopy(imageArtworkCopy);
+  const floating = useFloatingArtworkPresentation();
+  const toolsSlot = useArtworkLightboxScope()?.toolsSlot;
+  const tools = (
+    <div
+      className={floating ? 'flex flex-wrap items-center gap-2 px-3 py-1' : styles.tools}
+      data-review-mode={mode}
+      style={
+        !floating && mode !== 'markup' && typeof viewport.stageStyle.height === 'number'
+          ? { top: `clamp(44px, ${viewport.mediaBottom + 12}px, calc(100% - 60px))`, bottom: 'auto' }
+          : undefined
+      }
+    >
+      {mode === 'markup' ? (
+        children
+      ) : (
+        <section aria-label={t.tools} data-review-mode={mode}>
+          <div className={styles.dock} role="toolbar" aria-label={t.modes}>
+            <button
+              type="button"
+              disabled={!canAnnotate}
+              aria-pressed={mode === 'comment'}
+              onClick={() => onModeChange(mode === 'comment' ? 'view' : 'comment')}
+            >
+              <ReviewToolbarIcon name="rectangle" />
+              {t.circle}
+            </button>
+            <span className={styles.separator} aria-hidden />
+            <button type="button" disabled={!canMarkup} onClick={() => onModeChange('markup')}>
+              <ReviewToolbarIcon name="brush" />
+              {t.brush}
+            </button>
+          </div>
+        </section>
+      )}
+    </div>
+  );
   return (
     <>
       <div className={styles.viewOptions}>
@@ -74,48 +114,14 @@ export function ImageArtworkControls({
               {discussionCount ? ` · ${discussionCount}` : ''}
             </button>
             {src ? (
-              <a href={src} download="作品.png">
+              <a href={download?.src ?? src} download={download?.filename ?? '作品.png'}>
                 {t.download}
               </a>
             ) : null}
           </div>
         </details>
       </div>
-      <div
-        className={styles.tools}
-        data-review-mode={mode}
-        style={
-          mode !== 'markup' && typeof viewport.stageStyle.height === 'number'
-            ? {
-                top: `clamp(44px, ${viewport.mediaBottom + 12}px, calc(100% - 60px))`,
-                bottom: 'auto',
-              }
-            : undefined
-        }
-      >
-        {mode === 'markup' ? (
-          children
-        ) : (
-          <section aria-label={t.tools} data-review-mode={mode}>
-            <div className={styles.dock} role="toolbar" aria-label={t.modes}>
-              <button
-                type="button"
-                disabled={!canAnnotate}
-                aria-pressed={mode === 'comment'}
-                onClick={() => onModeChange(mode === 'comment' ? 'view' : 'comment')}
-              >
-                <ReviewToolbarIcon name="rectangle" />
-                {t.circle}
-              </button>
-              <span className={styles.separator} aria-hidden />
-              <button type="button" disabled={!canMarkup} onClick={() => onModeChange('markup')}>
-                <ReviewToolbarIcon name="brush" />
-                {t.brush}
-              </button>
-            </div>
-          </section>
-        )}
-      </div>
+      {floating && toolsSlot ? createPortal(tools, toolsSlot) : tools}
     </>
   );
 }

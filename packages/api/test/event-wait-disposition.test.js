@@ -107,7 +107,7 @@ describe('F167 event-wait completion terminal', () => {
     assert.equal((await w.projectionStore.get(SUBJECT)).state, 'resolved');
   });
 
-  test('what the producer writes is exactly what the stop gate observes: a matched turn that completes does not block', async () => {
+  test('event-wait completion settles its lifecycle without a separate Stop gate', async () => {
     const w = await world();
     const gate = new TurnCustodyProjectionService({
       ballCustodyProjectionStore: w.projectionStore,
@@ -121,14 +121,15 @@ describe('F167 event-wait completion terminal', () => {
       waitContinuationCarrier: w.carrier,
     };
     const opened = await gate.open(wake);
-    assert.equal(opened.state, 'covered_active');
-    assert.equal((await gate.close(opened)).shouldBlock, true);
+    assert.equal(opened.state, 'covered_empty');
+    assert.equal((await gate.close(opened)).shouldBlock, false);
 
     await w.service.complete(auth(), 'handled');
 
     const decision = await gate.close(opened);
     assert.equal(decision.shouldBlock, false);
-    assert.equal(decision.structuredTransitionKind, 'wait_dispositioned');
+    assert.equal(decision.structuredTransitionKind, undefined);
+    assert.equal(w.eventLog.events.filter((event) => event.kind === 'ball.wait_dispositioned').length, 1);
   });
 
   test('replaying the same completion is idempotent: no second terminal', async () => {

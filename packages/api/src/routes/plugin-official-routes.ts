@@ -3,12 +3,12 @@ import type { ExternalPluginLifecycleService } from '../domains/plugin/external-
 import { PluginLifecycleError } from '../domains/plugin/external-plugin-lifecycle-types.js';
 import type { PluginInventoryStore } from '../domains/plugin/host-inventory/ports.js';
 import type { PluginInstanceRecord, PluginInventorySnapshot } from '../domains/plugin/host-inventory/types.js';
-import { OFFICIAL_PLUGIN_CATALOG, type OfficialPluginCatalogEntry } from '../domains/plugin/official-catalog.js';
 import {
   type OfficialPluginCatalogProvider,
   type OfficialPluginCatalogSnapshot,
   StaticOfficialPluginCatalog,
-} from '../domains/plugin/official-catalog-provider.js';
+} from '../domains/plugin/manager/official-catalog-provider.js';
+import { OFFICIAL_PLUGIN_CATALOG, type OfficialPluginCatalogEntry } from '../domains/plugin/official-catalog.js';
 import { OfficialPluginInstallError } from '../domains/plugin/official-package-errors.js';
 import type { OfficialPluginPackageInstaller } from '../domains/plugin/official-package-installer.js';
 import type { OfficialPluginAuthPort } from '../domains/plugin/official-plugin-auth.js';

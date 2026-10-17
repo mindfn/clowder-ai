@@ -5,6 +5,8 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { AgyProfileConfig } from '@cat-cafe/shared';
 
 export interface ResolveAgyProfileInput {
+  /** Native acquires the cross-process profile lease before writing mutable settings. */
+  readonly materializeSettings?: boolean;
   readonly catId: string;
   readonly expectedModel: string;
   readonly workingDirectory: string;
@@ -271,7 +273,8 @@ export function resolveAgyProfile(input: ResolveAgyProfileInput): AgyProfile | n
     model: expectedModel,
     trustedWorkspaces,
   };
-  writeFileSync(settingsPath, `${JSON.stringify(nextSettings, null, 2)}\n`, 'utf8');
+  if (input.materializeSettings !== false)
+    writeFileSync(settingsPath, `${JSON.stringify(nextSettings, null, 2)}\n`, 'utf8');
 
   return {
     catId: input.catId,
@@ -308,7 +311,7 @@ export function resolveAgyProfile(input: ResolveAgyProfileInput): AgyProfile | n
  * `--add-dir workingDirectory`，**不是** process cwd。实测 `cd <sandbox> && agy --add-dir <work>`：
  * AGY tool `pwd` 回 `<work>`、能读 `<work>` 文件、`<work>/GEMINI.md` 指令照常加载；只有内部 cwd-relative
  * `cache/projects.json` 落 sandbox。所以三件事同时成立：active workspace=worktree（--add-dir 授权）、
- * cwd-relative cache 落 sandbox、conversation scope 由 per-worktree sandbox 隔离。GeminiAgentService 始终
+ * cwd-relative cache 落 sandbox、conversation scope 由 per-worktree sandbox 隔离。Native carrier 始终
  * 传 `--add-dir <absolute workingDirectory>`，不要删。
  */
 export function resolveAgySpawnCwd(agyProfile: AgyProfile | null, catId: string, workingDirectory: string): string {

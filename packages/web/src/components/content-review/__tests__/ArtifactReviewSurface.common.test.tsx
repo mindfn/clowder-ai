@@ -14,7 +14,8 @@ vi.mock('../useArtifactReview', () => ({
   useArtifactReview: (reviewId: string) => mocks.controller(reviewId),
   reviewDraftPrefix: (user: string, id: string) => `cat-cafe:review:${user}:${id}:`,
 }));
-vi.mock('../useReviewMediaSource', () => ({
+vi.mock('../useReviewMediaSource', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../useReviewMediaSource')>()),
   useReviewMediaSource: () => ({ src: 'blob:original-owner-media', error: null }),
 }));
 vi.mock('@/utils/api-client', () => ({
@@ -224,7 +225,13 @@ it('switches a named context from the open work and restores each original draft
   expect(container.textContent).toContain('未发送的批注：未提交方案1');
   expect(JSON.parse(localStorage.getItem(drafts[0])!).body).toBe('未提交方案1');
   expect(mocks.act).not.toHaveBeenCalled();
-  expect(mocks.apiFetch.mock.calls.every(([url]) => url === '/api/content-reviews/resolve')).toBe(true);
+  expect(
+    mocks.apiFetch.mock.calls.every(
+      ([url, init]) =>
+        url === '/api/content-reviews/resolve' ||
+        (['/api/cats', '/api/config/cat-order'].includes(url) && !init?.method),
+    ),
+  ).toBe(true);
 });
 
 it('a linked Task context resumes the publication draft and its exact unknown operation instead of a second Task draft', async () => {

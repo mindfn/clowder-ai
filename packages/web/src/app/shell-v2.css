@@ -76,6 +76,21 @@ html[data-shell="v2"] {
   .shell-chat-header-navigation {
     flex: 1 1 0;
     min-width: 0;
+    gap: 2px;
+  }
+  /* The menu already truncates its label; let its wrapper yield space to the
+   * fixed controls instead of painting over search in a narrow English pane. */
+  .shell-chat-header-navigation [data-testid="conversation-view-control"] {
+    flex: 0 1 auto;
+    min-width: 28px;
+  }
+  .shell-chat-header-navigation [data-testid="conversation-view-menu-toggle"] {
+    max-width: 100%;
+    padding-inline: 4px;
+    gap: 2px;
+  }
+  .shell-chat-header-navigation [data-testid="conversation-view-menu-toggle"] > span[aria-hidden="true"] {
+    display: none;
   }
   .shell-chat-header-actions {
     flex: 0 0 auto;
@@ -83,7 +98,8 @@ html[data-shell="v2"] {
     gap: 2px;
   }
   .shell-chat-header-actions button {
-    padding-inline: 5px;
+    min-width: 28px;
+    padding-inline: 6px;
     gap: 3px;
   }
   /* Accessible names and real counts remain on the existing controls. */

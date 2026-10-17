@@ -22,7 +22,6 @@ function receipt(id: string, humanAttempt: boolean): Message {
           resolverState: 'fresh',
           snapshotRef: 'fixture:snapshot',
           sourceMessageId: 'original-message',
-          ...(!humanAttempt ? { retryInvocationId: 'f293-preview-invocation' } : {}),
           target: {
             targetCatId: 'codex-astra',
             disposition: humanAttempt ? 'warned' : 'rejected',

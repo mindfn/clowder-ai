@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { classifyStatusChecks, observeMergePrTruth } from './lib/clowder-merge-check-evidence.mjs';
 
 export const CLOWDER_REPOSITORY = 'zts212653/clowder-ai';
-export const CAT_CAFE_REPOSITORY = 'zts212653/cat-cafe';
+export const CAT_CAFE_REPOSITORY = 'zts212653/clowder-ai';
 const CAFE_MESSAGE_ID = /^\d{16,}-\d{6}-[0-9a-f]{8}$/i;
 const INTAKE_DECISIONS = new Set(['absorbed', 'public-only', 'rejected']);
 

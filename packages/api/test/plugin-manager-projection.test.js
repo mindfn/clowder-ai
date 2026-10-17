@@ -6,7 +6,7 @@ import {
   derivePluginManagerActions,
   pluginManagerContributionsFromManifest,
   projectPluginManagerCatalogCandidate,
-} from '../dist/domains/plugin/plugin-manager-projection.js';
+} from '../dist/domains/plugin/manager/plugin-manager-projection.js';
 
 function digest(value) {
   return `sha512-${createHash('sha512').update(value).digest('base64')}`;

@@ -6,7 +6,7 @@ import { readUserMentionPersonalPreview } from '../../src/routes/user-mention-pe
 
 const request = {
   userId: 'owner',
-  catId: 'codex61-sol',
+  from: { kind: 'agent' as const, catId: 'codex61-sol' },
   threadId: 'thread',
   content: '@co-creator\n请重启',
   mentions: [],

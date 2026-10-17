@@ -60,7 +60,7 @@ function fakeSpawn(launches, conversationId, model = 'gemini-3.8-flash-high') {
 }
 
 describe('F325 native AGY session binding', () => {
-  test('resumes only when workspace and L0 fingerprint are unchanged', async () => {
+  test('resumes only with the verified binding; missing binding or identity drift requires router rebuilding', async () => {
     const f = fixture();
     try {
       const launches = [];
@@ -72,10 +72,14 @@ describe('F325 native AGY session binding', () => {
         }),
       );
       assert.equal(first.at(-1).errorCode, undefined);
+      const init = first.find((event) => event.type === 'session_init');
+      assert.equal(init.sessionId, 'session-one');
+      assert.ok(init.nativeSessionBinding);
       const second = await collect(
         f.service.invoke('two', {
           workingDirectory: f.workspace,
           sessionId: 'session-one',
+          nativeSessionBinding: init.nativeSessionBinding,
           spawnCliOverride: fakeSpawn(launches, 'session-one'),
         }),
       );
@@ -86,21 +90,38 @@ describe('F325 native AGY session binding', () => {
         launches[0].args[launches[0].args.indexOf('--agent') + 1],
       );
 
+      const missing = await collect(
+        f.service.invoke('missing binding', {
+          workingDirectory: f.workspace,
+          sessionId: init.sessionId,
+          spawnCliOverride: fakeSpawn(launches, 'must-not-launch'),
+        }),
+      );
+      assert.equal(missing.at(-1).errorCode, 'AGY_NATIVE_RESUME_MISMATCH');
+
       f.setNativeBody('# Identity\nL0-v2\n');
       const third = await collect(
         f.service.invoke('three', {
           workingDirectory: f.workspace,
           sessionId: 'session-one',
+          nativeSessionBinding: init.nativeSessionBinding,
           systemPrompt: '# Identity\nL0-v2\n',
           spawnCliOverride: fakeSpawn(launches, 'session-three'),
         }),
       );
-      assert.equal(third.at(-1).errorCode, undefined);
-      assert.ok(!launches[2].args.includes('--conversation'));
-      assert.notEqual(
-        launches[2].args[launches[2].args.indexOf('--agent') + 1],
-        launches[0].args[launches[0].args.indexOf('--agent') + 1],
+      assert.equal(third.at(-1).errorCode, 'AGY_NATIVE_RESUME_MISMATCH');
+      f.setNativeBody('# Identity\nL0-v1\n');
+      const permissionChange = await collect(
+        f.service.invoke('read only', {
+          workingDirectory: f.workspace,
+          sessionId: init.sessionId,
+          nativeSessionBinding: init.nativeSessionBinding,
+          toolExecutionPolicy: { mode: 'read_only' },
+          spawnCliOverride: fakeSpawn(launches, 'must-not-launch'),
+        }),
       );
+      assert.equal(permissionChange.at(-1).errorCode, 'AGY_NATIVE_RESUME_MISMATCH');
+      assert.equal(launches.length, 2, 'service never silently replaces a mismatched session');
     } finally {
       f.cleanup();
     }

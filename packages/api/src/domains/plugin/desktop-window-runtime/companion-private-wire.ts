@@ -30,6 +30,12 @@ import {
   validateCompanionCommand as validatePresentationCompanionCommand,
   validateCompanionReply as validatePresentationCompanionReply,
 } from '@clowder-ai/plugin-contract-beta27';
+import {
+  type CompanionCommand as LetterCompanionCommand,
+  type CompanionReply as LetterCompanionReply,
+  validateCompanionCommand as validateLetterCompanionCommand,
+  validateCompanionReply as validateLetterCompanionReply,
+} from '@clowder-ai/plugin-contract-beta28';
 import { z } from 'zod';
 import type { CompanionArchiveContract } from './published-companion-v2.js';
 
@@ -181,6 +187,7 @@ export type HostCompanionCommand =
   | Exclude<UnifiedCompanionCommand, { kind: `audio.${string}` }>
   | Exclude<WorkCompanionCommand, { kind: `audio.${string}` }>
   | Exclude<PresentationCompanionCommand, { kind: `audio.${string}` }>
+  | Exclude<LetterCompanionCommand, { kind: `audio.${string}` }>
   | z.infer<typeof offer>
   | z.infer<typeof f221ConfirmTrial>;
 export type HostCompanionReply =
@@ -189,6 +196,7 @@ export type HostCompanionReply =
   | UnifiedCompanionReply
   | WorkCompanionReply
   | PresentationCompanionReply
+  | LetterCompanionReply
   | HostCompanionState
   | z.infer<typeof answer>
   | HostF221Preview
@@ -197,18 +205,24 @@ export function validateHostCompanionCommand(
   value: unknown,
   contract: CompanionArchiveContract['contract'] = '0.1.0-beta.21',
 ): value is HostCompanionCommand {
-  if (!['0.1.0-beta.21', '0.1.0-beta.23', '0.1.0-beta.24', '0.1.0-beta.25', '0.1.0-beta.27'].includes(contract))
+  if (
+    !['0.1.0-beta.21', '0.1.0-beta.23', '0.1.0-beta.24', '0.1.0-beta.25', '0.1.0-beta.27', '0.1.0-beta.28'].includes(
+      contract,
+    )
+  )
     return false;
   const validatePublic =
-    contract === '0.1.0-beta.27'
-      ? validatePresentationCompanionCommand
-      : contract === '0.1.0-beta.25'
-        ? validateWorkCompanionCommand
-        : contract === '0.1.0-beta.24'
-          ? validateUnifiedCompanionCommand
-          : contract === '0.1.0-beta.23'
-            ? validateModernCompanionCommand
-            : validateCompanionCommand;
+    contract === '0.1.0-beta.28'
+      ? validateLetterCompanionCommand
+      : contract === '0.1.0-beta.27'
+        ? validatePresentationCompanionCommand
+        : contract === '0.1.0-beta.25'
+          ? validateWorkCompanionCommand
+          : contract === '0.1.0-beta.24'
+            ? validateUnifiedCompanionCommand
+            : contract === '0.1.0-beta.23'
+              ? validateModernCompanionCommand
+              : validateCompanionCommand;
   return (
     (validatePublic(value) && !value.kind.startsWith('audio.')) ||
     offer.safeParse(value).success ||
@@ -219,18 +233,24 @@ export function validateHostCompanionReply(
   value: unknown,
   contract: CompanionArchiveContract['contract'] = '0.1.0-beta.21',
 ): value is HostCompanionReply {
-  if (!['0.1.0-beta.21', '0.1.0-beta.23', '0.1.0-beta.24', '0.1.0-beta.25', '0.1.0-beta.27'].includes(contract))
+  if (
+    !['0.1.0-beta.21', '0.1.0-beta.23', '0.1.0-beta.24', '0.1.0-beta.25', '0.1.0-beta.27', '0.1.0-beta.28'].includes(
+      contract,
+    )
+  )
     return false;
   const validatePublic =
-    contract === '0.1.0-beta.27'
-      ? validatePresentationCompanionReply
-      : contract === '0.1.0-beta.25'
-        ? validateWorkCompanionReply
-        : contract === '0.1.0-beta.24'
-          ? validateUnifiedCompanionReply
-          : contract === '0.1.0-beta.23'
-            ? validateModernCompanionReply
-            : validateCompanionReply;
+    contract === '0.1.0-beta.28'
+      ? validateLetterCompanionReply
+      : contract === '0.1.0-beta.27'
+        ? validatePresentationCompanionReply
+        : contract === '0.1.0-beta.25'
+          ? validateWorkCompanionReply
+          : contract === '0.1.0-beta.24'
+            ? validateUnifiedCompanionReply
+            : contract === '0.1.0-beta.23'
+              ? validateModernCompanionReply
+              : validateCompanionReply;
   if (value && typeof value === 'object' && 'kind' in value && value.kind === 'state') {
     const parsed = hostStateExtras.safeParse(value);
     if (!parsed.success) return false;

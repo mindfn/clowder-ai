@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mock, test } from 'node:test';
@@ -49,6 +49,38 @@ async function harness() {
   };
 }
 const signingSecret = `whsec_${Buffer.alloc(32, 4).toString('base64')}`;
+
+test('legacy summon lists are discarded on recovery without rotating the connection or subscription', async () => {
+  const h = await harness();
+  try {
+    const setup = await h.service.begin('owner');
+    await h.service.subscribe(setup.credentialSecret, {
+      attemptId: setup.attemptId!,
+      pairingCode: setup.pairingCode!,
+      url: 'https://example.com/dot',
+      secret: signingSecret,
+    });
+    const original = JSON.parse(await readFile(h.path, 'utf8'));
+    for (const allowedCatIds of [[], ['sonnet']]) {
+      await writeFile(h.path, JSON.stringify({ ...original, allowedCatIds }));
+      const restarted = new DotConnectionService({ ...h.options, store: new DotConnectionStore(h.path) });
+      const state = (await restarted.current())!;
+      assert.equal(Object.hasOwn(state, 'allowedCatIds'), false);
+      const status = await restarted.status('owner');
+      assert.equal(Object.hasOwn(status, 'allowedCatIds'), false);
+      assert.equal(status.paired, true);
+      assert.equal(status.subscription, 'active');
+      assert.equal(state.attemptId, original.attemptId);
+      assert.deepEqual(state.subscription, original.subscription);
+      await restarted.setOwnerPreferences('owner', { testEventIds: [] });
+      assert.equal(Object.hasOwn(JSON.parse(await readFile(h.path, 'utf8')), 'allowedCatIds'), false);
+    }
+    await writeFile(h.path, JSON.stringify({ ...original, unexpectedAuthority: true }));
+    await assert.rejects(() => h.store.read(), /unrecognized_keys/);
+  } finally {
+    await rm(h.directory, { recursive: true, force: true });
+  }
+});
 
 test('owner setup can recover an unsubscribed dot after the old pairing window', async () => {
   const h = await harness();

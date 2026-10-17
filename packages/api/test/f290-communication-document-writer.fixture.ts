@@ -127,7 +127,7 @@ export async function documentWriterFixture() {
       await f.messages.appendIdempotent({
         userId: f.cafe.ownerUserId,
         threadId: f.task.threadId,
-        catId: CAT,
+        from: { kind: 'agent', catId: CAT },
         mentions: [catId],
         timestamp: Date.now(),
         origin: 'callback',

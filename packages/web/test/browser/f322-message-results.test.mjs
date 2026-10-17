@@ -18,6 +18,7 @@ const productionCss = [
 let browser, script, css;
 const originalCwd = process.cwd();
 const records = Array.from({ length: 18 }, (_, index) => ({
+  from: { kind: 'agent', catId: 'codex61-sol' },
   id: `old-${index}`,
   type: 'assistant',
   catId: 'codex61-sol',
@@ -104,6 +105,7 @@ async function open(
   coldReturn = false,
   pendingRestore = false,
   longMessage = false,
+  workspace = false,
 ) {
   const page = await browser.newPage({ viewport });
   const errors = [];
@@ -136,6 +138,7 @@ async function open(
               breedId: 'maine-coon',
               avatar: '/avatars/codex.png',
               mentionPatterns: ['@codex61-sol'],
+              carrier: 'cli',
               clientId: 'openai',
               defaultModel: 'gpt-6.1-sol',
               color: { primary: '#5B8C5A', secondary: '#D4E6D3' },
@@ -196,12 +199,56 @@ async function open(
       body: `<!doctype html><html ${dark ? 'data-theme="dark" class="dark"' : ''}><meta charset="utf-8">${productionCss.map((href) => `<link rel="stylesheet" href="${href}">`).join('')}<link rel="stylesheet" href="/proof.css"><div id="root"></div><script type="module" src="/proof.js"></script></html>`,
     });
   });
-  await page.goto(longMessage ? `${origin}?proofLong=1` : pendingRestore ? `${origin}?proofNavigation=1` : origin);
+  await page.goto(
+    workspace
+      ? `${origin}?proofWorkspace=1`
+      : longMessage
+        ? `${origin}?proofLong=1`
+        : pendingRestore
+          ? `${origin}?proofNavigation=1`
+          : origin,
+  );
   await page.getByRole('button', { name: '查找消息', exact: true }).click();
   await page.getByRole('textbox', { name: '搜索消息' }).fill('琴键');
   await page.getByRole('button', { name: '搜索', exact: true }).click();
   await page.locator('[data-message-search-result]').first().waitFor();
   return { page, errors, queries, pages, releaseHistory };
+}
+
+for (const width of [1440, 390]) {
+  test(`search trip leaves the Workspace return clickable and resumes in Chat at ${width}px`, async () => {
+    const { page, errors } = await open({ width, height: 900 }, false, false, false, false, true);
+    try {
+      await page.locator('[data-message-search-result]').first().getByRole('button', { name: '跳过去' }).click();
+      const controls = page.getByRole('navigation', { name: '浏览本次检索结果' });
+      await page.waitForFunction(() => document.querySelector('nav output')?.textContent === '1 / 2');
+      await page.getByRole('button', { name: '查看原图', exact: true }).click();
+      await page.screenshot({ path: path.join(evidence, `workspace-return-${width}.png`) });
+      if (width === 1440) {
+        const bounds = await controls.boundingBox();
+        const chat = await page.getByTestId('thread-chat-host').boundingBox();
+        assert(bounds && chat);
+        assert(
+          bounds.x >= chat.x && bounds.x + bounds.width <= chat.x + chat.width,
+          'controls stay in the Chat column',
+        );
+      } else {
+        assert.equal(await controls.count(), 0, 'covered Chat does not expose search navigation over Workspace');
+      }
+      await page.getByRole('button', { name: '‹ 聊天', exact: true }).click({ timeout: 4000 });
+      await controls.getByRole('button', { name: '下一处结果' }).click();
+      await page.waitForFunction(() => document.querySelector('nav output')?.textContent === '2 / 2');
+      await controls.getByRole('button', { name: '回到刚才', exact: true }).click();
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[data-reading-trip-status]')?.getAttribute('data-reading-trip-status') ===
+          'completed',
+      );
+      assert.deepEqual(errors, []);
+    } finally {
+      await page.close();
+    }
+  });
 }
 
 test('cached thread restores its visible bottom before an unread revalidation response arrives', async () => {

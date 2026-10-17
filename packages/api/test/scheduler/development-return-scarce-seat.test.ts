@@ -18,6 +18,8 @@ test('registered terminal development_return still wakes a scarce original owner
   assert.equal(fixture.wakes.length, 1);
   assert.equal(fixture.wakes[0][1], 'fable-5');
   const wake = fixture.messages.getById(fixture.wakes[0][4]);
-  assert.equal(wake?.queueCustody?.sourceCategory, 'producer_return');
+  assert.equal(wake?.from.kind, 'external');
+  assert.equal(wake?.source?.connector, 'development-return');
+  assert.equal(wake?.queueCustody, undefined);
   assert.equal(fixture.service.read(registration.registrationId)?.status, 'delivered');
 });

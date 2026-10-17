@@ -1397,20 +1397,10 @@ maybe_quarantine_stale_aof_dir() {
 }
 
 prune_redis_backups() {
-    local keep="${1:-20}"
-    local files=()
-    while IFS= read -r f; do
-        files+=("$f")
-    done < <(ls -1t "$REDIS_BACKUP_DIR"/"${REDIS_STORAGE_KEY}"-*.rdb 2>/dev/null || true)
-
-    if [ "${#files[@]}" -le "$keep" ]; then
-        return
-    fi
-
-    local i
-    for ((i=keep; i<${#files[@]}; i++)); do
-        /bin/rm -f "${files[$i]}"
-    done
+    # Three recent + seven daily snapshots + the oldest anchor; manual copies stay untouched.
+    # A refusal preserves backups and must not prevent the application from starting/stopping.
+    node "$SCRIPT_DIR/redis-backup-retention.mjs" "$REDIS_BACKUP_DIR" "$REDIS_STORAGE_KEY" --apply >/dev/null ||
+        echo '[backup-retention] retained existing snapshots after a failed retention check' >&2
 }
 
 archive_redis_snapshot() {
@@ -1442,13 +1432,18 @@ archive_redis_snapshot() {
     local stamp
     stamp=$(date '+%Y%m%d-%H%M%S')
     local target="$REDIS_BACKUP_DIR/${REDIS_STORAGE_KEY}-${reason}-${stamp}.rdb"
-    if cp -p "$source" "$target" 2>/dev/null || cp "$source" "$target" 2>/dev/null; then
+    local partial=""
+    if partial=$(mktemp "${target}.partial.XXXXXX" 2>/dev/null) &&
+        { cp -p "$source" "$partial" 2>/dev/null || cp "$source" "$partial" 2>/dev/null; } &&
+        node "$SCRIPT_DIR/redis-backup-retention.mjs" --check-snapshot "$partial" &&
+        mv -f "$partial" "$target"; then
         echo -e "${GREEN}  ✓ Redis 快照归档: $target${NC}"
     else
+        [ -z "$partial" ] || /bin/rm -f -- "$partial"
         echo -e "${YELLOW}  ⚠ Redis 快照归档失败，继续启动: $target${NC}"
         return 0
     fi
-    prune_redis_backups 20
+    prune_redis_backups
 }
 
 print_redis_runtime_info() {
@@ -1499,28 +1494,39 @@ run_logged_step() {
 }
 
 # 构建 shared + MCP + API (tsc)；--prod-web 时额外构建 Frontend
-build_packages() {
-    echo ""
-    echo -e "${CYAN}构建 shared...${NC}"
-    run_logged_step "shared 构建" 3 run_in_dir "$PROJECT_DIR/packages/shared" pnpm run build
-    echo -e "${GREEN}  ✓ shared 构建完成${NC}"
-
-    echo ""
-    echo -e "${CYAN}构建 MCP Server...${NC}"
-    run_logged_step "MCP Server 构建" 3 run_in_dir "$PROJECT_DIR/packages/mcp-server" pnpm run build
-    echo -e "${GREEN}  ✓ MCP Server 构建完成${NC}"
-
-    echo ""
-    echo -e "${CYAN}构建 API...${NC}"
-    run_logged_step "API 构建" 3 run_in_dir "$PROJECT_DIR/packages/api" pnpm run build
-    echo -e "${GREEN}  ✓ API 构建完成${NC}"
-
-    if [ "$PROD_WEB" = true ]; then
+compile_packages() {
+    local package rc
+    local built_packages=(shared mcp-server api)
+    [ "$PROD_WEB" != true ] || built_packages+=(web)
+    for package in "${built_packages[@]}"; do
         echo ""
-        echo -e "${CYAN}构建 Frontend (production)...${NC}"
-        run_logged_step "Frontend 构建" 10 run_in_dir "$PROJECT_DIR/packages/web" pnpm run build
-        echo -e "${GREEN}  ✓ Frontend 构建完成 (PWA 已启用)${NC}"
+        echo -e "${CYAN}构建 $package...${NC}"
+        # Explicitly propagate failure in the new compiler shell: it does not
+        # inherit the launcher's errexit, and a later echo must not hide status.
+        if run_logged_step "$package 构建" 10 run_in_dir "$PROJECT_DIR/packages/$package" pnpm run build; then
+            echo -e "${GREEN}  ✓ $package 构建完成${NC}"
+        else
+            rc=$?
+            return "$rc"
+        fi
+    done
+}
+
+build_packages() {
+    local selected_packages=shared,mcp-server,api rc
+    [ "$PROD_WEB" != true ] || selected_packages+=,web
+    BUILD_IDENTITY_PENDING=true
+    # Preserve the public launcher and alpha coordinates; export only its
+    # compiler/log functions into the awaited, independently owned POSIX group.
+    export -f compile_packages run_logged_step run_in_dir
+    if PROJECT_DIR="$PROJECT_DIR" PROD_WEB="$PROD_WEB" RED="$RED" GREEN="$GREEN" CYAN="$CYAN" NC="$NC" \
+        node "$SCRIPT_DIR/lib/build-identity.cjs" run "$PROJECT_DIR" "$selected_packages" bash -c compile_packages; then
+        rc=0
+    else
+        rc=$?
     fi
+    BUILD_IDENTITY_PENDING=false
+    return "$rc"
 }
 
 configure_mcp_server_path() {
@@ -1712,6 +1718,11 @@ cleanup() {
     [ "$CLEANUP_RUNNING" = true ] && return "${CLEANUP_STATUS:-0}"
     CLEANUP_RUNNING=true
     CLEANUP_STATUS=0
+
+    if [ "${BUILD_IDENTITY_PENDING:-false}" = true ]; then
+        node "$SCRIPT_DIR/lib/build-identity.cjs" invalidate "$PROJECT_DIR" || true
+        BUILD_IDENTITY_PENDING=false
+    fi
 
     echo ""
     echo "正在关闭服务..."

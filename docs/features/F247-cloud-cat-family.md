@@ -4,7 +4,7 @@ related_features: [F178, F061, F174, F236, F237, F172, F202, F309, F310, F317, F
 topics: [cloud-cat, chatgpt-pro, mcp, multi-provider, custom-instructions, github-connector, chrome-extension, native-messaging]
 doc_kind: spec
 description: Productized cloud-cat platform for connecting ChatGPT Pro and future cloud LLM providers into Clowder AI as first-class collaborators.
-tips_exempt: "Renewed 2026-10-10: Phase G and the related-feature update record the in-progress independent dot entry; where that entry ships it has its own implementation-anchored tip, so this architecture record adds no separate discovery action. Earlier transport retirement and in-place Settings repair flows are unchanged."
+tips_exempt: "Renewed 2026-10-14: remove the rejected per-cat dot permission step; no new configuration or discovery action to teach. Existing plugin setup and lifecycle tips remain the entry; this change removes redundant work."
 description_source: model
 description_author: codex
 description_updated_at: 2026-07-06T11:45:00Z
@@ -645,9 +645,11 @@ gpt-pro（以及未来 claude-cloud / gemini-cloud 等其他 cloud cats），不
 - `@gpt-pro` 无可用 binding 时提示：“先绑定 conversation，或选择复制并打开。”不得只显示内部 `HOST_APPEND_UNAVAILABLE`。
 ### Phase G — dot 独立接入、猫咖内召唤与协作
 
-**Status**: in-progress；Astra 负责设计/范围，Sol61 实现。operator 于本 thread `[thread-id]#private-source-id` 接受概念并要求直接开发、在真实代码里打磨。
+**2026-10-16 本人续办，G1仍未通过**：正式boot35的Ask734被全文读取并接纳后，canonical终稿711仍指向human708；显式对照744成功不代签自动回程。[PR5626](https://github.com/zts212653/clowder-ai/pull/5626)已合入4901f6ffe9cb6f8e072a06dd43b86f7b41a7aabf：按canonical输入与精确child/response关系绑定唯一Ask，串/并行文字与非文字共用原子终稿/Queue提交，保留原执行来源与sender权限；dot读源补可选rich/thinking。原cloud对a4370df8e5审毕无新问题，实际合入树与验证候选逐字相同。
 
-**2026-10-14 召唤权限校准（待实现）**：You 在本 thread `private-source-id` 明确要求去掉「获准召唤的家猫」逐猫勾选。安装并启用 dot 后，同账号家猫可在原对话召唤，无须第二次名单授权；已有空名单或部分名单不再限制协作。移除该设置及其写入接口，旧持久记录须兼容读取而不恢复拦截。保留账号/来源对话可见性、插件启停、有效订阅、exact-source 回程与 dot 询问的真实执行来源检查；不授予家猫 operator 实施批准权，不触碰正式服务或网络设置。沿原 Task936 实现、独立审查和 Alpha 验证，G1 仍待真实 provider 验收。
+Main已落地，正式仍为实查boot35，未同步或重启。原Task936已将持久deployment等待更新为generation15，等runtime实际包含6ab4c52b（Git已核包含4901f6ffe9与a47ad19e）且API/Web ready，自动续办真实ordinary Ask→unread/full→canonical自动事件回程及PNG普通Back/刷新/1440/390；真实订阅和旧反例保持。原928/r23的13文件仍无执行结果。正式自动回程、完整图片旅程、原API Alpha验收与G1仍未通过，原936责任不关闭。
+
+**Status**: in-progress；Astra 负责设计/范围，Sol61 实现。operator 于本 thread `[thread-id]#private-source-id` 接受概念并要求直接开发、在真实代码里打磨。
 
 **2026-10-11 实现状态**：首版 #5336 已合入 `7c6ef410e4`，browser admission #5343 已合入 `fad12058a8`。
 已有 MCP 复用纠正 #5381 已合入 `9c04cba87becb03b44ca71962f7d9d9d5425c95c`：保留原 `/mcp` 与 Pro 口令/工具，

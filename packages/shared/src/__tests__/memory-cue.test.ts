@@ -42,7 +42,7 @@ const fixtures = {
     scope,
     occurredAt: 1_785_600_000_001,
     payload: {
-      repoFullName: 'zts212653/cat-cafe',
+      repoFullName: 'zts212653/clowder-ai',
       prNumber: 3366,
       headSha: 'b83ce623eff16b0085be39801844e9b6b04c9313',
       phase: 'merge_gate',
@@ -289,7 +289,7 @@ describe('F287 memory cue shared contract', () => {
       v: 1,
       producer: 'github_ci',
       producerProvenance: 'server_github_ci',
-      repoFullName: 'zts212653/cat-cafe',
+      repoFullName: 'zts212653/clowder-ai',
       prNumber: 3366,
       headSha: 'b83ce623eff16b0085be39801844e9b6b04c9313',
       phase: 'merge_gate',

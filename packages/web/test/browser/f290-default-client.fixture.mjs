@@ -263,7 +263,7 @@ export async function setupResponseRequest({ cafe, embedded, nativeOwner }) {
   assert.equal((await nativeOwner.dispatchPending()).failed, 0);
   const responseQueue = await nativeOwner.queuedForChannel('产品方向');
   assert.equal(responseQueue.length, 1);
-  assert.deepEqual(responseQueue[0].targetCats, [nativeOwner.cat.id]);
+  assert.deepEqual(responseQueue[0].targets, [nativeOwner.cat.id]);
   const attentionItem = (await nativeOwner.connector.listInbox(nativeOwner.connection.connectionId)).find(
     (item) => item.event.body === responseRequest,
   );

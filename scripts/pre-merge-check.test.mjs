@@ -235,6 +235,7 @@ if (
   args[0]?.endsWith('/run-with-gate-resource-permit.mjs') &&
   process.env.CAT_CAFE_FULL_GATE_LEASE_HELD === '1'
 ) {
+  appendFileSync(${JSON.stringify(logPath)}, 'stage-parent ' + (process.env.CAT_CAFE_GATE_EXECUTION_PARENT_JOB_ID ?? '<unset>') + '\\n');
   const { runGateResourceStageFixture } = require(${JSON.stringify(path.join(repoRoot, 'scripts', 'lib', 'gate-resource-stage-fixture.mjs'))});
   process.exit(runGateResourceStageFixture(args.slice(1)));
 }
@@ -266,6 +267,7 @@ if (args[0]?.endsWith('plan-browser-verification.mjs')) {
 }
 if (args[0]?.endsWith('run-browser-verification.mjs')) {
   appendFileSync(${JSON.stringify(logPath)}, 'browser-outer-permit ' + (process.env.CAT_CAFE_FULL_GATE_RESOURCE_PERMIT_HELD ?? '<unset>') + '\\n');
+  appendFileSync(${JSON.stringify(logPath)}, 'browser-parent ' + (process.env.CAT_CAFE_GATE_EXECUTION_PARENT_JOB_ID ?? '<unset>') + '\\n');
   process.exit(Number(process.env.STUB_BROWSER_VERIFICATION_EXIT ?? '0'));
 }
 if (args[0]?.endsWith('gate-prepared-artifacts.mjs') && args[1] === 'record') {
@@ -794,11 +796,21 @@ describe('pre-merge-check dependency refresh order', () => {
   );
 
   it('keeps a completed --no-rebase full probe noncanonical', SOURCE_GATE_CONTROL_TEST_OPTIONS, (t) => {
-    const result = runGate(requireBash(t), ['--no-rebase'], { STUB_GATE_ROUTE: 'full' }, { sourceFixture: true });
+    const result = runGate(
+      requireBash(t),
+      ['--no-rebase'],
+      {
+        STUB_GATE_ROUTE: 'full',
+        CAT_CAFE_GATE_EXECUTION_PARENT_JOB_ID: 'stale-parent',
+      },
+      { sourceFixture: true },
+    );
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /route=full/);
     assert.equal(result.sentinelWritten, false);
     assert.ok(!result.logLines.some((line) => line.includes('gate-terminal-receipt.mjs begin')));
+    assert.ok(result.logLines.includes('browser-parent <unset>'));
+    assert.ok(result.logLines.includes('stage-parent <unset>'));
   });
 
   it(
@@ -1501,7 +1513,12 @@ describe('pre-merge-check dependency refresh order', () => {
     'passes a frozen browser plan to its executor without a second outer permit',
     SOURCE_GATE_CONTROL_TEST_OPTIONS,
     (t) => {
-      const result = runGate(requireBash(t), [], {}, { sourceFixture: true });
+      const result = runGate(
+        requireBash(t),
+        [],
+        { CAT_CAFE_MANAGED_JOB_ID: 'current-producer', CAT_CAFE_GATE_EXECUTION_PARENT_JOB_ID: 'stale-parent' },
+        { sourceFixture: true },
+      );
       assert.equal(result.status, 0, result.stderr);
       const call = result.logLines.find(
         (line) => line.startsWith('node ') && line.includes('run-browser-verification.mjs'),
@@ -1509,6 +1526,8 @@ describe('pre-merge-check dependency refresh order', () => {
       assert.ok(call, result.logLines.join('\n'));
       assert.match(call, /--head a{40} --base 1{40} --mode merge/);
       assert.ok(result.logLines.includes('browser-outer-permit <unset>'));
+      assert.ok(result.logLines.includes('browser-parent current-producer'), result.logLines.join('\n'));
+      assert.ok(result.logLines.includes('stage-parent current-producer'), result.logLines.join('\n'));
       assert.ok(!result.logLines.includes('pnpm --filter @cat-cafe/web run test:browser'));
     },
   );

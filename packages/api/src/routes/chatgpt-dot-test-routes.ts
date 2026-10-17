@@ -12,7 +12,6 @@ export function registerDotTestRoutes(
     dispatches: DotDispatchStore;
     startTest: (ownerUserId: string) => Promise<unknown>;
     threads: Pick<IThreadStore, 'get'>;
-    selectableCat: (id: string) => boolean;
   },
 ) {
   app.get<{ Params: { eventId: string } }>('/api/plugins/chatgpt-dot/delivery/:eventId', async (request, reply) => {
@@ -78,17 +77,5 @@ export function registerDotTestRoutes(
     } catch {
       return reply.code(409).send({ error: '请核对当前订阅后重试；已有测试不会重复派发。' });
     }
-  });
-  app.post('/api/plugins/chatgpt-dot/allowed-cats', async (request, reply) => {
-    const access = requirePluginOwnerLocalAccess(request, 'write');
-    if ('error' in access) return pluginAccessError(reply, access);
-    const body = z
-      .object({ catIds: z.array(z.string().min(1).max(128)).max(50) })
-      .strict()
-      .safeParse(request.body);
-    if (!body.success || body.data.catIds.some((id) => id === 'gpt-dot' || !options.selectableCat(id)))
-      return reply.code(400).send({ error: '请选择已有的家猫。' });
-    await options.connection.setOwnerPreferences(access.operator, { allowedCatIds: [...new Set(body.data.catIds)] });
-    return { ok: true };
   });
 }

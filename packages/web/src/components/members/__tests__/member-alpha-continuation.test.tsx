@@ -19,6 +19,7 @@ const cat: CatData = {
   avatar: '/avatars/family/codex61-sol.png',
   color: { primary: '#5B8C5A', secondary: '#D4E6D3' },
   mentionPatterns: ['@tester'],
+  carrier: 'cli',
   clientId: 'anthropic',
   accountRef: 'claude',
   defaultModel: 'test-model',
@@ -224,7 +225,7 @@ it('does not borrow active from the saved strategy for a draft; discard restores
   expect(contextText()).toContain('This strategy has not been saved');
   expect(statusText()).not.toContain('Available');
   expect(writes()).toHaveLength(0);
-  await click('Discard');
+  await click('Discard changes');
   expect(statusText()).toContain('Available');
   expect(container.querySelector<HTMLSelectElement>('#member-context select')?.value).toBe('compress');
 });

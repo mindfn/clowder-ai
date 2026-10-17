@@ -19,7 +19,10 @@ interface Input {
   readonly ownerUserId: string;
   readonly sessions: LiveCompanionSessions;
   readonly service: OwnerPageActionService;
-  readonly messages: Pick<IMessageStore, 'appendIdempotent' | 'getById' | 'getByThread' | 'getByThreadAfter'>;
+  readonly messages: Pick<
+    IMessageStore,
+    'appendIdempotent' | 'getById' | 'getByThread' | 'getByThreadAfter' | 'recordCompanionDeliveryAcceptance'
+  >;
   readonly threadService: Pick<ConciergeThreadService, 'getOrCreate' | 'isCurrent'>;
   readonly mcpDistDir: string;
   readonly allowedDirectories: readonly string[];
@@ -83,7 +86,7 @@ export async function startOwnerLocalNoteSimulation(input: Input): Promise<Owner
       publish() {},
     });
     input.service.bindCall(call, ledger);
-    input.sessions.claim(callId, input.ownerUserId, threadId, [catId]);
+    await input.sessions.claim(callId, input.ownerUserId, threadId, [catId]);
     await call.configure({
       CAT_CAFE_API_URL: input.apiUrl,
       CAT_CAFE_USER_ID: input.ownerUserId,
@@ -97,7 +100,7 @@ export async function startOwnerLocalNoteSimulation(input: Input): Promise<Owner
     const appended = await input.messages.appendIdempotent({
       userId: input.ownerUserId,
       threadId,
-      catId: null,
+      from: { kind: 'user', userId: input.ownerUserId },
       content: REQUEST_TEXT,
       mentions: [],
       timestamp: Date.now(),

@@ -1,11 +1,10 @@
 import { spawn } from 'node:child_process';
-import { type ImmutableMedia, immutableMediaSchema } from '@cat-cafe/shared';
-import sharp from 'sharp';
+import { type ImmutableMedia, immutableMediaSchema, type ReviewedMediaType } from '@cat-cafe/shared';
 import { z } from 'zod';
 import { MediaOwnerError } from './media-errors.js';
+import { probeImmutableImage } from './published-image-probe.js';
 import { verifiedVideoFrameRate } from './published-media-frame-rate.js';
 
-const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const videoStreamSchema = z.object({
   index: z.number().int().min(0).max(64),
   id: z.string().min(1),
@@ -33,28 +32,8 @@ const videoProbeSchema = z.object({
   packets: z.array(z.unknown()).max(250000).optional(),
 });
 
-export async function probeImmutableMedia(
-  bytes: Buffer,
-  mediaType: 'image/png' | 'video/mp4',
-): Promise<ImmutableMedia> {
-  if (mediaType === 'image/png') {
-    if (!bytes.subarray(0, 8).equals(pngSignature)) throw new MediaOwnerError('invalid_media');
-    try {
-      const decoder = sharp(bytes, { limitInputPixels: 40_000_000, failOn: 'error' });
-      const metadata = await decoder.metadata();
-      if (
-        metadata.format !== 'png' ||
-        (metadata.pages && metadata.pages > 1) ||
-        (metadata.orientation && metadata.orientation !== 1)
-      ) {
-        throw new MediaOwnerError('invalid_media');
-      }
-      await decoder.stats();
-      return immutableMediaSchema.parse({ kind: 'image', width: metadata.width, height: metadata.height });
-    } catch {
-      throw new MediaOwnerError('invalid_media');
-    }
-  }
+export async function probeImmutableMedia(bytes: Buffer, mediaType: ReviewedMediaType): Promise<ImmutableMedia> {
+  if (mediaType !== 'video/mp4') return probeImmutableImage(bytes, mediaType);
   if (bytes.length < 12 || bytes.subarray(4, 8).toString('ascii') !== 'ftyp')
     throw new MediaOwnerError('invalid_media');
   const media = parseVideoProbe(await runVideoProbe(bytes));

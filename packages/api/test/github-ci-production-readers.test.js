@@ -20,7 +20,7 @@ test('production-shaped plugin wiring defers details, uses one credential, and r
   const readers = createCiCollectionReaders(log, () => 'production-reader-fixture', {
     async execFileAsync(_file, args, options) {
       commands.push(args);
-      assert.equal(options.timeout, 5_000);
+      assert.ok(options.signal instanceof AbortSignal);
       assert.equal(options.env.GITHUB_TOKEN, 'production-reader-fixture');
       if (args[1] === 'graphql')
         return {
@@ -91,4 +91,58 @@ test('production-shaped plugin wiring defers details, uses one credential, and r
   assert.notEqual(routed[0].failureDetailsPending, true);
   assert.equal(routed[0].checks[0].name, 'gate');
   assert.equal(routed[0].aggregateBucket, 'fail');
+});
+
+test('production CI waits through ordinary shared-credential contention within the gate budget', async () => {
+  const { executeGitHubRequest } = await import('../dist/infrastructure/github/request-budget.js');
+  const token = 'production-queue-contention';
+  let release;
+  let started;
+  const occupied = new Promise((resolve) => {
+    started = resolve;
+  });
+  const blocked = new Promise((resolve) => {
+    release = resolve;
+  });
+  const predecessor = executeGitHubRequest(['api', '/fixture/other-poller'], {
+    ghToken: token,
+    execFileAsync: async () => {
+      started();
+      await blocked;
+      return { stdout: '{}' };
+    },
+  });
+  await occupied;
+  // Live recovery observed six serial collectors sharing one credential. A
+  // healthy 2.5s batch was expiring in the old 5s queue-inclusive budget. Keep
+  // this real deadline regression at the transport boundary (no GitHub calls).
+  const unblock = setTimeout(release, 6000);
+  try {
+    const readers = createCiCollectionReaders({ warn() {} }, () => token, {
+      execFileAsync: async () => ({
+        stdout: JSON.stringify({
+          data: {
+            r0: {
+              p0: {
+                headRefOid: 'queue-head',
+                state: 'OPEN',
+                mergedAt: null,
+                mergedBy: null,
+                commits: { nodes: [] },
+              },
+            },
+          },
+        }),
+      }),
+    });
+    const result = await readers.fetchPrStatuses(
+      [{ repoFullName: 'owner/repo', prNumber: 8 }],
+      AbortSignal.timeout(30000),
+    );
+    assert.equal(result.get('owner/repo#8')?.headSha, 'queue-head', 'healthy queued CI facts must reach the poller');
+  } finally {
+    clearTimeout(unblock);
+    release();
+    await predecessor;
+  }
 });

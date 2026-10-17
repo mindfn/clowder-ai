@@ -109,7 +109,7 @@ test('raw Human entrust has no Host Task without a committed Service assignment'
     const raw = f.messages.append({
       userId: f.cafe.ownerUserId,
       threadId: f.endpoint.id,
-      catId: null,
+      from: { kind: 'external', connectorId: 'collective' },
       mentions: [],
       timestamp: Date.now(),
       content: event.body,
@@ -169,7 +169,7 @@ test('public Work refs bind invocation/source/current versions and continue the 
     const message = f.messages.append({
       userId: f.cafe.ownerUserId,
       threadId: f.endpoint.id,
-      catId: null,
+      from: { kind: 'external', connectorId: 'collective' },
       mentions: [CAT],
       timestamp: Date.now(),
       content: event.body,

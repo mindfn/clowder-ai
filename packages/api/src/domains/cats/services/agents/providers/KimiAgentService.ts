@@ -127,7 +127,12 @@ export class KimiAgentService implements AgentService {
   }
 
   freshnessCarrierCapability(): AgentFreshnessCarrierCapability {
-    return { provider: 'kimi', carrier: 'kimi_stream_json', deliverySemantics: 'unsupported' };
+    return {
+      provider: 'kimi',
+      carrier: 'kimi_stream_json',
+      deliverySemantics: 'unsupported',
+      activeInvocationGuidance: 'unsupported',
+    };
   }
 
   contextCapability(): import('../../types.js').AgentContextCapability {
@@ -219,6 +224,10 @@ export class KimiAgentService implements AgentService {
           if (stored === l0Fingerprint) {
             effectiveResumeSessionId = options.sessionId;
           } else {
+            if (options.requireExactResume)
+              throw new Error(
+                'Exact Kimi resume requires the original verified current identity; refusing a fresh session',
+              );
             freshStartReason = stored === undefined ? 'unverifiable' : 'stale';
             rejectedResumeSessionId = options.sessionId;
           }

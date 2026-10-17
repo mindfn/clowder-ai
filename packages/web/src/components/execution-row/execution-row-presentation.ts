@@ -9,8 +9,6 @@ const TONE_BY_STATUS: Record<RowStatus, ExecutionRowTone> = {
   silent: 'warning',
   confirming: 'neutral',
   unverified: 'warning',
-  stuck: 'critical',
-  paused: 'warning',
   waiting: 'neutral',
 };
 

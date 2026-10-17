@@ -44,8 +44,10 @@ export const HOLD_PATTERNS: readonly HoldPatternEntry[] = [
   // Most-specific first ↓
   { id: 'mcp_tool_name', re: /cat_cafe_hold_ball/ },
   { id: 'en_hold_ball_underscore', re: /\bhold_ball\b/i },
-  { id: 'en_holding_the_ball', re: /\bholding.the.ball\b/i },
-  { id: 'en_holdball_space', re: /\bhold.ball\b/i },
+  // English words are whitespace-separated; punctuation in task IDs and
+  // property names (hold-ball-…, holding.the.ball) is not a hold declaration.
+  { id: 'en_holding_the_ball', re: /\bholding\s+the\s+ball\b/i },
+  { id: 'en_holdball_space', re: /\bhold\s+ball\b/i },
   { id: 'cn_wo_chi_qiu', re: /我.*持.*球/ },
   // Least-specific last ↓ (bare 持球 substring)
   { id: 'cn_chiqiu', re: /持球/ },
@@ -105,7 +107,7 @@ export interface VoidHoldInput {
 }
 
 export interface VoidHoldEvaluation {
-  /** True iff the void-hold-hint should fire (caller emits the connector + counter). */
+  /** True iff the internal void-hold correction signal and counter should fire. */
   readonly shouldEmit: boolean;
   /**
    * Matched HOLD_PATTERN id when text claims hold — preserved even when

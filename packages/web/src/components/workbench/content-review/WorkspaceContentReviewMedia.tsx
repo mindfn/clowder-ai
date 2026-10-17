@@ -18,6 +18,7 @@ import { useArtworkSave } from '@/components/content-review/useArtworkSave';
 import { useArtworkViewport } from '@/components/content-review/useArtworkViewport';
 import { usePresentedVideoFrame } from '@/components/content-review/usePresentedVideoFrame';
 import { useReviewMediaSelection } from '@/components/content-review/useReviewMediaSelection';
+import { VideoArtworkControls } from '@/components/content-review/VideoArtworkControls';
 import { useShellPresentation } from '@/components/shell/shell-presentation';
 import { useF307ExperienceWorkbenchStore } from '@/components/workbench/experience-workbench-store';
 import { useWorkspacePreviewIntent } from '../WorkspacePreviewIntent';
@@ -31,6 +32,7 @@ export function WorkspaceContentReviewMedia({
   reviewId,
   sourceRevision,
   src,
+  download,
   media,
   annotations,
   annotationResolutions,
@@ -95,7 +97,11 @@ export function WorkspaceContentReviewMedia({
   const [textEditing, setTextEditing] = useState(false);
   const activeSurfaceId = useF307ExperienceWorkbenchStore((state) => state.layout.activeSurfaceId);
   const enterMainAreaAttention = useF307ExperienceWorkbenchStore((state) => state.enterMainAreaAttention);
-  const { frameTime, onSeeking, onSeeked, seekTo } = usePresentedVideoFrame(video, src);
+  const { frameTime, onSeeking, onSeeked, seekTo } = usePresentedVideoFrame(
+    video,
+    src,
+    media.kind === 'video' ? JSON.stringify([reviewId, sourceRevision, media.streamId]) : undefined,
+  );
   const frame =
     media.kind === 'video' && frameTime !== null
       ? { streamId: media.streamId, tick: browserTimeToTick(frameTime, media) }
@@ -307,7 +313,25 @@ export function WorkspaceContentReviewMedia({
           {src && !error ? overlay : null}
         </div>
       </section>
-      {imageChatPrimary ? (
+      {imageChatPrimary && media.kind === 'video' ? (
+        <VideoArtworkControls
+          media={media}
+          video={video}
+          seconds={seconds}
+          frameReady={frame !== null}
+          mode={mode}
+          canAnnotate={selectable}
+          canMarkup={writable && canMarkup && markup.canEdit}
+          onModeChange={onModeChange}
+          onRange={onAnchorSelected}
+          onFrame={() => selection.setSelecting(true)}
+          seekTo={seekTo}
+          annotations={attachedAnnotations}
+          onAnnotationActive={onAnnotationActive}
+        >
+          {toolbar}
+        </VideoArtworkControls>
+      ) : imageChatPrimary ? (
         <ImageArtworkControls
           mode={mode}
           canAnnotate={selectable}
@@ -318,6 +342,7 @@ export function WorkspaceContentReviewMedia({
           }}
           viewport={viewport}
           src={src}
+          download={download}
           discussionCount={annotations.length}
           onOpenDiscussion={onOpenDiscussion}
           wholeWorkAction={wholeWorkAction}
@@ -344,6 +369,7 @@ export function WorkspaceContentReviewMedia({
             selected,
             canAnnotate: writable,
             src,
+            download,
             error,
             selectionActive: selection.selectionActive,
             selecting: selection.selecting,

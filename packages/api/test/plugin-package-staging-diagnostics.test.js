@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import childProcess, { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import fs, { mkdtemp, rm } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { test } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -78,4 +81,111 @@ for (const phase of ['list', 'admission']) {
       await rm(logDir, { recursive: true, force: true });
     }
   });
+}
+
+const realExecFile = childProcess.execFile;
+const realExecFileAsync = promisify(realExecFile);
+const realRm = fs.rm;
+const controlledTar = String.raw`
+process.stdout.write('ready\n');
+process.stdin.once('data', () => {
+  process.stderr.write(process.argv[2] + '\n');
+  process.exit(Number(process.argv[1]));
+});
+`;
+
+for (const failingMode of ['-tzf', '-tvzf']) {
+  test(
+    `staging waits for both real listing children when ${failingMode} rejects first`,
+    { timeout: 15_000 },
+    async () => {
+      const root = await fs.mkdtemp(join(tmpdir(), 'package-staging-lifetime-'));
+      const artifactRoot = join(root, 'artifact');
+      const packagesRoot = join(root, 'packages');
+      await fs.mkdir(artifactRoot);
+      const bytes = Buffer.from('invalid archive: both controlled tar children reject');
+      await fs.writeFile(join(artifactRoot, 'package.tgz'), bytes);
+      const packageDigest = `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
+      const children = [];
+      const cleanups = [];
+      let bothStarted;
+      const started = new Promise((resolve) => {
+        bothStarted = resolve;
+      });
+      // Route only the executable: actual execFile promises, pipes, close events,
+      // the private cwd, and the production environment/options remain real.
+      const route = (file, args, options) => {
+        assert.equal(file, 'controlled-package-tar');
+        assert.deepEqual(args.slice(1), ['package.tgz']);
+        const execution = realExecFileAsync(
+          process.execPath,
+          ['-e', controlledTar, args[0] === failingMode ? '7' : '9', args[0]],
+          options,
+        );
+        const record = { mode: args[0], child: execution.child, execution, closed: false };
+        execution.catch(() => undefined);
+        record.ready = new Promise((resolve, reject) => {
+          record.child.stdout.once('data', resolve);
+          record.child.once('error', reject);
+        });
+        record.child.once('close', () => {
+          record.closed = true;
+        });
+        children.push(record);
+        if (children.length === 2) bothStarted();
+        return execution;
+      };
+      childProcess.execFile = Object.assign((...args) => realExecFile(...args), { [promisify.custom]: route });
+      fs.rm = async (path, options) => {
+        if (basename(path).startsWith('.runtime-stage-')) {
+          cleanups.push({ path, liveChildren: children.filter((child) => !child.closed).map((child) => child.mode) });
+        }
+        return realRm(path, options);
+      };
+      syncBuiltinESMExports();
+      let rejection;
+      try {
+        const { stageVerifiedPackageArchive } = await import(
+          `../dist/domains/plugin/external-runtime/package-staging.js?lifetime=${failingMode}`
+        );
+        rejection = stageVerifiedPackageArchive({
+          artifactRoot,
+          packagesRoot,
+          packageDigest,
+          tarBin: 'controlled-package-tar',
+        }).then(
+          () => assert.fail('invalid archive was admitted'),
+          (error) => error,
+        );
+        await started;
+        await Promise.all(children.map((child) => child.ready));
+        const first = children.find((child) => child.mode === failingMode);
+        const sibling = children.find((child) => child !== first);
+        first.child.stdin.end('finish');
+        await assert.rejects(first.execution, (error) => error.code === 7);
+        // Drain the rejection continuations while the sibling remains held by
+        // stdin, rather than guessing a duration in which it might still run.
+        await setImmediate();
+        assert.equal(sibling.closed, false, 'the sibling must still hold the production stage cwd');
+        sibling.child.stdin.end('finish');
+        await Promise.allSettled(children.map((child) => child.execution));
+        const error = await rejection;
+        assert.equal(error.code, 'PACKAGE_AUTHORITY_MISMATCH');
+        assert.equal(error.cause.code, 7, 'keep the first failure rather than the later sibling error');
+        assert.equal(error.cause.stderr.trim(), failingMode);
+        assert.equal(cleanups.length, 1, 'failure must release its private stage exactly once');
+        assert.deepEqual(cleanups[0].liveChildren, [], 'cleanup must not remove a live tar child cwd');
+        assert.deepEqual(await fs.readdir(packagesRoot), [], 'no staging directory may survive rejection');
+        assert.deepEqual(await fs.readFile(join(artifactRoot, 'package.tgz')), bytes);
+      } finally {
+        childProcess.execFile = realExecFile;
+        fs.rm = realRm;
+        syncBuiltinESMExports();
+        for (const record of children) if (!record.closed) record.child.kill();
+        await Promise.allSettled(children.map((child) => child.execution));
+        if (rejection) await rejection;
+        await realRm(root, { recursive: true, force: true });
+      }
+    },
+  );
 }

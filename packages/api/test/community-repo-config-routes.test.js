@@ -175,7 +175,7 @@ describe('Community Repo Config Routes', () => {
         method: 'POST',
         url: '/api/community-repo-configs',
         payload: {
-          repo: 'zts212653/cat-cafe',
+          repo: 'zts212653/clowder-ai',
           guardThreadId: 'thread_b',
           guardCatId: 'opus',
         },

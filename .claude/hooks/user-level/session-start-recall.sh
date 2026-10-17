@@ -119,9 +119,9 @@ fi
 UNTRACKED_DOCS=$(git ls-files --others --exclude-standard -- 'docs/*.md' 'docs/**/*.md' 2>/dev/null | head -10)
 if [ -n "$UNTRACKED_DOCS" ]; then
   WARNINGS="${WARNINGS}
-⚠️ docs/ 下有未跟踪的 .md 文件（某只猫生成了但忘记 commit push）：
+⚠️ docs/ 下有未跟踪的 .md 文件（可能是你写的，也可能是别的猫正在写）：
 ${UNTRACKED_DOCS}
-→ 向co-creator汇报，商量处理方式（commit/移走/删除）
+→ 是你写的就 commit push；不是你写的别动，也别拿去问co-creator或跨线程催（写它的猫可能正在提交）
 "
 fi
 
@@ -143,7 +143,7 @@ if [ -n "$ROOT_CLUTTER" ]; then
   WARNINGS="${WARNINGS}
 ⚠️ 根目录有不该在这里的文件：
 ${ROOT_CLUTTER}
-→ 向co-creator汇报，商量处理方式
+→ 是你放的就收走（截图 → assets/screenshots/，设计稿 → designs/）；不是你放的别动，也别拿去问co-creator；未知文件不删
 "
 fi
 

@@ -2,7 +2,12 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { MeetingIntakeJudgmentField, PluginDescription, PluginIconSpec } from '@cat-cafe/shared';
 import type { Capability, PluginManifest } from '@clowder-ai/plugin-contract';
+import { BUNDLED_PACKAGE_ARCHIVES } from './bundled-package-index.js';
 import { CHATGPT_DOT_PLUGIN_MANIFEST } from './chatgpt-dot-manifest.js';
+import { COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST } from './collective-connector-manifest.js';
+
+export { COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST } from './collective-connector-manifest.js';
+
 import { PUBLISHED_COMPANION_V2 } from './desktop-window-runtime/published-companion-v2.js';
 
 export interface OfficialPluginOwnerAuth {
@@ -18,6 +23,8 @@ export interface OfficialPluginCatalogEntry {
   readonly version: string;
   readonly pluginId: string;
   readonly distribution: 'registry' | 'bundled';
+  /** Missing/manifest denotes the frozen pre-archive Host format; never a fallback after archive failure. */
+  readonly bundledFormat?: 'manifest' | 'archive';
   readonly archiveUrl: string;
   readonly packageDigest: string;
   /** Host-owned migration identity hidden when this catalog row is discoverable. */
@@ -63,6 +70,7 @@ export interface OfficialPluginCatalogPolicy {
   readonly packageName: string;
   readonly pluginId: string;
   readonly distribution: 'registry' | 'bundled';
+  readonly bundledFormat?: 'manifest' | 'archive';
   readonly releaseTag: 'next';
   readonly bootstrapRelease: OfficialPluginRelease;
   readonly effectiveGrants: readonly Capability[];
@@ -79,6 +87,7 @@ export function officialPluginCatalogEntry(
     packageName: policy.packageName,
     pluginId: policy.pluginId,
     distribution: policy.distribution,
+    ...(policy.bundledFormat === undefined ? {} : { bundledFormat: policy.bundledFormat }),
     version: release.version,
     archiveUrl: release.archiveUrl,
     packageDigest: release.packageDigest,
@@ -86,37 +95,6 @@ export function officialPluginCatalogEntry(
     ...(policy.ownerAuth === undefined ? {} : { ownerAuth: policy.ownerAuth }),
   };
 }
-
-export const COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST = {
-  pluginId: 'official.collective-connector',
-  version: '0.1.0',
-  contractVersion: '0.1.0',
-  name: 'Collective Connector',
-  description: 'Pairs this Clowder AI Host with an independent Collective Service.',
-  features: [
-    {
-      id: 'collective-connection',
-      name: 'Collective connection',
-      resources: [],
-      capabilities: [],
-    },
-  ],
-  data: [
-    {
-      name: 'collective-connections',
-      dataClass: 'relationship',
-      strategy: 'retained',
-      schemaVersion: '1',
-    },
-    {
-      name: 'collective-signal-custody',
-      dataClass: 'interaction-history',
-      strategy: 'retained',
-      schemaVersion: '1',
-    },
-  ],
-  runtime: { transport: 'builtin' },
-} as const satisfies PluginManifest;
 
 export function bundledManifestDigest(manifest: PluginManifest): string {
   return `sha512-${createHash('sha512').update(JSON.stringify(manifest)).digest('base64')}`;
@@ -133,11 +111,12 @@ export const OFFICIAL_PLUGIN_POLICIES = [
     packageName: '@cat-cafe/chatgpt-dot',
     pluginId: CHATGPT_DOT_PLUGIN_MANIFEST.pluginId,
     distribution: 'bundled',
+    bundledFormat: 'archive',
     releaseTag: 'next',
     bootstrapRelease: {
       version: CHATGPT_DOT_PLUGIN_MANIFEST.version,
-      archiveUrl: 'builtin://chatgpt-dot/0.1.0',
-      packageDigest: bundledManifestDigest(CHATGPT_DOT_PLUGIN_MANIFEST),
+      archiveUrl: BUNDLED_PACKAGE_ARCHIVES['chatgpt-dot'].archiveUrl,
+      packageDigest: BUNDLED_PACKAGE_ARCHIVES['chatgpt-dot'].packageDigest,
     },
     effectiveGrants: [],
     hostSignalRoutes: [],
@@ -174,11 +153,12 @@ export const OFFICIAL_PLUGIN_POLICIES = [
     packageName: '@cat-cafe/collective-connector',
     pluginId: 'official.collective-connector',
     distribution: 'bundled',
+    bundledFormat: 'archive',
     releaseTag: 'next',
     bootstrapRelease: {
-      version: '0.1.0',
-      archiveUrl: 'builtin:official.collective-connector',
-      packageDigest: bundledManifestDigest(COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST),
+      version: COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST.version,
+      archiveUrl: BUNDLED_PACKAGE_ARCHIVES['collective-connector'].archiveUrl,
+      packageDigest: BUNDLED_PACKAGE_ARCHIVES['collective-connector'].packageDigest,
     },
     effectiveGrants: [],
     hostSignalRoutes: [],
@@ -214,3 +194,8 @@ export const OFFICIAL_PLUGIN_POLICIES = [
 ] as const satisfies readonly OfficialPluginCatalogPolicy[];
 
 export const OFFICIAL_PLUGIN_CATALOG = OFFICIAL_PLUGIN_POLICIES.map((policy) => officialPluginCatalogEntry(policy));
+
+/** Host-shipped discovery is shared by production Manager and offline consumers. */
+export const OFFICIAL_BUNDLED_CATALOG_ENTRIES = OFFICIAL_PLUGIN_CATALOG.filter(
+  (entry) => entry.distribution === 'bundled',
+);

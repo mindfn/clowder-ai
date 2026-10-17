@@ -44,7 +44,7 @@ describe('F322 B §1.16 — a cat reply in three layers (new shell only)', () =>
       ).toBeNull();
     });
 
-    it('keeps the persisted a2a routing message as its own classic system row', () => {
+    it('keeps retired routing protocol rows out of the classic timeline', () => {
       const reply = streamReply();
       const routing: ChatMessageData = {
         id: 'route-1',
@@ -57,14 +57,13 @@ describe('F322 B §1.16 — a cat reply in three layers (new shell only)', () =>
             fromCatId: 'opus',
             targetCatId: 'codex-astra',
             invocationId: 'parent-1',
-            routing: { mode: 'serial', index: 1, total: 1 },
           },
         },
       };
 
       harness.renderTimeline([reply, routing]);
 
-      expect(harness.container.querySelector('[data-message-id="route-1"]')).not.toBeNull();
+      expect(harness.container.querySelector('[data-message-id="route-1"]')).toBeNull();
       expect(q('reply-handoff')).toBeNull();
     });
   });
@@ -99,80 +98,6 @@ describe('F322 B §1.16 — a cat reply in three layers (new shell only)', () =>
       expect(q('reply-status')).toBeNull();
       expect(q('reply-record')).toBeNull();
       expect(q('message-metadata')).toBeNull();
-    });
-
-    it('S3 projects a persisted handoff into the reply that emitted it and removes the separate blue system row', () => {
-      const reply = streamReply();
-      const routing: ChatMessageData = {
-        id: 'route-1',
-        type: 'system',
-        content: '布偶猫(Opus) → 缅因猫 Astra(gpt-6-astra)',
-        timestamp: reply.timestamp + 1,
-        extra: {
-          systemKind: 'a2a_routing',
-          a2aRouting: {
-            fromCatId: 'opus',
-            targetCatId: 'codex-astra',
-            invocationId: 'parent-1',
-            routing: { mode: 'serial', index: 1, total: 1 },
-          },
-        },
-      };
-
-      harness.renderTimeline([reply, routing]);
-
-      expect(q('reply-handoff')?.textContent).toContain('交给');
-      expect(q('reply-handoff')?.textContent).toContain('缅因猫 Astra');
-      expect(harness.container.querySelector('[data-message-id="route-1"]')?.textContent).toBe('');
-      expect(
-        harness.container.querySelector('[data-message-id="route-1"]')?.hasAttribute('data-projected-a2a-routing'),
-      ).toBe(true);
-    });
-
-    it('S3 combines a real parallel fan-out into one "同时交给" line without changing either carrier message', () => {
-      const reply = streamReply();
-      const routes: ChatMessageData[] = [
-        {
-          id: 'parallel-1',
-          type: 'system',
-          content: '布偶猫(Opus) ⇉ 缅因猫 Astra(gpt-6-astra)（并行 1/2）',
-          timestamp: reply.timestamp + 1,
-          extra: {
-            systemKind: 'a2a_routing',
-            a2aRouting: {
-              fromCatId: 'opus',
-              targetCatId: 'codex-astra',
-              routing: { mode: 'parallel', index: 1, total: 2 },
-            },
-          },
-        },
-        {
-          id: 'parallel-2',
-          type: 'system',
-          content: '布偶猫(Opus) ⇉ 暹罗猫(gemini)（并行 2/2）',
-          timestamp: reply.timestamp + 1,
-          extra: {
-            systemKind: 'a2a_routing',
-            a2aRouting: {
-              fromCatId: 'opus',
-              targetCatId: 'gemini',
-              routing: { mode: 'parallel', index: 2, total: 2 },
-            },
-          },
-        },
-      ];
-
-      harness.renderTimeline([reply, ...routes]);
-
-      const handoffs = harness.container.querySelectorAll('[data-testid="reply-handoff"]');
-      expect(handoffs).toHaveLength(1);
-      expect(handoffs[0]?.textContent).toContain('同时交给');
-      expect(handoffs[0]?.textContent).toContain('缅因猫 Astra');
-      expect(handoffs[0]?.textContent).toContain('gemini');
-      expect(harness.container.querySelector('[data-message-id="parallel-1"]')?.textContent).toBe('');
-      expect(harness.container.querySelector('[data-message-id="parallel-2"]')?.textContent).toBe('');
-      expect(routes[0]?.extra?.a2aRouting?.routing).toEqual({ mode: 'parallel', index: 1, total: 2 });
-      expect(routes[1]?.extra?.a2aRouting?.routing).toEqual({ mode: 'parallel', index: 2, total: 2 });
     });
 
     it('S4 shows the completed turn recall total from the same recall tool events, never while it is running', () => {

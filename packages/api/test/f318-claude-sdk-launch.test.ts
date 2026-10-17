@@ -146,7 +146,7 @@ test('read-only SDK ignores all operator settings, hooks and extra arguments', a
     });
   const withoutManaged = await prepare();
   assert.equal(withoutManaged.sdkOptions.settings, undefined);
-  assert.deepEqual(withoutManaged.sdkOptions.extraArgs, {});
+  assert.equal(withoutManaged.sdkOptions.extraArgs, undefined, 'read-only launches omit all extra CLI arguments');
   assert.deepEqual(withoutManaged.sdkOptions.settingSources, []);
   const withManaged = await prepare(buildClaudeCompactionLaunchPlan());
   const settings = JSON.parse(withManaged.sdkOptions.settings as string);

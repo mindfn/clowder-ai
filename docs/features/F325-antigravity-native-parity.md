@@ -1,17 +1,9 @@
 ---
 feature_ids: [F325]
-tips_exempt: "Renewed 2026-10-14: This records repair toward normal member capability parity and still-incomplete acceptance, not a newly usable public entry. The former Task-only tool/file restrictions are not the product goal; add user-facing discovery when the complete working path is delivered and verified."
+tips_exempt: "Renewed 2026-10-15 for native concurrency repair: This records repair toward normal member capability parity and still-incomplete acceptance, not a newly usable public entry. The former Task-only tool/file restrictions are not the product goal; add user-facing discovery when the complete working path is delivered and verified."
 related_features: [F053, F061, F143, F149, F161, F174, F178, F194, F201, F203, F210, F211, F241, F254, F261, F286, F296, F299, F306, F318, F320, F323, F324]
 topics: [antigravity, acp, native-carrier, parity, migration, managed-job]
 doc_kind: spec
-mcp_admission_status: accepted
-mcp_admission_ref: "file:docs/features/F325-antigravity-native-parity.md"
-mcp_admission_claims:
-  - ref: "file:docs/features/F325-antigravity-native-parity.md"
-    toolName: cat_cafe_run_task_test
-    resourceFamily: task-workflow
-    boundaryKind: side-effect-boundary
-    decision: accepted
 created: 2026-09-29
 description: "让暹罗与其他 AGY 猫在家里稳定对话、持续工作和恢复现场，统一原生接入、身份、安全与长任务体验，并退役旧执行载体。"
 description_source: human
@@ -25,19 +17,25 @@ description_updated_at: 2026-09-29T06:01:16Z
 
 **我们要的结果**：You 从家里正常入口叫出Siamese，便能对话、创作、查记忆、用工具、读改代码与测试、接 review、接住插话、停止和续接；长任务独立持久、重启可恢复，历史与身份保留，过时入口退役。以家里 Codex app-server / Claude 已落地的实际能力为参照，在相同授权与受保护目标边界下可用。普通工作不能要求人为维护 Native 专属的短工具清单或只为验收准备的空目录。任何真实上游限制须有当前证据和可用替代；本地尚未接线不能冒充不支持。
 
-**实现与验收进展（2026-10-14 11:30 UTC）**：[同一个 PR #5510](https://github.com/zts212653/clowder-ai/pull/5510) 的最终作者 cut 为 `c6a93c161b`。正常 MCP/原生工具、共享 guard、流式/工具错误恢复、skills/媒体、当轮用量、持久 session 与发送正文前的 verified init 已接通；Native 压缩沿既有 F296 控制与 epoch owner 接线。Action Plane 单一持久 job 包含独立 worker、lease/fencing、principal 幂等/显式 retry lineage、取消/恢复、日志与 metrics/trace。旧 Gemini CLI/IDE execution、专用 Task/file grant 和 task-test 旁路已在 PR 中退役，历史 reader 保留。代码尚未合入；后文旧 P1 描述是历史基线，不是新的产品限制。
+**实现与验收进展（2026-10-14 16:40 UTC）**：[同一个 PR #5510](https://github.com/zts212653/clowder-ai/pull/5510) 已于 16:00 UTC 合入 `4fd53e548ba7fdf3d27720b08629fe1eca4a3bbf`。Sonnet 对最终 `1ee83e6f52e995e970d888a61ead2371ca52ab00` 独立复审 approved（执行线程 source1026：`private-source-id`）。正常 MCP/原生工具、共享 guard、流式/工具错误恢复、skills/媒体、当轮用量、持久 session 与发送正文前的 verified init 已接通；Native 压缩沿既有 F296 控制与 epoch owner 接线。Action Plane 单一持久 job 包含独立 worker、lease/fencing、principal 幂等/显式 retry lineage、取消/恢复、日志与 metrics/trace。旧 Gemini CLI/IDE execution、专用 Task/file grant 和 task-test 旁路已在 PR 中退役，历史 reader 保留。合入还修正共享 shell reader 把重定向当 argv 的根因，保护 Claude/Codex 与 Native 的目录判断；非作者 4099 条差分未发现 deny→allow 放松。后文旧 P1 描述是历史基线，不是新的产品限制。
 
-**尚未结算**：非作者独立审查、合入后 Alpha 全旅程与获准 runtime 激活。协议只证明配置与 CLI init/request 选择的模型，没有独立 backend served-model 证明，保持 `modelVerified=false`，AC-A2 不提前签字；Linux/Windows 未认证。所有剩余项仍在原 Task2347，由 Astra 继续完成，不以本次作者报告关闭 Feature。
+**凭据控制面复审修正（source440）**：Sol6.1在71上发现security证书/identity/login/trust隐式修改仍可绕过。Astra复现4红/4阳性后，在同PR提交`c515439ea3a0d8ce10c32e52112eab4e055e590b`，按整类命令只放行经证明的只读形式，其余拒绝；原反例及相关guard合计18/18，57个本机命令名判定扫描无漏项。仅2文件变化，其他独立已测delta保持，Sol6.1 source462已typed approved、53/53独立检查通过；不替真实OAuth刷新或原线程验收签字。
+
+**当前review路由**：You source052曾指定后续开发reviews交SiameseArgon；当前source548（`[thread-id]#private-source-id`）因正式环境仍有串行等待，直接改派小太阳Sol6.1审PR #5583。Sol6.1 source551已接exact `fb975c33f4dd2a2dfa05e10c52b3962738693325`的四文件增量。原Argon请求source535的持久队列回执已为`withdrawn`、attempt `cancelled/source_withdrawn`，当前队列无该审查，不重复唤醒。Astra继续原Task/实现，旧#5580及其他独立批准保持原审查归属；本次改派不代表新批准或正式加载。
+
+**独立恢复判断已通过**：Argon source097（`private-source-id`）typed approved证据cut `c9a356870747b70cac8ffa17f0c001e58a3c4200`，无P1/P2，认可解除旧会话续接、只读补读准入与OAuth五秒保存超时三项具体阻塞；核过38件原件哈希及历史/成员不变。其批准不覆盖整体Feature终态。
+
+**尚未结算**：boot35已实看当前回复的桌面、手机与刷新呈现，其他页面旅程不据此代签；macOS桌面无逐帧记录，不能扩大无弹窗的保证。自动阈值 handoff 的 unavailable 会阻止实际动作，需原持续工作结果的策略证据/具体裁定；既有 Native 手动压缩与续接实证保留。协议只证明配置与CLI init/request选择的模型，没有独立backend served-model证明，保持`modelVerified=false`；AC-A2不提前签字。source1141提出的明确限制建议尚待operator裁定。Linux/Windows未认证。独立整体愿景结论不通过，不以作者报告代签或关闭Feature。原#5510工位因规范收尾的后续main内容检查未通过而具名retained至2026-10-15 20:25 UTC，#5551修正工位已释放；保留不冒充删除。
 
 原 A–E、F261 有效需求与迁移/历史边界继续被同一 Task 承接；未以部分进度关闭 Feature，也未重启正式 runtime。
 
 Architecture cell: `identity-session`, `transport`, `callback-auth`, `bubble-pipeline`, `action-plane`, `mcp-surface-governance`, `dispatch`
 
-Map delta: update required — P1 在现有 identity/session、callback auth、MCP surface 和 Action Plane 边界加入 AGY native consumer。TaskStore 仍是批准任务的真相源；单次测试的短寿命进程由 host-owned MCP guardian 拥有，P1 不新增持久 job 真相。P2 的通用 job/lease/fence 仍归 Action Plane。
+Map delta: landed in PR #5510 — AGY Native 消费现有 identity/session、callback auth、MCP surface 与 Action Plane。普通工具按共享 invocation policy 授权，不再要求 Native 专属 Task/file grant；持久 Managed Job 的 record/lease/fence 归 Action Plane，F167 Task/wake 仅承载关联与完成通知，不另立任务真相。
 
 Why: F325 是 AGY 用户旅程的唯一交付入口，复用已有运行时、鉴权、MCP、任务与呈现 owner；不建立第四套会话/审批/任务真相源。
 
-Canonical source: `packages/api/src/domains/cats/services/agents/providers/agy-native/AgyNativeAgentService.ts`（原生 L0/会话/通知）、`agy-native-coding-grant.ts` + `invoke-single-cat.ts`（Task 来源）、`packages/api/src/domains/cats/services/agents/invocation/tool-execution-policy.ts` + `packages/api/src/routes/callback-native-test-grant.ts`（server 侧 route scope）、`packages/mcp-server/src/tools/native-task-test-tool.ts`（MCP 语义）与 `native-task-test-runner.ts` + `native-task-test-guardian.ts`（短测试进程）。
+Canonical source: `packages/api/src/domains/cats/services/agents/providers/agy-native/`（原生 L0、精确 binding、preflight、stream-json 与媒体/skills）、`packages/api/src/domains/cats/services/agents/invocation/tool-execution-policy.ts` 与 `scripts/native-effect-segment-locations.mjs`（共享授权与命令目标分析）、`packages/api/src/domains/managed-job/ManagedJobService.ts`（唯一持久 job 服务）、`packages/api/src/routes/session-compaction-surface.ts`（既有压缩控制）、`packages/mcp-server/src/tools/callback-tools.ts`（MCP hold/status/tail/cancel 接线）。
 
 原生 L0 沿既有 `l0-compiler.ts` 按 catId 与 callback owner 编译，由 Service 写入主 agent 原生槽；用户 prepend、resume fallback 与 F129 动态 pack 不作为该槽的替代来源。`invoke-single-cat.test.js` 的普通 Chat 路由回归覆盖无 prepend 首轮、续轮绑定及动态 pack 隔离；编译失败继续在模型启动前拒绝。
 
@@ -45,9 +43,9 @@ Canonical source: `packages/api/src/domains/cats/services/agents/providers/agy-n
 
 P1 验证期间，`scripts/pre-merge-check.sh` 从冻结的 main 与本地发布分支 tracking ref 判定同步方式：已含 main 时不重放；发布 tip 是本地 HEAD 的祖先、且尚未进入 main 时普通 merge main，保留已发布历史与合并解冲突；缺少 tracking ref、已与它分叉或发布 tip 已进入 main 时沿用 rebase。tracking ref 是本地已知发布证据，不声明远端状态实时完整。祖先/对象核验错误或 merge 冲突在后续门禁前停止，HEAD 变化后仍重启当前树的门禁。`scripts/pre-merge-check.test.mjs` 的真实 Git 回归守「发布后 main 前进」的 add/add 解冲突与两侧祖先保留；同文件守失败不重放、rebase 路径及重启顺序。
 
-Consumer evidence: `rg -n 'resolveAgyNativeCodingGrant|callbackPolicyForAgyNativeMcpTools|native-test-grant|cat_cafe_run_task_test|runSandboxedNativeTaskTest|freshnessCarrierCapability' packages/api/src packages/mcp-server/src packages/shared/src` 可复查 host、回调、MCP 与配置消费者；`scripts/lib/browser-impact-policy.json` 对新输入声明浏览器烟测，不能代替真实 Chat。
+Consumer evidence: `rg -n 'AgyNativeAgentService|ManagedJobService|compact-native|agy_stream_json' packages/api/src packages/mcp-server/src packages/shared/src packages/web/src` 可复查实际 consumer。旧 `agy-native-coding-grant`、`callback-native-test-grant`、`native-task-test-*` 与 `cat_cafe_run_task_test` 已随 #5510 退役，其旧 MCP admission 记录不再作为现役工具声明。
 
-Claim guard: `agy-native-coding-grant.test.js` / `invoke-single-cat.test.js` 守 live Task、结束后降只读与错绑拒绝；`agy-native-callback-scope.test.js` / `callback-native-test-grant.test.js` 守 server 侧 route；`native-task-test-runner.test.js` / `native-task-test-guardian-startup.test.js` 守沙箱、父死清理、启动前取消和越权信号；`agy-native-mcp-config.test.js` 守 OAuth 首次登录的零字节占位与非空畸形配置拒绝；固定 CLI 的 `f325-agy-native-mcp-wire.mjs test|test-fail|test-cancel|freshness` 守脚本化模型接线；`agy-native-agent-service.test.js` / `agy-native-turn.test.js` 守通知与一次终态。`f325-agy-native-oauth-wire.mjs read|cancel` 是操作员复跑的隔离个人 OAuth 真模型证据，非自动测试。真实压缩后身份、生产 F254、Alpha 与受控加载仍是独立准入门。
+Claim guard: `agy-native-preflight.test.js` / `agy-native-agent-service-resume.test.js` 守正文前 verified init 和精确续接；`agy-native-normal-work.test.js` / `agy-native-callback-scope.test.js` 守普通工具与 server scope；`agy-native-effect-guard.test.js` / `f306-native-effect-segment-locations-bash-oracle.test.js` 守控制面和共享 shell 坐标；`managed-job-service.test.js` 与 worker/route 故障测试守幂等、取消、恢复和唯一完成；`f296-native-compaction-route.test.js` 守压缩控制。作者最后完整 API 套件 29396 项中 5 个既有 cursor 失败，合流 main #5542 后同组转绿；Sonnet 最终完整套件 29385 项只余 3 个已证环境基线失败，无 PR-only 失败。独立证据与合入判据见 [merge receipt](https://github.com/zts212653/clowder-ai/pull/5510#issuecomment-6172582915)。F320 #5540 引入的 browser catalog 配额错误已具名交回原 owner、候选 #5548 当时尚未合入，未报绿；不归因给 F325。真实 Alpha 与获准运行激活继续独立验收。
 
 ## Why
 

@@ -351,7 +351,7 @@ describe('ChatInput draft persistence', () => {
     act(() => {
       textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     });
-    expect(onSend).toHaveBeenCalledWith('will be sent', undefined, undefined, undefined, undefined, undefined);
+    expect(onSend).toHaveBeenCalledWith('will be sent', undefined, undefined, undefined);
 
     // Unmount and remount — draft should be gone
     act(() => root.unmount());
@@ -583,7 +583,7 @@ describe('ChatInput draft persistence', () => {
     act(() => {
       getTextarea().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     });
-    expect(onSend).toHaveBeenCalledWith('', undefined, undefined, undefined, undefined, undefined, [attachment]);
+    expect(onSend).toHaveBeenCalledWith('', undefined, undefined, undefined, [attachment]);
     expect(container.querySelector('[data-context-kind="thread"]')).toBeNull();
     expect(threadContextAttachmentDrafts.has('thread-CONTEXT')).toBe(false);
   });
@@ -646,11 +646,7 @@ describe('ChatInput draft persistence', () => {
     act(() => {
       getTextarea().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     });
-    expect(onSend).toHaveBeenCalledWith('', undefined, undefined, undefined, undefined, undefined, [
-      threadAttachment,
-      first,
-      updated,
-    ]);
+    expect(onSend).toHaveBeenCalledWith('', undefined, undefined, undefined, [threadAttachment, first, updated]);
   });
 
   it('keeps structured context drafts when the send is rejected before admission', async () => {
@@ -1363,7 +1359,7 @@ describe('ChatInput draft persistence', () => {
     act(() => {
       getTextarea().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     });
-    expect(onSend).toHaveBeenCalledWith('msg with image', [fakeImage], undefined, undefined, undefined, undefined);
+    expect(onSend).toHaveBeenCalledWith('msg with image', [fakeImage], undefined, undefined);
     expect(getPreviewImage('pic.png')).toBeNull();
 
     act(() => root.unmount());

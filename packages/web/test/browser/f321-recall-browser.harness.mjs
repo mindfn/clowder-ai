@@ -41,6 +41,7 @@ const cat = (id, nickname) => ({
   displayName: nickname,
   color: { primary: 'var(--color-codex-primary)', secondary: 'var(--color-codex-bg)' },
   mentionPatterns: [`@${id}`],
+  carrier: 'cli',
   clientId: 'openai',
   defaultModel: 'fixture',
   avatar: '',

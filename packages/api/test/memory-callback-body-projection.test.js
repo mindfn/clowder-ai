@@ -5,17 +5,19 @@ import Fastify from 'fastify';
 import './helpers/setup-cat-registry.js';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js';
-import { createInitialQueuedMessageCustody } from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { InMemoryTurnExecutionStore } from '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js';
 import { DeliveryCursorStore } from '../dist/domains/cats/services/stores/ports/DeliveryCursorStore.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
+import { projectQueuedCallbackMessageBody } from '../dist/routes/callback-message-body.js';
 import { callbacksRoutes } from '../dist/routes/callbacks.js';
+import { createCallbackContextFixture } from './helpers/callback-context-fixture.js';
+import { adaptMessageStore } from './helpers/message-from-fixtures.js';
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/memory-runtime-quote.json', import.meta.url), 'utf8'));
 
 async function setup(overrides = {}) {
-  const messageStore = new MessageStore();
+  const messageStore = adaptMessageStore(new MessageStore());
   const threadStore = new ThreadStore();
   const registry = new InvocationRegistry();
   const app = Fastify();
@@ -31,162 +33,64 @@ async function setup(overrides = {}) {
   return { app, messageStore, headers, invocationId };
 }
 
-test('queued transcript timestamps retain durable enqueue time across repeated reads', async () => {
-  const invocationQueue = new InvocationQueue();
-  const turnExecutionStore = new InMemoryTurnExecutionStore();
-  const { app, headers, invocationId } = await setup({ invocationQueue, turnExecutionStore });
-  try {
-    await turnExecutionStore.createRunning({
-      invocationId,
-      parentInvocationId: invocationId,
-      threadId: 'default',
-      userId: 'default-user',
-      catId: 'codex61-sol',
-      executionKind: 'ordinary',
-      startedAt: Date.now(),
-    });
-    const { entry } = invocationQueue.enqueue({
-      ownerAuthProvenance: 'strict',
-      threadId: 'default',
-      userId: 'default-user',
-      content: 'queued agent notice',
-      source: 'agent',
-      callerCatId: 'codex-sol',
-      targetCats: ['codex61-sol'],
-      intent: 'execute',
-    });
-    for (let i = 0; i < 2; i++) {
-      const response = await app.inject({ url: '/api/callbacks/thread-context?responseMode=full', headers });
-      assert.equal(response.statusCode, 200, response.body);
-      const message = response.json().messages.find((m) => m.queueEntryId === entry.id);
-      assert.equal(message.timestamp, entry.createdAt, 'reading must not manufacture a new event time');
-    }
-  } finally {
-    await app.close();
+test('queued transcript timestamps retain durable source time across repeated reads', async (t) => {
+  const f = await createCallbackContextFixture(t);
+  const timestamp = 1350;
+  const admitted = await f.enqueue('queued user notice', {}, { timestamp });
+  for (let i = 0; i < 2; i++) {
+    const result = await f.read();
+    assert.equal(result.statusCode, 200, result.body);
+    const projected = result.json().messages.find((m) => m.id === admitted.message.id);
+    assert.equal(projected.timestamp, timestamp, 'reading must not manufacture an event time');
   }
+  assert.equal(f.messages.getById(admitted.message.id).lifecycle.dispatchRefs.length, 1);
 });
 
-test('queued runtime quote is exposed as the same complete body in context and exact drill', async () => {
-  const invocationQueue = new InvocationQueue();
-  const turnExecutionStore = new InMemoryTurnExecutionStore();
-  const { app, messageStore, headers, invocationId } = await setup({
-    invocationQueue,
-    turnExecutionStore,
-    queueProcessor: { markPromptMessagesSeen: async () => [] },
+test('queued runtime quote retains the complete body in context and exact drill', async (t) => {
+  const f = await createCallbackContextFixture(t);
+  const admitted = await f.enqueue('', {}, { timestamp: fixture.timestamp, contentBlocks: fixture.contentBlocks });
+  const context = await f.read();
+  const drill = await f.app.inject({
+    url: `/api/callbacks/get-message?messageId=${admitted.message.id}&mode=full`,
+    headers: { 'x-invocation-id': f.auth.invocationId, 'x-callback-token': f.auth.callbackToken },
   });
-  try {
-    await turnExecutionStore.createRunning({
-      invocationId,
-      parentInvocationId: invocationId,
-      threadId: 'default',
-      userId: 'default-user',
-      catId: 'codex61-sol',
-      executionKind: 'ordinary',
-      startedAt: Date.now(),
-    });
-    const { entry } = invocationQueue.enqueue({
-      ownerAuthProvenance: 'strict',
-      threadId: 'default',
-      userId: 'default-user',
-      content: '',
-      source: 'user',
-      targetCats: ['codex61-sol'],
-      authorIntentByCatId: { 'codex61-sol': { requested: 'continue_current', boundParentInvocationId: invocationId } },
-      intent: 'execute',
-    });
-    const message = messageStore.append({
-      userId: 'default-user',
-      threadId: 'default',
-      catId: null,
-      content: '',
-      contentBlocks: fixture.contentBlocks,
-      mentions: [],
-      timestamp: fixture.timestamp,
-      deliveryStatus: 'queued',
-      queueCustody: createInitialQueuedMessageCustody(entry),
-    });
-    invocationQueue.backfillMessageId('default', 'default-user', entry.id, message.id);
-    const context = await app.inject({ url: '/api/callbacks/thread-context?responseMode=full', headers });
-    const drill = await app.inject({ url: `/api/callbacks/get-message?messageId=${message.id}&mode=full`, headers });
-    assert.equal(context.statusCode, 200, context.body);
-    assert.equal(drill.statusCode, 200, drill.body);
-    const projected = context.json().messages.find((m) => m.id === message.id);
-    assert.equal(projected.content, drill.json().message.content);
-    assert.deepEqual(projected.contentBlocks, fixture.contentBlocks);
-    assert.match(projected.content, /可以啊 你喊他继续啊/);
-    assert.equal(projected.contentLength, projected.content.length);
-  } finally {
-    await app.close();
-  }
+  assert.equal(context.statusCode, 200, context.body);
+  assert.equal(drill.statusCode, 200, drill.body);
+  const projected = context.json().messages.find((m) => m.id === admitted.message.id);
+  assert.equal(projected.content, drill.json().message.content);
+  assert.deepEqual(projected.contentBlocks, fixture.contentBlocks);
+  assert.match(projected.content, /可以啊 你喊他继续啊/);
+  assert.deepEqual((await f.queue.getDurableEntry(f.threadId, admitted.entry.id)).targets, ['codex']);
 });
 
-for (const sourceCase of ['missing', 'foreign']) {
-  test(`queued ${sourceCase} source stays unexposed while other readable bodies remain available`, async () => {
-    const invocationQueue = new InvocationQueue();
-    const turnExecutionStore = new InMemoryTurnExecutionStore();
-    const { app, messageStore, headers, invocationId } = await setup({
-      invocationQueue,
-      turnExecutionStore,
-      deliveryCursorStore: new DeliveryCursorStore(),
-    });
-    try {
-      await turnExecutionStore.createRunning({
-        invocationId,
-        parentInvocationId: invocationId,
-        threadId: 'default',
-        userId: 'default-user',
-        catId: 'codex61-sol',
-        executionKind: 'ordinary',
-        startedAt: Date.now(),
-      });
-      const readable = messageStore.append({
-        userId: 'default-user',
-        catId: null,
-        content: 'readable original',
-        mentions: [],
-        timestamp: 1,
-      });
-      const { entry } = invocationQueue.enqueue({
-        ownerAuthProvenance: 'strict',
-        threadId: 'default',
-        userId: 'default-user',
-        content: 'queue text alone is incomplete',
-        source: 'user',
-        targetCats: ['codex61-sol'],
-        authorIntentByCatId: {
-          'codex61-sol': { requested: 'continue_current', boundParentInvocationId: invocationId },
+for (const sourceCase of ['missing', 'foreign', 'unavailable']) {
+  test(`queued body projection withholds ${sourceCase} persisted source without a text fallback`, async () => {
+    const result = await projectQueuedCallbackMessageBody(
+      { entryId: 'owned-entry', messageId: 'source-id', content: 'queue text alone is incomplete' },
+      {
+        getById: async () => {
+          if (sourceCase === 'unavailable') throw new Error('owned store unavailable');
+          return sourceCase === 'missing'
+            ? null
+            : {
+                id: 'source-id',
+                threadId: 'owned-thread',
+                userId: 'foreign-owner',
+                from: { kind: 'user', userId: 'foreign-owner' },
+                content: 'private content',
+                contentBlocks: fixture.contentBlocks,
+              };
         },
-        intent: 'execute',
-      });
-      const sourceId =
-        sourceCase === 'missing'
-          ? 'missing-source'
-          : messageStore.append({
-              userId: 'other-user',
-              catId: null,
-              content: 'private content',
-              contentBlocks: fixture.contentBlocks,
-              mentions: [],
-              timestamp: 2,
-            }).id;
-      invocationQueue.backfillMessageId('default', 'default-user', entry.id, sourceId);
-      const response = await app.inject({
-        url: '/api/callbacks/thread-context?readIntent=unread&responseMode=full',
-        headers,
-      });
-      assert.equal(response.statusCode, 200, response.body);
-      const messages = response.json().messages;
-      assert.equal(messages.find((m) => m.id === readable.id).content, readable.content);
-      const pending = messages.find((m) => m.queueEntryId === entry.id);
-      assert.equal(pending.truncated, true);
-      assert.equal(pending.sourceUnavailableReason, 'queued_body_source_unavailable');
-      assert.equal(pending.content, undefined);
-      assert.equal(pending.contentBlocks, undefined);
-      assert.equal(invocationQueue.getEntrySnapshot('default', 'default-user', entry.id).queuedSeenByCatIds, undefined);
-      assert.equal(response.body.includes('private content'), false);
-    } finally {
-      await app.close();
-    }
+      },
+      { threadId: 'owned-thread', userId: 'owner', catId: 'opus', viewer: { type: 'cat', catId: 'opus' } },
+    );
+    assert.equal(result.content, '');
+    assert.equal(result.contentLength, 0);
+    assert.equal(result.contentBlocks, undefined);
+    assert.equal(
+      result.sourceUnavailableReason,
+      sourceCase === 'unavailable' ? 'queued_body_source_unavailable' : 'queued_body_source_changed',
+    );
   });
 }
 

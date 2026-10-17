@@ -331,13 +331,14 @@ async function runCase({ width, language, theme }) {
     await toolsTrigger.press('Enter');
     const tools = page.locator('[data-v2-workspace-menu]:not([hidden])');
     await tools.waitFor();
-    await tools.getByTestId('workspace-launcher-now').click();
-    await page.getByTestId('workspace-now-v2').waitFor();
-    assert.equal(await page.getByTestId('workspace-now-v2').getByTestId('workspace-running-object').count(), 20);
-    await originalHome(page, language);
+    // Main #5589 retired the duplicate Now page; all running work stays on Home.
+    assert.equal(await tools.getByTestId('workspace-launcher-now').count(), 0);
+    await page.keyboard.press('Escape');
+    await tools.waitFor({ state: 'hidden' });
+    assert.equal(await home.getByTestId('workspace-running-object').count(), 20);
     await toolsTrigger.click();
     await tools.waitFor();
-    assert.equal(await tools.locator('[data-workspace-destination]').count(), 18);
+    assert.equal(await tools.locator('[data-workspace-destination]').count(), 17);
     assert.deepEqual(
       await tools.locator('.home-group-title').allTextContents(),
       language === 'en' ? ['Recent work pages', 'Activity', 'Code', 'Other'] : ['最近的工作页', '活动', '代码', '其他'],

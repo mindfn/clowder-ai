@@ -1,7 +1,7 @@
 'use client';
 
 import type { ActiveExecutionProjection } from '@cat-cafe/shared';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { formatCatName, useCatData } from '@/hooks/useCatData';
 import { useExecutionRecoveryVerification } from '@/hooks/useExecutionRecoveryVerification';
 import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
@@ -9,12 +9,12 @@ import { catColorVar } from '@/lib/cat-slug';
 import { activeExecutionKey, useActiveExecutionStore } from '@/stores/activeExecutionStore';
 import type { AppServerLifecycleSnapshot, AppServerLifecycleStage } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
-import { useToastStore } from '@/stores/toastStore';
-import { apiFetch } from '@/utils/api-client';
 import { isSilentActiveTurn, isStreamingTipSuppressed } from './capability-tip-placement';
 import { ExecutionCancelButton } from './ExecutionCancelButton';
+import { useRowForceReset } from './execution-row/useRowForceReset';
 import { ForceResetDialog } from './ForceResetDialog';
 import { managedCommandActivityLabel } from './managed-command-activity-label';
+import { useQueueActionConvergence } from './useQueueActionConvergence';
 
 const APP_SERVER_STAGE_LABELS: Record<AppServerLifecycleStage, string> = {
   child_spawned: '启动子进程',
@@ -50,8 +50,8 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
   const executionAnchorThreadId = useActiveExecutionStore((state) => state.anchorThreadId);
   const { getCatById } = useCatData();
   const [, setTick] = useState(0);
-  const [resetDialogOpen, setResetDialogOpen] = useState(false);
-  const [resetting, setResetting] = useState(false);
+  const convergence = useQueueActionConvergence(effectiveThreadId);
+  const forceReset = useRowForceReset({ threadId: effectiveThreadId, convergence });
 
   const activeExecutions = useMemo(
     () =>
@@ -92,23 +92,6 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
     if (execution.kind !== 'live_invocation') return false;
     return isStreamingTipSuppressed(catStatuses[execution.catId], catInvocations[execution.catId]?.appServerLifecycle);
   });
-  // F220 Phase 3: 确认后调 force-reset 端点（只清运行态，LL-048 不碰持久化）→ toast → 关弹窗。
-  const handleForceReset = useCallback(async () => {
-    if (!effectiveThreadId) return;
-    setResetting(true);
-    try {
-      await apiFetch(`/api/threads/${effectiveThreadId}/force-reset`, { method: 'POST' });
-      useToastStore.getState().addToast({
-        type: 'success',
-        title: '已重置',
-        message: '对话已解放，可以发新消息了',
-        duration: 4000,
-      });
-      setResetDialogOpen(false);
-    } finally {
-      setResetting(false);
-    }
-  }, [effectiveThreadId]);
 
   // Canonical truth is empty but unsettled while the legacy socket still reports a
   // live turn. Returning null here used to remove the force-reset entry — the only
@@ -122,13 +105,8 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
             运行状态待确认
           </span>
         </div>
-        <ForceResetEntry escalated onClick={() => setResetDialogOpen(true)} />
-        <ForceResetDialog
-          open={resetDialogOpen}
-          busy={resetting}
-          onCancel={() => setResetDialogOpen(false)}
-          onConfirm={handleForceReset}
-        />
+        <ForceResetEntry escalated onClick={forceReset.request} />
+        <ForceResetDialog {...forceReset.dialog} />
       </div>
     );
   }
@@ -165,13 +143,8 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
           );
         })}
       </div>
-      <ForceResetEntry escalated={stalled} onClick={() => setResetDialogOpen(true)} />
-      <ForceResetDialog
-        open={resetDialogOpen}
-        busy={resetting}
-        onCancel={() => setResetDialogOpen(false)}
-        onConfirm={handleForceReset}
-      />
+      <ForceResetEntry escalated={stalled} onClick={forceReset.request} />
+      <ForceResetDialog {...forceReset.dialog} />
     </div>
   );
 }
@@ -259,7 +232,7 @@ function CatStatusChip({
     >
       <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: color }} />
       <span className="text-cafe-secondary font-medium">{label}</span>
-      <span className="text-cafe-muted">
+      <span className="text-cafe-muted" data-testid="execution-kind">
         {execution.kind === 'managed_command' ? managedCommandActivityLabel(execution.activity) : '实时回合'} ·{' '}
         {execution.threadTitle ?? execution.threadId}
       </span>

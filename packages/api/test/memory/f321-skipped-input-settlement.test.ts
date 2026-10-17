@@ -10,7 +10,6 @@ import { createSummaryCompactionTaskSpec } from '../../src/domains/memory/Summar
 import { applyMigrations } from '../../src/domains/memory/schema.js';
 import { SUMMARY_CONFIG } from '../../src/domains/memory/summary-config.js';
 import { reconcileSummaryPendingInput } from '../../src/domains/memory/summary-pending-input.js';
-import { makeQueuedMessageCustody } from '../helpers/queued-message-custody.js';
 
 function fixture() {
   const db = new Database(':memory:');
@@ -24,10 +23,10 @@ function fixture() {
     const message = messages.append({
       threadId: 'home',
       userId: 'owner',
-      catId: null,
       content,
       timestamp: Date.now() - 3600000,
       ...options,
+      from: options.from ?? { kind: 'user', userId: options.userId ?? 'owner' },
     });
     db.prepare(
       "UPDATE summary_state SET pending_input_revision=pending_input_revision+1,pending_message_count=pending_message_count+1,pending_token_count=pending_token_count+?,pending_signal_flags=1 WHERE thread_id='home'",
@@ -79,7 +78,7 @@ for (const transition of ['cancel', 'zero_exposure_recall'] as const) {
   test(`real ${transition} leaves no invisible pending debt and later owner work can finish`, async () => {
     const f = fixture();
     try {
-      const queued = f.append('queued idea', { deliveryStatus: 'queued', queueCustody: makeQueuedMessageCustody() });
+      const queued = f.append('queued idea', { deliveryStatus: 'queued' });
       if (transition === 'cancel') assert.equal(f.messages.markCanceled(queued.id)?.deliveryTransitioned, true);
       else {
         const recalled = f.messages.recallMessageToComposerDraft(queued.id, {
@@ -114,7 +113,7 @@ for (const kind of ['system', 'whisper', 'foreign', 'recalled'] as const) {
       const ignored = f.append(
         'private system debt',
         kind === 'system'
-          ? { userId: 'system', catId: 'system' }
+          ? { userId: 'system', from: { kind: 'system', service: 'test-log' } }
           : kind === 'foreign'
             ? { userId: 'another-owner' }
             : kind === 'whisper'
@@ -148,7 +147,8 @@ for (const kind of ['system', 'whisper', 'foreign', 'recalled'] as const) {
 test('a skipped-only page settles without a model; stale replay cannot subtract a concurrent append', async () => {
   const f = fixture();
   try {
-    for (let i = 0; i < 201; i++) f.append('system log', { userId: 'scheduler', catId: null });
+    for (let i = 0; i < 201; i++)
+      f.append('system log', { userId: 'scheduler', from: { kind: 'system', service: 'scheduler' } });
     f.append('later owner');
     const before = f.state();
     assert.equal(await processThread(before, f.deps, SUMMARY_CONFIG), true);
@@ -171,7 +171,7 @@ test('partial model coverage and concurrent appends remain pending across the sc
   const f = fixture();
   try {
     const first = f.append('owner first');
-    const ignored = f.append('system log', { userId: 'system', catId: 'system' });
+    const ignored = f.append('system log', { userId: 'system', from: { kind: 'system', service: 'test-log' } });
     const unread = f.append('owner unread');
     const generate = f.deps.generateAbstractive;
     f.deps.generateAbstractive = async (input) => {
@@ -203,7 +203,7 @@ test('append deltas waiting in the real writer queue cannot recreate already set
     const system = f.messages.append({
       threadId: 'home',
       userId: 'system',
-      catId: 'system',
+      from: { kind: 'system', service: 'test-log' },
       content: 'late delta',
       timestamp: Date.now() - 3600000,
     });
@@ -234,7 +234,7 @@ test('append deltas waiting in the real writer queue cannot recreate already set
 test('suppression prepared during a skipped-only scan leaves counters and watermark untouched', async () => {
   const f = fixture();
   try {
-    f.append('system log', { userId: 'system', catId: 'system' });
+    f.append('system log', { userId: 'system', from: { kind: 'system', service: 'test-log' } });
     const before = f.state();
     const read = f.deps.getMessagesAfterWatermark;
     f.deps.getMessagesAfterWatermark = async (...args) => {
@@ -257,7 +257,7 @@ test('suppression prepared during a skipped-only scan leaves counters and waterm
 test('an append during canonical rebase invalidates its revision and cannot be cleared as empty debt', async () => {
   const f = fixture();
   try {
-    const queued = f.append('queued', { deliveryStatus: 'queued', queueCustody: makeQueuedMessageCustody() });
+    const queued = f.append('queued', { deliveryStatus: 'queued' });
     f.messages.markCanceled(queued.id);
     const read = f.deps.getMessagesAfterWatermark;
     f.deps.getMessagesAfterWatermark = async (...args) => {

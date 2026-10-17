@@ -11,7 +11,7 @@ import { useEffect, useRef, useState } from 'react';
 import { activeExecutionKey } from '@/stores/activeExecutionStore';
 import { CatAvatar } from '../CatAvatar';
 import { ForceResetDialog } from '../ForceResetDialog';
-import { SteerQueuedEntryModal } from '../SteerQueuedEntryModal';
+import { QueueSteerDialog } from '../QueueSteerDialog';
 import { useShellCopy } from '../shell/shell-copy';
 import styles from './ExecutionRow.module.css';
 import { ExecutionRowActions } from './ExecutionRowActions';
@@ -76,7 +76,7 @@ function Body({
   words: ExecutionRowWords;
 }) {
   const { model, resolveCatName } = controller;
-  const title = model.pauseReason ? words.pauseReason[model.pauseReason] : undefined;
+
   const fullStatus = rowStatusText(model, resolveCatName, words);
   return (
     <>
@@ -89,7 +89,6 @@ function Body({
       />
       <span
         data-testid="execution-row-text"
-        title={title}
         className={`${styles.fullStatus} min-w-0 truncate font-medium text-cafe-secondary`}
       >
         {fullStatus}
@@ -203,7 +202,14 @@ export function ExecutionRow({ threadId }: { threadId: string }) {
       </div>
       {panelOpen ? <ExecutionRowPanel controller={controller} /> : null}
       {steerEntry && steerEntry.status === 'queued' ? (
-        <SteerQueuedEntryModal onCancel={convergence.handleSteerCancel} onConfirm={convergence.handleSteerConfirm} />
+        <QueueSteerDialog
+          key={`${threadId}:${steerEntry.id}`}
+          threadId={threadId}
+          entry={steerEntry}
+          queue={controller.view.queue}
+          onCancel={convergence.handleSteerCancel}
+          onConfirm={convergence.handleSteerConfirm}
+        />
       ) : null}
       <ForceResetDialog {...forceReset.dialog} />
     </div>

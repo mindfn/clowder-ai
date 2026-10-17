@@ -53,14 +53,13 @@ test('shared proxy sender admits a verified subscription, preserves failure stat
       messageStore: messages,
       threadStore: threads,
       enabled: async () => true,
-      allowedCats: async () => (await connection.status()).allowedCatIds,
       sendWebhook,
     });
     const sources = ['A', 'B'].map((title) => {
       const thread = threads.create('owner', title);
       const source = messages.append({
         userId: 'owner',
-        catId: null,
+        from: { kind: 'user', userId: 'owner' },
         threadId: thread.id,
         content: `nonce ${title}`,
         mentions: [],

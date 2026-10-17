@@ -49,8 +49,6 @@ export {
   handleAckMentions,
   handleAdmitEntrustedWork,
   handleCloseEntrustedWork,
-  handleCompleteA2ADispatch,
-  handleCompleteManagedHold,
   handleCrossPostMessage,
   handleDrillMemoryCue,
   handleFeatIndex,
@@ -199,6 +197,7 @@ export {
   graphTools,
   handleGraphResolve,
 } from './graph-tools.js';
+export { handleGetHarnessHistory, handlePublishHarnessHistory, harnessHistoryTools } from './harness-history-tools.js';
 export {
   capabilitiesSnapshotInputSchema,
   handleCapabilitiesSnapshot,
@@ -247,7 +246,6 @@ export {
   drillMemoryCueInputSchema,
   recordMemoryCueOutcomeInputSchema,
 } from './memory-cue-tools.js';
-export { handleNativeTaskTest, nativeTaskTestTools } from './native-task-test-tool.js';
 export {
   handleListPawFeelInbox,
   handleTriagePawFeel,

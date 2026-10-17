@@ -24,7 +24,8 @@ test('private Work compiler preserves the same complete home identity/harness an
     assert.doesNotMatch(privateWork, /PRIVATE_OWNER_PORTRAIT_CANARY|## 主人画像/);
     assert.match(privateWork, /## 1\. 身份与伙伴声明/);
     assert.match(privateWork, /## 队友名册/);
-    assert.match(privateWork, /Redis 6399/);
+    assert.match(privateWork, /Runtime data safety/);
+    assert.match(privateWork, /共享文件 \/ Git \/ 记忆/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -125,7 +125,6 @@ describe('F322 new-shell Workspace home · 工具清单', () => {
       expect(
         qa('.home-tool-grid [data-workspace-destination]').map((node) => node.dataset.workspaceDestination),
       ).toEqual([
-        'host:now',
         'host:status',
         'mode:trajectory',
         'action:theater',

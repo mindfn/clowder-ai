@@ -3,7 +3,12 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 import { DEFAULT_THREAD_ID, type StoredMessage, type ThreadReplyProjection } from '../ports/MessageStore.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { isSystemUserMessage, resolveThreadMessageVisibility } from '../visibility.js';
-import { safeParseConnectorSource, safeParseExtra, safeParseQueueCustody } from './redis-message-parsers.js';
+import {
+  parseConnectorSourceField,
+  safeParseExtra,
+  safeParseLifecycleMetadata,
+  safeParseMessageFrom,
+} from './redis-message-parsers.js';
 import { parseRedisNumber } from './redis-number.js';
 
 const FIELDS = [
@@ -18,7 +23,8 @@ const FIELDS = [
   'origin',
   'source',
   'extra',
-  'queueCustody',
+  'from',
+  'lifecycle',
 ] as const;
 const CHUNK_SIZE = 100;
 type Before = { timestamp: number; messageId: string };
@@ -36,9 +42,11 @@ function decodeFields(fields: Array<string | null>): StoredMessage | null {
     origin,
     source,
     extra,
-    queueCustody,
+    from,
+    lifecycle,
   ] = fields;
   if (!id || (deletedAt && Number.parseInt(deletedAt, 10))) return null;
+  const sourceField = parseConnectorSourceField(source ?? undefined);
   return {
     id,
     threadId: threadId || DEFAULT_THREAD_ID,
@@ -50,9 +58,11 @@ function decodeFields(fields: Array<string | null>): StoredMessage | null {
     ...(timelineOrderAt !== null ? { timelineOrderAt: parseRedisNumber(timelineOrderAt) } : {}),
     ...(deliveryStatus ? { deliveryStatus: deliveryStatus as StoredMessage['deliveryStatus'] } : {}),
     ...(origin === 'stream' || origin === 'callback' || origin === 'briefing' ? { origin } : {}),
-    source: safeParseConnectorSource(source ?? undefined),
+    ...(sourceField.kind === 'valid' ? { source: sourceField.source } : {}),
+    ...(sourceField.kind === 'invalid' ? { sourceParseFailure: true as const } : {}),
+    from: safeParseMessageFrom(from),
+    lifecycle: safeParseLifecycleMetadata(lifecycle ?? undefined),
     extra: safeParseExtra(extra ?? undefined),
-    queueCustody: safeParseQueueCustody(queueCustody ?? undefined),
   };
 }
 

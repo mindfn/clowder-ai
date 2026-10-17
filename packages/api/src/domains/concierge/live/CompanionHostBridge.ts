@@ -1,6 +1,7 @@
 import { type ConciergeConfig, catRegistry } from '@cat-cafe/shared';
 import type { CompanionState } from '@clowder-ai/plugin-contract';
 import { z } from 'zod';
+import type { IMessageStore } from '../../cats/services/stores/ports/MessageStore.js';
 import {
   type HostCompanionCommand as CompanionCommand,
   type HostCompanionReply as CompanionReply,
@@ -19,9 +20,11 @@ import {
 import { CompanionF221Trial } from './CompanionF221Trial.js';
 import { readCompanionDecisions } from './companion-decision-read.js';
 import { CompanionBridgeError, CompanionOwnerClient } from './companion-owner-client.js';
+import { CompanionConversationHistory } from './host/companion-conversation-history.js';
 import { readCompanionConversation } from './host/companion-conversation-read.js';
 import { readModernCompanionTranscript, sendCompanionText } from './host/companion-modern-live.js';
 import { readModernCompanionSettings, updateModernCompanionSettings } from './host/companion-modern-settings.js';
+import { CompanionSubmissionDelivery } from './host/companion-submission-delivery.js';
 import {
   type CompanionWorkPort,
   companionWorkNavigationFailure,
@@ -38,6 +41,8 @@ type Options = ConstructorParameters<typeof CompanionOwnerClient>[0] & {
   /** Exact published archive admission from the installed package digest. */
   readonly publicCompanionV2: boolean;
   readonly companionContract?: CompanionArchiveContract['contract'];
+  readonly messages?: IMessageStore;
+  readonly verifyConversationThread?: (threadId: string) => Promise<boolean>;
   readonly work?: CompanionWorkPort;
   readonly disableCompanion?: () => Promise<void>;
   readonly openConversation: (threadId: string) => Promise<boolean>;
@@ -54,6 +59,8 @@ export class CompanionHostBridge {
   private readonly client: CompanionOwnerClient;
   private readonly f221: CompanionF221Trial;
   private readonly unified: CompanionUnifiedDecisions;
+  private readonly history?: CompanionConversationHistory;
+  private readonly submissions?: CompanionSubmissionDelivery;
   private callId: string | undefined;
   private pending: Promise<CompanionReply> | undefined;
   private changingDocuments = false;
@@ -64,6 +71,18 @@ export class CompanionHostBridge {
       ...options,
       assertCurrent: () => this.assertCurrent(),
     });
+    if (options.messages) {
+      const historyOptions = {
+        ownerUserId: options.ownerUserId,
+        client: this.client,
+        messages: options.messages,
+        conversationThread: () => this.conversationThread(),
+        assertCurrent: () => this.assertCurrent(),
+        ...(options.verifyConversationThread ? { verifyThread: options.verifyConversationThread } : {}),
+      };
+      this.history = new CompanionConversationHistory(historyOptions);
+      this.submissions = new CompanionSubmissionDelivery({ ...historyOptions, currentCallId: () => this.callId });
+    }
     this.f221 = new CompanionF221Trial(this.client, options.ownerUserId, () => ({
       generation: this.generation,
       callId: this.callId,
@@ -114,6 +133,7 @@ export class CompanionHostBridge {
   }
   async close(): Promise<void> {
     this.closed = true;
+    this.history?.close();
     this.unified.reset();
     this.options.work?.reset();
     await this.stop();
@@ -173,7 +193,9 @@ export class CompanionHostBridge {
         return { kind: 'navigation', delivery: opened ? 'requested' : 'unconfirmed' };
       }
       case 'decisions.read':
-        return ['0.1.0-beta.24', '0.1.0-beta.25', '0.1.0-beta.27'].includes(this.options.companionContract ?? '')
+        return ['0.1.0-beta.24', '0.1.0-beta.25', '0.1.0-beta.27', '0.1.0-beta.28'].includes(
+          this.options.companionContract ?? '',
+        )
           ? this.unified.read(command.offset, command.limit)
           : readCompanionDecisions(this.client, command.offset, command.limit);
       case 'decision.open':
@@ -185,7 +207,23 @@ export class CompanionHostBridge {
         return this.f221.inspect(command.proposalId);
       case 'f221.confirm-trial':
         return this.f221.confirm(command.nonce, command.action);
+      case 'conversation.body.read':
+        if (!this.history) throw new CompanionBridgeError('unavailable');
+        return this.history.readBody(command.continuation);
+      case 'conversation.draft.read':
+        if (!this.submissions) throw new CompanionBridgeError('unavailable');
+        return this.submissions.readDraft();
+      case 'conversation.draft.save':
+        if (!this.submissions) throw new CompanionBridgeError('unavailable');
+        return this.submissions.saveDraft(command.scopeRef, command.expectedRevision, command.text);
+      case 'conversation.delivery.read':
+        if (!this.submissions) throw new CompanionBridgeError('unavailable');
+        return this.submissions.readDelivery(command.scopeRef, command.clientMessageId);
       case 'conversation.read':
+        if ('v' in command && command.v === 2) {
+          if (!this.history) throw new CompanionBridgeError('unavailable');
+          return this.history.readPage(command);
+        }
         return readCompanionConversation({
           client: this.client,
           includeSavedIdentity: this.options.publicCompanionV2,
@@ -226,6 +264,11 @@ export class CompanionHostBridge {
         return this.options.observePresentation(command, verifyHost);
       }
       case 'text':
+        if ('v' in command && command.v === 2) {
+          if (!this.submissions) throw new CompanionBridgeError('unavailable');
+          if (!this.callId && (this.pending || this.changingDocuments)) throw new CompanionBridgeError('busy');
+          return this.submissions.submit(command);
+        }
         if (!this.callId && (this.pending || this.changingDocuments)) throw new CompanionBridgeError('busy');
         return sendCompanionText({
           client: this.client,
@@ -328,7 +371,7 @@ export class CompanionHostBridge {
       nativeActivity,
       nativeWork,
       liveTransport: { kind: 'gpt_live_v3', verifiedModel: null },
-      ...(this.options.companionContract === '0.1.0-beta.27'
+      ...(['0.1.0-beta.27', '0.1.0-beta.28'].includes(this.options.companionContract ?? '')
         ? { meeting: { kind: 'unconfirmed', sharing: false, paused: false, sourceLabel: null } as const }
         : {}),
     };

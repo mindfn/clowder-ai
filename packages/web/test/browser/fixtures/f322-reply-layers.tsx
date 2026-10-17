@@ -53,18 +53,23 @@ const result = (id: string, detail: string, status: 'completed' | 'error' = 'com
   timestamp: T0 + 1,
 });
 const run = (turn: string) => ({ stream: { invocationId: `parent-${turn}`, turnInvocationId: turn } });
-const reconciliation = (turn: string, phase: 'failed' | 'canceled' | 'unknown_running') => ({
-  ...run(turn),
-  invocationReconciliation: {
-    v: 1 as const,
-    invocationId: `parent-${turn}`,
-    catIds: [] as string[],
-    turnInvocationIds: [turn],
-    phase,
-    updatedAt: T0,
-  },
+const response = (
+  id: string,
+  catId: string,
+  status: Extract<NonNullable<ChatMessageData['lifecycle']>, { kind: 'response' }>['status'],
+): Extract<NonNullable<ChatMessageData['lifecycle']>, { kind: 'response' }> => ({
+  kind: 'response',
+  orderKey: `${T0}:${id}`,
+  invocationId: id,
+  targetId: catId,
+  inputEntryIds: [],
+  inputMessageIds: [],
+  status,
+  startedAt: T0,
+  ...(status === 'processing' ? {} : { completedAt: T0 + 1000 }),
 });
 const base = (id: string, catId: string, over: Partial<ChatMessageData>): ChatMessageData => ({
+  from: { kind: 'agent', catId: catId },
   id,
   type: 'assistant',
   catId,
@@ -94,16 +99,17 @@ const messages: ChatMessageData[] = [
     content: '在读登录页。',
     extra: run('turn-quiet'),
   }),
-  base('r-unverified', 'opus', {
-    isStreaming: true,
-    toolEvents: [tool('u1', 'Edit', JSON.stringify({ file_path: '/app/src/login.tsx' }))],
-    extra: reconciliation('turn-unverified', 'unknown_running'),
+  base('r-durable-processing', 'opus', {
+    // The named response remains processing even before this browser receives a stream.
+    isStreaming: false,
+    lifecycle: response('turn-processing', 'opus', 'processing'),
   }),
   base('r-failed', 'codex', {
+    lifecycle: response('turn-failed', 'codex', 'failed'),
     toolEvents: [tool('f1', 'Bash', JSON.stringify({ command: 'pnpm build' })), result('f1', 'exit 1', 'error')],
     content: '构建没过。',
     extra: {
-      ...reconciliation('turn-failed', 'failed'),
+      ...run('turn-failed'),
       cliDiagnostics: {
         publicSummary: '等待回复超时',
         publicHint: '',
@@ -113,9 +119,10 @@ const messages: ChatMessageData[] = [
     },
   }),
   base('r-stopped', 'gemini', {
+    lifecycle: response('turn-stopped', 'gemini', 'canceled'),
     toolEvents: [tool('s1', 'Grep', JSON.stringify({ pattern: 'TODO' })), result('s1', '3 matches')],
     content: '搜到一半被停了。',
-    extra: reconciliation('turn-stopped', 'canceled'),
+    extra: run('turn-stopped'),
   }),
   base('r-done', 'opus', {
     toolEvents: [
@@ -146,6 +153,15 @@ const messages: ChatMessageData[] = [
     extra: { isExplicitPost: true },
   }),
   base('r-handoff-recall', 'opus', {
+    lifecycle: {
+      ...response('r-handoff-recall', 'opus', 'completed'),
+      dispatchRefs: ['codex', 'gemini'].map((targetId, index) => ({
+        targetId,
+        phase: 'settled' as const,
+        statusMessageId: `r-dispatch-failure-${index + 1}`,
+        dispatchedAt: T0,
+      })),
+    },
     toolEvents: [
       tool('recall-1', 'mcp__cat_cafe_memory__cat_cafe_search_evidence', JSON.stringify({ query: 'F322' })),
       result('recall-1', 'Found 1 result(s): F322'),
@@ -154,6 +170,7 @@ const messages: ChatMessageData[] = [
     metadata: { provider: 'anthropic', model: 'claude-opus', usage: { durationMs: 65_000 } },
   }),
   {
+    from: { kind: 'system', service: 'a2a-routing' },
     id: 'r-handoff-route-1',
     type: 'system',
     content: '布偶猫 ⇉ 缅因猫（并行 1/2）',
@@ -168,6 +185,7 @@ const messages: ChatMessageData[] = [
     },
   },
   {
+    from: { kind: 'system', service: 'a2a-routing' },
     id: 'r-handoff-route-2',
     type: 'system',
     content: '布偶猫 ⇉ 暹罗猫（并行 2/2）',
@@ -181,23 +199,40 @@ const messages: ChatMessageData[] = [
       },
     },
   },
-  base('r-hidden-handoff-source', 'opus', {
-    isStreaming: false,
-    content: '',
-    toolEvents: [],
-  }),
-  {
-    id: 'r-hidden-handoff-route',
-    type: 'system',
-    content: '布偶猫 → 缅因猫',
-    timestamp: T0 + 2,
-    extra: {
-      systemKind: 'a2a_routing',
-      a2aRouting: {
-        fromCatId: 'opus',
-        targetCatId: 'codex',
-        invocationId: 'parent-r-hidden-handoff-source',
+  ...['codex', 'gemini'].map(
+    (targetId, index): ChatMessageData => ({
+      from: { kind: 'system', service: 'message-lifecycle' },
+      id: `r-dispatch-failure-${index + 1}`,
+      type: 'system',
+      content: '成员暂不可用',
+      timestamp: T0 + 1,
+      lifecycle: {
+        kind: 'delivery_failure',
+        orderKey: `${T0 + 1}:${index}`,
+        status: 'failed',
+        sourceEntryId: `entry-${index}`,
+        inputMessageId: 'r-handoff-recall',
+        requestedTargets: [targetId],
+        reason: 'no_available_target',
+        createdAt: T0 + 1,
       },
+    }),
+  ),
+  {
+    from: { kind: 'system', service: 'message-lifecycle' },
+    id: 'r-orphan-dispatch-failure',
+    type: 'system',
+    content: '唤起处理成员失败',
+    timestamp: T0 + 2,
+    lifecycle: {
+      kind: 'delivery_failure',
+      orderKey: `${T0 + 2}:orphan`,
+      status: 'failed',
+      sourceEntryId: 'entry-orphan',
+      inputMessageId: 'r-source-not-in-timeline',
+      requestedTargets: ['codex'],
+      reason: 'no_available_target',
+      createdAt: T0 + 2,
     },
   },
   ...(['running', 'canceled', 'succeeded'] as const).map((phase) =>
@@ -205,16 +240,18 @@ const messages: ChatMessageData[] = [
       // A terminal reconciliation fact must win even while an old stream flag is still present.
       isStreaming: phase !== 'running',
       toolEvents: [tool(`terminal-${phase}`, 'Read')],
+      lifecycle: {
+        kind: 'response',
+        orderKey: '1',
+        invocationId: `terminal-${phase}`,
+        targetId: 'opus',
+        inputEntryIds: [],
+        inputMessageIds: [],
+        status: phase === 'running' ? 'processing' : phase === 'succeeded' ? 'completed' : phase,
+        startedAt: T0,
+      },
       extra: {
         ...run(`terminal-${phase}`),
-        invocationReconciliation: {
-          v: 1 as const,
-          invocationId: `parent-terminal-${phase}`,
-          catIds: ['opus'],
-          turnInvocationIds: [`terminal-${phase}`],
-          phase,
-          updatedAt: T0,
-        },
       },
     }),
   ),
@@ -254,40 +291,21 @@ const failedMembers = [
   },
 ] satisfies SidebarSnapshotRow[];
 if (failureVisibility) {
-  messages.push(
-    base('r-supplement-failed', 'codex', {
-      content: 'The original answer remains available.',
-      extra: {
-        freshnessSupplement: {
-          type: 'freshness_supplement',
-          supplementId: 'f254-supplement:r-supplement-failed:1',
-          lineageId: 'r-supplement-failed',
-          originalMessageId: 'r-supplement-failed',
-          threadId: 'thread-replies',
-          catId: 'codex',
-          seq: 1,
-          status: 'failed',
-          requiredCount: 1,
-          terminalReason: 'read_only_policy_unavailable',
-          updatedAt: T0,
-        },
-      },
-    }),
-    {
-      id: 'r-network-error',
-      type: 'system',
-      content: 'Error: stream disconnected before completion',
-      timestamp: T0,
-      extra: {
-        cliDiagnostics: {
-          reasonCode: 'network_error',
-          publicSummary: '网络连接失败',
-          publicHint: '模型服务连接已中断。',
-          debugRef: { command: 'codex app-server', exitCode: null, signal: null, invocationId: 'failed-primary' },
-        },
+  messages.push({
+    from: { kind: 'system', service: 'agent-error' },
+    id: 'r-network-error',
+    type: 'system',
+    content: 'Error: stream disconnected before completion',
+    timestamp: T0,
+    extra: {
+      cliDiagnostics: {
+        reasonCode: 'network_error',
+        publicSummary: '网络连接失败',
+        publicHint: '模型服务连接已中断。',
+        debugRef: { command: 'codex app-server', exitCode: null, signal: null, invocationId: 'failed-primary' },
       },
     },
-  );
+  });
 }
 if (new URLSearchParams(window.location.search).has('subagents')) {
   messages.splice(0, messages.length, ...subexecutionSceneMessages());
@@ -299,6 +317,7 @@ if (probeReplyCopy) {
       content: Array.from({ length: 35 }, (_, index) => `Original paragraph ${index}`).join('\n'),
     }),
     {
+      from: { kind: 'user', userId: 'default-user' },
       id: 'r-copy-quote',
       type: 'user',
       content: '',

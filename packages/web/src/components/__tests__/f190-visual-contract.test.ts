@@ -57,6 +57,22 @@ function modalOverlayCandidates(source: string): ModalOverlayCandidate[] {
 }
 
 describe('F190 visual contract — no hard borders in card/panel components', () => {
+  it('composer popovers use the layer-four floating surface', () => {
+    const addMenu = readSrc('ChatInputAddMenu.tsx');
+    const inputMenus = readSrc('ChatInputMenus.tsx');
+    const whisper = readSrc('WhisperCatSelector.tsx');
+    const pathCompletion = readSrc('PathCompletionMenu.tsx');
+    const contextPicker = readSrc('ChatContextPicker.tsx');
+
+    expect(addMenu).toContain('<ComposerPopover');
+    expect(addMenu).toContain('presentation={presentation}');
+    expect(readSrc('ComposerPopover.tsx')).toMatch(/presentation === 'classic'[\s\S]*?bg-cafe-surface-canvas/);
+    expect(inputMenus.match(/bottom-full[^\n]+bg-cafe-surface-canvas/g)).toHaveLength(3);
+    expect(whisper).toMatch(/bottom-full[^\n]+bg-cafe-surface-canvas/);
+    expect(pathCompletion).toMatch(/bottom-full[^\n]+bg-cafe-surface-canvas/);
+    expect(contextPicker).toMatch(/bottom-full[^\n]+bg-cafe-surface-canvas/);
+  });
+
   it('SessionChainPanel uses settingsResourceCardClass, not border-[var(--console-border-soft)]', () => {
     const src = readSrc('SessionChainPanel.tsx');
     expect(src).toContain('settingsResourceCardClass');
@@ -491,6 +507,46 @@ describe('F190 typography guard — no hardcoded font sizes in console scope', (
       });
     expect(violations).toEqual([]);
   });
+});
+
+describe('F190 divider guard — console-scope dividers use semantic class', () => {
+  const DIVIDER_SCOPE = [
+    'memory/MemoryNav.tsx',
+    'signals/SignalNav.tsx',
+    'mission-control/MissionControlPage.tsx',
+    'settings/primitives/SettingsRow.tsx',
+    'settings/primitives/SettingsCollapsibleCard.tsx',
+    'settings/capability-settings-ui.tsx',
+    'UnifiedAuthModal.tsx',
+    'PushSettingsPanel.tsx',
+    'ThreadExecutionBar.tsx',
+    'audit/AuditExplorerPanel.tsx',
+    'mission-control/WorkflowSopPanel.tsx',
+    'mission-control/FeatureRowList.tsx',
+    'workspace/WorldPanel.tsx',
+    'PlanBoardPanel.tsx',
+    'workspace/ConsolePanel.tsx',
+    'workspace/BrowserToolbar.tsx',
+    'workspace/BrowserPanel.tsx',
+    'workspace/DiffViewer.tsx',
+    'rich/DiffBlock.tsx',
+    'mission-control/ExternalProjectTab.tsx',
+    'mission-control/SliceLadder.tsx',
+    'mission-control/ThreadSituationPanel.tsx',
+    'memory/CollectionGraphParts.tsx',
+    'memory/RecallFeed.tsx',
+    'memory/ToolUsageMetricsPanel.tsx',
+    'ThreadSidebar/ThreadSidebar.tsx',
+    'ThreadSidebar/DirectoryBrowser.tsx',
+  ];
+
+  for (const file of DIVIDER_SCOPE) {
+    it(`${file}: uses console-divider-* class, no clean raw border-[var(--console-border-soft)]`, () => {
+      const src = readSrc(file);
+      const rawDividers = src.match(/border-[tbrl] border-\[var\(--console-border-soft\)\]/g) ?? [];
+      expect(rawDividers).toEqual([]);
+    });
+  }
 });
 
 describe('#723 Mission Hub — card/border unification guard', () => {

@@ -50,7 +50,7 @@ export function createNativeOwnerResultArtifacts({ connector, tasks, messages, u
       const timestamp = Date.now();
       const publication = messages.append({
         userId,
-        catId: cat.id,
+        from: { kind: 'agent', catId: cat.id },
         threadId: task.threadId,
         mentions: [],
         timestamp,

@@ -19,6 +19,7 @@ const CAT = {
   variantLabel: 'GPT-5.6 Sol',
   color: { primary: '#6b8f34', secondary: '#c8d8b5' },
   mentionPatterns: ['codex-sol'],
+  carrier: 'cli',
   clientId: 'openai',
   defaultModel: 'gpt-5.6-sol',
   avatar: '/avatars/codex.png',

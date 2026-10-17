@@ -105,7 +105,7 @@ test('F153 Phase B: parentSpan threading through call chain', async (t) => {
   const CLI_PROVIDERS = [
     'ClaudeAgentService.ts',
     'CodexAgentService.ts',
-    'GeminiAgentService.ts',
+    'agy-native/agy-native-launch.ts',
     'OpenCodeAgentService.ts',
     'KimiAgentService.ts',
   ];

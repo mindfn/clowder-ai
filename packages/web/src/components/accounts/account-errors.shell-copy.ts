@@ -3,6 +3,12 @@ import { defineShellCopy } from '../shell/shell-copy';
 // Exact messages owned by the account journey; unknown diagnostics remain intact.
 export const accountErrorsCopy = defineShellCopy({
   zh: {
+    claude_token_settings_unreadable: 'Claude 设置读不到，请核对后重试。',
+    claude_token_settings_conflict: 'Claude 设置中另有 token，无法确认本次所选号；请先核对设置中的认证配置。',
+    claude_token_missing_or_expired: 'Token 缺失或已过期，请在此账号更新 token。',
+    claude_account_required: '请选择 Claude 默认登录、已保存 token 或兼容的 API 账号。',
+    claude_local_member_required: '仅本地 Claude 成员可以使用此换号入口。',
+    claude_token_account_fields_owned: 'Token 账号的认证方式由官方 Claude 登录管理。',
     'Provider base URL must be an absolute HTTP(S) URL': '服务商地址须为完整的 HTTP(S) URL',
     'Provider base URL must use HTTP(S)': '服务商地址须使用 HTTP(S)',
     'Binding preview changed; please review it again': '换号影响已变化，请重新预览确认',
@@ -82,6 +88,13 @@ export const accountErrorsCopy = defineShellCopy({
     'Login attempt required': '请重新开始登录',
   },
   en: {
+    claude_token_settings_unreadable: 'Claude settings could not be read. Check them and retry.',
+    claude_token_settings_conflict:
+      'Claude settings contain another token. Check that authentication setting before using this account.',
+    claude_token_missing_or_expired: 'Token missing or expired. Replace this account’s token.',
+    claude_account_required: 'Select the Claude default login, a saved token or a compatible API account.',
+    claude_local_member_required: 'This switch is available only to local Claude members.',
+    claude_token_account_fields_owned: 'Token account authentication is owned by the official Claude login.',
     'Provider base URL must be an absolute HTTP(S) URL': 'Provider base URL must be an absolute HTTP(S) URL',
     'Provider base URL must use HTTP(S)': 'Provider base URL must use HTTP(S)',
     'Binding preview changed; please review it again': 'The account switch preview changed. Review it again.',

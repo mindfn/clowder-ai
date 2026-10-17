@@ -132,20 +132,19 @@ test('human filter is after the original raw candidate cap and preserves owner, 
   }
 });
 
-test('an excluded cat preserves native custody errors, tolerant admission parsing and deleted-row exclusion', async () => {
+test('human filtering preserves canonical tolerant lifecycle decoding and deleted-row exclusion', async () => {
   const f = await fixture();
   try {
-    await f.add('broken-cat', 1, { catId: 'sonnet', queueCustody: '{broken' });
-    for (const options of [undefined, { humanOnly: true as const }]) {
-      await assert.rejects(
-        f.store.listOwnerMessageWindowSlice('owner', 0, 10, 100, options),
-        /invalid persisted queue custody/,
-      );
-    }
-    await f.redis.hdel(MessageKeys.detail('broken-cat'), 'queueCustody');
-    await f.redis.hset(MessageKeys.detail('broken-cat'), 'queueCustodyAdmission', '{broken');
+    await f.add('broken-cat', 1, { catId: 'sonnet', lifecycle: '{broken' });
+    const malformed = await f.store.listOwnerMessageWindowSlice('owner', 0, 10, 100);
+    assert.equal(malformed.messages.length, 1);
+    assert.equal(malformed.messages[0].lifecycle, undefined);
+    assert.deepEqual(await f.store.listOwnerMessageWindowSlice('owner', 0, 10, 100, { humanOnly: true }), {
+      messages: [],
+      hasMore: malformed.hasMore,
+    });
+    await f.redis.hdel(MessageKeys.detail('broken-cat'), 'lifecycle');
     const original = await f.store.listOwnerMessageWindowSlice('owner', 0, 10, 100);
-    assert.equal(original.messages[0]?.queueCustodyAdmission, undefined);
     assert.deepEqual(await f.store.listOwnerMessageWindowSlice('owner', 0, 10, 100, { humanOnly: true }), {
       messages: [],
       hasMore: original.hasMore,
@@ -162,8 +161,20 @@ test('an excluded cat preserves native custody errors, tolerant admission parsin
 
 test('memory adapter preserves its existing cap and excludes only cat rows when requested', () => {
   const store = new MessageStore();
-  store.append({ userId: 'owner', threadId: 'thread', catId: 'sonnet', content: 'cat', timestamp: 1 });
-  store.append({ userId: 'owner', threadId: 'thread', catId: null, content: 'human', timestamp: 2 });
+  store.append({
+    userId: 'owner',
+    threadId: 'thread',
+    from: { kind: 'agent', catId: 'sonnet' },
+    content: 'cat',
+    timestamp: 1,
+  });
+  store.append({
+    userId: 'owner',
+    threadId: 'thread',
+    from: { kind: 'user', userId: 'owner' },
+    content: 'human',
+    timestamp: 2,
+  });
   const original = store.listOwnerMessageWindowSlice('owner', 0, 10, 1);
   assert.deepEqual(store.listOwnerMessageWindowSlice('owner', 0, 10, 1, { humanOnly: true }), {
     ...original,
@@ -190,10 +201,34 @@ test('unbounded human-source window keeps every eligible human and omits cat pay
     const witness = f.events.findLast((event) => event.kind === 'message_read_batch');
     assert(witness && witness.kind === 'message_read_batch');
     assert.equal(witness.parsers.toolEvents.inputCodeUnits, 2);
-    await f.redis.hset(MessageKeys.detail('b-cat'), 'queueCustody', '{broken');
-    await assert.rejects(
-      f.store.listOwnerMessagesInWindow('owner', 0, 10, { humanOnly: true }),
-      /invalid persisted queue custody/,
+    await f.redis.hset(MessageKeys.detail('b-cat'), 'lifecycle', '{broken');
+    const malformedFull = await f.store.listOwnerMessagesInWindow('owner', 0, 10);
+    assert.equal(malformedFull.find((message) => message.id === 'b-cat')?.lifecycle, undefined);
+    assert.deepEqual(
+      await f.store.listOwnerMessagesInWindow('owner', 0, 10, { humanOnly: true }),
+      malformedFull.filter((message) => message.from.kind === 'user'),
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test('canonical from overrides legacy catId in the optimized Redis human window', async () => {
+  const f = await fixture();
+  try {
+    await f.add('a-agent', 1, {
+      from: JSON.stringify({ kind: 'agent', catId: 'sonnet' }),
+      catId: '',
+      toolEvents: 'x'.repeat(100000),
+    });
+    await f.add('b-system', 2, { from: JSON.stringify({ kind: 'system', service: 'scheduler' }), catId: '' });
+    await f.add('c-human', 3, { from: JSON.stringify({ kind: 'user', userId: 'owner' }), catId: 'legacy-stale' });
+    const page = await f.store.listOwnerMessageWindowSlice('owner', 0, 10, 2, { humanOnly: true });
+    assert.deepEqual(page, { messages: [], hasMore: true });
+    const all = await f.store.listOwnerMessagesInWindow('owner', 0, 10, { humanOnly: true });
+    assert.deepEqual(
+      all.map((message) => message.id),
+      ['c-human'],
     );
   } finally {
     await f.close();

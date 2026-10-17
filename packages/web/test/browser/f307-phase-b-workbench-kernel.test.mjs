@@ -79,6 +79,7 @@ const FIXED_API_FIXTURES = new Map([
           displayName: '小太阳·砚砚',
           color: { primary: 'var(--color-codex-primary)', secondary: 'var(--color-codex-bg)' },
           mentionPatterns: ['@codex-sol'],
+          carrier: 'cli',
           clientId: 'openai',
           defaultModel: 'gpt-5.6-sol',
           avatar: '',

@@ -179,7 +179,7 @@ registerDefaultEntryJourney(
         'rule/adoption/UNKNOWN wake does not manufacture Work acceptance',
       );
       const wakes = (await owner.queuedForChannel('产品方向')).filter(
-        (entry) => entry.executionScope === 'collective-participation',
+        (entry) => entry.execution.executionScope === 'collective-participation',
       );
       assert.ok(wakes.length > 0);
       await page.screenshot({ path: path.join(evidence, 'once-registered-desktop.png'), fullPage: true });

@@ -139,6 +139,8 @@ describe('fetchPrCiStatuses', () => {
   });
 });
 
+const FIXTURE_REPOSITORY = 'fixture-owner/fixture-repo';
+
 function rawGitHubFixture(annotationTexts, jobCheckRunId = 91) {
   const commands = [];
   return {
@@ -190,7 +192,7 @@ function rawGitHubFixture(annotationTexts, jobCheckRunId = 91) {
                 conclusion: 'failure',
                 runner_id: 0,
                 steps: [],
-                check_run_url: `https://api.github.com/repos/zts212653/cat-cafe/check-runs/${jobCheckRunId}`,
+                check_run_url: `https://api.github.com/repos/${FIXTURE_REPOSITORY}/check-runs/${jobCheckRunId}`,
               },
             ],
           }),
@@ -231,7 +233,7 @@ describe('classifyGitHubExecutionFailure', () => {
 
   it('assembles the exact enum from raw check, job, and annotation JSON', async () => {
     const fixture = rawGitHubFixture(['Account spending limit reached before the job started.']);
-    const result = await fetchPrCiStatus('zts212653/cat-cafe', 3276, { warn() {} }, fixture);
+    const result = await fetchPrCiStatus(FIXTURE_REPOSITORY, 3276, { warn() {} }, fixture);
     assert.equal(result.checks[0].executionFailure, 'billing_spending_limit_zero_step');
     assert.equal(result.checkRollup, 'present');
     assert.ok(fixture.commands.some((args) => args[0] === 'api' && args[1].includes('/check-runs?')));
@@ -272,13 +274,13 @@ describe('classifyGitHubExecutionFailure', () => {
 
   it('keeps a raw billing-shaped check unclassified when annotations are absent', async () => {
     const fixture = rawGitHubFixture([]);
-    const result = await fetchPrCiStatus('zts212653/cat-cafe', 3276, { warn() {} }, fixture);
+    const result = await fetchPrCiStatus(FIXTURE_REPOSITORY, 3276, { warn() {} }, fixture);
     assert.equal(Object.hasOwn(result.checks[0], 'executionFailure'), false);
   });
 
   it('does not splice a same-name job and check-run from different executions', async () => {
     const fixture = rawGitHubFixture(['Account spending limit reached before the job started.'], 999);
-    const result = await fetchPrCiStatus('zts212653/cat-cafe', 3276, { warn() {} }, fixture);
+    const result = await fetchPrCiStatus(FIXTURE_REPOSITORY, 3276, { warn() {} }, fixture);
     assert.equal(Object.hasOwn(result.checks[0], 'executionFailure'), false);
   });
 });

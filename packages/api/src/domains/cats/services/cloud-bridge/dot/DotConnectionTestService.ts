@@ -79,7 +79,7 @@ export class DotConnectionTestService {
     const message = await this.options.messages.append({
       threadId: thread.id,
       userId: state.ownerUserId,
-      catId: null,
+      from: { kind: 'user', userId: state.ownerUserId },
       content: `dot 接入验证 ${label}：请读取这条原消息，在原对话回复随机标识 ${nonce}。这是连接测试，不授权其他工作。`,
       mentions: [],
       timestamp: Date.now(),

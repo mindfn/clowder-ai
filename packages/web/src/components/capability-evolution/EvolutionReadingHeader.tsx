@@ -1,16 +1,22 @@
 import type { ReactNode } from 'react';
 import { evolutionProgramPresentation, productStatus } from './capability-evolution-presentation';
-import { EvolutionJourney, type JourneyMoment } from './EvolutionJourney';
+import { EvolutionJourney, type JourneyMoment, journeyStageLabel } from './EvolutionJourney';
 import { EvolutionProgramName } from './EvolutionProgramName';
 import { EvolutionProgramOrigin } from './EvolutionProgramOrigin';
 import type { EvolutionProgramProjection } from './evolution-program-projection';
 import { EvolutionProgressAction } from './journey/EvolutionProgressAction';
+
+function readingReturnLabel(desktop: boolean, fullWindow: boolean): string {
+  if (fullWindow) return '← 回到聊天';
+  return desktop ? '← 返回侧栏' : '← 返回详情';
+}
 
 export function EvolutionReadingHeader({
   projection,
   controls,
   returnToRail,
   desktop,
+  fullWindow,
   moment,
   v2,
 }: {
@@ -18,16 +24,18 @@ export function EvolutionReadingHeader({
   controls: ReactNode;
   returnToRail: () => void;
   desktop: boolean;
+  fullWindow: boolean;
   moment: JourneyMoment;
   v2: boolean;
 }) {
   const status = productStatus(projection);
-  if (!v2 || moment !== 1)
+  const returnLabel = readingReturnLabel(desktop, fullWindow);
+  if (!v2 || (moment !== 1 && moment !== 2))
     return (
       <header>
         <div className="mb-6 flex items-center justify-between">
           <button type="button" className="text-xs text-cafe-secondary" onClick={returnToRail}>
-            {desktop ? '← 返回侧栏' : '← 返回详情'}
+            {returnLabel}
           </button>
           {controls}
         </div>
@@ -61,12 +69,12 @@ export function EvolutionReadingHeader({
     <header className="evolution-v2-reading-heading">
       <div className="evolution-v2-reading-toolbar">
         <button type="button" className="evolution-link" onClick={returnToRail}>
-          {desktop ? '← 返回侧栏' : '← 返回详情'}
+          {returnLabel}
         </button>
         {controls}
       </div>
       <p className="evolution-eyebrow">
-        能力进化 · 第 {projection.program.cycle} 轮 · {productStatus(projection).label}
+        能力进化 · 第 {projection.program.cycle} 轮 · {journeyStageLabel(projection)}
       </p>
       <h1 className="evolution-title">{evolutionProgramPresentation(projection.program, projection.origin).title}</h1>
       <div className="evolution-v2-reading-origin">

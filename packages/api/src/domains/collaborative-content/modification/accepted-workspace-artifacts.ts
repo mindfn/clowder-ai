@@ -5,6 +5,7 @@ import {
   isSourceCodeExtension,
   type ThreadArtifactDTO,
 } from '@cat-cafe/shared';
+import { messageFrom } from '../../cats/services/stores/message-from.js';
 import type { IMessageStore, StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
 import { MediaOwnerError } from '../../video-studio/content-owner/media-errors.js';
 import { WorkspaceContentSourceError } from '../../workspace/workspace-content-source.js';
@@ -14,6 +15,7 @@ import { assertModificationSourceAuthority } from './request-authority.js';
 
 export interface AppliedWorkspaceReceiptMessage {
   readonly messageId: string;
+  readonly ownerUserId: string;
   readonly threadId: string;
   readonly replyTo: string;
   readonly receipt: ContentModificationReceiptV1;
@@ -37,8 +39,7 @@ export function projectAppliedWorkspaceReceipts(messages: readonly StoredMessage
   const projected: AppliedWorkspaceReceiptMessage[] = [];
   for (const message of messages) {
     if (
-      message.userId !== 'system' ||
-      message.catId !== null ||
+      messageFrom(message).kind !== 'system' ||
       message.extra?.systemKind !== 'content_modification_receipt' ||
       !message.replyTo
     )
@@ -47,6 +48,7 @@ export function projectAppliedWorkspaceReceipts(messages: readonly StoredMessage
     if (!parsed.success || parsed.data.state !== 'applied' || parsed.data.sourceMessageId !== message.replyTo) continue;
     projected.push({
       messageId: message.id,
+      ownerUserId: message.userId,
       threadId: message.threadId,
       replyTo: message.replyTo,
       receipt: parsed.data,
@@ -92,6 +94,7 @@ export class AcceptedWorkspaceArtifactReader implements AcceptedWorkspaceArtifac
     const record = this.deps.store.requests.get(receipt.requestId, ownerUserId);
     if (
       message.threadId !== threadId ||
+      (message.ownerUserId !== ownerUserId && message.ownerUserId !== 'system') ||
       !record ||
       record.ownerUserId !== ownerUserId ||
       record.payload.threadId !== threadId ||

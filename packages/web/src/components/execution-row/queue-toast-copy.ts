@@ -2,26 +2,23 @@
  * F322 original-B: the words the queue's actions answer with. One home, so the old panel and the one-row
  * surface can never tell the user two different things about the same press.
  */
-import type { QueueReminderAttemptState } from '@cat-cafe/shared';
-
-export const REMINDER_RESULT_COPY: Record<
-  QueueReminderAttemptState,
-  { type: 'success' | 'info'; title: string; message: string }
-> = {
-  requested: {
-    type: 'success',
-    title: '提醒已请求',
-    message: '不会打断当前工作；猫会在安全断点收到提示。',
-  },
-  delivered: { type: 'info', title: '提醒已送达', message: '猫已收到提示，尚未读取消息正文。' },
-  seen: { type: 'info', title: '提醒后已读取', message: '猫已在该轮完整读取这条消息。' },
-  missed: { type: 'info', title: '提醒未赶上本轮', message: '该轮已结束；回执保留本次未送达结果。' },
-};
-
-export function reminderResultCopy(state: unknown) {
-  return typeof state === 'string' && state in REMINDER_RESULT_COPY
-    ? REMINDER_RESULT_COPY[state as QueueReminderAttemptState]
-    : REMINDER_RESULT_COPY.requested;
+export function queuedGuidanceCopy(
+  effective: string | undefined,
+  fallbackReason: string | undefined,
+  turnAccepted: boolean | undefined,
+): string {
+  if (effective === 'next_work') {
+    return fallbackReason === 'parent_terminal_before_exposure'
+      ? '原回复已结束，消息已转为下一条回复处理。'
+      : '本次未追加到当前回复，消息已转为下一条回复处理。';
+  }
+  if (turnAccepted === false) {
+    return '客户端尚未接受本轮回复，消息仍在队列中；客户端接受后会自动尝试追加。若一直未开始，可点 Stop 取消当前回复。';
+  }
+  if (turnAccepted === true) {
+    return '消息仍在队列中，尚未确认追加成功；请按最新队列状态继续。';
+  }
+  return '消息仍在队列中，尚未确认客户端接收；请查看成员状态，若一直未开始，可点 Stop 取消当前回复。';
 }
 
 export function recoveryNoStartCopy(refreshed: boolean, error: unknown) {

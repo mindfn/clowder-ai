@@ -1,9 +1,9 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { useChatArtworkEntry } from '@/components/content-review/useChatArtworkEntry';
+import { useChatArtworkLightbox } from '@/components/content-review/useChatArtworkLightbox';
 import type { PublishedMessageCoordinate } from '@/components/content-review/usePublishedContent';
-import { CopyButton, Lightbox } from '@/components/Lightbox';
+import { CopyButton } from '@/components/Lightbox';
 import { useShellLanguage } from '@/components/shell/shell-language';
 import type { RichMediaGalleryBlock } from '@/stores/chat-types';
 import { API_URL } from '@/utils/api-client';
@@ -21,15 +21,10 @@ export function MediaGalleryBlock({
   publication?: PublishedMessageCoordinate;
 }) {
   const items = Array.isArray(block.items) ? block.items : [];
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const [previewReason, setPreviewReason] = useState<string | undefined>();
   const [failedUrls, setFailedUrls] = useState<Set<string>>(new Set());
   const mediaUrls = useGalleryMediaUrls(items);
   const language = useShellLanguage();
-  const published = useChatArtworkEntry(publication);
-  const lightboxItem = lightboxIndex === null ? undefined : items[lightboxIndex];
-  const lightboxUrl = lightboxIndex === null ? undefined : mediaUrls[lightboxIndex]?.url;
-  const lightboxSrc = lightboxUrl ? resolveMediaUrl(lightboxUrl) : undefined;
+  const published = useChatArtworkLightbox(publication);
 
   const handleImgError = useCallback((url: string) => {
     setFailedUrls((prev) => {
@@ -82,17 +77,16 @@ export function MediaGalleryBlock({
                   <button
                     type="button"
                     disabled={published.busy}
-                    onClick={async () => {
-                      if (!source && !published.isV2) {
-                        setLightboxIndex(i);
-                        return;
-                      }
-                      const result = await published.open(source, item.caption ?? item.alt ?? block.title ?? '作品');
-                      if (result.status === 'preview' && published.isV2) {
-                        setPreviewReason(result.reason);
-                        setLightboxIndex(i);
-                      }
-                    }}
+                    onClick={() =>
+                      void published.enlarge({
+                        url: src,
+                        title: item.caption ?? item.alt ?? block.title ?? '图片',
+                        alt: item.alt ?? '',
+                        caption: item.caption,
+                        mediaType: 'image',
+                        entry: source,
+                      })
+                    }
                     className="block w-full rounded focus:outline-2 focus:outline-[var(--semantic-info)]"
                     aria-label={
                       source ? `打开作品 ${item.alt ?? block.title ?? '图片'}` : `Enlarge ${item.alt ?? 'image'}`
@@ -122,16 +116,16 @@ export function MediaGalleryBlock({
                         type="button"
                         disabled={published.busy}
                         className="shrink-0 rounded border border-cafe-subtle px-2 py-1 font-semibold text-cafe-accent"
-                        onClick={async () => {
-                          const result = await published.open(
-                            source,
-                            item.caption ?? item.alt ?? block.title ?? '图片',
-                          );
-                          if (result.status === 'preview') {
-                            setPreviewReason(result.reason);
-                            setLightboxIndex(i);
-                          }
-                        }}
+                        onClick={() =>
+                          void published.openWorkMode({
+                            url: src,
+                            title: item.caption ?? item.alt ?? block.title ?? '图片',
+                            alt: item.alt ?? '',
+                            caption: item.caption,
+                            mediaType: 'image',
+                            entry: source,
+                          })
+                        }
                       >
                         {language === 'en' ? 'Open' : '打开'}
                       </button>
@@ -156,15 +150,7 @@ export function MediaGalleryBlock({
           </p>
         ) : null}
       </div>
-      {lightboxItem && lightboxSrc && !failedUrls.has(lightboxSrc) && (
-        <Lightbox
-          url={lightboxSrc}
-          alt={lightboxItem.alt ?? ''}
-          caption={lightboxItem.caption}
-          annotationUnavailableReason={previewReason}
-          onClose={() => setLightboxIndex(null)}
-        />
-      )}
+      {published.lightbox}
     </>
   );
 }

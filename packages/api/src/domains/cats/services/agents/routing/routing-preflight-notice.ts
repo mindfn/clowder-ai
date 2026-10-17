@@ -10,10 +10,11 @@ export async function routingPreflightNotice(
   decision: RoutingPreflightDecisionV1,
   catId: CatId,
   threadId: string,
-  originalTarget: boolean,
+  _originalTarget: boolean,
 ): Promise<AgentMessage | undefined> {
   const receipt = routingDispatchPreflightReceipt(decision, catId);
   if (receipt.target.disposition === 'allowed') return undefined;
+  if (receipt.target.disposition === 'rejected') await options.onRoutingPreflightRejected?.(receipt.target);
   if (options.beforeOutputCommit && !(await options.beforeOutputCommit(catId))) {
     if (options.persistenceContext) options.persistenceContext.actionOutputCommitRejected = true;
     return undefined;
@@ -21,9 +22,6 @@ export async function routingPreflightNotice(
   const payload = {
     ...receipt,
     ...(options.currentUserMessageId ? { sourceMessageId: options.currentUserMessageId } : {}),
-    ...(originalTarget && !options.routingQueueSource && options.parentInvocationId
-      ? { retryInvocationId: options.parentInvocationId }
-      : {}),
   };
   const content = JSON.stringify(payload);
   const timestamp = Date.now();
@@ -31,7 +29,7 @@ export async function routingPreflightNotice(
   try {
     const stored = await deps.messageStore.append({
       userId: 'system',
-      catId: null,
+      from: { kind: 'system', service: 'routing-preflight' },
       threadId,
       timestamp,
       content,

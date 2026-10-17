@@ -1329,6 +1329,7 @@ test('redis snapshot archive failure warns and does not abort startup flow', () 
     assert.equal(result.status, 0, `snapshot failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
     assert.match(result.stdout, /Redis 快照归档失败/);
     assert.match(result.stdout, /ok$/);
+    assert.equal(result.stderr, '', 'the launcher warning must replace low-level mktemp errors');
   } finally {
     chmodSync(backupDir, 0o700);
     rmSync(tempRoot, { recursive: true, force: true });

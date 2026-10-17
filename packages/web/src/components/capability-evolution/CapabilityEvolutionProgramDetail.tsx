@@ -30,39 +30,51 @@ import { useEvolutionOwnerReadingDefault } from './use-evolution-owner-reading-d
 
 function CurrentAdoption({
   catalog,
-  programRefs,
+  versions,
   loading,
 }: {
   catalog?: EvolutionResolvedAssetReviewV1;
-  programRefs: EvolutionProgramPresentationProjection['program']['currentAssetVersionRefs'];
+  versions: ReturnType<typeof projectAssetVersions>;
   loading: boolean;
 }) {
-  const current = catalog?.currentVersionRefs ?? [];
+  const adopted = versions.filter((version) => version.adopted);
+  const sourceCurrent = versions.filter((version) => version.sourceCurrent);
+  const title = (ref: ExactAssetVersionRefV1) =>
+    catalog?.versions.find((version) => refIdentity(version.versionRef) === refIdentity(ref))?.title;
   return (
-    <div>
-      <h3 className="text-xs font-semibold text-cafe-secondary">当前采用</h3>
-      {catalog ? (
-        current.length ? (
-          current.map((ref) => {
-            const title = catalog.versions.find(
-              (version) => refIdentity(version.versionRef) === refIdentity(ref),
-            )?.title;
-            return (
+    <div className="space-y-5">
+      <div>
+        <h3 className="text-xs font-semibold text-cafe-secondary">当前采用</h3>
+        {adopted.length ? (
+          adopted.map(({ ref }) => (
+            <div key={refIdentity(ref)} className="mt-2">
+              <p className="break-words text-sm font-semibold text-cafe">{title(ref) ?? ref.assetId}</p>
+              <EvolutionSource label="版本标识" source={ref} />
+            </div>
+          ))
+        ) : (
+          <p className="evolution-empty mt-2">本项目尚无采用记录。</p>
+        )}
+      </div>
+      <div>
+        <h3 className="text-xs font-semibold text-cafe-secondary">来源当前版本</h3>
+        {catalog ? (
+          sourceCurrent.length ? (
+            sourceCurrent.map(({ ref }) => (
               <div key={refIdentity(ref)} className="mt-2">
-                <p className="break-words text-sm font-semibold text-cafe">{title ?? ref.assetId}</p>
+                <p className="break-words text-sm font-semibold text-cafe">{title(ref) ?? ref.assetId}</p>
                 <EvolutionSource label="版本标识" source={ref} />
               </div>
-            );
-          })
+            ))
+          ) : (
+            <p className="evolution-empty mt-2">来源尚未登记当前版本。</p>
+          )
         ) : (
-          <p className="evolution-empty mt-2">资产来源尚无采用记录。</p>
-        )
-      ) : (
-        <p className="evolution-empty mt-2">{loading ? '正在读取资产来源…' : '当前采用尚待资产来源确认。'}</p>
-      )}
-      {!catalog &&
-        programRefs.map((ref) => <EvolutionSource key={refIdentity(ref)} label="项目最近记录" source={ref} />)}
-      {catalog && <EvolutionSource label="采用来源" source={catalog.currentProofRef} />}
+          <p className="evolution-empty mt-2">{loading ? '正在读取资产来源…' : '来源当前版本尚待确认。'}</p>
+        )}
+        {catalog && <EvolutionSource label="来源当前版本证明" source={catalog.currentProofRef} />}
+        <p className="evolution-empty mt-2">来源当前版本不等于本项目已采用。</p>
+      </div>
     </div>
   );
 }
@@ -187,11 +199,7 @@ export function CapabilityEvolutionProgramDetail({
         <EvolutionOwnerEvidence projection={projection} />
       )}
       <section className="mt-6 space-y-5" aria-label="采用与候选">
-        <CurrentAdoption
-          catalog={asset.catalog}
-          programRefs={projection.program.currentAssetVersionRefs}
-          loading={asset.loading}
-        />
+        <CurrentAdoption catalog={asset.catalog} versions={versions} loading={asset.loading} />
         <div>
           <h3 className="text-xs font-semibold text-cafe-secondary">本轮候选</h3>
           <p className="evolution-empty mt-2">

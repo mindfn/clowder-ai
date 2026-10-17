@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -9,7 +9,7 @@ import { createCatId, type MediaContextAttachment } from '@cat-cafe/shared';
 import Fastify from 'fastify';
 import sharp from 'sharp';
 import { InvocationRegistry } from '../../src/domains/cats/services/agents/invocation/InvocationRegistry.js';
-import type { ITurnExecutionStore } from '../../src/domains/cats/services/stores/ports/TurnExecutionStore.js';
+import type { TurnExecutionSourceReadPort } from '../../src/domains/cats/services/stores/ports/TurnExecutionStore.js';
 import { createContentModificationIntegration } from '../../src/domains/collaborative-content/modification/composition.js';
 import { WorkspaceContentReviewService } from '../../src/domains/collaborative-content/workspace-review/service.js';
 import { WorkspaceContentReviewStore } from '../../src/domains/collaborative-content/workspace-review/store.js';
@@ -22,7 +22,7 @@ import { createLiveReviewFixture } from './artifact-review-live-fixture.js';
 export async function mediaMessageFixture(
   t: { after: (callback: () => Promise<void>) => void },
   mediaType: 'image/png' | 'video/mp4' = 'image/png',
-  turnExecutions?: Pick<ITurnExecutionStore, 'get'>,
+  turnExecutions?: TurnExecutionSourceReadPort,
   options?: { authenticatedQueue?: boolean; nativeImageArchiveDirectory?: string; publicationLedger?: boolean },
 ) {
   const root = await mkdtemp(join(tmpdir(), 'f309-media-intake-'));
@@ -104,7 +104,7 @@ export async function mediaMessageFixture(
     integration.writer.close();
     filesStore.close();
     f.store.close();
-    await rm(root, { recursive: true, force: true });
+    console.info(`retained owned media review data: ${root}`);
   });
   if (options?.publicationLedger) {
     const asset = await f.media.prepare({ ...f.prepare, principal: f.human });
@@ -183,7 +183,7 @@ export async function mediaMessageFixture(
   function send(reference = attachment, body = '请一起修改这两处。') {
     return f.messages.append({
       userId: 'operator',
-      catId: null,
+      from: { kind: 'user', userId: 'operator' },
       threadId: f.thread.id,
       mentions: [createCatId('codex-astra')],
       visibility: 'whisper',

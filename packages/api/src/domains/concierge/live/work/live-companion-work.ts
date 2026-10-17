@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { GlobalArtifactDTO } from '@cat-cafe/shared';
 import type { StoredMessage } from '../../../cats/services/stores/ports/MessageStore.js';
-import { canViewMessage, isDurablyReadableByCat } from '../../../cats/services/stores/visibility.js';
+import { canViewMessage, isTimelinePublished } from '../../../cats/services/stores/visibility.js';
 import type { HomeWorkPublication } from '../host/home/home-hub-delivery.js';
 import type { LiveContextScope } from '../host/live-controlled-context.js';
 import { readCompanionArtifactLineage } from './companion-work-lineage.js';
@@ -28,9 +28,8 @@ function publications(message: StoredMessage | null, scope: LiveCompanionWorkSco
     !message ||
     message.deletedAt !== undefined ||
     message.deliveryStatus === 'canceled' ||
-    message.queueCustody?.withdrawnByCatIds?.includes(scope.catId) ||
     !canViewMessage(message, { type: 'cat', catId: scope.catId }) ||
-    !isDurablyReadableByCat(message, scope.catId)
+    !isTimelinePublished(message)
   )
     return [];
   return structuredClone(companionMessagePublications(message, scope.userId, scope.threadId));

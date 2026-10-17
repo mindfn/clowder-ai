@@ -10,10 +10,7 @@ import { buildWindowsStatus, resolveWindowsStatusPorts } from './lib/platform-st
 
 const ROOT = resolve(process.cwd());
 const localRequire = createRequire(import.meta.url);
-const BUILD_CHILD_ENV_INHERITED_CWD_EXCEPTIONS = [
-  // Antigravity never sets spawn.cwd, so its process and shell cwd intentionally inherit together.
-  'packages/api/src/domains/cats/services/agents/providers/GeminiAgentService.ts::buildChildEnv(options.callbackEnv)',
-];
+const BUILD_CHILD_ENV_INHERITED_CWD_EXCEPTIONS = [];
 
 function resolvePackageBin(packageName) {
   const pkgPath = localRequire.resolve(`${packageName}/package.json`);

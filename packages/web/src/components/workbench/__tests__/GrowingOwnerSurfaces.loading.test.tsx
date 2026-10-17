@@ -88,6 +88,22 @@ function preparedOwnerRead(): EntrustedWorkOwnerReadV1 {
   };
 }
 
+function mockRequests(read: (path: string) => Promise<Response>) {
+  mocks.fetch.mockImplementation((path: string) => {
+    if (path === '/api/session') return Promise.resolve(Response.json({ userId: 'owner' }));
+    if (path === '/api/config/ignored-items') {
+      return Promise.resolve(Response.json({ ownerUserId: 'owner', revision: 0, entries: [] }));
+    }
+    return read(path);
+  });
+}
+
+function expectOnlyOwnerReads(projection: 'product-schedule' | 'needs-me') {
+  expect(mocks.fetch.mock.calls.map(([path]) => path)).toEqual(
+    projection === 'product-schedule' ? ['/api/session', '/api/config/ignored-items'] : [],
+  );
+}
+
 describe('F310 prepared Artifact loading in real owner surfaces', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -105,7 +121,7 @@ describe('F310 prepared Artifact loading in real owner surfaces', () => {
     const catalog = new Promise<Response>((resolve) => {
       finishCatalog = resolve;
     });
-    mocks.fetch.mockImplementation((path: string) => {
+    mockRequests((path: string) => {
       if (path !== '/api/threads/thread-source/artifacts') throw new Error(`Unexpected request: ${path}`);
       return catalog.then((response) => response.clone());
     });
@@ -159,7 +175,7 @@ describe('F310 prepared Artifact loading in real owner surfaces', () => {
     'product-schedule',
     'needs-me',
   ] as const)('%s opens its exact publication even when the unrelated global catalog times out', async (projection) => {
-    mocks.fetch.mockImplementation((path: string) => {
+    mockRequests((path: string) => {
       if (path === '/api/artifacts') return Promise.reject(new Error('Request timed out'));
       if (path === '/api/threads/thread-source/artifacts') {
         return Promise.resolve(new Response(JSON.stringify({ threadId: 'thread-source', artifacts: [artifact] })));
@@ -186,7 +202,7 @@ describe('F310 prepared Artifact loading in real owner surfaces', () => {
     await render(projection);
     const openButton = button(projection === 'needs-me' ? 'needs-me-open-artifact' : 'product-schedule-open-artifact');
     if (projection === 'product-schedule') {
-      expect(mocks.fetch).not.toHaveBeenCalled();
+      expectOnlyOwnerReads(projection);
       expect(openButton.disabled).toBe(false);
       act(() => openButton.click());
     }
@@ -219,9 +235,11 @@ describe('F310 prepared Artifact loading in real owner surfaces', () => {
   it('aborts an unfinished owner read on departure and never opens its late result', async () => {
     await render('product-schedule');
     act(() => button('product-schedule-open-artifact').click());
-    const signal = mocks.fetch.mock.calls[0]?.[1]?.signal as AbortSignal;
+    const request = mocks.fetch.mock.calls.find(([path]) => path === '/api/threads/thread-source/artifacts');
+    const signal = request?.[1]?.signal as AbortSignal | undefined;
+    expect(signal?.aborted).toBe(false);
     act(() => root.render(null));
-    expect(signal.aborted).toBe(true);
+    expect(signal?.aborted).toBe(true);
     await loadCatalog([artifact]);
     expect(open).not.toHaveBeenCalled();
   });
@@ -274,7 +292,7 @@ describe('F310 prepared Artifact loading in real owner surfaces', () => {
     expect(result.artifact.resultTargetRef).toEqual({ owner: 'thread', key: 'thread-source' });
     expect(decodeURIComponent(result.returnSurface.resultTargetRef.key)).toContain(`${subjectRef}|2`);
     expect(container.querySelector('[role="alert"]')).toBeNull();
-    expect(mocks.fetch).not.toHaveBeenCalled();
+    expectOnlyOwnerReads(projection);
   });
 
   it.each([
@@ -294,7 +312,7 @@ describe('F310 prepared Artifact loading in real owner surfaces', () => {
       openInWorkspaceRef: `workspace:content-review:thread-source:${reviewId}`,
     };
     mocks.ownerReads = [ownerRead];
-    mocks.fetch.mockImplementation((path: string) => {
+    mockRequests((path: string) => {
       if (path === '/api/artifacts') return Promise.resolve(new Response(JSON.stringify({ artifacts: [] })));
       if (path === `/api/artifact-reviews/${reviewId}`)
         return Promise.resolve(new Response(JSON.stringify({ review: { reviewId, title: '判断产物面板按钮文案' } })));

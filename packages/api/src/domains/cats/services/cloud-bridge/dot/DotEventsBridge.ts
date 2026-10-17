@@ -16,7 +16,6 @@ export class DotEventsBridge {
       messageStore: Pick<IMessageStore, 'getById'>;
       threadStore: Pick<IThreadStore, 'get'>;
       enabled: () => Promise<boolean>;
-      allowedCats: () => Promise<readonly string[]>;
       sendWebhook?: DotWebhookSend;
       now?: () => number;
     },
@@ -55,14 +54,9 @@ export class DotEventsBridge {
       source.catId &&
       (connectionTest ||
         !admissionState ||
-        !(await canDeliverDotSource(
-          admissionState,
-          source,
-          this.options.messageStore,
-          await this.options.allowedCats(),
-        )))
+        !(await canDeliverDotSource(admissionState, source, this.options.messageStore)))
     )
-      return this.unavailable('这只家猫尚未获准召唤 dot，或原询问已失效。');
+      return this.unavailable('召唤来源无法核实，或原询问已失效。');
     if (!connectionTest && !(await this.options.enabled()))
       return this.unavailable('dot 尚未启用，请到插件详情完成往返验证。');
     const status = await this.options.connection.status(params.userId);
@@ -139,9 +133,7 @@ export class DotEventsBridge {
         thread.deletedAt ||
         thread.createdBy !== params.userId ||
         source.catId === DOT_CAT_ID ||
-        (source.catId &&
-          (connectionTest ||
-            !(await canDeliverDotSource(fresh, source, this.options.messageStore, await this.options.allowedCats()))))
+        (source.catId && (connectionTest || !(await canDeliverDotSource(fresh, source, this.options.messageStore))))
       )
         return this.unavailable('召唤来源或权限已变化。');
       const record = await this.options.dispatches.read(id);

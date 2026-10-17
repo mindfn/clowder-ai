@@ -42,7 +42,14 @@ export async function prepareCollectiveWorkDirectory(
 
 export function buildCollectiveWorkCodexPolicyArgs(input: CollectiveWorkPolicy): string[] {
   const policy = normalizeToolExecutionPolicy(input) as CollectiveWorkPolicy;
-  const filesystem: Record<string, string> = { '/': 'deny', ':minimal': 'read', [policy.workspaceRoot]: 'write' };
+  // Codex grants shared temp access independently of the root rule. Only this attempt's workspace is writable.
+  const filesystem: Record<string, string> = {
+    '/': 'deny',
+    ':minimal': 'read',
+    ':tmpdir': 'deny',
+    ':slash_tmp': 'deny',
+    [policy.workspaceRoot]: 'write',
+  };
   for (const root of policy.readOnlyRoots) filesystem[root] = 'read';
   return [
     '--ignore-user-config',

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { artifactReviewAnchorSchema, immutableMediaSchema, reviewedMediaAssetSchema } from './artifact-review.js';
 import { artifactReviewDrawingSchema, artifactReviewImageEditSchema } from './artifact-review-drawing.js';
+import { reviewedMediaTypeSchema } from './artifact-review-media.js';
 import { evolutionMediaLocatorSchema } from './evolution-media-source.js';
 import { videoProjectMessageContextSchema } from './video-project-message.js';
 import {
@@ -60,7 +61,7 @@ export const workspaceContentSourceSchema = z.discriminatedUnion('kind', [
       kind: z.literal('media'),
       locator: workspaceContentLocatorSchema,
       revision,
-      mime: z.enum(['image/png', 'video/mp4']),
+      mime: reviewedMediaTypeSchema,
       byteLength: positive,
       media: immutableMediaSchema,
     })
@@ -69,7 +70,7 @@ export const workspaceContentSourceSchema = z.discriminatedUnion('kind', [
     .object({
       kind: z.literal('publication'),
       revision,
-      mime: z.enum(['image/png', 'video/mp4']),
+      mime: reviewedMediaTypeSchema,
       media: immutableMediaSchema,
       publication: reviewedMediaAssetSchema.omit({ media: true, mediaType: true }),
     })

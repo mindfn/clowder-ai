@@ -25,7 +25,7 @@ export async function readCompanionConversation(options: {
     catId: z.string().nullable(),
     extra: z.unknown().optional(),
   });
-  const messages: Array<Extract<CompanionReply, { kind: 'conversation' }>['messages'][number]> = [];
+  const messages: Array<Exclude<Extract<CompanionReply, { kind: 'conversation' }>, { v: 2 }>['messages'][number]> = [];
   let remaining = 24000;
   let hasMore = result.hasMore === true;
   if (!Array.isArray(result.messages)) throw new CompanionBridgeError('unavailable');

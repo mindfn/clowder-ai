@@ -10,6 +10,7 @@ import type { PendingChatMark } from '@/components/content-review/ReviewPendingC
 import type { ContentReviewAnnotation, ContentReviewVisualMark } from './content-review-contract';
 import type { CanvasFocusRequest, DiscussionFocusRequest } from './workspace-review-media-focus';
 export interface WorkspaceReviewMediaProps {
+  download?: { src: string | null; filename: string };
   readonly sourceError?: string | null;
   readonly draftKey?: string;
   readonly canMarkup?: boolean;

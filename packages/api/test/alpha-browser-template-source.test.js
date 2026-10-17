@@ -34,9 +34,11 @@ test('production default readers enforce the actual dossier and current roster b
     const spec = createAlphaBrowserTemplate(f.options).createSpec('alpha-subscription', f.params);
     await spec.run.execute('alpha', 'alpha', f.context);
     assert.deepEqual(
-      f.triggered.map((args) => [args[1], args[2]]),
+      f.delivered.map((message) => [message.targetCatId, message.userId]),
       [[expected, 'owner']],
     );
+    assert.ok(f.delivered.every((message) => message.deliveryStatus === 'queued'));
+    assert.deepEqual(f.triggered, [], 'scheduler delivery enters the canonical Queue without a second trigger');
     assert.equal([...f.tasks.values()][0].ownerCatId, ownerCatId);
   }
 });

@@ -168,7 +168,7 @@ async function publishMemberImage(
     const result = await deps.messageStore.appendIdempotent({
       userId: record.userId,
       threadId: record.threadId,
-      catId: record.catId,
+      from: { kind: 'agent', catId: record.catId },
       content: input.title ?? '图片已发布',
       mentions: [],
       origin: 'callback',

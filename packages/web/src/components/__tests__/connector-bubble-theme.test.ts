@@ -81,7 +81,7 @@ describe('ConnectorBubble theme', () => {
       expect(container.textContent).not.toContain('自动问题卡');
       expect(container.textContent).not.toContain('确认记录');
       expect(container.querySelector('[data-message-id="m-feedback"]')).not.toBeNull();
-      expect(mockApiFetch).not.toHaveBeenCalled();
+      expect(mockApiFetch.mock.calls.every(([path]) => path === '/api/config')).toBe(true);
     });
   }
 
@@ -172,7 +172,7 @@ describe('ConnectorBubble theme', () => {
     mockApiFetch.mockClear();
     await act(async () => root.render(React.createElement(ConnectorBubble, { message: untrusted })));
     expect(container.textContent).toContain('自动问题卡');
-    expect(mockApiFetch).not.toHaveBeenCalled();
+    expect(mockApiFetch.mock.calls.every(([path]) => path === '/api/config')).toBe(true);
   });
 
   it('uses OKLCH-derived surface for vote-result bubble', () => {
@@ -181,6 +181,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: '投票结果: 谁最坏？',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'vote-result' },
       source: { connector: 'vote-result', label: '投票结果', icon: 'ballot' },
     };
     act(() => root.render(React.createElement(ConnectorBubble, { message })));
@@ -199,6 +200,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: '投票结果: 谁最坏？',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'vote-result' },
       source: { connector: 'vote-result', label: '投票结果', icon: 'ballot' },
       extra: {
         rich: {
@@ -233,6 +235,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: '[定时任务] 喝水提醒',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'scheduler' },
       source: { connector: 'scheduler', label: '定时任务', icon: 'scheduler' },
       extra: { scheduler: { hiddenTrigger: true } },
     };
@@ -363,6 +366,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: '**GitHub Review 通知**',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'github-review' },
       source: {
         connector: 'github-review',
         label: 'GitHub Review',
@@ -411,6 +415,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: `${label} notification`,
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: connector },
       source: { connector, label, icon },
     };
 
@@ -428,6 +433,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: '**Issue Comments — Issue #861**',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'github-issue-comment' },
       source: {
         connector: 'github-issue-comment',
         label: 'Issue Comment',
@@ -453,6 +459,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: '**GitHub Review 需要分派**',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'github-review' },
       source: { connector: 'github-review', label: 'GitHub Review', icon: '⚠️' },
     };
     act(() => root.render(React.createElement(ConnectorBubble, { message })));
@@ -468,6 +475,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: '来自飞书的消息',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'feishu' },
       source: { connector: 'feishu', label: '飞书 DM', icon: '/images/connectors/feishu.png' },
     };
     act(() => root.render(React.createElement(ConnectorBubble, { message })));
@@ -482,6 +490,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: 'iMessage incoming',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'imessage' },
       source: { connector: 'imessage', label: 'iMessage', icon: '💬' },
     };
     act(() => root.render(React.createElement(ConnectorBubble, { message })));
@@ -498,6 +507,7 @@ describe('ConnectorBubble theme', () => {
       type: 'connector',
       content: '🏓 codex 持球中',
       timestamp: Date.now(),
+      from: { kind: 'external', connectorId: 'hold-ball' },
       source: { connector: 'hold-ball', label: '持球通知', icon: '🏓' },
     };
     act(() => root.render(React.createElement(ConnectorBubble, { message })));

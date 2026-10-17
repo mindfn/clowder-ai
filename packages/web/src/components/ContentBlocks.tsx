@@ -1,12 +1,10 @@
 'use client';
 
-import { useState } from 'react';
 import type { MessageContent } from '@/stores/chatStore';
 import { API_URL } from '@/utils/api-client';
 import { ContextAttachmentView } from './ContextAttachmentView';
-import { useChatArtworkEntry } from './content-review/useChatArtworkEntry';
+import { useChatArtworkLightbox } from './content-review/useChatArtworkLightbox';
 import type { PublishedMessageCoordinate } from './content-review/usePublishedContent';
-import { Lightbox } from './Lightbox';
 import { MarkdownContent } from './MarkdownContent';
 
 function formatFileSize(bytes: number): string {
@@ -40,10 +38,7 @@ export function ContentBlocks({
   /** Callback posts store their spoken body separately from attachment-only blocks. */
   fallbackText?: string;
 }) {
-  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
-  const [previewReason, setPreviewReason] = useState<string | undefined>();
-  const [previewMediaType, setPreviewMediaType] = useState<'image' | 'video'>('image');
-  const published = useChatArtworkEntry(publication);
+  const published = useChatArtworkLightbox(publication);
   let fileQuoteNumber = 0;
   return (
     <>
@@ -64,18 +59,15 @@ export function ContentBlocks({
               disabled={published.busy}
               aria-label={source ? '打开作品 图片' : '查看附件'}
               className="block max-w-full sm:max-w-sm rounded-lg mt-2 border border-cafe hover:opacity-90 transition-opacity"
-              onClick={async () => {
-                if (!source && !published.isV2) {
-                  setLightboxSrc(src);
-                  return;
-                }
-                const result = await published.open(source, '图片');
-                if (result.status === 'preview' && published.isV2) {
-                  setPreviewReason(result.reason);
-                  setPreviewMediaType('image');
-                  setLightboxSrc(src);
-                }
-              }}
+              onClick={() =>
+                void published.enlarge({
+                  url: src,
+                  title: '图片',
+                  alt: 'attached image',
+                  mediaType: 'image',
+                  entry: source,
+                })
+              }
             >
               {/* biome-ignore lint/performance/noImgElement: original uploaded dimensions are unknown at the chat entry */}
               <img src={src} alt="附件" className="max-w-full rounded-lg" />
@@ -91,14 +83,15 @@ export function ContentBlocks({
                 key={i}
                 type="button"
                 disabled={published.busy}
-                onClick={async () => {
-                  const result = await published.open(source, block.fileName);
-                  if (result.status === 'preview' && published.isV2) {
-                    setPreviewReason(result.reason);
-                    setPreviewMediaType(block.mimeType.startsWith('video/') ? 'video' : 'image');
-                    setLightboxSrc(src);
-                  }
-                }}
+                onClick={() =>
+                  void published.enlarge({
+                    url: src,
+                    title: block.fileName,
+                    alt: block.fileName,
+                    mediaType: block.mimeType.startsWith('video/') ? 'video' : 'image',
+                    entry: source,
+                  })
+                }
                 className="mt-2 flex max-w-sm items-center gap-2 rounded-lg border border-cafe bg-cafe-surface px-3 py-2 text-left hover:border-cafe-accent"
               >
                 <span aria-hidden="true">{fileIcon(block.mimeType)}</span>
@@ -145,15 +138,7 @@ export function ContentBlocks({
           {published.error}
         </p>
       ) : null}
-      {lightboxSrc && (
-        <Lightbox
-          url={lightboxSrc}
-          alt={previewMediaType === 'video' ? '视频预览' : 'attached image'}
-          annotationUnavailableReason={previewReason}
-          mediaType={previewMediaType}
-          onClose={() => setLightboxSrc(null)}
-        />
-      )}
+      {published.lightbox}
     </>
   );
 }

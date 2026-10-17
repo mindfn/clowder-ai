@@ -62,11 +62,9 @@ unset API_SERVER_HOST
 unset DEFAULT_CAT_ID
 
 # REDIS_URL is a runtime binding like the variables above, but unsetting it is
-# not enough: packages/shared/src/utils/redis.ts resolves
-# `process.env['REDIS_URL'] ?? 'redis://localhost:6399'`, so an absent value
-# selects the sanctuary. Unset is the most dangerous state here, not the safest,
-# and the variable must be pinned rather than stripped. Iron rule 1: development
-# uses 6398 only.
+# not enough: an absent URL can select a shared default endpoint. Nor is 6398
+# proof of an owned test store: another checkout may be using it. Non-Redis
+# suites must have a non-connectable binding, and discard inherited data paths.
 #
 # The isolated runner can call pnpm test, which enters this wrapper again.
 # Preserve that runner's endpoint/DB only after checking its existing lease,
@@ -82,7 +80,8 @@ if [[ "${CAT_CAFE_REDIS_TEST_ISOLATED:-}" == "1" ]]; then
   REDIS_URL="$(NODE_OPTIONS= NODE_TEST_CONTEXT= node "$test_script_dir/redis-test-entrypoint.mjs")"
   export REDIS_URL
 else
-  export REDIS_URL="redis://127.0.0.1:6398"
+  unset REDIS_PORT REDIS_DATA_DIR REDIS_BACKUP_DIR REDIS_KEY_PREFIX
+  export REDIS_URL="redis://127.0.0.1:0"
 fi
 
 exec "$@"

@@ -119,6 +119,7 @@ export function RuntimeInteractionCard({
     );
   const hostAligned = !host || Boolean(host.readCurrent && hostOwnerMatches && record?.updatedAt === host.revision);
   const canonical =
+    record?.request.kind !== 'conversation_decision' &&
     hostOwnerMatches &&
     Boolean(record?.cardRef && messageId === record.cardRef.messageId && block.id === record.cardRef.blockId);
 
@@ -130,7 +131,11 @@ export function RuntimeInteractionCard({
       <header className="mb-3 flex items-start gap-2">
         <div className="min-w-0">
           <p className="text-micro font-medium text-[var(--semantic-info)]">
-            {copy.kind[record?.request.kind ?? 'unknown']}
+            {
+              copy.kind[
+                record?.request.kind === 'conversation_decision' ? 'unknown' : (record?.request.kind ?? 'unknown')
+              ]
+            }
           </p>
           <h3 className="text-sm font-semibold">{record?.request.title ?? block.title}</h3>
           {record?.request.description ? (
@@ -176,6 +181,7 @@ function PendingSurface({
   onReject: () => void;
 }) {
   const request = record.request;
+  if (request.kind === 'conversation_decision') return null;
   if (request.kind === 'question') {
     return (
       <RuntimeInteractionQuestionForm

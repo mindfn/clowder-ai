@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { InvocationQueue } from '../src/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { InvocationTracker } from '../src/domains/cats/services/agents/invocation/InvocationTracker.js';
-import { QueueSourceCustodyAdmissionService } from '../src/domains/cats/services/agents/invocation/QueueSourceCustodyAdmission.js';
 import { AgentRegistry } from '../src/domains/cats/services/agents/registry/AgentRegistry.js';
 import { AgentRouter } from '../src/domains/cats/services/agents/routing/AgentRouter.js';
 import { routeSerial } from '../src/domains/cats/services/agents/routing/route-serial.js';
 import type { AgentMessage, AgentService, AgentServiceOptions } from '../src/domains/cats/services/types.js';
+import { commitCompletedResponseAndEnqueueA2ATargets } from '../src/routes/callback-a2a-trigger.js';
 import { callbackCustodyFixture, DELEGATE, NEXT_CAT } from './f290-communication-a2a-custody-callback.fixture.js';
 import { CAT } from './f290-communication-validation.host.js';
+import { appendTestLifecycleResponseSource } from './helpers/message-from-fixtures.js';
 import { scriptedSessionInit } from './helpers/scoped-test-sessions.js';
 
 export type ScopeCase = 'private' | 'public' | 'delegated-private' | 'home';
@@ -43,7 +44,7 @@ export async function routeCustodyFixture(scope: ScopeCase, defer: DeferCase) {
     triggerId = f.messages.append({
       userId: f.cafe.ownerUserId,
       threadId,
-      catId: null,
+      from: { kind: 'user', userId: f.cafe.ownerUserId },
       content: 'Ordinary home request',
       mentions: [],
       timestamp: Date.now(),
@@ -84,7 +85,6 @@ export async function routeCustodyFixture(scope: ScopeCase, defer: DeferCase) {
     registry: f.registry,
     agentRegistry: agents,
     messageStore: f.messages,
-    queueSourceCustodyAdmission: new QueueSourceCustodyAdmissionService({ queue, messageStore: f.messages }),
     threadStore: f.threads,
     taskStore: f.tasks,
     collectiveContext: () => f.context,
@@ -105,7 +105,21 @@ export async function routeCustodyFixture(scope: ScopeCase, defer: DeferCase) {
         signal: controller.signal,
         invocationController: controller,
         queueHasQueuedMessages: () => defer === 'pending',
-        deferA2AEnqueue: (entry) => queue.enqueue(entry),
+        onLifecycleInvocationStarted: async (input) => {
+          const response = appendTestLifecycleResponseSource(f.messages, { ...input, timestamp: input.startedAt });
+          return { responseMessageId: response.id, priorFrontierMessageId: triggerId };
+        },
+        commitCompletedA2AWake: (input) =>
+          commitCompletedResponseAndEnqueueA2ATargets(
+            {
+              messageStore: f.messages,
+              invocationQueue: queue,
+              invocationTracker: tracker,
+              socketManager: { broadcastAgentMessage() {}, broadcastToRoom() {}, emitToUser() {} },
+              log: { info() {}, warn() {}, error() {} },
+            },
+            input,
+          ),
         trackA2ASlot: (tid, target, user, owner) => tracker.trackExternalSlot(tid, target, owner, user, [target]),
         completeA2ASlots: (tid, cats, owner) => {
           for (const target of cats) tracker.completeSlot(tid, target, owner);

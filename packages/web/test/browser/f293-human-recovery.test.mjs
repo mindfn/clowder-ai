@@ -80,12 +80,15 @@ test(
       }
       let body = {};
       if (url.pathname.endsWith('/retry')) {
-        assert.equal(url.pathname, '/api/invocations/f293-preview-invocation/retry');
+        assert.equal(
+          url.pathname,
+          '/api/threads/f293-preview/messages/original-message/routing-targets/codex-astra/retry',
+        );
         assert.equal(route.request().method(), 'POST');
         posts++;
         status = 'running';
         body = { status: 'retrying' };
-      } else if (url.pathname === '/api/invocations/f293-preview-invocation') {
+      } else if (url.pathname === '/api/threads/f293-preview/messages/original-message/routing-targets/codex-astra') {
         body = { status };
       } else if (url.pathname === '/api/cats') {
         body = { cats: [] };

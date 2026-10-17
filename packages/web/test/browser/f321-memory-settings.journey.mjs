@@ -285,7 +285,8 @@ function settingsResponse(key, mode, effectiveMode) {
       nudgeFailureRate: metric,
     },
   }[key];
-  if (key === '/api/services/embedding-model/install-preview') return { status: 403, body: { error: 'Forbidden' } };
+  if (new URL(key, 'http://fixture').pathname === '/api/services/embedding-model/install-preview')
+    return { status: 403, body: { error: 'Forbidden' } };
   if (mode === 'error' && ['/api/evidence/status', '/api/recall/flags', '/api/services'].includes(key))
     return { status: 403, body: { error: 'Forbidden' } };
   if (key.startsWith('/api/recall/lifecycle/three-axis')) {

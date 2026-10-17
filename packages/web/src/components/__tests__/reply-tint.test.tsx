@@ -8,6 +8,8 @@ import { ReplyPreviewBar } from '../ReplyPreviewBar';
 
 Object.assign(globalThis as Record<string, unknown>, { React });
 
+vi.mock('@/components/shell/shell-presentation', () => ({ useShellPresentation: () => 'v2' }));
+
 const config = vi.hoisted(() => ({ primary: '#D4A76A' as string | null }));
 
 vi.mock('@/hooks/useCoCreatorConfig', () => ({
@@ -32,12 +34,25 @@ const getCatById = (id: string) => (id === 'opus' ? opus : undefined);
 
 const pill = (senderCatId: string | null) =>
   renderToStaticMarkup(
-    <ReplyPill replyPreview={{ senderCatId, content: '内容' }} replyToId="m1" getCatById={getCatById} />,
+    <ReplyPill
+      replyPreview={{
+        from: senderCatId ? { kind: 'agent', catId: senderCatId } : { kind: 'user', userId: 'owner' },
+        senderCatId,
+        content: '内容',
+      }}
+      replyToId="m1"
+      getCatById={getCatById}
+    />,
   );
 const bar = (senderCatId: string | null) =>
   renderToStaticMarkup(
     <ReplyPreviewBar
-      replyToMessage={{ id: 'm1', senderCatId, content: '内容' }}
+      replyToMessage={{
+        id: 'm1',
+        from: senderCatId ? { kind: 'agent', catId: senderCatId } : { kind: 'user', userId: 'owner' },
+        senderCatId,
+        content: '内容',
+      }}
       cats={[opus]}
       onClear={() => undefined}
     />,
@@ -97,7 +112,7 @@ describe('DirectionPill', () => {
           <DirectionPill direction={{ ...direction, targets: ['ghost'] }} getCatById={getCatById} />,
         ),
       ),
-    ).toBe('#9B7EBD20');
+    ).toBe('var(--shell-selected)');
   });
 
   it('a cat configured with an opaque eight-digit colour tints like its six-digit form', () => {

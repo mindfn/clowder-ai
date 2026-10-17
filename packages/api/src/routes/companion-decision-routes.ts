@@ -1,6 +1,7 @@
 import type { IgnoredItemSnapshot } from '@cat-cafe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { RuntimeInteractionPendingReadSource } from '../domains/runtime-interaction/ports/RuntimeInteractionStore.js';
 import { companionDecisionWireResponse, readCompanionDecisionProjection } from './companion-decision-read-service.js';
 import { requirePluginOwnerLocalAccess } from './plugin-access-guards.js';
@@ -21,7 +22,7 @@ const pageSchema = z
 /** Owner-local decision read and exact-source mention acknowledgement, independent of Live configuration. */
 export const companionDecisionRoutes: FastifyPluginAsync<{
   ownerUserId: string;
-  messageStore?: UserMentionInboxStore;
+  messageStore?: UserMentionInboxStore & Pick<IMessageStore, 'getById'>;
   now?: () => number;
   threadStore?: MentionReadOptions['threads'];
   runtimeInteractionStore?: RuntimeInteractionPendingReadSource;
@@ -50,6 +51,7 @@ export const companionDecisionRoutes: FastifyPluginAsync<{
       { cutover, now: (options.now ?? Date.now)(), period: mentionPeriod, threads: options.threadStore },
       options.runtimeInteractionStore,
       personalView ? { mode: personalView, read: options.readIgnoredItemPreferences } : undefined,
+      options.messageStore,
     );
     const response = companionDecisionWireResponse(result, view);
     return reply.code(response.statusCode).send(response.body);

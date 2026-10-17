@@ -177,6 +177,30 @@ describe('F311 Evolution Program Workbench surface', () => {
     }
   });
 
+  it('names the v2 current goal stage consistently when already submitted preparation is read', async () => {
+    localStorage.setItem('cat-cafe:shell-presentation', 'v2');
+    const prepared = { ...programFixture('constituting'), preparation: evolutionPreparationFixture() };
+    const programId = prepared.program.programId;
+    useEvolutionReading.getState().update(programId, { journeyMoment: 1 });
+    const priorAttention = useF307ExperienceWorkbenchStore.getState().mainAreaAttentionSurfaceId;
+    useF307ExperienceWorkbenchStore.setState({
+      mainAreaAttentionSurfaceId: createEvolutionProgramSurface(programId).id,
+    });
+    apiFetchMock.mockResolvedValue(Response.json(prepared));
+    try {
+      await renderView(<EvolutionProgramSurface programId={programId} />);
+      expect(container.querySelector('.evolution-v2-reading-heading')?.textContent).toContain('提出目标（等你确认）');
+      expect(container.querySelector('[data-journey-panel="1"]')?.textContent).toContain('项目目前在提出目标');
+      expect(container.textContent).not.toContain('这里展示后续需要完成的内容');
+      expect(container.querySelector('[data-testid="evolution-preparation-workspace"]')?.textContent).toContain(
+        '已提交',
+      );
+    } finally {
+      await act(async () => useF307ExperienceWorkbenchStore.setState({ mainAreaAttentionSurfaceId: priorAttention }));
+      localStorage.removeItem('cat-cafe:shell-presentation');
+    }
+  });
+
   it('reads the canonical projection and shows lifecycle, refs, blocker, and next action', async () => {
     apiFetchMock.mockResolvedValue(new Response(JSON.stringify(projection), { status: 200 }));
     await renderView(<EvolutionProgramSurface programId="evolution-program:bcc336788a7df9d6075b1efb4c0a7e68" />);

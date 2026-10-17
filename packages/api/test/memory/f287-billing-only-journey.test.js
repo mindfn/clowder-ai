@@ -4,7 +4,7 @@ import { describe, test } from 'node:test';
 
 const headSha = 'a'.repeat(40);
 const poll = {
-  repoFullName: 'zts212653/cat-cafe',
+  repoFullName: 'zts212653/clowder-ai',
   prNumber: 3276,
   headSha,
   prState: 'open',

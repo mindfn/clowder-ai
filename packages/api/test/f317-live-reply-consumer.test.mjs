@@ -27,17 +27,30 @@ test('expected replies require an active result consumer, independently of expos
   };
   const store = new MessageStore();
   const cursors = new DeliveryCursorStore();
-  const base = { userId: 'owner', threadId: 'home', catId: null, content: 'start', mentions: [], timestamp: 1 };
+  const base = {
+    userId: 'owner',
+    threadId: 'home',
+    from: { kind: 'user', userId: 'owner' },
+    content: 'start',
+    mentions: [],
+    timestamp: 1,
+  };
   const seed = store.append(base);
   await cursors.ackSeenCursor('owner', 'codex-astra', 'home', cursorFor(seed));
   const parent = store.append({
     ...base,
-    catId: 'codex-astra',
+    from: { kind: 'agent', catId: 'codex-astra' },
     mentions: ['opus5'],
     content: '@opus5 请读原文',
     timestamp: 2,
   });
-  const reply = store.append({ ...base, catId: 'opus5', replyTo: parent.id, content: '真实结果', timestamp: 3 });
+  const reply = store.append({
+    ...base,
+    from: { kind: 'agent', catId: 'opus5' },
+    replyTo: parent.id,
+    content: '真实结果',
+    timestamp: 3,
+  });
   const factory = createProviderNativeFreshnessFactory({
     redis: { multi: () => transaction },
     cursorStore: cursors,
@@ -65,7 +78,12 @@ test('expected replies require an active result consumer, independently of expos
   await live.idle.commitDelivered(notice, { acceptedTurnId: 'accepted-native-turn' });
   await cursors.ackSeenCursor('owner', 'codex-astra', 'home', cursorFor(reply));
   assert.equal(await live.idle.prepare(), null, 'full read suppresses the repeat');
-  const outside = store.append({ ...base, catId: 'codex-sol', content: '另一条来信', timestamp: 4 });
+  const outside = store.append({
+    ...base,
+    from: { kind: 'agent', catId: 'codex-sol' },
+    content: '另一条来信',
+    timestamp: 4,
+  });
   assert.deepEqual((await ordinary.idle.prepare()).correlationMessageIds, [outside.id]);
   active = false;
   assert.equal(await live.idle.prepare(), null, 'consumer revocation is checked on each boundary');

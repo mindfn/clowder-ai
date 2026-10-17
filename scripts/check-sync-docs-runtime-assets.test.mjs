@@ -30,6 +30,17 @@ const SYNC_SCRIPT_PATH = resolve(SELF_DIR, 'sync-to-opensource.sh');
 const MICRODUCK_ROADSHOW_ROOT = 'docs/videos/f311-microduck-roadshow';
 const MICRODUCK_PIPELINE_ROOT = 'docs/videos/f311-microduck-roadshow/pipeline';
 const MICRODUCK_FOOTBALL_PUBLICATION = `${MICRODUCK_PIPELINE_ROOT}/football/workspace-publication.json`;
+const MICRODUCK_CORTEX_ARCHIVE = `${MICRODUCK_PIPELINE_ROOT}/cortex/evidence/20260910`;
+const MICRODUCK_CORTEX_RUNTIME_ASSETS = [
+  `${MICRODUCK_CORTEX_ARCHIVE}/manifest.json`,
+  ...['cortex-793-live1', 'cortex-793-live2-state'].flatMap((run) =>
+    ['manifest.json', 'summary.json', 'annotation.json', 'observations.jsonl', 'match.mp4', 'contact-sheet.png'].map(
+      (file) => `${MICRODUCK_CORTEX_ARCHIVE}/${run}/${file}`,
+    ),
+  ),
+];
+const F314_ARCHIVE_ROOT = 'docs/discussions/f314-incident-archive';
+const F314_LINEAGE_INDEX = `${F314_ARCHIVE_ROOT}/lineage/lineage-index.json`;
 const MICRODUCK_RUNTIME_SOURCE_FILES = [
   'packages/api/src/infrastructure/capability-evolution/adapters/microduck-local-owner-evidence.ts',
   'packages/api/src/infrastructure/capability-evolution/adapters/microduck-preparation/publication.ts',
@@ -80,7 +91,12 @@ describe('F311 Microduck runtime asset boundary', () => {
         ...experiment.subjects.map((subject) => subject.configPath),
       ]),
     ].map((path) => `${MICRODUCK_PIPELINE_ROOT}/${path}`);
-    const expectedAssets = [...MICRODUCK_LITERAL_RUNTIME_ASSETS, ...publicationResources, ...experimentResources];
+    const expectedAssets = [
+      ...MICRODUCK_LITERAL_RUNTIME_ASSETS,
+      ...publicationResources,
+      ...experimentResources,
+      ...MICRODUCK_CORTEX_RUNTIME_ASSETS,
+    ];
     const runtimeAssets = parseManifestList(manifestText, 'docs_runtime_assets_allowlist').filter((path) =>
       path.startsWith(MICRODUCK_ROADSHOW_ROOT),
     );
@@ -122,6 +138,33 @@ describe('F311 Microduck runtime asset boundary', () => {
       assert.equal(isIgnored(path), false);
       assert.equal(isCoveredBySync(path, loadSyncCoveragePaths(REPO_ROOT)), true);
     }
+
+    const cortexReader =
+      'packages/api/src/infrastructure/capability-evolution/adapters/microduck-exploration/cortex-reader.ts';
+    assert.deepEqual(
+      parseDocsReferences(readFileSync(resolve(REPO_ROOT, cortexReader), 'utf8'), cortexReader).map(({ path }) => path),
+      [MICRODUCK_CORTEX_ARCHIVE],
+    );
+    assert.equal(isIgnored(MICRODUCK_CORTEX_ARCHIVE), true);
+    assert.equal(isIgnored(`${MICRODUCK_CORTEX_ARCHIVE}/cortex-793-live1/match.mp4`), false);
+    assert.equal(isCoveredBySync(`${MICRODUCK_CORTEX_ARCHIVE}/`, loadSyncCoveragePaths(REPO_ROOT)), false);
+    for (const path of MICRODUCK_CORTEX_RUNTIME_ASSETS) {
+      assert.equal(isIgnored(path), false);
+      assert.equal(isCoveredBySync(path, loadSyncCoveragePaths(REPO_ROOT)), true);
+    }
+  });
+
+  it('exports only the F314 owner-reviewed lineage index while source links stay commit-pinned', () => {
+    const projection =
+      'packages/api/src/infrastructure/capability-evolution/adapters/request-review/request-review-harness-lineage.ts';
+    assert.deepEqual(
+      parseDocsReferences(readFileSync(resolve(REPO_ROOT, projection), 'utf8'), projection).map(({ path }) => path),
+      [F314_ARCHIVE_ROOT],
+    );
+    assert.equal(isIgnored(F314_ARCHIVE_ROOT), true);
+    assert.equal(isIgnored(F314_LINEAGE_INDEX), false);
+    assert.equal(isCoveredBySync(F314_LINEAGE_INDEX, loadSyncCoveragePaths(REPO_ROOT)), true);
+    assert.equal(isCoveredBySync(`${F314_ARCHIVE_ROOT}/cases/private.md`, loadSyncCoveragePaths(REPO_ROOT)), false);
   });
 });
 

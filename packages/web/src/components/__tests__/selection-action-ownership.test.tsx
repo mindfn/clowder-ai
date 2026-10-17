@@ -50,13 +50,13 @@ describe('body selection uses readable message ownership rather than the author 
     return editor;
   }
 
-  it('gates pending paint, then preserves the editor when only the author anchor is unavailable', () => {
+  it('preserves the opened draft and focus through pending paint and author-anchor loss', () => {
     const editor = openEditor();
     expect(editor.contains(document.activeElement)).toBe(true);
     act(() => owner.pending());
-    expect(editor.hasAttribute('inert')).toBe(true);
-    expect(editor.getAttribute('aria-hidden')).toBe('true');
-    expect(editor.contains(document.activeElement)).toBe(false);
+    expect(editor.hasAttribute('inert')).toBe(false);
+    expect(editor.getAttribute('aria-hidden')).not.toBe('true');
+    expect(editor.contains(document.activeElement)).toBe(true);
     act(() => owner.settle(true, false));
     expect(editor.isConnected).toBe(true);
     expect(editor.hasAttribute('data-message-action-unavailable')).toBe(false);
@@ -66,11 +66,15 @@ describe('body selection uses readable message ownership rather than the author 
     expect(editor.contains(document.activeElement)).toBe(true);
   });
 
-  it('retires the editor on message loss without retaining focus, and permits a fresh recovered selection', () => {
+  it('keeps the chosen text draft on source loss, then gates a new selection until the source recovers', () => {
     const editor = openEditor();
     act(() => owner.settle(false, false));
+    expect(editor.isConnected).toBe(true);
+    expect(editor.contains(document.activeElement)).toBe(true);
+    expect(close).not.toHaveBeenCalled();
+    // An explicit outside gesture closes the owned draft; source loss itself cannot discard it.
+    act(() => document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })));
     expect(editor.isConnected).toBe(false);
-    expect(editor.contains(document.activeElement)).toBe(false);
     expect(close).toHaveBeenCalled();
     const trigger = document.querySelector<HTMLElement>('[data-testid="owned-selection"]');
     expect(trigger?.hasAttribute('inert')).toBe(true);

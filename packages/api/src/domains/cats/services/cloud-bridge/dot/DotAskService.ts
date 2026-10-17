@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { createCatId, dotAskArguments } from '@cat-cafe/shared';
 import type { z } from 'zod';
+import type { QueueTargetExecutionReadPort } from '../../agents/invocation/queue-ledger/QueueTargetExecutionView.js';
 import { analyzeA2AMentions } from '../../agents/routing/a2a-mentions.js';
 import { resolveCatTarget } from '../../agents/routing/cat-target-resolver.js';
 import type { IMessageStore, StoredMessage } from '../../stores/ports/MessageStore.js';
@@ -21,13 +23,28 @@ export interface DotAskAdmission {
 }
 
 /** A persisted question or one process-local child is not a complete fan-out receipt. */
-export function hasCompleteDotAskFanout(message: StoredMessage | null | undefined): boolean {
+export async function hasCompleteDotAskFanout(
+  message: StoredMessage | null | undefined,
+  queue: QueueTargetExecutionReadPort | undefined,
+): Promise<boolean> {
   const recipients = message?.extra?.dotAsk?.recipientCatIds;
-  const custody = message?.queueCustody;
-  return Boolean(
-    recipients?.length &&
-      custody?.ownerUserId === message?.userId &&
-      recipients.every((catId) => !!custody?.carrierByTargetCatId?.[catId]),
+  if (!message || !recipients?.length || message.lifecycle?.kind !== 'input') return false;
+  const refs = message.lifecycle.dispatchRefs ?? [];
+  const rows = (await queue?.getDurableEntriesForMessages(message.threadId, [message.id]))?.get(message.id) ?? [];
+  return recipients.every(
+    (target) =>
+      refs.filter((ref) => ref.targetId === target).length === 1 ||
+      rows.some(
+        (row) =>
+          row.threadId === message.threadId &&
+          row.owner.kind === 'user' &&
+          row.owner.userId === message.userId &&
+          row.payload.messageId === message.id &&
+          row.payload.sourceRecordId === message.id &&
+          isDeepStrictEqual(row.from, message.from) &&
+          row.targets.includes(target) &&
+          (row.status === 'queued' || row.status === 'claimed'),
+      ),
   );
 }
 

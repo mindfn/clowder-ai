@@ -1,11 +1,14 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ChatMessage, QueueEntry } from '@/stores/chat-types';
 
 const state = vi.hoisted(() => ({
   apiFetch: vi.fn(),
   participants: ['opus55', 'codex-sol'] as string[],
   executions: {} as Record<string, { threadId: string; catId: string }>,
+  messages: [] as ChatMessage[],
+  queue: [] as QueueEntry[],
 }));
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -59,6 +62,8 @@ describe('F322 conversation view control in the real v2 header', () => {
           onToggleViewMode={() => {}}
           statusPanelOpen={false}
           onToggleStatusPanel={() => {}}
+          conversationViewMessages={state.messages}
+          conversationViewQueue={state.queue}
         />,
       ),
     );
@@ -70,6 +75,47 @@ describe('F322 conversation view control in the real v2 header', () => {
     writeShellPresentation('v2');
     state.participants = ['opus55', 'codex-sol'];
     state.executions = {};
+    state.messages = [
+      {
+        id: 'message-to-opus',
+        type: 'user',
+        content: '请看这里',
+        timestamp: 10,
+        lifecycle: {
+          kind: 'input',
+          orderKey: '10:message-to-opus',
+          dispatchRefs: [
+            {
+              targetId: 'opus55',
+              phase: 'settled',
+              statusMessageId: 'response-opus',
+              dispatchedAt: 12,
+              inputRead: { status: 'read', at: 15 },
+            },
+          ],
+        },
+      },
+      {
+        id: 'response-opus',
+        type: 'assistant',
+        catId: 'opus55',
+        from: { kind: 'agent', catId: 'opus55' },
+        content: '看到了',
+        timestamp: 20,
+        lifecycle: {
+          kind: 'response',
+          orderKey: '18:response-opus',
+          targetId: 'opus55',
+          invocationId: 'inv-opus',
+          startedAt: 18,
+          status: 'completed',
+          inputMessageIds: ['message-to-opus'],
+          inputEntryIds: ['entry-opus'],
+          completedAt: 20,
+        },
+      },
+    ];
+    state.queue = [];
     state.apiFetch.mockReset();
     state.apiFetch.mockImplementation(async (path: string) => {
       if (path.includes('/active-pane')) return Response.json({ active: false });
@@ -89,7 +135,7 @@ describe('F322 conversation view control in the real v2 header', () => {
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   });
 
-  it('replaces the passive avatar strip with a named group-view menu and honest disabled cat choices', async () => {
+  it('replaces the passive avatar strip with an evidence-gated view menu and exact scope copy', async () => {
     state.executions = { active: { threadId: 'thread-view', catId: 'opus55' } };
     await render();
     const toggle = host.querySelector<HTMLButtonElement>('[data-testid="conversation-view-menu-toggle"]');
@@ -102,8 +148,10 @@ describe('F322 conversation view control in the real v2 header', () => {
     expect(menu?.querySelector('[data-conversation-view="group"]')?.getAttribute('aria-checked')).toBe('true');
     const catChoices = [...(menu?.querySelectorAll<HTMLButtonElement>('[data-conversation-cat]') ?? [])];
     expect(catChoices).toHaveLength(2);
-    expect(catChoices.every((choice) => choice.disabled)).toBe(true);
-    expect(menu?.textContent).toContain('读取记录暂不可用');
+    expect(catChoices[0]?.disabled).toBe(false);
+    expect(catChoices[1]?.disabled).toBe(true);
+    expect(catChoices[0]?.textContent).toContain('发给它的和它说的');
+    expect(catChoices[1]?.textContent).toContain('还没有可确认的对话记录');
     expect(menu?.textContent).toContain('正在工作');
 
     await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
@@ -114,6 +162,33 @@ describe('F322 conversation view control in the real v2 header', () => {
     expect(host.querySelector('[data-testid="conversation-view-menu"]')).not.toBeNull();
     await act(async () => document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
     expect(host.querySelector('[data-testid="conversation-view-menu"]')).toBeNull();
+  });
+
+  it('shows a confirmed cat view after save and restores group without changing the message scope copy', async () => {
+    state.apiFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path.includes('/active-pane')) return Response.json({ active: false });
+      if (init?.method === 'PUT') {
+        const requested = JSON.parse(String(init.body)) as { view: { mode: 'group' | 'cat'; catId?: string } };
+        return Response.json({ stored: requested.view, effective: requested.view, source: 'thread' });
+      }
+      return Response.json({ stored: null, effective: { mode: 'group' }, source: 'product' });
+    });
+    await render();
+    const toggle = host.querySelector<HTMLButtonElement>('[data-testid="conversation-view-menu-toggle"]');
+    await act(async () => toggle?.click());
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-conversation-cat="opus55"]')?.click());
+    await settle();
+
+    expect(toggle?.textContent).toContain('布偶猫 Opus');
+    expect(
+      toggle?.querySelector('[data-conversation-view-current]')?.getAttribute('data-conversation-view-current'),
+    ).toBe('cat');
+
+    await act(async () => toggle?.click());
+    expect(host.querySelector('[data-conversation-cat="opus55"]')?.getAttribute('aria-checked')).toBe('true');
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-conversation-view="group"]')?.click());
+    await settle();
+    expect(toggle?.textContent).toContain('群聊');
   });
 
   it('uses the shell language live and keeps classic free of the entry', async () => {
@@ -166,6 +241,7 @@ describe('F322 conversation view control in the real v2 header', () => {
 
   it('does not accept a stored cat view without evidence and only replaces it after a confirmed group save', async () => {
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    state.messages = [];
     let putCount = 0;
     state.apiFetch.mockImplementation(async (path: string, init?: RequestInit) => {
       if (path.includes('/active-pane')) return Response.json({ active: false });

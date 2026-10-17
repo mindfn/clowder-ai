@@ -42,23 +42,15 @@ import {
   type BuiltinPluginContributionSupervisorOptions,
 } from './manager/builtin-contribution-supervisor.js';
 import { LocalPluginPackageAdmission } from './manager/local-package-admission.js';
+import type { OfficialPluginCatalogProvider } from './manager/official-catalog-provider.js';
 import { CompositePluginManagerCompatibilityPort } from './manager/plugin-manager-compatibility.js';
 import { HostPluginConfigurationService } from './manager/plugin-manager-configuration.js';
-import { PluginManagerPackageAssetService } from './manager/plugin-package-assets.js';
-import {
-  FilePluginPackageQuarantineStore,
-  PluginPackageQuarantineManagerAdapter,
-} from './manager/plugin-package-quarantine.js';
-import { type OfficialPluginCatalogEntry, officialPluginPresentationMatches } from './official-catalog.js';
-import type { OfficialPluginCatalogProvider } from './official-catalog-provider.js';
-import { OfficialPluginPackageInstaller } from './official-package-installer.js';
-import type { OfficialPluginAuthPort, OfficialPluginAuthStatus } from './official-plugin-auth.js';
 import {
   type PluginManagerCatalogCandidate,
   pluginManagerCapabilitiesFromManifest,
   pluginManagerContributionsFromManifest,
   projectPluginManagerCatalogCandidate,
-} from './plugin-manager-projection.js';
+} from './manager/plugin-manager-projection.js';
 import {
   type PluginManagerCatalogPort,
   type PluginManagerCatalogSnapshot,
@@ -66,7 +58,15 @@ import {
   PluginManagerService,
   PluginManagerServiceError,
   type PluginManagerStateProjectionPort,
-} from './plugin-manager-service.js';
+} from './manager/plugin-manager-service.js';
+import { PluginManagerPackageAssetService } from './manager/plugin-package-assets.js';
+import {
+  FilePluginPackageQuarantineStore,
+  PluginPackageQuarantineManagerAdapter,
+} from './manager/plugin-package-quarantine.js';
+import { type OfficialPluginCatalogEntry, officialPluginPresentationMatches } from './official-catalog.js';
+import { OfficialPluginPackageInstaller } from './official-package-installer.js';
+import type { OfficialPluginAuthPort, OfficialPluginAuthStatus } from './official-plugin-auth.js';
 
 export interface PluginRuntimePersistencePaths {
   readonly inventorySnapshotPath: string;

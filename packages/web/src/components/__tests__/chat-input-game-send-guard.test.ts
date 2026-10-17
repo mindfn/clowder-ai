@@ -189,13 +189,17 @@ describe('layer drill-in does not trigger outside-click close', () => {
 describe('game start failure handling', () => {
   it.each(['HTTP', 'network'] as const)('%s error is reported and the selected lobby can retry', async (failure) => {
     const onSend = vi.fn();
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => successfulStart());
     const errorText = failure === 'HTTP' ? 'Thread already has an active game' : 'Network error';
-    if (failure === 'HTTP') {
-      fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ error: errorText }), { status: 409 }));
-    } else {
-      fetchSpy.mockRejectedValueOnce(new Error(errorText));
-    }
+    let failNextGameStart = true;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      // Draft hydration may read first; inject at the game mutation, not the first fetch.
+      if (String(input).includes('/api/game/start') && init?.method === 'POST' && failNextGameStart) {
+        failNextGameStart = false;
+        if (failure === 'HTTP') return new Response(JSON.stringify({ error: errorText }), { status: 409 });
+        throw new Error(errorText);
+      }
+      return successfulStart();
+    });
     act(() => root.render(React.createElement(ChatInput, { onSend, threadId: 'game-test' })));
     const confirm = openReadyLobby();
     await act(async () => confirm.click());

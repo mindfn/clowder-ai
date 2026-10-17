@@ -135,9 +135,18 @@ for (const outcome of ['failed', 'canceled', 'unavailable', 'interrupted']) {
       };
     }
 
-    const result = await f.service.admit(f.request);
-    assert.equal(result.outcome, 'replaced');
-    assert.equal(result.lease.generation, 9);
+    if (outcome === 'interrupted') {
+      await assert.rejects(f.service.admit(f.request), /standing/);
+      assert.equal(
+        f.current().generation,
+        8,
+        'legacy interruption evidence cannot replace an active canonical execution',
+      );
+    } else {
+      const result = await f.service.admit(f.request);
+      assert.equal(result.outcome, 'replaced');
+      assert.equal(result.lease.generation, 9);
+    }
   });
 }
 

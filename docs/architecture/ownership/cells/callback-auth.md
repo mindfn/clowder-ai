@@ -14,7 +14,6 @@ code_anchors:
   - packages/api/src/routes/callback-auth-schema.ts
   - packages/api/src/routes/callback-auth-telemetry.ts
   - packages/api/src/routes/callback-auth-system-message.ts
-  - packages/api/src/routes/callback-native-test-grant.ts
   - packages/api/src/domains/cats/services/agents/invocation/tool-execution-policy.ts
   - packages/api/src/domains/cats/services/agents/agent-key/AgentKeyRegistry.ts
   - packages/api/src/domains/cats/services/agents/agent-key/AgentKeySidecarProvisioner.ts

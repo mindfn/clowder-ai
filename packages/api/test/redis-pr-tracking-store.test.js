@@ -86,7 +86,7 @@ describe('RedisPrTrackingStore', { skip: redisIsolationSkipReason(REDIS_URL) }, 
     if (skipIfNoRedis()) return;
 
     const input = {
-      repoFullName: 'zts212653/cat-cafe',
+      repoFullName: 'zts212653/clowder-ai',
       prNumber: 42,
       catId: 'opus',
       threadId: 'thread-1',
@@ -94,15 +94,15 @@ describe('RedisPrTrackingStore', { skip: redisIsolationSkipReason(REDIS_URL) }, 
     };
 
     const entry = await store.register(input);
-    assert.strictEqual(entry.repoFullName, 'zts212653/cat-cafe');
+    assert.strictEqual(entry.repoFullName, 'zts212653/clowder-ai');
     assert.strictEqual(entry.prNumber, 42);
     assert.strictEqual(entry.catId, 'opus');
     assert.strictEqual(entry.threadId, 'thread-1');
     assert.strictEqual(typeof entry.registeredAt, 'number');
 
-    const found = await store.get('zts212653/cat-cafe', 42);
+    const found = await store.get('zts212653/clowder-ai', 42);
     assert.ok(found);
-    assert.strictEqual(found.repoFullName, 'zts212653/cat-cafe');
+    assert.strictEqual(found.repoFullName, 'zts212653/clowder-ai');
     assert.strictEqual(found.prNumber, 42);
     assert.strictEqual(found.catId, 'opus');
   });

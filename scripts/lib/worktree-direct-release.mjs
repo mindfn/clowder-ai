@@ -38,6 +38,7 @@ export function removeFinishedWorktree({ repo, root, entry, validate, actor, aut
     authorizationRef,
     sourceRef: entry.finishSourceRef,
     head: entry.head,
+    ...(entry.mergedAt ? { mergedAt: entry.mergedAt } : {}),
     restore,
   };
   append(root, { ...base, state: 'pending' }, clock());
@@ -46,14 +47,21 @@ export function removeFinishedWorktree({ repo, root, entry, validate, actor, aut
   validate();
   verifySourceOriginals(entry, manifest);
   const before = freeBytes(dirname(entry.path));
-  const result = git(repo, ['worktree', 'remove', entry.path]);
-  if (!result.ok || existsSync(entry.path)) throw new Error('git worktree remove refused; archive remains available');
-  const after = freeBytes(dirname(entry.path));
-  const done = { ...base, state: 'done', manifestSha256, diskFreeBytesBefore: before, diskFreeBytesAfter: after };
+  // Hashing originals can take time. Refresh the caller's process/job/owner
+  // observations at the destructive boundary; this is a probe, not an admission lock.
+  validate();
+  let done;
   try {
+    const result = git(repo, ['worktree', 'remove', entry.path]);
+    if (!result.ok || existsSync(entry.path)) throw new Error('git worktree remove refused');
+    const after = freeBytes(dirname(entry.path));
+    done = { ...base, state: 'done', manifestSha256, diskFreeBytesBefore: before, diskFreeBytesAfter: after };
     append(root, done, clock());
   } catch (cause) {
-    const error = new Error(`working copy removed but release receipt failed: txn=${txn}`, { cause });
+    const status = existsSync(entry.path)
+      ? 'worktree release incomplete'
+      : 'working copy removed but release completion failed';
+    const error = new Error(`${status}: txn=${txn}; ${cause.message}`, { cause });
     error.recovery = { state: 'pending', txn, archivePath, restore };
     throw error;
   }
@@ -92,9 +100,17 @@ export function directReleaseReceipt({ repo, root, path, owner, sourceRef }) {
       r.state === 'done' &&
       previous?.pending.txn === r.txn &&
       previous.done === null &&
-      ['archivePath', 'removedPath', 'owner', 'performedBy', 'authorizationRef', 'sourceRef', 'head', 'restore'].every(
-        (key) => previous.pending[key] === r[key],
-      ) &&
+      [
+        'archivePath',
+        'removedPath',
+        'owner',
+        'performedBy',
+        'authorizationRef',
+        'sourceRef',
+        'head',
+        'restore',
+        'mergedAt',
+      ].every((key) => previous.pending[key] === r[key]) &&
       Number.isFinite(Date.parse(r.at)) &&
       Date.parse(r.at) >= Date.parse(previous.pending.at)
     )
@@ -116,7 +132,8 @@ export function directReleaseReceipt({ repo, root, path, owner, sourceRef }) {
     manifest.removedPath !== r.removedPath ||
     manifest.head !== r.head ||
     manifest.owner !== owner ||
-    manifest.sourceRef !== sourceRef
+    manifest.sourceRef !== sourceRef ||
+    manifest.mergedAt !== r.mergedAt
   )
     throw new Error('release archive receipt mismatch');
   return {
@@ -126,6 +143,7 @@ export function directReleaseReceipt({ repo, root, path, owner, sourceRef }) {
     owner,
     sourceRef,
     head: r.head,
+    ...(r.mergedAt ? { mergedAt: r.mergedAt } : {}),
     archivePath: r.archivePath,
     restore: r.restore,
     diskFreeBytesBefore: r.diskFreeBytesBefore,

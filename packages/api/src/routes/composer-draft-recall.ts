@@ -1,6 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
-import type { QueuedMessageCustodyCoordinator } from '../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
@@ -8,15 +7,19 @@ import type { IIndexBuilder } from '../domains/memory/interfaces.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { resolveStrictUserId } from '../utils/request-identity.js';
 import { createRecallMessageHandler } from './composer-draft-recall-handler.js';
-import { composerDraftClearSchema, composerDraftPutSchema, recallBodySchema } from './composer-draft-recall-helpers.js';
+import {
+  composerDraftClearSchema,
+  composerDraftPutSchema,
+  projectComposerDraft,
+  recallBodySchema,
+} from './composer-draft-recall-helpers.js';
 
 export interface ComposerDraftRecallRoutesOptions {
   messageStore: IMessageStore;
   threadStore?: Pick<IThreadStore, 'get' | 'compareAndSetTitle'>;
   socketManager: SocketManager;
   invocationQueue?: InvocationQueue;
-  queueCustodyCoordinator?: Pick<QueuedMessageCustodyCoordinator, 'recallMessageToComposerDraft'>;
-  queueProcessor?: Pick<QueueProcessor, 'unregisterEntryCompleteHook' | 'finalizeRemovedEntry'>;
+  queueProcessor?: Pick<QueueProcessor, 'unregisterEntryCompleteHook' | 'registerCallerDispatchQueueWithdrawal'>;
   indexBuilder?: Pick<
     IIndexBuilder,
     'suppressMessagePassage' | 'releaseMessagePassageSuppression' | 'finalizeMessagePassageSuppression'
@@ -38,7 +41,7 @@ export const composerDraftRecallRoutes: FastifyPluginAsync<ComposerDraftRecallRo
     const ownerUserId = requireStrictOwner(request, reply);
     if (!ownerUserId) return { error: 'Authentication required', code: 'AUTH_REQUIRED' };
     const draft = await opts.messageStore.getOwnerComposerDraft(ownerUserId, request.params.threadId);
-    return { draft, revision: draft?.revision ?? 0 };
+    return { draft: projectComposerDraft(draft), revision: draft?.revision ?? 0 };
   });
 
   app.put<{ Params: { threadId: string } }>('/api/threads/:threadId/composer-draft', async (request, reply) => {
@@ -57,7 +60,7 @@ export const composerDraftRecallRoutes: FastifyPluginAsync<ComposerDraftRecallRo
       reply.status(409);
       return { code: 'DRAFT_REVISION_MISMATCH', actualRevision: result.actualRevision };
     }
-    return { draft: result.draft };
+    return { draft: projectComposerDraft(result.draft) };
   });
 
   app.delete<{ Params: { threadId: string } }>('/api/threads/:threadId/composer-draft', async (request, reply) => {
@@ -81,14 +84,13 @@ export const composerDraftRecallRoutes: FastifyPluginAsync<ComposerDraftRecallRo
     return { cleared: true, revision: result.revision };
   });
 
-  if (opts.invocationQueue && opts.queueCustodyCoordinator && opts.indexBuilder && opts.threadStore) {
+  if (opts.invocationQueue && opts.indexBuilder && opts.threadStore) {
     app.post<{ Params: { id: string } }>(
       '/api/messages/:id/recall',
       createRecallMessageHandler(
         {
           ...opts,
           invocationQueue: opts.invocationQueue,
-          queueCustodyCoordinator: opts.queueCustodyCoordinator,
           indexBuilder: opts.indexBuilder,
           threadStore: opts.threadStore,
         },

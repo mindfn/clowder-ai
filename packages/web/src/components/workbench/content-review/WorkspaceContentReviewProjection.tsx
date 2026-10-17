@@ -1,12 +1,15 @@
 import type { WorkspaceContentReviewAction } from '@cat-cafe/shared';
 import { useRef, useState } from 'react';
 import { ImageWorkProgress } from '@/components/content-review/ImageWorkProgress';
+import { mediaChatMime } from '@/components/content-review/media-chat-selection';
 import { modificationStorageKey } from '@/components/content-review/modification-draft';
 import { modificationFocusStanding, usePendingModificationFocus } from '@/components/content-review/modification-focus';
 import { ReviewToolbarIcon } from '@/components/content-review/ReviewToolbarIcon';
 import commentStyles from '@/components/content-review/review-comment.module.css';
 import toolbarStyles from '@/components/content-review/review-toolbar.module.css';
 import styles from '@/components/content-review/review-workspace.module.css';
+import { reviewMediaDisplayPath } from '@/components/content-review/useReviewMediaSource';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import { useChatStore } from '@/stores/chatStore';
 import { API_URL } from '@/utils/api-client';
 import { isChatWorkElementVisible } from '../WorkspaceChatWorkScope';
@@ -113,9 +116,14 @@ export function WorkspaceContentReviewProjection({
     else setDiscussionOpen(false);
   };
   const source = view.currentSource ?? view.review.source;
+  const isV2 = useShellPresentation() === 'v2';
   const canAuthor = view.canWrite && view.sourceState === 'current' && capabilities.annotate.state === 'available';
   const canWrite = canAuthor && !busy;
-  const imageChatPrimary = source.kind !== 'text' && source.kind !== 'video-project' && source.mime === 'image/png';
+  const imageChatPrimary =
+    source.kind !== 'text' &&
+    source.kind !== 'video-project' &&
+    !!mediaChatMime(source.mime) &&
+    (source.media.kind === 'image' || isV2);
   const mediaRoot = useRef<HTMLDivElement>(null);
   const mediaChat = useWorkspaceMediaChat({
     view,
@@ -264,6 +272,10 @@ export function WorkspaceContentReviewProjection({
         {view.review.annotations.length > 0 ? <div className="border-t border-cafe-subtle p-3">{comments}</div> : null}
       </>
     );
+  const originalMediaSrc =
+    source.kind === 'publication'
+      ? `${API_URL}/api/content-publications/${encodeURIComponent(source.publication.contentRef)}/media/${source.publication.ownerRevision}`
+      : `${API_URL}/api/${source.kind === 'evolution' ? '' : 'workspace/'}content-reviews/${encodeURIComponent(view.review.reviewId)}/media?expectedSourceRevision=${encodeURIComponent(source.revision)}`;
   return (
     <div
       ref={mediaRoot}
@@ -285,13 +297,13 @@ export function WorkspaceContentReviewProjection({
           key={`${view.review.reviewId}:${source.revision}`}
           reviewId={view.review.reviewId}
           sourceRevision={source.revision}
-          src={
-            workflow?.mediaSource
-              ? workflow.mediaSource.src
-              : source.kind === 'publication'
-                ? `${API_URL}/api/content-publications/${encodeURIComponent(source.publication.contentRef)}/media/${source.publication.ownerRevision}`
-                : `${API_URL}/api/${source.kind === 'evolution' ? '' : 'workspace/'}content-reviews/${encodeURIComponent(view.review.reviewId)}/media?expectedSourceRevision=${encodeURIComponent(source.revision)}`
-          }
+          src={workflow?.mediaSource ? workflow.mediaSource.src : reviewMediaDisplayPath(originalMediaSrc, source.mime)}
+          download={{
+            src: workflow?.mediaSource
+              ? (workflow.mediaSource.downloadSrc ?? workflow.mediaSource.src)
+              : originalMediaSrc,
+            filename: `作品.${source.mime === 'image/jpeg' ? 'jpg' : source.mime.split('/')[1]}`,
+          }}
           media={source.media}
           sourceError={workflow?.mediaSource?.error}
           annotations={view.review.annotations}

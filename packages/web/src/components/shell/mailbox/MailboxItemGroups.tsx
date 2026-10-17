@@ -2,6 +2,7 @@ import type { UnifiedAttentionItemGroupCountsV1 } from '@cat-cafe/shared';
 import type { ReactNode } from 'react';
 import { ShellGlyph } from '../ShellIcons';
 import { useShellCopy } from '../shell-copy';
+import { isMailboxDecision } from './mailbox-decision-kind';
 import { mailboxEntryCopy } from './mailbox-entry.shell-copy';
 import type { MailboxDisplayRow } from './mailbox-rows';
 
@@ -36,9 +37,7 @@ export function MailboxItemGroups({
     );
   }
   const waiting = (row: MailboxDisplayRow) =>
-    row.kind === 'item' &&
-    row.item.kind !== 'user_mention' &&
-    (row.item.approval?.resolution === 'open' || row.item.choiceRequest !== undefined);
+    row.kind === 'item' && row.item.kind !== 'user_mention' && isMailboxDecision(row.item);
   const groups = [
     {
       id: 'decisions',

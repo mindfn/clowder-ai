@@ -4,6 +4,7 @@ import { addMediaSelectionToChat, addMediaWorkToChat } from '@/components/conten
 import {
   addMediaWork,
   MEDIA_SELECTION_REFUSAL_COPY,
+  mediaChatMime,
   mediaChatTarget,
   pendingMediaAttachment,
   sameMediaSource,
@@ -70,7 +71,7 @@ export function useWorkspaceMediaChat({
     if (!chatMedia) {
       setNotice({
         kind: 'selection',
-        message: MEDIA_SELECTION_REFUSAL_COPY[mime && mime !== 'image/png' ? 'not_image' : 'invalid'],
+        message: MEDIA_SELECTION_REFUSAL_COPY[mime && !mediaChatMime(mime) ? 'not_image' : 'invalid'],
       });
       return false;
     }
@@ -118,7 +119,8 @@ export function useWorkspaceMediaChat({
   return {
     target: chatMedia,
     offered: target?.kind === 'media_anchor',
-    wholeWorkOffered: mime === 'image/png' && !!chatMedia && (isV2 || view.canWrite) && view.sourceState === 'current',
+    wholeWorkOffered:
+      !!mime && !!mediaChatMime(mime) && !!chatMedia && (isV2 || view.canWrite) && view.sourceState === 'current',
     add,
     addSelection,
     addWork,

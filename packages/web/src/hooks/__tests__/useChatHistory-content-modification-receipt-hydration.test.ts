@@ -119,14 +119,13 @@ describe('F309 — Host receipt carrier survives hydration and reconciliation', 
     };
     const history: ChatMessage = { ...current, extra: { ...current.extra, contentModificationReceiptV1: RECEIPT } };
     expect(
-      mergeReplaceHydrationMessages([history], [current], {}).messages[0]?.extra?.contentModificationReceiptV1,
+      mergeReplaceHydrationMessages([history], [current]).messages[0]?.extra?.contentModificationReceiptV1,
     ).toEqual(RECEIPT);
     // And the other way round: history without it must not erase what the live copy already carries.
     expect(
       mergeReplaceHydrationMessages(
         [current],
         [{ ...current, extra: { ...current.extra, contentModificationReceiptV1: RECEIPT } }],
-        {},
       ).messages[0]?.extra?.contentModificationReceiptV1,
     ).toEqual(RECEIPT);
   });

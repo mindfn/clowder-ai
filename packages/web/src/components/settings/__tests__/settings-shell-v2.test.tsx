@@ -14,9 +14,15 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(nav.search),
 }));
 
-const chat = vi.hoisted(() => ({ setWorkspaceMode: vi.fn(), openTeamSubject: vi.fn() }));
+const chat = vi.hoisted(() => ({
+  setCurrentThread: vi.fn(),
+  setWorkspaceMode: vi.fn(),
+  openTeamSubject: vi.fn(),
+}));
 vi.mock('@/stores/chatStore', () => ({
-  useChatStore: (select: (state: typeof chat) => unknown) => select(chat),
+  useChatStore: Object.assign((select: (state: typeof chat) => unknown) => select(chat), {
+    getState: () => chat,
+  }),
 }));
 
 const pins = vi.hoisted(() => ({ pinned: [] as string[], pin: vi.fn(), unpin: vi.fn() }));

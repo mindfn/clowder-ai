@@ -6,7 +6,7 @@ import {
   PluginManagerCompatibilityAdapter,
   RepositoryPluginManagerCompatibilityProvider,
 } from '../dist/domains/plugin/manager/plugin-manager-compatibility.js';
-import { PluginManagerService } from '../dist/domains/plugin/plugin-manager-service.js';
+import { PluginManagerService } from '../dist/domains/plugin/manager/plugin-manager-service.js';
 
 function digest(value) {
   return `sha512-${createHash('sha512').update(value).digest('base64')}`;

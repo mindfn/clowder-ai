@@ -1,5 +1,5 @@
 import type { Readable } from 'node:stream';
-import type { ImmutableMedia } from '@cat-cafe/shared';
+import type { ImmutableMedia, ReviewedMediaType } from '@cat-cafe/shared';
 
 export const MAX_WORKSPACE_COLLABORATION_BYTES = 64 * 1024 * 1024;
 
@@ -76,7 +76,7 @@ export class WorkspaceContentSourceError extends Error {
 
 export interface WorkspaceMediaDescriptionV1 extends WorkspaceContentDescriptionV1 {
   readonly kind: 'media';
-  readonly mime: 'image/png' | 'video/mp4';
+  readonly mime: ReviewedMediaType;
   readonly media: ImmutableMedia;
 }
 

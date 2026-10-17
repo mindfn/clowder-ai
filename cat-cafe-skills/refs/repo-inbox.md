@@ -269,7 +269,7 @@ cat_cafe_register_pr_tracking(
 | 变量 | 说明 | 示例 |
 |------|------|------|
 | `GITHUB_WEBHOOK_SECRET` | webhook secret（同 GitHub 配置页的 Secret） | `whsec_xxx` |
-| `GITHUB_REPO_ALLOWLIST` | 逗号分隔的授权仓库列表 | `zts212653/cat-cafe,zts212653/clowder-ai` |
+| `GITHUB_REPO_ALLOWLIST` | 逗号分隔的授权仓库列表 | `zts212653/clowder-ai,zts212653/clowder-ai` |
 | `GITHUB_REPO_INBOX_CAT_ID` | 启动必填；仅在 repo 未登记时作为 fallback，正常路由以 Community Repo `guardCatId` 为准 | `cat-maine-coon` |
 
 三个变量 + Redis 全部配置后，`GitHubRepoWebhookHandler` 才注册到 webhook 路由。

@@ -142,7 +142,7 @@ export class DotReturnService {
       !this.visible(source)
     )
       throw new Error('dot_source_unavailable');
-    if (!(await canDeliverDotSource(fresh, source, this.options.messages, fresh.allowedCatIds)))
+    if (!(await canDeliverDotSource(fresh, source, this.options.messages)))
       throw new Error('dot_source_authority_revoked');
     return source;
   }
@@ -164,6 +164,10 @@ export class DotReturnService {
       catId: message.catId,
       content: message.content,
       contentBlocks: message.contentBlocks ?? [],
+      // Return the stored presentation payload without rewriting the original text
+      // or exposing unrelated execution/tool metadata. Visibility is checked above.
+      ...(message.extra?.rich ? { rich: message.extra.rich } : {}),
+      ...(message.thinking ? { thinking: message.thinking } : {}),
       replyTo: message.replyTo ?? null,
       timestamp: message.timestamp,
     };

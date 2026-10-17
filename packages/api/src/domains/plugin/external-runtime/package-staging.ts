@@ -200,7 +200,7 @@ export async function stageVerifiedPackageArchive(
     await verifyArchiveDigest(sealedArchivePath, input.packageDigest);
     phase = 'list';
     const archiveEnvironment = { PATH: process.env.PATH ?? '/usr/bin:/bin', LC_ALL: 'C' };
-    const [list, verboseList] = await Promise.all([
+    const listings = [
       // GNU tar interprets the colon in Windows drive paths as host:file.
       // Resolve the sealed archive within this Host-owned staging directory.
       execFileAsync(input.tarBin, ['-tzf', PACKAGE_ARCHIVE_FILENAME], {
@@ -213,7 +213,13 @@ export async function stageVerifiedPackageArchive(
         env: archiveEnvironment,
         maxBuffer: 8 * 1024 * 1024,
       }),
-    ]);
+    ] as const;
+    const [list, verboseList] = await Promise.all(listings).catch(async (error: unknown) => {
+      // Both tar children own this cwd until close. Preserve the first failure,
+      // but drain its sibling before the outer catch removes the stage.
+      await Promise.allSettled(listings);
+      throw error;
+    });
     const members = archiveMembers(list.stdout);
     validateArchiveMemberTypes(verboseList.stdout, members.length);
     phase = 'extract';

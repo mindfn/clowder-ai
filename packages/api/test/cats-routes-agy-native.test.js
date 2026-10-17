@@ -104,14 +104,14 @@ test('member PATCH persists, exposes and reconciles an explicit AGY Native profi
     const response = await f.patch({ defaultModel: profile.model, agyProfile: profile });
     assert.equal(response.statusCode, 200, response.body);
     assert.deepEqual(response.json().cat.agyProfile, profile);
-    assert.equal(response.json().cat.adapterMode, 'agy-native');
+    assert.equal(response.json().cat.agyProfile.carrier, 'native');
     assert.deepEqual(f.persisted().agyProfile, profile);
     assert.deepEqual(catRegistry.tryGet('gemini38').config.agyProfile, profile);
     const read = await f.app.inject({ method: 'GET', url: '/api/cats' });
     assert.deepEqual(read.json().cats.find((cat) => cat.id === 'gemini38').agyProfile, profile);
     const reverted = await f.patch({ agyProfile: null });
     assert.equal(reverted.statusCode, 200, reverted.body);
-    assert.equal(reverted.json().cat.adapterMode, 'cli');
+    assert.equal(reverted.json().cat.agyProfile, undefined);
     assert.equal(catRegistry.tryGet('gemini38').config.agyProfile, undefined);
   } finally {
     await f.close();
@@ -140,7 +140,7 @@ test('Native profile mutation rejects unsafe or conflicting settings before pers
   }
 });
 
-test('native coding approval stays private and is retained only for an unchanged binding', async () => {
+test('retired native coding grants are stripped when member settings are saved', async () => {
   const grant = {
     threadId: 'thread-1',
     taskId: 'task-1',
@@ -156,7 +156,7 @@ test('native coding approval stays private and is retained only for an unchanged
     assert.equal(response.statusCode, 200, response.body);
     assert.ok(response.json().cat.agyProfile);
     assert.equal(response.json().cat.agyProfile.nativeCodingGrant, undefined);
-    assert.deepEqual(f.persisted().agyProfile.nativeCodingGrant, grant);
+    assert.equal(f.persisted().agyProfile.nativeCodingGrant, undefined);
     const changed = await f.patch({ agyProfile: { ...profile, profileId: 'another' } });
     assert.equal(changed.statusCode, 200, changed.body);
     assert.equal(f.persisted().agyProfile.nativeCodingGrant, undefined);
@@ -189,7 +189,7 @@ test('creation supports Native and client/ACP transitions mask template Native s
     assert.equal(response.json().cat.agyProfile.profileId, 'new-gemini');
     const acp = await f.patch({ acp: { command: 'gemini', startupArgs: ['--acp'] } });
     assert.equal(acp.statusCode, 200, acp.body);
-    assert.equal(acp.json().cat.adapterMode, 'acp');
+    assert.deepEqual(acp.json().cat.acp, { command: 'gemini', startupArgs: ['--acp'] });
     assert.equal(f.persisted().agyProfile, null);
     assert.equal(catRegistry.tryGet('gemini38').config.agyProfile, undefined);
     const native = await f.patch({ acp: null, agyProfile: profile });

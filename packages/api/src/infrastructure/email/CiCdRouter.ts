@@ -295,6 +295,7 @@ export class CiCdRouter {
     return this.opts.waitLifecycle.observe({
       taskId: task.id,
       sourceObservedAt: poll.observedAt,
+      deliveryPriority: !terminal && waitBucket === 'fail' ? 'urgent' : 'normal',
       facts: {
         headSha: poll.headSha,
         ci: {

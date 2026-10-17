@@ -1,7 +1,7 @@
 import { type RefObject, useEffect } from 'react';
 
-export function useTextareaAutosize(ref: RefObject<HTMLTextAreaElement>, input: string) {
-  // biome-ignore lint/correctness/useExhaustiveDependencies: React must commit each draft value before measuring the DOM's scrollHeight.
+export function useTextareaAutosize(ref: RefObject<HTMLTextAreaElement>, input: string, placeholder?: string) {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: React must commit the draft and displayed placeholder before measuring the DOM's scrollHeight.
   useEffect(() => {
     const textarea = ref.current;
     if (!textarea) return;
@@ -33,5 +33,5 @@ export function useTextareaAutosize(ref: RefObject<HTMLTextAreaElement>, input: 
       window.removeEventListener('resize', resize);
       observer?.disconnect();
     };
-  }, [ref, input]);
+  }, [ref, input, placeholder]);
 }

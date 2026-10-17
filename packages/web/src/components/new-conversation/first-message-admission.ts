@@ -1,6 +1,5 @@
 import type { ContextAttachment, MessageWorkDisposition } from '@cat-cafe/shared';
 import type { WhisperOptions } from '@/hooks/useSendMessage';
-import type { DeliveryMode } from '@/stores/chat-types';
 
 export interface PendingNewConversationIntent {
   v: 1;
@@ -25,7 +24,7 @@ export interface FirstMessagePayload {
   content: string;
   images?: File[];
   whisper?: WhisperOptions;
-  deliveryMode?: DeliveryMode;
+  explicitTargetCats?: string[];
   replyToId?: string;
   messageDisposition?: MessageWorkDisposition;
   contextAttachments?: ContextAttachment[];

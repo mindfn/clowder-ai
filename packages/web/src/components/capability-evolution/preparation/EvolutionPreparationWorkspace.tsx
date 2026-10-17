@@ -158,7 +158,7 @@ export function EvolutionPreparationWorkspace({ projection }: { projection: Evol
           );
         })}
       </div>
-      {v2 && <EvolutionPreparationActivityStatus projection={projection} />}
+      {v2 && <EvolutionPreparationActivityStatus projection={projection} section={displayedSection} />}
       {selected === 'measurement_plan' && reading.preparationReturn && (
         <div className="evolution-preparation-return">
           <button type="button" className="evolution-link" onClick={() => selectSection('success_contract')}>
@@ -197,6 +197,7 @@ export function EvolutionPreparationWorkspace({ projection }: { projection: Evol
             programId={programId}
             section={displayedSection!}
             historicalCurrent={measurementHistory}
+            showActivity={!v2}
             gtLabels={labels}
             focusedGtSourceKey={reading.preparationGtSourceKey}
             onJumpGtSource={jumpToGtSource}

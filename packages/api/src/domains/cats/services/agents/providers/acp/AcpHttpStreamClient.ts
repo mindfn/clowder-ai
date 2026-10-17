@@ -32,11 +32,13 @@ import {
   type AcpCapacitySignal,
   type AcpClientConfig,
   AcpProtocolError,
+  AcpSessionCancelledError,
   AcpStreamIdleError,
   AcpTimeoutError,
   buildAcpSpawnLogFields,
 } from './AcpClient.js';
 import { AcpCwdIdentityTracker } from './acp-cwd-identity.js';
+import { type AcpPromptInput, toAcpPromptContent } from './acp-prompt-content.js';
 import type {
   AcpAgentRequest,
   AcpInitializeResult,
@@ -44,6 +46,7 @@ import type {
   AcpNewSessionResult,
   AcpNotification,
   AcpPermissionRequest,
+  AcpPromptCapabilities,
   AcpPromptResult,
   AcpResponse,
   AcpSessionUpdate,
@@ -86,6 +89,7 @@ export class AcpHttpStreamClient {
   private port: number | null = null;
   private baseUrl = '';
   private initResult: AcpInitializeResult | null = null;
+  private negotiatedPromptCapabilities?: Readonly<AcpPromptCapabilities>;
   private readonly capacityListeners = new Set<(signal: AcpCapacitySignal) => void>();
   /** #1186 P1: Per-session cancel callbacks — settles the local prompt stream on cancel. */
   private readonly sessionCancelCallbacks = new Map<string, () => void>();
@@ -185,6 +189,7 @@ export class AcpHttpStreamClient {
     // Phase 3: send initialize via HTTP
     const resp = await this.httpRequest(ACP_METHODS.initialize, { protocolVersion: 1 });
     this.initResult = resp.result as unknown as AcpInitializeResult;
+    this.negotiatedPromptCapabilities = Object.freeze({ ...this.initResult.agentCapabilities?.promptCapabilities });
     log.info(
       {
         agentInfo: this.initResult.agentInfo,
@@ -242,9 +247,10 @@ export class AcpHttpStreamClient {
    */
   async *promptStream(
     sessionId: string,
-    text: string,
+    input: AcpPromptInput,
     options?: { timeoutMs?: number; idleWarningMs?: number; idleStallMs?: number },
   ): AsyncGenerator<AcpSessionUpdate, AcpStopReason> {
+    const prompt = toAcpPromptContent(input, this.promptCapabilities);
     const timeoutMs = options?.timeoutMs ?? 900_000;
     const idleWarningMs = options?.idleWarningMs ?? 20_000;
     const idleStallMs = options?.idleStallMs ?? 90_000;
@@ -254,7 +260,7 @@ export class AcpHttpStreamClient {
       jsonrpc: '2.0',
       method: ACP_METHODS.sessionPrompt,
       id,
-      params: { sessionId, prompt: [{ type: 'text', text }] },
+      params: { sessionId, prompt },
     });
     const controller = new AbortController();
 
@@ -283,7 +289,7 @@ export class AcpHttpStreamClient {
 
     const resetBudget = () => {
       if (budgetTimer) clearTimeout(budgetTimer);
-      if (done) return;
+      if (done || timeoutMs <= 0) return;
       budgetTimer = setTimeout(() => {
         if (done) return;
         log.error({ sessionId, eventCount, timeoutMs }, 'HTTP turn budget exceeded');
@@ -342,7 +348,10 @@ export class AcpHttpStreamClient {
         const params = req.params as Record<string, unknown>;
         enqueueSessionUpdate({ sessionId: params.sessionId, sessionUpdate: 'permission_pending' });
       }
-      await this.handleAgentRequest(req, { responseTimeoutMs: timeoutMs, signal: controller.signal });
+      await this.handleAgentRequest(req, {
+        responseTimeoutMs: timeoutMs > 0 ? timeoutMs : undefined,
+        signal: controller.signal,
+      });
     };
 
     const isAgentRequest = (method: string | undefined, msgId: string | undefined) =>
@@ -351,7 +360,7 @@ export class AcpHttpStreamClient {
     /** #1186: Active from prompt start — covers zero-first-event. */
     const scheduleIdleCheck = () => {
       if (idleTimer) clearTimeout(idleTimer);
-      if (done) return;
+      if (done || idleStallMs <= 0) return;
       // Cap initial delay at idleStallMs so short TTLs (< idleWarningMs) fire on time
       const nextMs = idleWarningFired ? Math.max(0, idleStallMs - idleWarningMs) : Math.min(idleWarningMs, idleStallMs);
       idleTimer = setTimeout(() => {
@@ -401,12 +410,7 @@ export class AcpHttpStreamClient {
       // prompt. The pool uses this only for single-flight retirement.
       this.unquiescedSessionIds.add(sessionId);
       log.info({ sessionId, eventCount }, 'HTTP cancel settled local prompt stream');
-      promptError = new AcpStreamIdleError(
-        sessionId,
-        Date.now() - (lastEventAt || Date.now()),
-        eventCount,
-        idleStallMs,
-      );
+      promptError = new AcpSessionCancelledError(sessionId);
       done = true;
       if (idleTimer) clearTimeout(idleTimer);
       if (budgetTimer) clearTimeout(budgetTimer);
@@ -614,6 +618,11 @@ export class AcpHttpStreamClient {
   }
   get isSafeForSingleFlightReuse(): boolean {
     return this.unquiescedSessionIds.size === 0;
+  }
+
+  get promptCapabilities(): Readonly<AcpPromptCapabilities> | undefined {
+    const capabilities = this.negotiatedPromptCapabilities;
+    return capabilities ? { ...capabilities } : undefined;
   }
   isSessionSafeForReuse(sessionId: string): boolean {
     return !this.unquiescedSessionIds.has(sessionId);

@@ -33,7 +33,7 @@ export interface GhClientLogger {
 
 export class RealGhClient implements GhClient {
   constructor(
-    /** Repo full name, e.g. 'zts212653/cat-cafe'（gh --repo 用） */
+    /** Repo full name, e.g. 'zts212653/clowder-ai'（gh --repo 用） */
     private readonly repoFullName: string,
     private readonly ghCmd: GhCmdRunner = defaultGhCmd,
     /** Which base branch names count as "main"（默认 main/master）。 */

@@ -56,7 +56,6 @@ describe('Workspace home formatting', () => {
 describe('Workspace home tool rows', () => {
   it('lists the tools in the design order and groups', () => {
     expect(HOME_ROWS.map((row) => `${row.group}/${row.id}`)).toEqual([
-      'activity/host:now',
       'activity/host:status',
       'activity/mode:trajectory',
       'activity/action:theater',
@@ -80,7 +79,6 @@ describe('Workspace home tool rows', () => {
   it('keeps the classic test ids so existing journeys find a tool in either shell', () => {
     const ids = HOME_ROWS.flatMap((row) => (row.kind === 'destination' ? [destinationTestId(row.destination)] : []));
     expect(ids).toEqual([
-      'workspace-launcher-now',
       'workspace-launcher-status',
       'workspace-launcher-trajectory',
       'workspace-launcher-theater',

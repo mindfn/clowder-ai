@@ -5,7 +5,10 @@ describe('one v3 tool catalogue', () => {
   it('contains all accepted activity/code/other destinations once', () => {
     expect(HOME_ROWS.map((row) => row.copyKey).sort()).toEqual(
       [
-        'now',
+        'capability-evolution',
+        'community',
+        'eval',
+        'schedule',
         'status',
         'trajectory',
         'theater',
@@ -18,6 +21,10 @@ describe('one v3 tool catalogue', () => {
         'voice',
         'films',
         'team',
+        'schedule',
+        'eval',
+        'community',
+        'capability-evolution',
       ].sort(),
     );
     expect(new Set(HOME_ROWS.map((row) => row.id)).size).toBe(HOME_ROWS.length);

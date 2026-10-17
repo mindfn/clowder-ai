@@ -24,7 +24,7 @@ async function fixture() {
   const source = messages.append({
     userId: 'owner',
     threadId: thread.id,
-    catId: null,
+    from: { kind: 'user', userId: 'owner' },
     content: '开始听 Chrome',
     mentions: [],
     timestamp: Date.now(),
@@ -84,7 +84,7 @@ test('later direct owner input supersedes old consent; user speaking cannot admi
   f.messages.append({
     userId: 'owner',
     threadId: f.principal.threadId,
-    catId: null,
+    from: { kind: 'user', userId: 'owner' },
     content: '别录音',
     mentions: [],
     timestamp: Date.now(),

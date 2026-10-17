@@ -59,7 +59,7 @@ describe('EventWaitDispositionService (Redis path)', { skip: redisIsolationSkipR
     const wake = realWaitWake('matched', {
       holderCatId: HOLDER,
       subjectKey,
-      subjectRef: `pr:zts212653/cat-cafe#${threadId}`,
+      subjectRef: `pr:zts212653/clowder-ai#${threadId}`,
     });
     const s = stack(threadId, wake);
     await s.ingest.record(

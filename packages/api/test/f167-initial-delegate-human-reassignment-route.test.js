@@ -195,7 +195,7 @@ test('the real callback route derives direct-human proof before replacing termin
   const f = await createHarness(t);
   const correction = f.messageStore.append({
     userId: TENANT,
-    catId: null,
+    from: { kind: 'user', userId: TENANT },
     threadId: f.child.id,
     content: 'Stop the old delegate; continue here with the new implementer',
     mentions: [],
@@ -227,7 +227,7 @@ test('a cat-authored grounding message cannot become direct-human reassignment p
   const f = await createHarness(t);
   const fake = f.messageStore.append({
     userId: TENANT,
-    catId: OWNER_CAT,
+    from: { kind: 'agent', catId: OWNER_CAT },
     threadId: f.child.id,
     content: 'I claim this is a human correction',
     mentions: [],

@@ -149,7 +149,7 @@ describe('F293 controlled human recovery journey', () => {
     assert.equal(calls, 2, 'a human attempt reaches the recovered provider');
     assert.equal((await h.decide()).targets[0].disposition, 'allowed');
     assert.equal(calls, 2, 'recovery does not replay either blocked request');
-    assert.equal(messages.filter((message) => message.extra?.systemInfo?.payload.retryInvocationId).length, 3);
+    assert.equal(messages.filter((message) => message.extra?.systemInfo?.payload.retryInvocationId).length, 0);
     await send('thread-b');
     await send('thread-c');
     assert.equal(calls, 4, 'both other threads can send again through the same resolver');

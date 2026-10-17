@@ -1,11 +1,15 @@
 'use client';
 
+import { useContext } from 'react';
 import type { CatData } from '@/hooks/useCatData';
 import { useRoutingContext } from '../routing-context/useRoutingContext';
 import { OpenTeamWorkspaceButton } from '../settings/OpenTeamWorkspaceButton';
-import { useMemberText } from './editor-presentation';
-import { MemberStatus } from './MemberStatus';
-import { memberStatus } from './member-projection';
+import { useShellCopy } from '../shell/shell-copy';
+import { useConfirm } from '../useConfirm';
+import { useMembersCopy, useMemberText } from './editor-presentation';
+import { MemberChanges } from './MemberChangeMark';
+import { type MemberStatus as MemberStatusReading, memberStatus } from './member-projection';
+import { memberSaveCopy } from './member-save.shell-copy';
 import { useMemberClock } from './useMemberClock';
 export function MemberDetailHeader({
   cat,
@@ -19,15 +23,40 @@ export function MemberDetailHeader({
   const t = useMemberText();
   const routing = useRoutingContext();
   const now = useMemberClock(routing.data);
+  const copy = useShellCopy(memberSaveCopy);
+  const changes = useContext(MemberChanges);
+  const confirm = useConfirm();
+  const editorCopy = useMembersCopy();
+  const beforeOpen = async () =>
+    changes.length === 0 ||
+    (await confirm({
+      title: editorCopy.closeTitle,
+      message: editorCopy.unsavedPrompt,
+      confirmLabel: editorCopy.leave,
+      cancelLabel: editorCopy.取消,
+    }));
+  const status: MemberStatusReading =
+    routing.loading && !routing.data
+      ? { label: '读取中', detail: '', tone: 'unknown', observedAt: undefined, detailIsNote: false }
+      : memberStatus(cat, routing.data, routing.error, now);
+  const detail = status.detailIsNote ? status.source : status.detail;
   return (
     <div className="member-detail-status">
-      <MemberStatus
-        status={
-          routing.loading && !routing.data
-            ? { label: '读取中', detail: '', tone: 'unknown' }
-            : memberStatus(cat, routing.data, routing.error, now)
-        }
-      />
+      <div className="member-detail-summary" data-tone={status.tone}>
+        <span className="member-status-label">
+          <i aria-hidden="true" />
+          {t(status.label === '已恢复' ? '可用' : status.label)}
+        </span>
+        {detail && <span> · {t(detail)}</span>}
+        {status.observedAt !== undefined && (
+          <time dateTime={new Date(status.observedAt).toISOString()}>
+            {' '}
+            · {new Date(status.observedAt).toLocaleString()}
+          </time>
+        )}
+        <span> · </span>
+        <OpenTeamWorkspaceButton label={copy.records} catId={cat.id} inline onBeforeOpen={beforeOpen} />
+      </div>
       <label className="member-enable-control">
         <span>{t('启用')}</span>
         <button
@@ -42,7 +71,7 @@ export function MemberDetailHeader({
           <span />
         </button>
       </label>
-      <OpenTeamWorkspaceButton label={t('打开猫猫团队')} />
+      <OpenTeamWorkspaceButton label={t('打开猫猫团队')} onBeforeOpen={beforeOpen} />
     </div>
   );
 }

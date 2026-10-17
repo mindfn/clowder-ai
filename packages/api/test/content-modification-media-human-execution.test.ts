@@ -12,7 +12,10 @@ async function fixture(
   visibility: 'public' | 'whisper' = 'whisper',
 ) {
   let turns = new InMemoryTurnExecutionStore();
-  const f = await mediaMessageFixture(t, mediaType, { get: (id) => turns.get(id) });
+  const f = await mediaMessageFixture(t, mediaType, {
+    get: (id) => turns.get(id),
+    listBySource: (query) => turns.listBySource(query),
+  });
   const human = f.send();
   if (visibility === 'public') {
     human.visibility = 'public';
@@ -29,19 +32,21 @@ async function fixture(
   assert.ok(child);
   // Reproduce Alpha's canonical same-turn fact: Human is covered, derived Host is not.
   const sameTurn = { ...child, causal: { triggerMessageId: human.id, coveredMessageIds: [human.id] } };
-  function observe(fact: TurnExecutionRecord | null) {
+  function observeMany(facts: TurnExecutionRecord[]) {
     turns = new InMemoryTurnExecutionStore();
-    if (!fact) return;
-    assert.equal(turns.createRunning(fact).outcome, 'created');
-    if (fact.status !== 'running')
-      turns.transitionTerminal(fact.invocationId, {
-        status: fact.status,
-        terminalReason: `fixture_canonical_${fact.status}`,
-        endedAt: fact.endedAt ?? Date.now(),
-      });
+    for (const fact of facts) {
+      assert.equal(turns.createRunning(fact).outcome, 'created');
+      if (fact.status !== 'running')
+        turns.transitionTerminal(fact.invocationId, {
+          status: fact.status,
+          terminalReason: `fixture_canonical_${fact.status}`,
+          endedAt: fact.endedAt ?? Date.now(),
+        });
+    }
   }
+  const observe = (fact: TurnExecutionRecord | null) => observeMany(fact ? [fact] : []);
   const read = () => f.integration.requests.read(request.record.requestId, f.human);
-  return { ...f, humanMessage: human, request, receipt, carrier, child, sameTurn, observe, read };
+  return { ...f, humanMessage: human, request, receipt, carrier, child, sameTurn, observe, observeMany, read };
 }
 
 for (const mediaType of ['image/png', 'video/mp4'] as const) {
@@ -94,6 +99,14 @@ for (const mediaType of ['image/png', 'video/mp4'] as const) {
       assert.equal(view.execution?.state, 'unknown');
       assert.equal(view.execution?.parentInvocationId, undefined, 'foreign facts supply no stop target');
     }
+    f.observeMany([f.sameTurn, { ...f.child, invocationId: randomUUID() }]);
+    assert.equal(
+      (await f.read()).execution?.state,
+      'unknown',
+      'competing Human/carrier causal bindings cannot choose the newest child',
+    );
+    f.observeMany([f.sameTurn, { ...f.sameTurn, invocationId: randomUUID() }]);
+    assert.equal((await f.read()).execution?.state, 'unknown', 'multiple original-Human bindings are ambiguous');
     f.observe(f.sameTurn);
     const source = f.carrier.source;
     assert.ok(source?.meta);
@@ -117,18 +130,13 @@ for (const mediaType of ['image/png', 'video/mp4'] as const) {
     f.carrier.whisperTo = ['sonnet' as typeof f.child.catId];
     assert.equal((await f.read()).execution, undefined, 'the carrier audience must remain the source audience');
     f.carrier.whisperTo = f.humanMessage.whisperTo;
-    const custody = f.carrier.queueCustody;
-    assert.ok(custody?.targetAttempts?.length);
-    const attempt = custody.targetAttempts.at(-1);
-    assert.ok(attempt);
     const laterId = randomUUID();
-    custody.targetAttempts.push({
-      ...attempt,
-      id: randomUUID(),
-      sequence: attempt.sequence + 1,
-      invocationId: laterId,
-    });
-    assert.equal((await f.read()).execution?.state, 'unknown', 'a missing current child cannot fall back to old Human');
+    f.observe(null);
+    assert.equal(
+      (await f.read()).execution?.state,
+      'unknown',
+      'no current scoped source record supplies no stop target',
+    );
     f.observe({ ...f.sameTurn, invocationId: laterId, causal: { triggerMessageId: f.carrier.id } });
     assert.equal((await f.read()).execution?.state, 'running', 'a later actual carrier turn is still valid');
     f.observe({ ...f.sameTurn, invocationId: laterId, causal: { triggerMessageId: 'another-human' } });
@@ -136,14 +144,10 @@ for (const mediaType of ['image/png', 'video/mp4'] as const) {
   });
 }
 
-test('handled media delivery without a canonical executor never claims model finished', async (t) => {
+test('retired media delivery without a canonical executor never claims model finished', async (t) => {
   const f = await fixture(t, 'image/png');
-  const custody = f.carrier.queueCustody;
-  assert.ok(custody?.targetAttempts?.length);
-  custody.status = 'terminal';
-  custody.pendingTargetCats = [];
-  custody.handledByCatIds = [f.child.catId];
-  for (const attempt of custody.targetAttempts) attempt.state = 'handled';
+  assert.equal(f.dispatch.queue.size(f.thread.id, 'operator'), 0);
+  assert.equal(f.carrier.queueCustody, undefined);
   f.observe(null);
   assert.equal((await f.read()).execution?.state, 'unknown');
   assert.equal((await f.read()).execution?.parentInvocationId, undefined);
@@ -221,7 +225,8 @@ for (const visibility of ['public', 'whisper'] as const) {
     assert.ok(receipt);
     const key = `f309-return:${createHash('sha256').update(receipt).digest('hex')}`;
     const original = f.messages.getByIdempotencyKey('operator', f.thread.id, key);
-    assert.ok(original?.queueCustody);
+    assert.ok(original);
+    assert.equal(original.queueCustody, undefined);
     const admittedVisibility = original.visibility;
     const admittedRecipients = original.whisperTo;
     await f.dispatch.waitForAwakening(original.id);

@@ -1,3 +1,7 @@
+import { shellQuoteArg } from './pty-shell-quote.js';
+
+export { shellQuoteArg } from './pty-shell-quote.js';
+
 /**
  * F230 PTY utility helpers — shared by PtyDriver and ClaudeInteractivePtyCarrierService.
  * Functions here are stateless or use tmux/fs primitives only.
@@ -26,10 +30,6 @@ export function generateSessionName(prefix: string): string {
  * token must be single-quoted to prevent metacharacter injection from
  * caller-supplied values (e.g. model override strings, extra args).
  */
-export function shellQuoteArg(s: string): string {
-  // Wrap in single quotes; escape embedded single quotes as '\''
-  return `'${s.replace(/'/g, "'\\''")}'`;
-}
 
 /**
  * Build the shell command string to launch claude inside the tmux pane.

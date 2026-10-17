@@ -1,8 +1,14 @@
 'use client';
 
+import type { ContextAttachment } from '@cat-cafe/shared';
 import { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { type UploadStatus, useSendMessage } from '@/hooks/useSendMessage';
+import {
+  type SendMessageAdmissionOptions,
+  type UploadStatus,
+  useSendMessage,
+  type WhisperOptions,
+} from '@/hooks/useSendMessage';
 import { type Thread, useChatStore } from '@/stores/chatStore';
 import { ChatInput } from './ChatInput';
 import { PawIcon } from './icons/PawIcon';
@@ -11,7 +17,16 @@ import { SplitPaneCell, SplitPanePlaceholder } from './SplitPaneCell';
 
 interface SplitPaneViewProps {
   isReadonly?: boolean;
-  onSend: ReturnType<typeof useSendMessage>['handleSend'];
+  onSend: (
+    content: string,
+    images?: File[],
+    overrideThreadId?: string,
+    whisper?: WhisperOptions,
+    replyToId?: string,
+    contextAttachments?: ContextAttachment[],
+    explicitTargetCats?: string[],
+    options?: SendMessageAdmissionOptions,
+  ) => void | boolean | Promise<void | boolean>;
   uploadStatus?: UploadStatus;
   uploadError?: string | null;
   /** Switch from split to single mode, focusing the given thread */
@@ -140,7 +155,7 @@ export function SplitPaneView({
           </div>
 
           {/* Shared input bar */}
-          <div className="border-t border-cafe-subtle bg-cafe-surface px-3 py-2">
+          <div data-concierge-action-zone className="border-t border-cafe-subtle bg-cafe-surface px-3 py-2">
             <div className="flex items-center gap-2 mb-1">
               <span className="text-micro text-cafe-muted">
                 {splitPaneTargetId
@@ -151,27 +166,45 @@ export function SplitPaneView({
             <ChatInput
               key={splitPaneTargetId ?? 'no-target'}
               threadId={splitPaneTargetId ?? undefined}
-              onSend={(content, images, whisper, deliveryMode, replyToId, messageDisposition, contextAttachments) =>
-                contextAttachments?.length
+              onSend={(
+                content,
+                images,
+                whisper,
+                replyToId,
+                contextAttachments,
+                explicitTargetCats,
+                messageDisposition,
+              ) =>
+                messageDisposition
                   ? onSend(
                       content,
                       images,
                       splitPaneTargetId ?? undefined,
                       whisper,
-                      deliveryMode,
                       replyToId,
-                      messageDisposition,
                       contextAttachments,
+                      explicitTargetCats,
+                      { messageDisposition },
                     )
-                  : onSend(
-                      content,
-                      images,
-                      splitPaneTargetId ?? undefined,
-                      whisper,
-                      deliveryMode,
-                      replyToId,
-                      messageDisposition,
-                    )
+                  : contextAttachments?.length
+                    ? onSend(
+                        content,
+                        images,
+                        splitPaneTargetId ?? undefined,
+                        whisper,
+                        replyToId,
+                        contextAttachments,
+                        explicitTargetCats,
+                      )
+                    : onSend(
+                        content,
+                        images,
+                        splitPaneTargetId ?? undefined,
+                        whisper,
+                        replyToId,
+                        undefined,
+                        explicitTargetCats,
+                      )
               }
               disabled={!splitPaneTargetId || isReadonly}
               uploadStatus={uploadStatus}
@@ -191,7 +224,7 @@ export function SplitPaneChatView(props: SplitPaneChatViewProps) {
   const { handleSend, uploadStatus, uploadError } = useSendMessage();
   const sendComposerDraft = useCallback<typeof handleSend>(
     (...args) => {
-      args[8] = { ...args[8], consumeComposerDraft: true };
+      args[7] = { ...args[7], consumeComposerDraft: true };
       return handleSend(...args);
     },
     [handleSend],

@@ -143,7 +143,7 @@ describe('ChatInput context picker', () => {
         .querySelector<HTMLTextAreaElement>('textarea')
         ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     });
-    expect(onSendMock).toHaveBeenCalledWith('', undefined, undefined, undefined, undefined, undefined, [
+    expect(onSendMock).toHaveBeenCalledWith('', undefined, undefined, undefined, [
       expect.objectContaining({ kind: 'thread', threadId: 'thread_other', title: '另一个 Thread' }),
     ]);
   });
@@ -214,9 +214,7 @@ describe('ChatInput context picker', () => {
     await act(async () =>
       container.querySelector('textarea')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })),
     );
-    expect(onSendMock).toHaveBeenCalledWith('保留旧稿', undefined, undefined, undefined, undefined, undefined, [
-      screening('v1'),
-    ]);
+    expect(onSendMock).toHaveBeenCalledWith('保留旧稿', undefined, undefined, undefined, [screening('v1')]);
   });
   it('sends multiple same-screening marks through the original composer as one frozen source', async () => {
     const first = screening('v1');
@@ -231,10 +229,7 @@ describe('ChatInput context picker', () => {
     await act(async () =>
       container.querySelector('textarea')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })),
     );
-    expect(onSendMock).toHaveBeenCalledWith('两处一起修改', undefined, undefined, undefined, undefined, undefined, [
-      first,
-      second,
-    ]);
+    expect(onSendMock).toHaveBeenCalledWith('两处一起修改', undefined, undefined, undefined, [first, second]);
   });
 
   it('searches Workspace filenames and inserts the selected result', async () => {

@@ -14,38 +14,30 @@ const DEFAULT_SNAPSHOT: MessageDispositionPreferenceSnapshot = {
   thread: null,
   effective: 'next_work',
   source: 'product',
-  onboardingSeen: false,
 };
 
 export type MessageDispositionSelectionSource = MessageDispositionPreferenceSource | 'once';
-export type MessageDispositionPreferenceScope = 'once' | 'thread' | 'global';
+export type MessageDispositionPreferenceScope = 'thread' | 'global';
 
 export interface MessageDispositionPreferenceController {
   snapshot: MessageDispositionPreferenceSnapshot;
-  oneShot: MessageWorkDisposition | null;
   effective: MessageWorkDisposition;
   source: MessageDispositionSelectionSource;
   loading: boolean;
   error: string | null;
+  oneShot: MessageWorkDisposition | null;
   setOneShot(disposition: MessageWorkDisposition): void;
   clearOneShot(): void;
   setPreference(scope: 'thread' | 'global', disposition: MessageWorkDisposition | null): Promise<boolean>;
-  markOnboardingSeen(): Promise<boolean>;
 }
 
 type PreferenceWrite =
   | { scope: 'global'; disposition: MessageWorkDisposition | null }
-  | { scope: 'thread'; threadId: string; disposition: MessageWorkDisposition | null }
-  | { scope: 'onboarding'; seen: true };
+  | { scope: 'thread'; threadId: string; disposition: MessageWorkDisposition | null };
 
 interface ScopedSnapshot {
   threadId: string | undefined;
   value: MessageDispositionPreferenceSnapshot;
-}
-
-interface ScopedOneShot {
-  threadId: string | undefined;
-  value: MessageWorkDisposition | null;
 }
 
 function applyGlobalPreference(
@@ -60,7 +52,6 @@ function applyGlobalPreference(
     global,
     effective,
     source: snapshot.thread ? 'thread' : global ? 'global' : 'product',
-    onboardingSeen: next.onboardingSeen,
   };
 }
 
@@ -72,9 +63,6 @@ function applySavedSnapshot(
 ): ScopedSnapshot {
   if (current.threadId !== threadId) return current;
   if (body.scope === 'global') return { threadId, value: applyGlobalPreference(current.value, next) };
-  if (body.scope === 'onboarding') {
-    return { threadId, value: { ...current.value, onboardingSeen: next.onboardingSeen } };
-  }
   return { threadId, value: next };
 }
 
@@ -91,20 +79,24 @@ export function useMessageDispositionPreference(
     threadId: undefined,
     value: DEFAULT_SNAPSHOT,
   });
-  const [oneShotState, setOneShotState] = useState<ScopedOneShot>({
-    threadId: undefined,
-    value: null,
-  });
   const [loading, setLoading] = useState(false);
+  const [oneShotState, setOneShotState] = useState<{
+    threadId: string | undefined;
+    value: MessageWorkDisposition | null;
+  }>({ threadId, value: null });
+  const oneShot = oneShotState.threadId === threadId ? oneShotState.value : null;
+  const setOneShot = useCallback((value: MessageWorkDisposition) => setOneShotState({ threadId, value }), [threadId]);
+  const clearOneShot = useCallback(
+    () => setOneShotState((current) => (current === oneShotState ? { threadId, value: null } : current)),
+    [threadId, oneShotState],
+  );
   const [error, setError] = useState<string | null>(null);
   const operationSequence = useRef(0);
   const snapshot = snapshotState.threadId === threadId ? snapshotState.value : DEFAULT_SNAPSHOT;
-  const oneShot = oneShotState.threadId === threadId ? oneShotState.value : null;
 
   useLayoutEffect(() => {
     operationSequence.current += 1;
     setSnapshotState({ threadId, value: DEFAULT_SNAPSHOT });
-    setOneShotState({ threadId, value: null });
     setLoading(false);
     setError(null);
   }, [threadId]);
@@ -127,18 +119,6 @@ export function useMessageDispositionPreference(
         if (operationSequence.current === sequence) setLoading(false);
       });
   }, [enabled, threadId]);
-
-  const setOneShot = useCallback(
-    (disposition: MessageWorkDisposition) => {
-      setOneShotState({ threadId, value: disposition });
-      setError(null);
-    },
-    [threadId],
-  );
-
-  const clearOneShot = useCallback(() => {
-    setOneShotState((current) => (current.threadId === threadId ? { ...current, value: null } : current));
-  }, [threadId]);
 
   const save = useCallback(
     async (body: PreferenceWrite): Promise<boolean> => {
@@ -179,24 +159,18 @@ export function useMessageDispositionPreference(
     [save, threadId],
   );
 
-  const markOnboardingSeen = useCallback(() => {
-    if (snapshot.onboardingSeen) return Promise.resolve(true);
-    return save({ scope: 'onboarding', seen: true });
-  }, [save, snapshot.onboardingSeen]);
-
   return useMemo(
     () => ({
       snapshot,
-      oneShot,
       effective: oneShot ?? snapshot.effective,
-      source: oneShot ? ('once' as const) : snapshot.source,
-      loading,
-      error,
+      source: oneShot ? 'once' : snapshot.source,
+      oneShot,
       setOneShot,
       clearOneShot,
+      loading,
+      error,
       setPreference,
-      markOnboardingSeen,
     }),
-    [snapshot, oneShot, loading, error, setOneShot, clearOneShot, setPreference, markOnboardingSeen],
+    [snapshot, oneShot, setOneShot, clearOneShot, loading, error, setPreference],
   );
 }

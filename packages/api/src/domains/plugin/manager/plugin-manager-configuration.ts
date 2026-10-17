@@ -3,8 +3,8 @@ import type { ConfigurationField } from '@clowder-ai/plugin-contract';
 import type { PluginInventoryStore, PluginInventoryTransaction } from '../host-inventory/ports.js';
 import type { PluginInstanceRecord, PluginPackageRecord } from '../host-inventory/types.js';
 import { readPluginConfig, writePluginConfig } from '../plugin-config-store.js';
-import { type PluginManagerConfigurationPort, PluginManagerServiceError } from '../plugin-manager-service.js';
 import { effectivePluginConfigurationValue } from './plugin-configuration-values.js';
+import { type PluginManagerConfigurationPort, PluginManagerServiceError } from './plugin-manager-service.js';
 
 const SECRET_MASK = '••••••';
 const CONFIGURATION_KEY = /^[A-Za-z][A-Za-z0-9._-]*$/;

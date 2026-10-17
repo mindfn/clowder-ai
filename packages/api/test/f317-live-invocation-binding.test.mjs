@@ -95,5 +95,6 @@ test('Live declares the app-server carrier it actually uses even when ordinary t
     provider: 'openai_codex',
     carrier: 'codex_app_server',
     deliverySemantics: 'exact_active_turn',
+    activeInvocationGuidance: 'supported',
   });
 });

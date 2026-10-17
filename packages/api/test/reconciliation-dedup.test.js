@@ -36,46 +36,46 @@ describe('ReconciliationDedup', () => {
   });
 
   it('returns false for a new item', async () => {
-    const result = await dedup.isNotified('zts212653/cat-cafe', 'pr', 42);
+    const result = await dedup.isNotified('fixture-owner/first-repo', 'pr', 42);
     assert.equal(result, false);
   });
 
   it('returns true after markNotified', async () => {
-    await dedup.markNotified('zts212653/cat-cafe', 'pr', 42);
-    const result = await dedup.isNotified('zts212653/cat-cafe', 'pr', 42);
+    await dedup.markNotified('fixture-owner/first-repo', 'pr', 42);
+    const result = await dedup.isNotified('fixture-owner/first-repo', 'pr', 42);
     assert.equal(result, true);
   });
 
   it('tracks PRs and Issues independently', async () => {
-    await dedup.markNotified('zts212653/cat-cafe', 'pr', 10);
-    assert.equal(await dedup.isNotified('zts212653/cat-cafe', 'pr', 10), true);
-    assert.equal(await dedup.isNotified('zts212653/cat-cafe', 'issue', 10), false);
+    await dedup.markNotified('fixture-owner/first-repo', 'pr', 10);
+    assert.equal(await dedup.isNotified('fixture-owner/first-repo', 'pr', 10), true);
+    assert.equal(await dedup.isNotified('fixture-owner/first-repo', 'issue', 10), false);
   });
 
   it('tracks repos independently', async () => {
-    await dedup.markNotified('zts212653/cat-cafe', 'pr', 5);
-    assert.equal(await dedup.isNotified('zts212653/cat-cafe', 'pr', 5), true);
-    assert.equal(await dedup.isNotified('zts212653/clowder-ai', 'pr', 5), false);
+    await dedup.markNotified('fixture-owner/first-repo', 'pr', 5);
+    assert.equal(await dedup.isNotified('fixture-owner/first-repo', 'pr', 5), true);
+    assert.equal(await dedup.isNotified('fixture-owner/second-repo', 'pr', 5), false);
   });
 
   it('uses correct key prefix', async () => {
-    await dedup.markNotified('zts212653/cat-cafe', 'pr', 99);
-    assert.ok(redis.store.has('f141:notified:zts212653/cat-cafe#pr-99'));
+    await dedup.markNotified('fixture-owner/first-repo', 'pr', 99);
+    assert.ok(redis.store.has('f141:notified:fixture-owner/first-repo#pr-99'));
   });
 
   it('tracks repo baseline independently from item notifications', async () => {
-    assert.equal(await dedup.isBaselineEstablished('zts212653/cat-cafe'), false);
+    assert.equal(await dedup.isBaselineEstablished('fixture-owner/first-repo'), false);
 
-    await dedup.markBaselineEstablished('zts212653/cat-cafe');
+    await dedup.markBaselineEstablished('fixture-owner/first-repo');
 
-    assert.equal(await dedup.isBaselineEstablished('zts212653/cat-cafe'), true);
-    assert.equal(await dedup.isBaselineEstablished('zts212653/clowder-ai'), false);
-    assert.equal(await dedup.isNotified('zts212653/cat-cafe', 'pr', 99), false);
+    assert.equal(await dedup.isBaselineEstablished('fixture-owner/first-repo'), true);
+    assert.equal(await dedup.isBaselineEstablished('fixture-owner/second-repo'), false);
+    assert.equal(await dedup.isNotified('fixture-owner/first-repo', 'pr', 99), false);
   });
 
   it('stores notified markers without TTL', async () => {
-    await dedup.markNotified('zts212653/cat-cafe', 'issue', 100);
-    const entry = redis.store.get('f141:notified:zts212653/cat-cafe#issue-100');
+    await dedup.markNotified('fixture-owner/first-repo', 'issue', 100);
+    const entry = redis.store.get('f141:notified:fixture-owner/first-repo#issue-100');
 
     assert.equal(entry.value, '1');
     assert.equal(entry.exToken, undefined);
@@ -83,8 +83,8 @@ describe('ReconciliationDedup', () => {
   });
 
   it('stores baseline markers without TTL', async () => {
-    await dedup.markBaselineEstablished('zts212653/cat-cafe');
-    const entry = redis.store.get('f141:baseline:zts212653/cat-cafe');
+    await dedup.markBaselineEstablished('fixture-owner/first-repo');
+    const entry = redis.store.get('f141:baseline:fixture-owner/first-repo');
 
     assert.equal(entry.value, '1');
     assert.equal(entry.exToken, undefined);
@@ -92,10 +92,10 @@ describe('ReconciliationDedup', () => {
   });
 
   it('migrates old TTL markers to persistent markers when observed', async () => {
-    await redis.set('f141:notified:zts212653/cat-cafe#pr-101', '1', 'EX', 604800);
+    await redis.set('f141:notified:fixture-owner/first-repo#pr-101', '1', 'EX', 604800);
 
-    assert.equal(await dedup.isNotified('zts212653/cat-cafe', 'pr', 101), true);
-    const entry = redis.store.get('f141:notified:zts212653/cat-cafe#pr-101');
+    assert.equal(await dedup.isNotified('fixture-owner/first-repo', 'pr', 101), true);
+    const entry = redis.store.get('f141:notified:fixture-owner/first-repo#pr-101');
     assert.equal(entry.value, '1');
     assert.equal(entry.exToken, undefined);
     assert.equal(entry.ttl, undefined);

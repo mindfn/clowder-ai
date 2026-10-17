@@ -11,12 +11,12 @@ import {
   getCliEffortOptionsForClient,
   type HubCatEditorFormState,
   type StrategyFormState,
-  usesCliTransport,
+  usesCliCarrier,
 } from './hub-cat-editor.model';
 import { SectionCard, SelectField, TextField } from './hub-cat-editor-fields';
 import { TagEditor } from './hub-tag-editor';
-
 import { useEditorText, useMemberEditorPresentation } from './members/editor-presentation';
+import { MemberChangedField } from './members/MemberChangeMark';
 
 type FormPatch = Partial<HubCatEditorFormState>;
 
@@ -61,7 +61,7 @@ export function AdvancedRuntimeSection({
     authMode: 'oauth' as const,
   };
   const cliEffortOptions = getCliEffortOptionsForClient(form.clientId, form.defaultModel);
-  const cliExtensionsAvailable = usesCliTransport(form);
+  const cliExtensionsAvailable = usesCliCarrier(form);
 
   return (
     <SectionCard
@@ -138,22 +138,24 @@ export function AdvancedRuntimeSection({
           </div>
         ) : null}
         {cliExtensionsAvailable ? (
-          <div className="space-y-1">
-            <p className="text-sm font-medium text-cafe">{t('额外 CLI 参数')}</p>
-            <TagEditor
-              tags={form.cliConfigArgs}
-              onChange={(nextTags) => onChange({ cliConfigArgs: nextTags })}
-              addLabel={t('+ 添加参数')}
-              placeholder={t('例如 --model xxx 或 --flag value')}
-              emptyLabel={t('无额外参数')}
-              tone="green"
-            />
-            <p className="text-label leading-4 text-cafe-muted">
-              {page
-                ? t('启动时附加这些参数；与上方字段重复的保留参数以上方字段为准。')
-                : '每条直接追加到 CLI 命令。普通重复参数以用户参数为准；`CLI Effort`、`速度档位`等结构化保留项始终以上方字段为准，对应 raw 参数会被忽略。'}
-            </p>
-          </div>
+          <MemberChangedField label="Extra CLI arguments">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-cafe">{t('额外 CLI 参数')}</p>
+              <TagEditor
+                tags={form.cliConfigArgs}
+                onChange={(nextTags) => onChange({ cliConfigArgs: nextTags })}
+                addLabel={t('+ 添加参数')}
+                placeholder={t('例如 --model xxx 或 --flag value')}
+                emptyLabel={t('无额外参数')}
+                tone="green"
+              />
+              <p className="text-label leading-4 text-cafe-muted">
+                {page
+                  ? t('启动时附加这些参数；与上方字段重复的保留参数以上方字段为准。')
+                  : '每条直接追加到 CLI 命令。普通重复参数以用户参数为准；`CLI Effort`、`速度档位`等结构化保留项始终以上方字段为准，对应 raw 参数会被忽略。'}
+              </p>
+            </div>
+          </MemberChangedField>
         ) : null}
       </div>
 
@@ -225,18 +227,14 @@ export function AdvancedRuntimeSection({
 }
 
 function selectionMatchesSavedContext(cat: CatData | null | undefined, form: HubCatEditorFormState): boolean {
-  if (!cat || cat.clientId !== form.clientId || Boolean(cat.acp) !== form.acpEnabled) return false;
-  if (form.clientId !== 'openai') return true;
-  return (cat.cli?.carrier ?? '') === form.codexCarrier;
+  return Boolean(cat && cat.clientId === form.clientId && cat.carrier === form.carrier);
 }
 
 function draftCannotResolveOrApplyContextWindow(form: HubCatEditorFormState): boolean | null {
-  if (form.acpEnabled) return false;
+  if (form.carrier === 'acp') return false;
   if (form.clientId === 'antigravity' || form.clientId === 'catagent' || form.clientId === 'google') return true;
   if (form.clientId !== 'openai') return false;
-  if (form.codexCarrier === 'app_server') return true;
-  if (form.codexCarrier === 'exec_json') return false;
-  return null;
+  return form.carrier === 'app_server';
 }
 
 export function ContextWindowCompatibilityNotice({ cat, form }: { cat?: CatData | null; form: HubCatEditorFormState }) {

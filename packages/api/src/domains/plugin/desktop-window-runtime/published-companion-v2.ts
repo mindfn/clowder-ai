@@ -12,10 +12,22 @@ export const PUBLISHED_COMPANION_PRESENTATION = {
   packageDigest: 'sha512-TN23gstQt3AC79zddScxjr9q9ZPGaNn+ieGdrLvfm3Ju+ev1cBjH/z7US8pxP3bLLF6FbFYfPbFmogb9EeIxug==',
 } as const;
 
+/** Verified registry release for durable letters and bounded history; never a source-only candidate. */
+export const PUBLISHED_COMPANION_LETTER = {
+  version: '0.1.0-alpha.25',
+  packageDigest: 'sha512-nAQbBlflHyfY08lzldO/nxEqbLvteXYT3e+rMxw/Lfq/2o8t01WH82aPLHrkyhxgvDe0IS7cfo0DCo30qow/wQ==',
+} as const;
+
 export interface CompanionArchiveContract {
   readonly version: string;
   readonly packageDigest: string;
-  readonly contract: '0.1.0-beta.21' | '0.1.0-beta.23' | '0.1.0-beta.24' | '0.1.0-beta.25' | '0.1.0-beta.27';
+  readonly contract:
+    | '0.1.0-beta.21'
+    | '0.1.0-beta.23'
+    | '0.1.0-beta.24'
+    | '0.1.0-beta.25'
+    | '0.1.0-beta.27'
+    | '0.1.0-beta.28';
 }
 
 /** Host-owned archive catalog, never negotiated by bridgeVersion or renderer input. */
@@ -47,6 +59,12 @@ export const COMPANION_ARCHIVE_CONTRACTS: readonly CompanionArchiveContract[] = 
     contract: '0.1.0-beta.25',
   },
   { ...PUBLISHED_COMPANION_PRESENTATION, contract: '0.1.0-beta.27' },
+  { ...PUBLISHED_COMPANION_LETTER, contract: '0.1.0-beta.28' },
+  {
+    version: '0.1.0-alpha.26',
+    packageDigest: 'sha512-bAyhY4Xbn5lzjaJtpFPRM7BhZtt5alycAxrVomLdv9WUAKVBBjA2u/EGDVpQEry1c6tqPLLfIqkLYXf0MKAclA==',
+    contract: '0.1.0-beta.28',
+  },
 ];
 
 export function isModernCompanionContract(contract: CompanionArchiveContract['contract'] | undefined): boolean {
@@ -54,7 +72,8 @@ export function isModernCompanionContract(contract: CompanionArchiveContract['co
     contract === '0.1.0-beta.23' ||
     contract === '0.1.0-beta.24' ||
     contract === '0.1.0-beta.25' ||
-    contract === '0.1.0-beta.27'
+    contract === '0.1.0-beta.27' ||
+    contract === '0.1.0-beta.28'
   );
 }
 

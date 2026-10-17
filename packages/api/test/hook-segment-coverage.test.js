@@ -5,7 +5,7 @@
  * - **Segment coverage**: every expected S/D-prefix hook produces non-empty
  *   content (catches silent drops during refactoring)
  * - Specific segment content from known hooks (identity, mentions, governance)
- * - Correct hook event counts matching the 46-hook manifest catalog
+ * - Correct hook event counts matching the 45-hook manifest catalog
  * - S-prefix scope filtering (L/B/C hooks executed but not in output)
  * - D-prefix scope filtering (R/N hooks executed but not in output)
  * - Trace capture drains correctly (no stale buffer)
@@ -283,7 +283,7 @@ describe('Hook segment coverage (AC-P2-14)', () => {
     }
   });
 
-  it('per-turn trace produces exactly 24 per-turn events', () => {
+  it('per-turn trace retains all 23 active hooks after retiring Signal article injection', () => {
     const { trace } = ppb.buildInvocationContextViaHookPipelineWithTrace({
       catId: 'opus',
       mode: 'serial',
@@ -293,7 +293,14 @@ describe('Hook segment coverage (AC-P2-14)', () => {
       mcpAvailable: true,
       a2aEnabled: true,
     });
-    assert.equal(trace.events.length, 24, `Expected 24 per-turn events, got ${trace.events.length}`);
+    assert.equal(trace.events.length, 23, `Expected 23 per-turn events, got ${trace.events.length}`);
+    const expectedIds = [...Array.from({ length: 19 }, (_, i) => `D${i + 1}`), 'D21', 'R1', 'R2', 'N1'];
+    assert.deepEqual(
+      trace.events.map((event) => event.hookId).sort(),
+      expectedIds.sort(),
+      'Retiring D20 must preserve every other per-turn hook',
+    );
+    assert.ok(!trace.patches.some((patch) => patch.hookId === 'D20'), 'Retired article injection produces no patch');
   });
 
   // -- Trace capture (AC-P2-8) -----------------------------------------------

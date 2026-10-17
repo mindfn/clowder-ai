@@ -1,5 +1,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import type { ConversationViewPreferenceController } from '@/hooks/useConversationViewPreference';
+import type { ChatMessage, QueueEntry } from '@/stores/chat-types';
 import { apiFetch } from '@/utils/api-client';
 import { AppTooltip } from './AppTooltip';
 import { ThreadTitleResetMenu } from './execution-row/ThreadTitleResetMenu';
@@ -26,6 +28,9 @@ interface ChatContainerHeaderProps {
   onOpenMessageSearch?: () => void;
   messageSearchOpen?: boolean;
   approvalCount?: number;
+  conversationViewController?: ConversationViewPreferenceController;
+  conversationViewMessages?: readonly ChatMessage[];
+  conversationViewQueue?: readonly QueueEntry[];
 }
 
 export function ChatContainerHeader({
@@ -43,6 +48,9 @@ export function ChatContainerHeader({
   onOpenMessageSearch,
   messageSearchOpen = false,
   approvalCount = 0,
+  conversationViewController,
+  conversationViewMessages,
+  conversationViewQueue,
 }: ChatContainerHeaderProps) {
   const isV2 = useShellPresentation() === 'v2';
   if (isV2) {
@@ -76,12 +84,18 @@ export function ChatContainerHeader({
               {/* F198 Phase C AC-C5: Daemon active indicator */}
               <DaemonActiveIndicator threadId={threadId} />
             </div>
-            <ConversationViewMenu key={threadId} threadId={threadId} />
+            <ConversationViewMenu
+              key={threadId}
+              threadId={threadId}
+              controller={conversationViewController}
+              messages={conversationViewMessages}
+              queue={conversationViewQueue}
+            />
             <ThreadMetadataMenu key={`metadata:${threadId}`} threadId={threadId} />
           </div>
           <div className="shell-chat-header-actions flex flex-none flex-wrap items-center justify-end gap-1 sm:gap-1.5">
             {onOpenMessageSearch && <MessageSearchButton onOpen={onOpenMessageSearch} open={messageSearchOpen} />}
-            <ThreadWorksButton />
+            <ThreadWorksButton threadId={threadId} />
             <ThreadTasksButton />
             <PanelToggle
               onToggleStatusPanel={onToggleStatusPanel}

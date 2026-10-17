@@ -6,7 +6,7 @@ import { useThreadArtifacts } from '@/hooks/useThreadArtifacts';
 import { scrollToMessage } from '@/utils/scrollToMessage';
 import { ArtifactFileSourceResolver } from './ArtifactFileSourceResolver';
 import { ArtifactPublicationSurface } from './ArtifactPublicationSurface';
-import { useF307ExperienceWorkbenchStore } from './experience-workbench-store';
+import { useResolveContentSurface } from './ContentSurfaceResolution';
 import { F307OwnerUnavailable as OwnerUnavailable } from './F307OwnerUnavailable';
 import { LegacyArtifactFileResolver } from './LegacyArtifactFileResolver';
 import { artifactObjectId, legacyArtifactObjectId, resolveArtifactTarget } from './real-surface-adapters';
@@ -20,6 +20,7 @@ export function F307ArtifactOwnerSurface({
   onRequestDetach: () => void;
   onOpenSurface: (surface: WorkspaceSurfaceDescriptor) => void;
 }) {
+  const resolveSurface = useResolveContentSurface(surface.id);
   const target = resolveArtifactTarget(surface);
   const { artifacts, loading, error } = useThreadArtifacts(target?.threadId);
   const [selected, setSelected] = useState<string | null>(null);
@@ -66,11 +67,7 @@ export function F307ArtifactOwnerSurface({
           title: artifact.name,
         }}
         onBack={onRequestDetach}
-        onResolved={(resolved) =>
-          useF307ExperienceWorkbenchStore
-            .getState()
-            .dispatch({ type: 'resolve-content-surface', sourceSurfaceId: surface.id, surface: resolved })
-        }
+        onResolved={(resolved) => resolveSurface(resolved)}
       />
     );
   if ((artifact.type === 'file' || artifact.type === 'code') && !artifact.url && artifact.ref?.startsWith('/'))
@@ -80,26 +77,16 @@ export function F307ArtifactOwnerSurface({
         path={artifact.ref}
         title={artifact.name}
         onBack={onRequestDetach}
-        onResolved={(resolved) =>
-          useF307ExperienceWorkbenchStore.getState().dispatch({
-            type: 'resolve-content-surface',
-            sourceSurfaceId: surface.id,
-            surface: resolved,
-          })
-        }
+        onResolved={(resolved) => resolveSurface(resolved)}
       />
     );
-  if (artifact.url && /^\/uploads\/[^/]+\.(png|mp4)$/i.test(artifact.url))
+  if (artifact.url && /^\/uploads\/[^/]+\.(png|jpe?g|webp|mp4)$/i.test(artifact.url))
     return (
       <ArtifactPublicationSurface
         key={`${target.threadId}:${target.artifactId}`}
         artifact={artifact}
         surface={surface}
-        onResolved={(resolved) =>
-          useF307ExperienceWorkbenchStore
-            .getState()
-            .dispatch({ type: 'resolve-content-surface', sourceSurfaceId: surface.id, surface: resolved })
-        }
+        onResolved={(resolved) => resolveSurface(resolved)}
         threadId={target.threadId}
         onBack={onRequestDetach}
       />

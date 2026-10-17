@@ -1384,7 +1384,7 @@ for ((i=1; i<=$#; i++)); do
 done
 
 if [ "\${1:-}" = "issue" ] && [ "\${2:-}" = "view" ]; then
-  if [ "$repo" != "zts212653/cat-cafe" ]; then
+  if [ "$repo" != "zts212653/clowder-ai" ]; then
     exit 1
   fi
   issue_id="\${3:-}"
@@ -1398,7 +1398,7 @@ NODE
 fi
 
 if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "view" ]; then
-  if [ "$repo" = "zts212653/cat-cafe" ]; then
+  if [ "$repo" = "zts212653/clowder-ai" ]; then
     cat <<'JSON'
 ${mockAbsorbPrJson}
 JSON
@@ -1413,7 +1413,7 @@ JSON
 fi
 
 if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "diff" ]; then
-  if [ "$repo" = "zts212653/cat-cafe" ]; then
+  if [ "$repo" = "zts212653/clowder-ai" ]; then
     cat <<'FILES'
 ${mockAbsorbPrFileList}
 FILES
@@ -1536,7 +1536,7 @@ for ((i=1; i<=$#; i++)); do
   fi
 done
 
-if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "view" ] && [ "$repo" = "zts212653/cat-cafe" ]; then
+if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "view" ] && [ "$repo" = "zts212653/clowder-ai" ]; then
   cat <<'JSON'
 {"headRefOid":"${currentHead}","state":"OPEN","headRefName":"fix/intake-fixture"}
 JSON
@@ -1550,7 +1550,7 @@ JSON
   exit 0
 fi
 
-if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "comment" ] && [ "\${3:-}" = "5678" ] && [ "$repo" = "zts212653/cat-cafe" ]; then
+if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "comment" ] && [ "\${3:-}" = "5678" ] && [ "$repo" = "zts212653/clowder-ai" ]; then
   body_file=""
   for ((i=1; i<=$#; i++)); do
     if [ "\${!i}" = "--body-file" ]; then

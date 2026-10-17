@@ -107,7 +107,9 @@ async function createManagedWindow(
     if (!win.isDestroyed()) win.webContents.send('companion:event', event);
   };
   const voice = createVoiceHost(electron, {
-    callScoped: ['0.1.0-beta.23', '0.1.0-beta.24', '0.1.0-beta.25', '0.1.0-beta.27'].includes(companionContract),
+    callScoped: ['0.1.0-beta.23', '0.1.0-beta.24', '0.1.0-beta.25', '0.1.0-beta.27', '0.1.0-beta.28'].includes(
+      companionContract,
+    ),
     resources: options.voiceResources,
     isArmed: () => controller.armed,
     requestOffer: (sdp) => controller.request({ kind: 'offer', sdp }, false),

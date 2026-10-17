@@ -11,7 +11,10 @@ import type { LiveRecoveryOptions } from './recovery/live-recovery-contract.js';
 /** Admission dependencies owned by Host, never a renderer-supplied configuration. */
 export interface LiveCompanionCallOptions {
   binding: Omit<LiveTranscriptBinding, 'nativeThreadId' | 'realtimeSessionId'>;
-  messageStore: Pick<IMessageStore, 'appendIdempotent' | 'getById' | 'getByThread' | 'getByThreadAfter'>;
+  messageStore: Pick<
+    IMessageStore,
+    'appendIdempotent' | 'getById' | 'getByThread' | 'getByThreadAfter' | 'recordCompanionDeliveryAcceptance'
+  >;
   mcpDistDir: string;
   allowedDirectories: readonly string[];
   screenServer?: CodexAppServerJsonObject;

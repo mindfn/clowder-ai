@@ -115,7 +115,6 @@ function sanitizeDispositionPreferences(value: unknown): MessageDispositionPrefe
   return {
     ...(isDisposition(candidate.global) ? { global: candidate.global } : {}),
     ...(Object.keys(threads).length > 0 ? { threads } : {}),
-    ...(candidate.onboardingSeen === true ? { onboardingSeen: true } : {}),
   };
 }
 
@@ -133,7 +132,6 @@ export function resolveMessageDispositionPreference(
       thread,
       effective: thread,
       source: 'thread',
-      onboardingSeen: preference.onboardingSeen === true,
     };
   }
   if (global) {
@@ -143,7 +141,6 @@ export function resolveMessageDispositionPreference(
       thread: null,
       effective: global,
       source: 'global',
-      onboardingSeen: preference.onboardingSeen === true,
     };
   }
   return {
@@ -152,7 +149,6 @@ export function resolveMessageDispositionPreference(
     thread: null,
     effective: MESSAGE_DISPOSITION_PRODUCT_DEFAULT,
     source: 'product',
-    onboardingSeen: preference.onboardingSeen === true,
   };
 }
 
@@ -160,14 +156,10 @@ export function saveMessageDispositionPreference(
   projectRoot: string,
   input:
     | { scope: 'global'; disposition: MessageWorkDisposition | null }
-    | { scope: 'thread'; threadId: string; disposition: MessageWorkDisposition | null }
-    | { scope: 'onboarding'; seen: true },
+    | { scope: 'thread'; threadId: string; disposition: MessageWorkDisposition | null },
 ): MessageDispositionPreferenceSnapshot {
   updateUserPreferences(projectRoot, (current) => {
     const existing = sanitizeDispositionPreferences(current.messageDisposition);
-    if (input.scope === 'onboarding') {
-      return { ...current, messageDisposition: { ...existing, onboardingSeen: true } };
-    }
     if (input.scope === 'global') {
       const next = { ...existing };
       if (input.disposition) next.global = input.disposition;

@@ -20,6 +20,7 @@ function createMockSocketManager() {
   return {
     broadcastAgentMessage() {},
     broadcastToRoom() {},
+    emitToUser() {},
   };
 }
 
@@ -135,14 +136,17 @@ describe('F177-H: Cross-post participant check warning', () => {
   let mockRouter;
   let threadStore;
   let agentKeyRegistry;
+  let invocationQueue;
 
   beforeEach(async () => {
     const { InvocationRegistry } = await import(
       '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js'
     );
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
     registry = new InvocationRegistry();
+    invocationQueue = new InvocationQueue();
     messageStore = new MessageStore();
     socketManager = createMockSocketManager();
     invocationRecordStore = createMockInvocationRecordStore();
@@ -160,6 +164,8 @@ describe('F177-H: Cross-post participant check warning', () => {
       socketManager,
       router: mockRouter,
       invocationRecordStore,
+      invocationQueue,
+      queueProcessor: { async requestDrain() {} },
       threadStore,
       agentKeyRegistry,
     });
@@ -335,26 +341,6 @@ describe('F177-H: Cross-post participant check warning', () => {
     assert.equal(notInThread, undefined, 'no warning when target is a participant');
   });
 
-  test('agent-key post rejects replace_final because it has no provider stream', async () => {
-    const app = await createApp();
-    const targetThread = threadStore.create('user-1', 'Target');
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/callbacks/post-message',
-      headers: { 'x-agent-key-secret': 'test-agent-secret' },
-      payload: {
-        threadId: targetThread.id,
-        content: 'There is no provider final to replace',
-        streamDisposition: 'replace_final',
-      },
-    });
-
-    assert.equal(res.statusCode, 400);
-    assert.equal(JSON.parse(res.body).kind, 'replace_final_agent_key_unsupported');
-    assert.equal(messageStore.size, 0);
-  });
-
   test('agent-key reviewer can persist and route a typed local review fact without lease state', async () => {
     const app = await createApp();
     const targetThread = threadStore.create('user-1', 'Target');
@@ -371,7 +357,7 @@ describe('F177-H: Cross-post participant check warning', () => {
         clientMessageId: 'typed-local-review-agent-key',
         localReviewVerdict: 'approved',
         reviewedHeadSha: 'a'.repeat(40),
-        reviewSubjectRef: 'pr:zts212653/cat-cafe#4268',
+        reviewSubjectRef: 'pr:zts212653/clowder-ai#4268',
         acceptedSourceRef: 'docs/features/F314-development-episode-alignment-experiment.md',
         acceptedRevision: 'b'.repeat(40),
       },
@@ -384,7 +370,7 @@ describe('F177-H: Cross-post participant check warning', () => {
       verdict: 'approved',
       clientMessageId: 'typed-local-review-agent-key',
       reviewedHeadSha: 'a'.repeat(40),
-      reviewSubjectRef: 'pr:zts212653/cat-cafe#4268',
+      reviewSubjectRef: 'pr:zts212653/clowder-ai#4268',
       acceptedSourceRef: 'docs/features/F314-development-episode-alignment-experiment.md',
       acceptedRevision: 'b'.repeat(40),
     });

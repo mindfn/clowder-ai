@@ -1,3 +1,4 @@
+import type { LifecycleStoredMessageMetadata } from '@cat-cafe/shared';
 import { describeToolAction, type ToolAction } from './tool-action';
 
 /**
@@ -23,8 +24,8 @@ export type ReplyStatus =
 export interface ReplyStatusInput {
   /** This reply's own stream flag. */
   streaming: boolean;
-  /** `message.extra.invocationReconciliation.phase` of this reply. */
-  phase: 'running' | 'succeeded' | 'failed' | 'canceled' | 'unknown_running' | undefined;
+  /** The named response's durable lifecycle status. */
+  status: Extract<LifecycleStoredMessageMetadata, { kind: 'response' }>['status'] | undefined;
   /** The message itself is an error. */
   errored: boolean;
   failure: { reasonCode: string | undefined; timeoutDiagnostics: boolean };
@@ -41,13 +42,18 @@ export interface ReplyStatusInput {
 export type ReplyExecutionState = 'running' | 'terminal' | 'unverified';
 
 export function deriveReplyExecutionState(
-  input: Pick<ReplyStatusInput, 'streaming' | 'phase' | 'errored'>,
+  input: Pick<ReplyStatusInput, 'streaming' | 'status' | 'errored'>,
 ): ReplyExecutionState {
-  if (input.errored || input.phase === 'succeeded' || input.phase === 'failed' || input.phase === 'canceled') {
+  if (
+    input.errored ||
+    input.status === 'completed' ||
+    input.status === 'failed' ||
+    input.status === 'canceled' ||
+    input.status === 'interrupted'
+  ) {
     return 'terminal';
   }
-  if (input.phase === 'unknown_running') return 'unverified';
-  if (input.phase === 'running') return 'running';
+  if (input.status === 'processing') return 'running';
   return input.streaming ? 'running' : 'terminal';
 }
 
@@ -65,8 +71,8 @@ function failureReason(failure: ReplyStatusInput['failure']): ReplyFailureReason
 }
 
 export function deriveReplyStatus(input: ReplyStatusInput): ReplyStatus | null {
-  if (input.phase === 'canceled') return { kind: 'stopped' };
-  if (input.phase === 'failed' || input.errored) return { kind: 'failed', reason: failureReason(input.failure) };
+  if (input.status === 'canceled' || input.status === 'interrupted') return { kind: 'stopped' };
+  if (input.status === 'failed' || input.errored) return { kind: 'failed', reason: failureReason(input.failure) };
   const execution = deriveReplyExecutionState(input);
   if (execution === 'unverified') return { kind: 'unverified' };
   if (execution === 'terminal') return null;

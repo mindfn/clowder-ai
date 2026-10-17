@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { CHATGPT_DOT_PLUGIN_MANIFEST } from '../src/domains/plugin/chatgpt-dot-manifest.js';
 import { HostInventoryControlPlane } from '../src/domains/plugin/host-inventory/control-plane.js';
@@ -17,12 +20,14 @@ test('one cloud GPT entry enables dot collaboration without installing another C
   assert.ok(OFFICIAL_PLUGIN_CATALOG.some((entry) => entry.pluginId === 'official.collective-connector'));
 });
 
-test('dot installs through Host inventory once, and its real Manager row stays disabled until configured', async () => {
+test('dot installs through Host inventory once, and its real Manager row stays disabled until configured', async (t) => {
   const dot = OFFICIAL_PLUGIN_CATALOG.find((entry) => entry.pluginId === 'official.chatgpt-dot');
   assert.ok(dot);
   const store = new MemoryPluginInventoryStore();
   const inventory = new HostInventoryControlPlane(store);
-  const installer = new OfficialPluginPackageInstaller({ inventory, packagesRoot: '/unused', catalog: [dot] });
+  const packagesRoot = await mkdtemp(join(tmpdir(), 'f247-dot-package-'));
+  t.after(() => rm(packagesRoot, { recursive: true }));
+  const installer = new OfficialPluginPackageInstaller({ inventory, packagesRoot, catalog: [dot] });
   const release = { version: dot.version, packageDigest: dot.packageDigest };
   const first = await installer.install(dot.catalogId, release);
   const second = await installer.install(dot.catalogId, release);

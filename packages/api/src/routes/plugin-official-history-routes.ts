@@ -1,8 +1,8 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { PluginInventoryStore } from '../domains/plugin/host-inventory/ports.js';
 import type { PluginInstanceRecord } from '../domains/plugin/host-inventory/types.js';
+import type { OfficialPluginCatalogProvider } from '../domains/plugin/manager/official-catalog-provider.js';
 import type { OfficialPluginCatalogEntry } from '../domains/plugin/official-catalog.js';
-import type { OfficialPluginCatalogProvider } from '../domains/plugin/official-catalog-provider.js';
 import type { OfficialPluginAuthPort } from '../domains/plugin/official-plugin-auth.js';
 import {
   OfficialPluginHistoryImportError,

@@ -4,11 +4,12 @@ import { createCatId } from '@cat-cafe/shared';
 import { MessageStore } from '../src/domains/cats/services/stores/ports/MessageStore.js';
 import { LiveLateResultNotices } from '../src/domains/concierge/live/host/live-late-result-notices.js';
 import { persistLiveTranscriptItem, persistLiveUserText } from '../src/domains/concierge/live/live-transcript.js';
+import { adaptMessageStore } from './helpers/message-from-fixtures.js';
 
 async function fixture() {
   const catId = createCatId('codex61-sol');
   const scope = { userId: 'owner', threadId: 'home', catId, callId: 'old-call' };
-  const store = new MessageStore();
+  const store = adaptMessageStore(new MessageStore());
   const source = await persistLiveUserText(store, scope, 'compare old SOP and new report', 'source');
   const result = await persistLiveTranscriptItem(
     store,

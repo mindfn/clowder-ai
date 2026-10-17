@@ -3,14 +3,14 @@
  * Pure functions for determining whether a message is visible to a given viewer.
  */
 
-import { type CatId, isSelectableManagedHoldConnectorSource } from '@cat-cafe/shared';
+import { type CatId, isManagedHoldConnectorSource } from '@cat-cafe/shared';
+import { messageFrom } from './message-from.js';
 import type { IMessageStore, StoredMessage, ThreadMessageReadOptions } from './ports/MessageStore.js';
 import {
   isDeliveredMessage,
   isOwnerVisibleRecalledUserMessage,
   isQueuedCatTimelineMessage,
-  isQueuedOwnerConnectorTimelineMessage,
-  isQueuedUserTimelineMessage,
+  isQueuedOwnerWork,
   isRealCatSpeech,
   type TimelineOrderMessage,
 } from './thread-publication-predicates.js';
@@ -27,8 +27,10 @@ export const SYSTEM_USER_IDS: ReadonlySet<string> = new Set(['scheduler', 'syste
  * Historical writes use `catId: 'system'`; newer display-only badges (for example
  * persisted ACP errors) use `catId: null`. Both must bypass per-user filtering.
  */
-export function isSystemUserMessage(msg: Pick<StoredMessage, 'userId' | 'catId'>): boolean {
-  return SYSTEM_USER_IDS.has(msg.userId) && (msg.catId === 'system' || msg.catId === null);
+export function isSystemUserMessage(
+  msg: Pick<StoredMessage, 'from' | 'userId' | 'catId' | 'source' | 'sourceParseFailure' | 'origin'>,
+): boolean {
+  return messageFrom(msg).kind === 'system';
 }
 
 /**
@@ -38,23 +40,24 @@ export function isSystemUserMessage(msg: Pick<StoredMessage, 'userId' | 'catId'>
  */
 export function isTimelinePublished(msg: StoredMessage): boolean {
   if (!msg.deliveryStatus || msg.deliveryStatus === 'delivered') return true;
+  if (msg.deliveryStatus === 'canceled' && msg.lifecycle?.kind === 'response') return true;
   return msg.deliveryStatus === 'queued' && isRealCatSpeech(msg);
 }
 
 /**
  * A scheduler-authored managed-hold row is user-visible only when its durable
- * Queue custody binds the exact viewer. Scheduler authorship is provenance,
+ * persisted owner binds the exact viewer. Scheduler authorship is provenance,
  * never access authority. Legacy ownerless records and hidden trigger rows
  * fail closed.
  */
 type ManagedHoldConnectorVisibilityMessage = Pick<
   StoredMessage,
-  'userId' | 'catId' | 'threadId' | 'source' | 'extra' | 'queueCustody'
+  'from' | 'userId' | 'catId' | 'threadId' | 'source' | 'extra'
 >;
 
 /** Classify the protected scheduler namespace before evaluating publication authority. */
 export function isManagedHoldConnectorMessage(msg: ManagedHoldConnectorVisibilityMessage): boolean {
-  return msg.userId === 'scheduler' && msg.catId === null && msg.source?.connector === 'hold-ball';
+  return messageFrom(msg).kind === 'system' && msg.source?.connector === 'hold-ball';
 }
 
 export function isOwnerVisibleManagedHoldConnector(
@@ -66,8 +69,21 @@ export function isOwnerVisibleManagedHoldConnector(
     viewerUserId.length > 0 &&
     isManagedHoldConnectorMessage(msg) &&
     msg.extra?.scheduler?.hiddenTrigger !== true &&
-    msg.queueCustody?.ownerUserId === viewerUserId &&
-    isSelectableManagedHoldConnectorSource(msg.source) &&
+    msg.userId === viewerUserId &&
+    isManagedHoldConnectorSource(msg.source) &&
+    msg.source?.meta?.threadId === msg.threadId
+  );
+}
+
+/** Narrow system-message exception shared by full and incremental cat context. */
+export function isAgentReadableManagedHoldMessage(msg: StoredMessage): boolean {
+  return (
+    isDeliveredMessage(msg) &&
+    isManagedHoldConnectorMessage(msg) &&
+    msg.extra?.scheduler?.hiddenTrigger !== true &&
+    typeof msg.userId === 'string' &&
+    !SYSTEM_USER_IDS.has(msg.userId) &&
+    isManagedHoldConnectorSource(msg.source) &&
     msg.source?.meta?.threadId === msg.threadId
   );
 }
@@ -103,24 +119,6 @@ export function isDurableOwnerReadEvidence(msg: StoredMessage): boolean {
   return isTimelinePublished(msg) && !(msg.deliveryStatus === 'queued' && msg.origin === 'stream');
 }
 
-/**
- * A queued user body that was already exposed to one exact child is durable
- * cognition for that target cat. The append-only exposure witness survives
- * child/session replacement, while other cats remain unable to read the body.
- */
-export function hasDurableQueueBodyExposure(msg: StoredMessage, catId: CatId): boolean {
-  return (
-    msg.deliveryStatus === 'queued' &&
-    msg.catId === null &&
-    (msg.queueCustody?.bodyExposures ?? []).some((exposure) => exposure.targetCatId === catId)
-  );
-}
-
-/** Published history plus target-scoped queued bodies the cat has already read. */
-export function isDurablyReadableByCat(msg: StoredMessage, catId: CatId): boolean {
-  return isTimelinePublished(msg) || hasDurableQueueBodyExposure(msg, catId);
-}
-
 /** Resolve the publication predicate for a thread read in one place. */
 export function resolveThreadMessageVisibility(
   options?: ThreadMessageReadOptions,
@@ -131,7 +129,7 @@ export function resolveThreadMessageVisibility(
       options?.onlyUnpositionedOwnerMessages === true &&
       (!viewerUserId ||
         message.userId !== viewerUserId ||
-        message.catId !== null ||
+        messageFrom(message).kind !== 'user' ||
         (message.deliveryStatus !== 'queued' &&
           (message.recall === undefined || message.recall.recalledAt < (options.ownerUncertaintySinceMs ?? 0))))
     )
@@ -140,19 +138,14 @@ export function resolveThreadMessageVisibility(
     if (viewerUserId !== undefined && isManagedHoldConnectorMessage(message)) {
       return (
         isDeliveredMessage(message) ||
-        (options?.includeQueuedUserMessages === true && message.deliveryStatus === 'queued') ||
-        (options?.includeExposedQueuedUserMessagesForCatId !== undefined &&
-          hasDurableQueueBodyExposure(message, options.includeExposedQueuedUserMessagesForCatId))
+        (options?.includeQueuedUserMessages === true && message.deliveryStatus === 'queued')
       );
     }
 
     return (
       isDeliveredMessage(message) ||
       (options?.includeQueuedCatMessages === true && isQueuedCatTimelineMessage(message)) ||
-      (options?.includeQueuedUserMessages === true &&
-        (isQueuedUserTimelineMessage(message) || isQueuedOwnerConnectorTimelineMessage(message))) ||
-      (options?.includeExposedQueuedUserMessagesForCatId !== undefined &&
-        hasDurableQueueBodyExposure(message, options.includeExposedQueuedUserMessagesForCatId)) ||
+      (options?.includeQueuedUserMessages === true && isQueuedOwnerWork(message)) ||
       (options?.includeRecalledUserMessages === true && isOwnerVisibleRecalledUserMessage(message))
     );
   };
@@ -163,22 +156,13 @@ export function resolveThreadMessageVisibility(
  * published when authored, even if recipient execution custody ends later.
  */
 export function resolveDeliveryTimelineScore(message: StoredMessage, deliveredAt: number): number {
-  return isTimelinePublished(message) ||
-    isQueuedUserTimelineMessage(message) ||
-    isQueuedOwnerConnectorTimelineMessage(message)
-    ? message.timestamp
-    : deliveredAt;
+  return isTimelinePublished(message) ? message.timestamp : deliveredAt;
 }
 
 /** Match the Redis timeline score when constructing pagination cursors in memory. */
-export function getTimelineOrderTime(message: TimelineOrderMessage): number {
+export function getTimelineOrderTime(message: StoredMessage): number {
   if (message.timelineOrderAt !== undefined) return message.timelineOrderAt;
-  if (
-    isQueuedCatTimelineMessage(message) ||
-    isQueuedUserTimelineMessage(message) ||
-    isQueuedOwnerConnectorTimelineMessage(message)
-  )
-    return message.timestamp;
+  if (isQueuedCatTimelineMessage(message)) return message.timestamp;
   return message.deliveredAt ?? message.timestamp;
 }
 
@@ -246,8 +230,10 @@ export function canQuoteInPublicReply(parent: StoredMessage): boolean {
  * POST /api/messages replyTo validation, and the get-message route — so no path can
  * forget the exclusion (the "fetch + gate" invariant in this file's header).
  */
-export function isInternalNonQuotableParent(msg: Pick<StoredMessage, 'userId' | 'origin'>): boolean {
-  return msg.userId === 'system' || msg.origin === 'briefing';
+export function isInternalNonQuotableParent(
+  msg: Pick<StoredMessage, 'from' | 'userId' | 'catId' | 'source' | 'sourceParseFailure' | 'origin'>,
+): boolean {
+  return messageFrom(msg).kind === 'system' || msg.origin === 'briefing';
 }
 
 export function isEligibleReplyParent(parent: StoredMessage, opts: ReplyParentEligibilityOptions): boolean {

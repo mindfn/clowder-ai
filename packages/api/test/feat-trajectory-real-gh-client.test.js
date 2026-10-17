@@ -22,7 +22,7 @@ describe('RealGhClient', () => {
         },
       ]);
       const stub = async () => stubOutput;
-      const client = new RealGhClient('zts212653/cat-cafe', stub);
+      const client = new RealGhClient('zts212653/clowder-ai', stub);
       const pr = await client.findPrByBranch('feat/f233-phase-c-c2a');
       assert.strictEqual(pr.prNumber, 2439);
       assert.strictEqual(pr.prState, 'open', 'state normalized to lowercase');
@@ -44,7 +44,7 @@ describe('RealGhClient', () => {
         },
       ]);
       const stub = async () => stubOutput;
-      const client = new RealGhClient('zts212653/cat-cafe', stub);
+      const client = new RealGhClient('zts212653/clowder-ai', stub);
       const pr = await client.findPrByBranch('feat/f233-phase-c-c2a');
       assert.strictEqual(pr.prState, 'merged');
       assert.strictEqual(pr.prMergedAt, Date.parse('2026-06-20T03:54:49Z'));
@@ -64,7 +64,7 @@ describe('RealGhClient', () => {
         },
       ]);
       const stub = async () => stubOutput;
-      const client = new RealGhClient('zts212653/cat-cafe', stub);
+      const client = new RealGhClient('zts212653/clowder-ai', stub);
       const pr = await client.findPrByBranch('feat/abandoned');
       assert.strictEqual(pr.prState, 'closed');
       assert.strictEqual(pr.prMergedAt, null);
@@ -84,7 +84,7 @@ describe('RealGhClient', () => {
         },
       ]);
       const stub = async () => stubOutput;
-      const client = new RealGhClient('zts212653/cat-cafe', stub);
+      const client = new RealGhClient('zts212653/clowder-ai', stub);
       const pr = await client.findPrByBranch('feat/sub-feature');
       assert.strictEqual(pr.prState, 'merged');
       assert.strictEqual(pr.mergedToMain, false, 'merged but base != main → mergedToMain=false');
@@ -288,13 +288,13 @@ describe('RealGhClient', () => {
         capturedArgs = args;
         return '[]';
       };
-      const client = new RealGhClient('zts212653/cat-cafe', stub);
+      const client = new RealGhClient('zts212653/clowder-ai', stub);
       await client.findPrByBranch('feat/check-args');
       assert.deepStrictEqual(capturedArgs, [
         'pr',
         'list',
         '--repo',
-        'zts212653/cat-cafe',
+        'zts212653/clowder-ai',
         '--head',
         'feat/check-args',
         '--state',

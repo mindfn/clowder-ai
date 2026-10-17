@@ -16,9 +16,8 @@ import { type HomeCopy, homeCopy } from './workspace-home.shell-copy';
  * 等待与接回 on the new shell's Workspace home — presentation only.
  *
  * Owned by F323: the same `/api/runtime-deployment/waits` projection, hydration states and 重试 as the classic card, the
- * same three item states and the same honest lines ("运行证据不完整…"). Only the shape changes: one flat list (the state
- * rides on each row's last line instead of three group headings), ordered 可以接回 → 暂不能判定 → 等待更新, and the
- * candidate preview moves from a box in the header to the card's foot.
+ * same three item states. A short neutral summary stays visible; the original condition and next step remain in a closed
+ * disclosure. The candidate count is a forecast after deployment, never a claim that a waiting item is already ready.
  */
 
 const STATE_ORDER: Record<DeploymentWaitItemProjection['state'], number> = {
@@ -68,10 +67,24 @@ function WaitRow({ item, now }: { item: DeploymentWaitItemProjection; now: numbe
   const reason = reasonText(t, item);
   const nextStep = item.nextStep || t.wait.nextStepFallback;
   const ready = item.state === 'ready_to_return';
+  const summary = ready
+    ? t.wait.readySummary
+    : item.state === 'unknown'
+      ? item.condition.kind === 'revision_included'
+        ? t.wait.revisionUnconfirmed
+        : t.wait.bootUnconfirmed
+      : item.condition.kind === 'revision_included'
+        ? t.wait.waitForFix
+        : t.wait.waitForBoot;
   return (
     <article className="home-wait-row" data-testid="workspace-deployment-wait-item" data-state={item.state}>
       <div className="home-wait-main">
-        <b className="home-wait-title text-compact">{item.taskTitle}</b>
+        <div className="home-wait-copy">
+          <b className="home-wait-title text-compact">{item.taskTitle}</b>{' '}
+          <span className="home-wait-summary text-xs">
+            {summary} · {waitedText(t, item, now)} · {owner}
+          </span>
+        </div>
         <ThreadChatLink
           threadId={item.threadId}
           label={t.wait.openConversation}
@@ -79,17 +92,14 @@ function WaitRow({ item, now }: { item: DeploymentWaitItemProjection; now: numbe
           title={t.wait.openConversation}
         />
       </div>
-      <small className="home-wait-line text-xs">
-        {waitedText(t, item, now)} · {owner} · {conditionText(t, item)}
-      </small>
-      {reason && (
-        <small className="home-wait-line text-xs" data-tone="warn">
-          {reason}
+      <details className="home-wait-details text-xs">
+        <summary className="shell-focusable">{ready ? t.wait.readyDetails : t.wait.returnDetails}</summary>
+        <small className="home-wait-line text-xs">{conditionText(t, item)}</small>
+        {reason && <small className="home-wait-line text-xs">{reason}</small>}
+        <small className="home-wait-line text-xs">
+          {ready ? t.wait.canContinue(nextStep) : t.wait.afterReturn(nextStep)}
         </small>
-      )}
-      <small className="home-wait-line text-xs" data-tone={ready ? 'ok' : undefined}>
-        {ready ? t.wait.canContinue(nextStep) : t.wait.afterReturn(nextStep)}
-      </small>
+      </details>
     </article>
   );
 }
@@ -99,13 +109,13 @@ function CandidateLine({ projection, now }: { projection: DeploymentWaitListResp
   const candidate = projection.candidate;
   if (!candidate) return null;
   return (
-    <p className="home-card-foot text-xs" data-testid="deployment-candidate-preview">
-      {t.wait.candidate(shortRevision(candidate.revision))} ·{' '}
-      {t.wait.observed(formatObservedAge(candidate.observedAt, now, t.time))} ·{' '}
-      {t.wait.satisfiable(candidate.satisfiableCount)}
-      {candidate.unknownCount > 0 && (
-        <span className="home-foot-warn"> · {t.wait.unknownEvidence(candidate.unknownCount)}</span>
-      )}
+    <p
+      className="home-card-foot text-xs"
+      data-testid="deployment-candidate-preview"
+      title={`${t.wait.candidate(shortRevision(candidate.revision))} · ${t.wait.observed(formatObservedAge(candidate.observedAt, now, t.time))} · ${t.wait.satisfiable(candidate.satisfiableCount)}`}
+    >
+      {t.wait.resumeForecast(candidate.satisfiableCount)}
+      {candidate.unknownCount > 0 && <span> · {t.wait.unknownEvidence(candidate.unknownCount)}</span>}
     </p>
   );
 }

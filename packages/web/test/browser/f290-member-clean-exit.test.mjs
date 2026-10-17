@@ -54,12 +54,13 @@ test(
         .click();
       await memberPage.getByRole('heading', { name: '# 产品方向', exact: true }).waitFor();
       await memberPage.getByText('讨论在这里发生，每个 Café 仍然保留自己的边界。', { exact: true }).waitFor();
-      await memberPage.getByRole('button', { name: '退出共同家园', exact: true }).waitFor();
+      await memberPage.getByLabel('猫咖共创组菜单', { exact: true }).click();
+      await memberPage.getByRole('button', { name: '离开共同体…', exact: true }).waitFor();
       await memberPage.screenshot({ path: path.join(evidence, 'member-before-exit-1440.png'), fullPage: true });
 
       await memberPage.setViewportSize({ width: 390, height: 844 });
       await memberPage.getByRole('button', { name: '频道导航', exact: true }).click();
-      const exitButton = memberPage.getByRole('button', { name: '退出共同家园', exact: true });
+      const exitButton = memberPage.getByRole('button', { name: '离开共同体…', exact: true });
       await exitButton.waitFor();
       const exitTarget = await exitButton.boundingBox();
       assert.ok(

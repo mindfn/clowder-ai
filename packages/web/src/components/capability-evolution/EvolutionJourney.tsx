@@ -12,6 +12,15 @@ export function journeyMoment(projection: EvolutionProgramProjection): JourneyMo
   return 1;
 }
 
+/** The new shell names the journey phase first, with the preparation substate separately. */
+export function journeyStageLabel(projection: EvolutionProgramProjection): string {
+  const phase = MOMENTS[journeyMoment(projection)];
+  if (projection.program.lifecycle !== 'active') return phase;
+  if (projection.program.stage === 'constituting') return `${phase}（等你确认）`;
+  if (projection.program.stage === 'instrumenting') return `${phase}（评估）`;
+  return phase;
+}
+
 export function EvolutionJourney({ projection }: { projection: EvolutionProgramProjection }) {
   const current = journeyMoment(projection);
   const id = projection.program.programId;

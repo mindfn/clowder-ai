@@ -29,7 +29,7 @@ describe('F280 register_pr_tracking public contract', () => {
     try {
       const { handleRegisterPrTracking } = await import('../dist/tools/callback-tools.js');
       await handleRegisterPrTracking({
-        repoFullName: 'zts212653/cat-cafe',
+        repoFullName: 'zts212653/clowder-ai',
         prNumber: 3300,
         when: [{ kind: 'pr_head_changed' }, { kind: 'pr_ci_terminal' }],
         nextStep: 'Re-lock the exact HEAD and continue merge-gate.',
@@ -37,7 +37,7 @@ describe('F280 register_pr_tracking public contract', () => {
       });
 
       assert.deepEqual(requestBody, {
-        repoFullName: 'zts212653/cat-cafe',
+        repoFullName: 'zts212653/clowder-ai',
         prNumber: 3300,
         when: [{ kind: 'pr_head_changed' }, { kind: 'pr_ci_terminal' }],
         nextStep: 'Re-lock the exact HEAD and continue merge-gate.',
@@ -79,7 +79,7 @@ describe('F280 register_pr_tracking public contract', () => {
     try {
       const { handleRegisterPrTracking } = await import('../dist/tools/callback-tools.js');
       await handleRegisterPrTracking({
-        repoFullName: 'zts212653/cat-cafe',
+        repoFullName: 'zts212653/clowder-ai',
         prNumber: 3300,
         when: [{ kind: 'pr_head_changed' }],
         nextStep: 'Continue.',

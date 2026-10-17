@@ -53,7 +53,8 @@ describe('RichBlocks exact forwarding', () => {
     const forward = richBlock?.querySelector<HTMLButtonElement>('button[aria-label="转发富块：Decision"]');
 
     expect(richBlock?.className).toContain('group/rich-block');
-    expect(actionDock?.className).toContain('absolute');
+    expect(actionDock?.className).not.toContain('absolute');
+    expect(actionDock?.className).toContain('grid-rows-[0fr]');
     expect(actionDock?.className).toContain('pointer-events-none');
     expect(actionDock?.className).toContain('opacity-0');
     expect(actionDock?.className).toContain('group-hover/rich-block:pointer-events-auto');

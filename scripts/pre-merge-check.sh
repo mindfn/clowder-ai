@@ -49,6 +49,7 @@ GATE_EXECUTION_RESUME_KIND=""
 GATE_EXECUTION_RESUME_KEY=""
 GATE_EXECUTION_RESUME_SOURCE_RUN_ID=""
 unset CAT_CAFE_GATE_EXECUTION_RESUME_SOURCE_RUN_ID
+unset CAT_CAFE_GATE_EXECUTION_PARENT_JOB_ID
 GATE_TERMINAL_ACTIVE=false
 GATE_TERMINAL_STATUS="failed"
 GATE_RUN_ID=""
@@ -1114,6 +1115,9 @@ if [ "$NO_REBASE" = "false" ] && [ "$PUBLIC_EXPORT" = "false" ] && [ "$TEST_MODE
   case "$GATE_CLAIM_ROLE" in
     producer)
       GATE_TERMINAL_ACTIVE=true
+      # A managed command owns cancellation, but only an admitted gate producer
+      # owns a cumulative full-gate budget. Bind stages to this producer only.
+      export CAT_CAFE_GATE_EXECUTION_PARENT_JOB_ID="$CAT_CAFE_MANAGED_JOB_ID"
       echo -e "${GREEN}✓ Durable gate producer: ${GATE_RUN_ID}${NC}"
       ;;
     reused|consumed)

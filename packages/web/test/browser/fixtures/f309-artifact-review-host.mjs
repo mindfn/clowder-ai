@@ -17,6 +17,7 @@ import { registerArtifactReviewRoutes } from '../../../../api/src/routes/artifac
 import { registerCallbackArtifactReviewRoutes } from '../../../../api/src/routes/callback-artifact-review-routes.ts';
 import { registerCallbackAuthHook } from '../../../../api/src/routes/callback-auth-prehandler.ts';
 import { registerCallbackTaskRoutes } from '../../../../api/src/routes/callback-task-routes.ts';
+import { composerDraftRecallRoutes } from '../../../../api/src/routes/composer-draft-recall.ts';
 import { registerContentModificationRoutes } from '../../../../api/src/routes/content-modification-routes.ts';
 import { registerEntrustedWorkReadRoutes } from '../../../../api/src/routes/entrusted-work-read-routes.ts';
 import { registerPublishedContentRoutes } from '../../../../api/src/routes/published-content-routes.ts';
@@ -80,7 +81,7 @@ export async function startReviewHost(
     }
     res.setHeader('content-type', 'text/html');
     res.end(
-      `<!doctype html><html lang="zh-CN"${revisionAttribute}><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/host.css"><style>body{margin:0}</style><div id="root"></div><script>window.__F309_FIXTURE__=${JSON.stringify({ threadId: f.thread.id })}</script><script type="module" src="/host.js"></script></html>`,
+      `<!doctype html><html lang="zh-CN"${revisionAttribute}><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/host.css"><style>body{margin:0}</style><div id="root"></div><script>window.__F309_FIXTURE__=${JSON.stringify({ threadId: f.thread.id, mediaType })}</script><script type="module" src="/host.js"></script></html>`,
     );
   });
   await new Promise((resolve, reject) => {
@@ -109,6 +110,10 @@ export async function startReviewHost(
     cats: catRegistry.getAllIds().map((id) => ({ ...catRegistry.getOrThrow(id).config, id })),
   }));
   app.get('/api/config/cat-order', async () => ({ catOrder: ['codex-astra'] }));
+  await app.register(composerDraftRecallRoutes, {
+    messageStore: f.messages,
+    socketManager: { emitToUser, broadcastAgentMessage() {}, broadcastToRoom() {} },
+  });
   const artifacts = () =>
     aggregateThreadArtifacts({ messages: f.messages.getByThread(f.thread.id), prTasks: [], fileLedger: [] });
   app.get('/api/artifacts', async () => {

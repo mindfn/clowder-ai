@@ -1,8 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { RoutingContextLedger } from '@/components/routing-context/RoutingContextLedger';
-import { useCatData } from '@/hooks/useCatData';
+import { refreshCatsNow, useCatData } from '@/hooks/useCatData';
 import { catDossierCoversStrengths, useDossierProfiles } from '@/hooks/useDossierProfiles';
 import { apiFetch } from '@/utils/api-client';
 import { accountsCopy } from '../accounts/accounts.shell-copy';
@@ -17,6 +16,7 @@ import { HubEnvFilesTab } from '../HubEnvFilesTab';
 import { MemberCopyProvider } from '../members/editor-presentation';
 import { type MemberDeleteCopy, MemberEditorHost } from '../members/MemberEditorHost';
 import { MemberListHost } from '../members/MemberListHost';
+import { memberSaveCopy } from '../members/member-save.shell-copy';
 import { useMemberReturn } from '../members/useMemberReturn';
 import { MemoryHub } from '../memory/MemoryHub';
 import { MissionControlPage } from '../mission-control/MissionControlPage';
@@ -53,6 +53,7 @@ interface SettingsContentProps {
 
 export function SettingsContent({ section, initialEditCatId, initialReferrerThread = null }: SettingsContentProps) {
   const accountsText = useShellCopy(accountsCopy);
+  const saveText = useShellCopy(memberSaveCopy);
   const sectionText = useSettingsDetailText();
   const { cats, refresh, isLoading: catsLoading, hasFetched: catsKnown } = useCatData();
   const isV2 = useShellPresentation() === 'v2';
@@ -118,8 +119,12 @@ export function SettingsContent({ section, initialEditCatId, initialReferrerThre
   }, [initialEditCatId, section, cats]);
 
   const handleEditorSaved = useCallback(async () => {
-    await Promise.all([fetchData(), refresh()]);
-  }, [fetchData, refresh]);
+    const [, { cats: updatedCats, fromApi }] = await Promise.all([fetchData(), refreshCatsNow()]);
+    if (editingCat && (!fromApi || !updatedCats.some((cat) => cat.id === editingCat.id))) {
+      throw new Error(saveText.readbackFailed);
+    }
+    setEditingCat((previous) => (previous ? (updatedCats.find((cat) => cat.id === previous.id) ?? previous) : null));
+  }, [fetchData, editingCat, saveText.readbackFailed]);
 
   const handleToggleAvailability = useCallback(
     async (cat: (typeof cats)[number]) => {
@@ -281,7 +286,6 @@ export function SettingsContent({ section, initialEditCatId, initialReferrerThre
               <div className="flex justify-end">
                 <OpenTeamWorkspaceButton />
               </div>
-              <RoutingContextLedger />
             </div>
           </div>
         );

@@ -41,6 +41,10 @@ function approvalCardPlace(item: UnifiedAttentionItemV1): OriginalPlace {
 export function resolveOriginalPlace(item: UnifiedAttentionItemV1): OriginalPlace {
   if (item.userMention)
     return { kind: 'exact', actionRef: `message:${item.userMention.threadId}:${item.userMention.messageId}` };
+  if (item.runtimeInteraction) {
+    const { threadId, messageId, blockId } = item.runtimeInteraction.cardRef;
+    return { kind: 'exact', actionRef: `message:${threadId}:${messageId}#${blockId}` };
+  }
   if (item.choiceRequest) {
     const { threadId, messageId, blockId } = item.choiceRequest.cardRef;
     return { kind: 'exact', actionRef: `message:${threadId}:${messageId}#${blockId}` };

@@ -41,6 +41,7 @@ export function ensureDotIdentity(projectRoot: string): boolean {
     mentionPatterns: ['@dot'],
     roleDescription: '在原对话相处与协作的长期云端家猫。',
     clientId: 'openai',
+    carrier: 'app_server',
     defaultModel: 'ChatGPT dot',
     provider: 'openai-chatgpt-pro',
     mcpSupport: true,

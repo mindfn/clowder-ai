@@ -2,11 +2,17 @@ import type { ThreadArtifactDTO } from '@cat-cafe/shared';
 import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { ArtworkLightboxHost } from '@/components/content-review/ArtworkLightboxHost';
+import { ArtworkLightboxProvider } from '@/components/content-review/ArtworkLightboxScope';
 import { writeShellLanguage } from '@/components/shell/shell-language';
+import { writeShellPresentation } from '@/components/shell/shell-presentation';
 import { useChatStore } from '@/stores/chatStore';
 import { ThreadWorksPanelV2 } from '../ThreadWorksPanelV2';
 
 const data = vi.hoisted(() => ({ fetch: vi.fn() }));
+vi.mock('@/components/workbench/F307OwnerSurfaceRenderer', () => ({
+  F307OwnerSurfaceRenderer: () => <div>Original publication owner</div>,
+}));
 vi.mock('@/utils/api-client', () => ({ API_URL: '', apiFetch: data.fetch }));
 vi.mock('@/hooks/useCatData', () => ({ useCatData: () => ({ getCatById: () => ({ nickname: '小太阳·砚砚' }) }) }));
 const items: ThreadArtifactDTO[] = [
@@ -26,6 +32,7 @@ let root: Root;
 const open = vi.fn();
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  writeShellPresentation('classic');
   writeShellLanguage('en');
   data.fetch.mockReset();
   open.mockReset();
@@ -49,6 +56,7 @@ afterEach(() => {
   host.remove();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  writeShellPresentation('classic');
 });
 it('uses the named source read and opens a complete document DTO with the original list view', async () => {
   await act(async () => root.render(<ThreadWorksPanelV2 threadId="work-source" onSelectArtifact={open} />));
@@ -80,6 +88,57 @@ it('incomplete source reads show neither a precise count nor a false empty state
   expect(host.textContent).toContain('the count is not confirmed');
   expect(host.textContent).not.toContain('0 works');
   expect(host.textContent).not.toContain('No works match');
+});
+
+it.each([
+  'image',
+  'file',
+] as const)('a published PNG catalogued as %s floats its admitted owner and carries the exact list return into work mode', async (type) => {
+  writeShellPresentation('v2');
+  useChatStore.setState({ workspaceOpenRequest: null });
+  const image: ThreadArtifactDTO = { ...items[0], type, name: 'Original.png', url: '/uploads/original.png' };
+  const asset = {
+    contentRef: `prepared-media:${'c'.repeat(64)}`,
+    ownerRevision: 1,
+    blobDigest: `sha256:${'a'.repeat(64)}`,
+    mediaType: 'image/png',
+    media: { kind: 'image', width: 160, height: 100 },
+    sourcePublication: { artifactRef: image.url, sourceRef: 'message:work-source:published-md', revision: '300' },
+    ownerReceiptRef: 'receipt',
+  };
+  data.fetch.mockImplementation(async (url: string) =>
+    Response.json(
+      url === '/api/content-publications/resolve'
+        ? { status: 'resolved', ownerUserId: 'operator', asset }
+        : { threadId: 'work-source', artifacts: [image], complete: true, total: 1, view: 'works' },
+    ),
+  );
+  await act(async () =>
+    root.render(
+      <ArtworkLightboxProvider threadId="work-source">
+        <ThreadWorksPanelV2 threadId="work-source" onSelectArtifact={open} />
+        <ArtworkLightboxHost />
+      </ArtworkLightboxProvider>,
+    ),
+  );
+  const list = host.querySelector<HTMLElement>('.v2-works-scroll')!;
+  list.scrollTop = 231;
+  await act(async () => host.querySelector<HTMLButtonElement>('[data-testid="workspace-home-artifact-card"]')?.click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Original publication owner');
+  expect(useChatStore.getState().workspaceOpenRequest).toBeNull();
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-testid="lightbox-open-workspace"]')?.click());
+  expect(useChatStore.getState().workspaceOpenRequest).toMatchObject({
+    presentation: 'work-mode',
+    threadId: 'work-source',
+    target: {
+      kind: 'publication',
+      contentRef: asset.contentRef,
+      ownerRevision: 1,
+      navigationOrigin: { kind: 'artifact-list', threadId: 'work-source', view: { viewport: { scrollTop: 231 } } },
+    },
+  });
+  expect(open).not.toHaveBeenCalled();
+  writeShellPresentation('classic');
 });
 
 it('returns the actual Works scroll position with its selected card after remount', async () => {

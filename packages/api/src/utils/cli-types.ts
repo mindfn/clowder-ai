@@ -26,7 +26,10 @@ export interface CliSpawnOptions {
   outputMode?: 'ndjson' | 'plainText';
   /** Working directory for the process */
   cwd?: string;
-  /** Opt-in timeout in milliseconds before automatic termination (default: 0 = manual cancel only) */
+  /**
+   * Opt-in response timeout in milliseconds for probes and other one-off commands (default: 0 =
+   * none). A dispatched member never sets it: its one timeout is its invocation's (F117 KD-22).
+   */
   timeoutMs?: number;
   /** AbortSignal to cancel the process externally */
   signal?: AbortSignal;
@@ -68,6 +71,10 @@ export interface CliSpawnOptions {
    * stdio[0] 设为 'pipe' 并将此内容写入 child.stdin。
    */
   stdinInput?: string;
+  /** Register a prompt writer for carriers that confirm their runtime before receiving input. */
+  onStdinReady?: (write: (input: string) => void) => void;
+  /** Duplex NDJSON drivers close input after their terminal frame, not after writing the prompt. */
+  stdinCloseSignal?: AbortSignal;
   /**
    * F212 Phase F (AC-F1/F3 testability per 砚砚 R1 P1-1): test injection point for the
    * structured-log writes (`'CLI abnormal exit'` + `'CLI stderr (LOG_CLI_STDERR=1)'`).

@@ -179,7 +179,7 @@ test('accepted exact publication survives owner failure and recovery after its c
   assert.equal(f.carriers().length, 1);
 });
 
-for (const boundary of ['old-child', 'no-body-witness', 'other-image', 'cancelled-request'] as const) {
+for (const boundary of ['old-child', 'withdrawn-return-source', 'other-image', 'cancelled-request'] as const) {
   test(`publication candidate ${boundary} cannot borrow the current continuation`, async (t) => {
     const f = await fixture(t);
     f.publish('append');
@@ -188,7 +188,7 @@ for (const boundary of ['old-child', 'no-body-witness', 'other-image', 'cancelle
     const carrier = f.carriers()[0]!;
     const childId = await f.dispatch.waitForAwakening(carrier.id);
     const before = f.store.get(f.request.record.progress.review!.reviewId)!.revision;
-    if (boundary === 'no-body-witness') f.messages.getById(carrier.id)!.queueCustody!.bodyExposures = [];
+    if (boundary === 'withdrawn-return-source') f.messages.getById(carrier.id)!._tombstone = true;
     if (boundary === 'cancelled-request') await f.integration.requests.cancel(f.request.record.requestId, f.human);
     const result = await candidate(
       f,
@@ -232,7 +232,7 @@ test('cancellation selects the new running child and refuses the old finished ch
   );
 });
 
-test('handled original target stays globally queued while the witnessed new carrier continues the same request', async (t) => {
+test('delivered multi-recipient Human remains independent of the exact derived continuation', async (t) => {
   const f = await fixture(t, true);
   await f.markOriginalHandled();
   f.publish('append');
@@ -246,24 +246,24 @@ test('handled original target stays globally queued while the witnessed new carr
   assert.equal(control.stage, 'active');
   const response = await candidate(f, childId);
   assert.equal(response.statusCode, 200, response.body);
-  assert.equal(f.messages.getById(f.humanMessage.id)?.deliveryStatus, 'queued');
-  assert.deepEqual(f.messages.getById(f.humanMessage.id)?.queueCustody?.pendingTargetCats, ['sonnet']);
+  assert.equal(f.messages.getById(f.humanMessage.id)?.deliveryStatus, undefined);
+  assert.equal(Object.hasOwn(f.messages.getById(f.humanMessage.id)!, 'queueCustody'), false);
 });
 
-for (const boundary of ['no-current-child', 'no-current-body'] as const) {
-  test(`handled original target ${boundary} cannot authorize continuation reads`, async (t) => {
+for (const boundary of ['no-current-child', 'withdrawn-return-source'] as const) {
+  test(`same-owner control projection stays independent of ${boundary}`, async (t) => {
     const f = await fixture(t, true);
     await f.markOriginalHandled();
     f.publish('append');
     await f.recover();
     const carrier = f.carriers()[0]!;
     const childId = await f.dispatch.waitForAwakening(carrier.id);
-    if (boundary === 'no-current-body') f.messages.getById(carrier.id)!.queueCustody!.bodyExposures = [];
+    if (boundary === 'withdrawn-return-source') f.messages.getById(carrier.id)!._tombstone = true;
     const control = await f.integration.requests.controlForCat(
       f.request.record.requestId,
       boundary === 'no-current-child' ? f.cat : { ...f.cat, invocationId: childId },
     );
-    assert.equal(control.stage, 'source_unavailable');
+    assert.equal(control.stage, 'active', 'Business control reads do not adopt an input or grant callback execution');
   });
 }
 

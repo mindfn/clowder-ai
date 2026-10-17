@@ -2,7 +2,9 @@ import type { ThreadArtifactDTO } from '@cat-cafe/shared';
 import { act, type ComponentProps, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { MAILBOX_NAVIGATE_EVENT } from '@/components/shell/mailbox/mailbox-navigation';
 import { writeShellPresentation } from '@/components/shell/shell-presentation';
+import { canonicalLauncherDestination } from '@/components/workspace/WorkspaceLauncher';
 import type { OpenHomeArtifact } from '@/components/workspace-home/HomeWorksSummary';
 import type { WorkspaceToolsContentProps } from '@/components/workspace-home/WorkspaceToolsContent';
 import { useChatStore } from '@/stores/chatStore';
@@ -13,6 +15,7 @@ import type { F307WorkbenchTabsProps } from '../F307WorkbenchTabs';
 import {
   artifactObjectId,
   createArtifactSurface,
+  createWorkspaceDestinationSurface,
   createWorkspaceModeSurface,
   resolvePullRequestChangesTarget,
 } from '../real-surface-adapters';
@@ -159,6 +162,46 @@ async function renderHost(foregroundSurfaceId: string | null = null) {
     ),
   );
 }
+
+it.each(['now', 'needs-me'] as const)('retires a selected persisted %s tab through its current entry', async (id) => {
+  const legacy =
+    id === 'now'
+      ? createWorkspaceDestinationSurface(canonicalLauncherDestination('host', 'now'), 'thread-a')
+      : createWorkspaceModeSurface('needs-me', 'thread-a');
+  const other = createWorkspaceModeSurface('schedule', 'thread-a');
+  if (!legacy) throw new Error('Missing persisted legacy destination');
+  useF307ExperienceWorkbenchStore.setState({
+    layout: {
+      ...createInitialWorkbenchState([legacy, other]),
+      activeSurfaceId: legacy.id,
+    },
+  });
+  const mailbox = vi.fn();
+  window.addEventListener(MAILBOX_NAVIGATE_EVENT, mailbox);
+  try {
+    await renderHost(legacy.id);
+    expect(useF307ExperienceWorkbenchStore.getState().layout.surfaces.map((s) => s.id)).toEqual([other.id]);
+    expect(container.querySelector('[data-testid="home-probe"]')).not.toBeNull();
+    expect(mailbox).toHaveBeenCalledTimes(id === 'needs-me' ? 1 : 0);
+    expect(probes.recent).not.toContain(legacy.id);
+  } finally {
+    window.removeEventListener(MAILBOX_NAVIGATE_EVENT, mailbox);
+  }
+});
+
+it('keeps latent legacy tabs until explicitly selected and does not steal another foreground', async () => {
+  const legacy = createWorkspaceModeSurface('needs-me', 'thread-a');
+  const other = createWorkspaceModeSurface('schedule', 'thread-a');
+  useF307ExperienceWorkbenchStore.setState({
+    layout: {
+      ...createInitialWorkbenchState([legacy, other]),
+      activeSurfaceId: legacy.id,
+    },
+  });
+  await renderHost(other.id);
+  expect(useF307ExperienceWorkbenchStore.getState().layout.surfaces.map((s) => s.id)).toContain(legacy.id);
+  expect(container.querySelector('[data-testid="home-probe"]')).toBeNull();
+});
 
 it('supplies the canonical current-host MRU in visit order, without taking tab order or another thread', async () => {
   const a = createWorkspaceModeSurface('artifacts', 'thread-a');

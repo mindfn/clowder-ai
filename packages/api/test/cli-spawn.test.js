@@ -163,6 +163,43 @@ test('spawnCli: 无 stdinInput 时 stdio[0]=ignore (向后兼容，不影响其�
   assert.equal(spawnFn.mock.calls[0].arguments[2].stdio[0], 'ignore');
 });
 
+test('spawnCli defers stdin until its caller verifies a provider event and prevents writes after closure', async () => {
+  const proc = createMockProcess();
+  proc.stdin = new PassThrough();
+  let body = '',
+    write;
+  proc.stdin.on('data', (chunk) => {
+    body += chunk;
+  });
+  const close = new AbortController();
+  const iterator = spawnCli(
+    {
+      command: 'test-cli',
+      args: [],
+      onStdinReady: (writer) => {
+        write = writer;
+      },
+      stdinCloseSignal: close.signal,
+    },
+    { spawnFn: createMockSpawnFn(proc) },
+  );
+  try {
+    const pending = iterator.next();
+    proc.stdout.write('{"event":"init"}\n');
+    assert.equal((await pending).value.event, 'init');
+    assert.equal(body, '');
+    assert.equal(typeof write, 'function');
+    write('verified prompt\n');
+    assert.equal(body, 'verified prompt\n');
+    close.abort();
+    assert.throws(() => write('too late'), /stdin.*closed/);
+  } finally {
+    proc.stdout.end();
+    proc._emitter.emit('exit', 0, null);
+    await iterator.return();
+  }
+});
+
 test(
   'spawnCli default spawn supervisors Unix CLI children with parent pid',
   { skip: process.platform === 'win32' && 'Unix supervisor is not used on Windows' },

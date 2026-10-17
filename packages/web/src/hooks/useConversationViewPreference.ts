@@ -40,6 +40,10 @@ async function persistConversationView(
 }
 
 export type ConversationViewPreferenceError = 'load' | 'save' | null;
+export type ConversationViewPreferenceBeforeCommit = (
+  previous: ConversationViewPreferenceSnapshot,
+  next: ConversationViewPreferenceSnapshot,
+) => void;
 
 export interface ConversationViewPreferenceController {
   snapshot: ConversationViewPreferenceSnapshot;
@@ -47,18 +51,47 @@ export interface ConversationViewPreferenceController {
   saving: boolean;
   error: ConversationViewPreferenceError;
   save(view: ConversationViewPreference): Promise<boolean>;
+  subscribeBeforeCommit(listener: ConversationViewPreferenceBeforeCommit): () => void;
 }
 
-export function useConversationViewPreference(threadId: string): ConversationViewPreferenceController {
+export function useConversationViewPreference(threadId: string, enabled = true): ConversationViewPreferenceController {
   const [snapshot, setSnapshot] = useState<ConversationViewPreferenceSnapshot>(PRODUCT_SNAPSHOT);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<ConversationViewPreferenceError>(null);
   const generationRef = useRef(0);
+  const snapshotRef = useRef(PRODUCT_SNAPSHOT);
+  const beforeCommitListenersRef = useRef(new Set<ConversationViewPreferenceBeforeCommit>());
+  const commitSnapshot = useCallback((next: ConversationViewPreferenceSnapshot) => {
+    const previous = snapshotRef.current;
+    for (const listener of beforeCommitListenersRef.current) {
+      try {
+        listener(previous, next);
+      } catch (cause) {
+        console.error('Conversation view before-commit subscriber failed', cause);
+      }
+    }
+    snapshotRef.current = next;
+    setSnapshot(next);
+  }, []);
+  const subscribeBeforeCommit = useCallback((listener: ConversationViewPreferenceBeforeCommit) => {
+    beforeCommitListenersRef.current.add(listener);
+    return () => beforeCommitListenersRef.current.delete(listener);
+  }, []);
 
   useEffect(() => {
+    if (!enabled) {
+      generationRef.current += 1;
+      snapshotRef.current = PRODUCT_SNAPSHOT;
+      setSnapshot(PRODUCT_SNAPSHOT);
+      setLoading(false);
+      setSaving(false);
+      setError(null);
+      return;
+    }
     const generation = ++generationRef.current;
     const abort = new AbortController();
+    snapshotRef.current = PRODUCT_SNAPSHOT;
     setSnapshot(PRODUCT_SNAPSHOT);
     setLoading(true);
     setSaving(false);
@@ -68,7 +101,7 @@ export function useConversationViewPreference(threadId: string): ConversationVie
         if (!response.ok) throw new Error(`conversation view load failed (${response.status})`);
         const parsed = parseSnapshot(await response.json());
         if (!parsed) throw new Error('conversation view response is invalid');
-        if (generation === generationRef.current) setSnapshot(parsed);
+        if (generation === generationRef.current) commitSnapshot(parsed);
       })
       .catch((cause: unknown) => {
         if (abort.signal.aborted || generation !== generationRef.current) return;
@@ -82,11 +115,11 @@ export function useConversationViewPreference(threadId: string): ConversationVie
       abort.abort();
       if (generation === generationRef.current) generationRef.current += 1;
     };
-  }, [threadId]);
+  }, [commitSnapshot, enabled, threadId]);
 
   const save = useCallback(
     async (view: ConversationViewPreference): Promise<boolean> => {
-      if (loading || saving) return false;
+      if (!enabled || loading || saving) return false;
       if (sameView(snapshot.stored, view)) {
         setError(null);
         return true;
@@ -97,7 +130,7 @@ export function useConversationViewPreference(threadId: string): ConversationVie
       try {
         const parsed = await persistConversationView(threadId, view);
         if (generation !== generationRef.current) return false;
-        setSnapshot(parsed);
+        commitSnapshot(parsed);
         return true;
       } catch (cause) {
         if (generation !== generationRef.current) return false;
@@ -108,8 +141,8 @@ export function useConversationViewPreference(threadId: string): ConversationVie
         if (generation === generationRef.current) setSaving(false);
       }
     },
-    [loading, saving, snapshot.stored, threadId],
+    [commitSnapshot, enabled, loading, saving, snapshot.stored, threadId],
   );
 
-  return { snapshot, loading, saving, error, save };
+  return { snapshot, loading, saving, error, save, subscribeBeforeCommit };
 }

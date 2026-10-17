@@ -12,7 +12,7 @@ async function fixture(prior = 0) {
     store.append({
       userId: 'owner',
       threadId: 'home',
-      catId: i % 2 ? createCatId('codex61-sol') : null,
+      from: i % 2 ? { kind: 'agent', catId: createCatId('codex61-sol') } : { kind: 'user', userId: 'owner' },
       content: 'earlier conversation',
       mentions: [],
       timestamp: Date.now() - 10_000 + i,
@@ -287,7 +287,7 @@ test('owner currentness is rechecked after the asynchronous reads of all utteran
       f.store.append({
         userId: 'owner',
         threadId: 'home',
-        catId: null,
+        from: { kind: 'user', userId: 'owner' },
         content: '还是Chrome',
         mentions: [],
         timestamp: Date.now(),

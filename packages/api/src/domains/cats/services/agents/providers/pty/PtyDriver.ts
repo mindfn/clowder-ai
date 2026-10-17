@@ -32,11 +32,13 @@
  * snapshotTranscriptFiles, watchForTranscriptFile, isBypassConfirmationScreen, sleep)
  * live in ./pty-utils.ts to stay within the 350-line file limit.
  */
+
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { createModuleLogger } from '../../../../../../infrastructure/logger.js';
+import { startTmuxSession } from './pty-session-launch.js';
 import {
   acquireTranscriptDirWatch,
   buildClaudeCommand,
@@ -136,7 +138,7 @@ export class PtyDriver {
     tmuxNewSessionArgs.push(claudeCmd);
 
     // Create detached tmux session running claude
-    await tmux(...tmuxNewSessionArgs);
+    await startTmuxSession(tmuxNewSessionArgs);
 
     // Ready probe: poll tmux list-panes until pane is alive, then grace period
     const graceMs = this.opts.readyGraceMs ?? 15_000; // spike: ready 10-15s

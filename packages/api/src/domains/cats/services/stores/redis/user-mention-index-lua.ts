@@ -77,7 +77,7 @@ local function checkMentionKeys(keys)
 end
 local function mentionEvent(hash)
   local r = redis.call('HMGET', hash, 'id', 'userId', 'threadId', 'catId', 'mentionsUser', 'visibility',
-    'source', 'origin', 'extra', 'deliveryStatus', 'deletedAt', 'recall', 'timestamp', 'deliveredAt')
+    'source', 'origin', 'extra', 'deliveryStatus', 'deletedAt', 'recall', 'timestamp', 'deliveredAt', 'from', 'lifecycle')
   if not r[1] or r[6] == 'whisper' or (r[7] and r[7] ~= '') or r[8] == 'briefing' or r[11] or r[12] then return nil end
   if r[2] == 'system' or r[2] == 'scheduler' or r[4] == 'system' then return nil end
   local extra = {}
@@ -88,8 +88,21 @@ local function mentionEvent(hash)
   end
   if extra.systemKind or extra.systemInfo then return nil end
   local cat = r[4] and r[4] ~= ''
+  if r[15] and r[15] ~= '' then
+    local ok, sender = pcall(cjson.decode, r[15])
+    if not ok or type(sender) ~= 'table' then return nil end
+    if sender.kind ~= 'agent' and sender.kind ~= 'user' then return nil end
+    cat = sender.kind == 'agent'
+  end
   if r[10] and r[10] ~= '' and r[10] ~= 'delivered' then
-    if r[10] ~= 'queued' or not cat then return nil end
+    -- Match isTimelinePublished: canceling a response's outbound work does not
+    -- withdraw its authored body. Ordinary canceled input remains excluded.
+    local publishedResponse = false
+    if r[10] == 'canceled' and r[16] and r[16] ~= '' then
+      local ok, lifecycle = pcall(cjson.decode, r[16])
+      publishedResponse = ok and type(lifecycle) == 'table' and lifecycle.kind == 'response'
+    end
+    if not publishedResponse and (r[10] ~= 'queued' or not cat) then return nil end
   end
   if not cat and extra.crossPost then return nil end
   if cat and r[5] ~= '1' then return nil end

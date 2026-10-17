@@ -85,7 +85,6 @@ describe('execution row location through the original owner', () => {
       messages: [message],
       threadStates: {},
       queue: [],
-      queuePaused: false,
       activeInvocations: {},
       catInvocations: {},
       catStatuses: {},
@@ -118,7 +117,7 @@ describe('execution row location through the original owner', () => {
 
   it('names a live reply, scrolls to its exact child bubble and opens its original record', async () => {
     await render(execution());
-    expect(text()).toContain('砚砚 · GPT-6.1 Sol 正在回话');
+    expect(text()).toContain('砚砚 · GPT-6.1 Sol 处理中');
     expect(locate()).not.toBeNull();
     await act(async () => locate()?.click());
     expect(scroll.mock.instances).toContain(container.querySelector('[data-message-id="original-writing-message"]'));
@@ -146,7 +145,7 @@ describe('execution row location through the original owner', () => {
   it('keeps the type distinction when language changes', async () => {
     await render(execution());
     act(() => writeShellLanguage('en'));
-    expect(text()).toContain('replying');
+    expect(text()).toContain('working');
   });
   it('keeps running words in the narrow managed row, in both languages', async () => {
     await render(execution({ kind: 'managed_command', activity: 'full_gate' }));

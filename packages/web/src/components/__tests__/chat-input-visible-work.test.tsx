@@ -104,15 +104,7 @@ it.each([
   expect(getContextAttachmentDraft(threadId)).toEqual([]);
   await sendEnter();
   expect(send).toHaveBeenCalledOnce();
-  expect(send.mock.calls[0]).toEqual([
-    '保留我的两行说明\n另一行',
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    [attachment],
-  ]);
+  expect(send.mock.calls[0]).toEqual(['保留我的两行说明\n另一行', undefined, undefined, undefined, [attachment]]);
   expect(host.querySelector('textarea')?.value).toBe('保留我的两行说明\n另一行');
   expect(getContextAttachmentDraft(threadId)).toEqual([]);
 });
@@ -127,7 +119,7 @@ it('an explicit circle keeps its ID, words and source instead of acquiring a who
   const send = vi.fn<Send>(() => false);
   await render(send);
   await sendEnter();
-  expect(send.mock.calls[0]?.[6]).toEqual([selected]);
+  expect(send.mock.calls[0]?.[4]).toEqual([selected]);
   expect(getContextAttachmentDraft(threadId)).toEqual([selected]);
 });
 
@@ -165,7 +157,7 @@ it.each([
   if (condition === 'hidden') visible = false;
   if (condition === 'other-surface') active = 'other';
   await sendEnter();
-  expect(send.mock.calls[0]?.[6]).toBeUndefined();
+  expect(send.mock.calls[0]?.[4]).toBeUndefined();
 });
 
 it('an old registration cleanup cannot remove its newer replacement and foreign thread reads stay empty', async () => {

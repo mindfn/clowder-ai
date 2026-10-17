@@ -15,6 +15,8 @@ export * from './avatar-limits.js';
 export * from './capability-tip-telemetry.js';
 // Export capability tips contract (F244 waiting-state Knowledge Feed projection)
 export * from './capability-tips.js';
+// Human-facing runtime member identity shared by API notifications and Web surfaces.
+export * from './cat-display-name.js';
 export * from './chatgpt-cloud-presentation.js';
 // Export shared CLI effort helpers
 export * from './cli-effort.js';
@@ -116,6 +118,7 @@ export * from './types/output-message.js';
 export * from './types/video-project.js';
 export * from './types/video-project-review.js';
 export * from './types/workspace-content-review.js';
+export * from './utils/local-session-import.js';
 export * from './utils/pull-request-changes-target.js';
 // Export subject key utilities (#320)
 export * from './utils/subject-key.js';

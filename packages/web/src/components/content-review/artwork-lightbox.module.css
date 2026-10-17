@@ -1,0 +1,47 @@
+.window {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: calc(100vw - 48px);
+  height: calc(100dvh - 80px);
+  max-width: 1440px;
+  min-height: 0;
+  gap: 14px;
+}
+.owner {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 12px;
+}
+.owner > * {
+  flex: 1;
+  min-height: 0;
+}
+.composer {
+  position: relative;
+  z-index: 10;
+  flex: none;
+  width: min(880px, 100%);
+  margin: 0 auto;
+  border-radius: 20px;
+  background: var(--cafe-surface);
+  color: var(--cafe-text);
+}
+.owner [data-testid="workspace-content-review-surface"] {
+  background: transparent;
+}
+@media (max-width: 600px) {
+  .window {
+    width: calc(100vw - 16px);
+    height: calc(100dvh - 64px);
+    gap: 8px;
+  }
+  .composer {
+    max-height: 44dvh;
+    overflow-y: auto;
+    border-radius: 14px;
+  }
+}

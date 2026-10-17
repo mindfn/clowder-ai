@@ -19,8 +19,8 @@ import { registerCallbackAuthHook } from '../../src/routes/callback-auth-prehand
 import { registerNativeTurnAdmissionRoute } from '../../src/routes/callback-native-turn-admission.ts';
 
 /** Installed CLI + scripted local Responses transport; this is sandbox evidence, not a true-model run. */
-export async function probePrivateNative() {
-  const root = await mkdtemp(join(tmpdir(), 'f290-private-native-'));
+export async function probePrivateNative({ tempParent = tmpdir() } = {}) {
+  const root = await mkdtemp(join(tempParent, 'f290-private-native-'));
   const oldAttempt = await prepareCollectiveWorkDirectory(
     root,
     'probe-owner',

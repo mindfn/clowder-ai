@@ -18,12 +18,16 @@ export async function createScarceNotificationFixture() {
   const messages = new MessageStore();
   const threads = new ThreadStore();
   const cursors = new DeliveryCursorStore();
-  const queue = new InvocationQueue();
+  const records = [];
+  const queue = new InvocationQueue(undefined, {
+    onAdmitted: ({ entries }) => {
+      if (entries.length) records.push({ targetCats: entries.flatMap((entry) => entry.targets) });
+    },
+  });
   const agentKeys = new AgentKeyRegistry();
   const source = await threads.create('user-1', 'Source');
   const target = await threads.create('user-1', 'Target');
   await threads.addParticipants(target.id, ['fable-5', 'codex']);
-  const records = [];
   const executions = [];
   async function setup({ queued = false, useDefaultReader = false } = {}) {
     const { callbacksRoutes } = await import('../../dist/routes/callbacks.js');
@@ -57,7 +61,8 @@ export async function createScarceNotificationFixture() {
           return null;
         },
       },
-      ...(queued ? { invocationQueue: queue } : {}),
+      invocationQueue: queue,
+      queueProcessor: { registerCallerDispatchInitialTargets() {}, async requestDrain() {} },
     });
     return registry.create('user-1', 'opus', source.id);
   }

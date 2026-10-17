@@ -1,6 +1,7 @@
 import { lstat, readFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { SignalSchemaCatalog } from '@clowder-ai/plugin-contract';
+import { fetchOfficialPackageArchive, registeredBundledArchive } from './bundled-package-source.js';
 import { staticEditorContributions } from './content-editor-runtime/admission.js';
 import { desktopWindowContribution } from './desktop-window-runtime/admission.js';
 import { FilesystemVerifiedPluginPackageLocator, type VerifiedPluginPackage } from './external-runtime/index.js';
@@ -9,6 +10,12 @@ import { reportPackageArchiveFailure } from './external-runtime/package-staging-
 import { snapshotPluginSurfaceAssets } from './external-runtime/package-surface-assets.js';
 import type { HostInventoryControlPlane } from './host-inventory/control-plane.js';
 import { type PackageAdmissionCandidate, PluginInventoryError } from './host-inventory/types.js';
+import { LEGACY_BUNDLED_MANIFESTS } from './legacy-bundled-manifests.js';
+import {
+  compareOfficialPluginVersions,
+  type OfficialPluginCatalogProvider,
+  StaticOfficialPluginCatalog,
+} from './manager/official-catalog-provider.js';
 import {
   type PluginPackageQuarantineFailureCode,
   type PluginPackageQuarantineRecorder,
@@ -16,18 +23,11 @@ import {
 } from './manager/plugin-package-quarantine.js';
 import {
   bundledManifestDigest,
-  OFFICIAL_BUNDLED_MANIFESTS,
   OFFICIAL_PLUGIN_CATALOG,
   type OfficialPluginCatalogEntry,
   officialPluginPresentationMatches,
 } from './official-catalog.js';
 import {
-  compareOfficialPluginVersions,
-  type OfficialPluginCatalogProvider,
-  StaticOfficialPluginCatalog,
-} from './official-catalog-provider.js';
-import {
-  downloadCatalogArchive,
   MAX_OFFICIAL_PACKAGE_BYTES,
   publishPluginPackageArchive,
   verifyPluginPackageDigest,
@@ -109,7 +109,7 @@ export class OfficialPluginPackageInstaller {
   constructor(private readonly options: OfficialPluginPackageInstallerOptions) {
     this.catalogProvider =
       options.catalogProvider ?? new StaticOfficialPluginCatalog(options.catalog ?? OFFICIAL_PLUGIN_CATALOG);
-    this.fetchArchive = options.fetchArchive ?? downloadCatalogArchive;
+    this.fetchArchive = options.fetchArchive ?? fetchOfficialPackageArchive;
     this.packagesRoot = resolve(options.packagesRoot);
   }
 
@@ -293,8 +293,11 @@ export class OfficialPluginPackageInstaller {
     entry: OfficialPluginCatalogEntry,
     accept: (candidate: PackageAdmissionCandidate) => Promise<T>,
   ): Promise<T> {
-    if (entry.distribution === 'bundled') {
+    if (entry.distribution === 'bundled' && entry.bundledFormat !== 'archive') {
       return this.withBundledPackage(entry, accept);
+    }
+    if (entry.distribution === 'bundled' && !registeredBundledArchive(entry)) {
+      throw new OfficialPluginInstallError('INVALID_PACKAGE_SCHEMA', 'bundled archive is not registered by the Host');
     }
     const bytes = await this.fetchArchive(entry);
     if (bytes.byteLength > MAX_OFFICIAL_PACKAGE_BYTES) {
@@ -313,6 +316,12 @@ export class OfficialPluginPackageInstaller {
       });
     }
     try {
+      if (entry.distribution === 'bundled' && located.manifest.runtime.transport !== 'builtin') {
+        throw new OfficialPluginInstallError(
+          'UNSUPPORTED_TRANSPORT',
+          'bundled archive must retain its builtin runtime',
+        );
+      }
       if (located.manifest.pluginId !== entry.pluginId) {
         throw new OfficialPluginInstallError('PACKAGE_ID_MISMATCH', 'package manifest identity differs from catalog');
       }
@@ -393,7 +402,9 @@ export class OfficialPluginPackageInstaller {
     entry: OfficialPluginCatalogEntry,
     accept: (candidate: PackageAdmissionCandidate) => Promise<T>,
   ): Promise<T> {
-    const manifest = OFFICIAL_BUNDLED_MANIFESTS.find((candidate) => candidate.pluginId === entry.pluginId);
+    const manifest = LEGACY_BUNDLED_MANIFESTS.find(
+      (candidate) => candidate.pluginId === entry.pluginId && candidate.version === entry.version,
+    );
     if (!manifest) {
       throw new OfficialPluginInstallError(
         'INVALID_PACKAGE_SCHEMA',

@@ -19,7 +19,7 @@ test('canonical dot request admission survives Redis hydration and cannot be rew
   const root = messages.append({
     userId: 'owner',
     threadId: 'A',
-    catId: createCatId('gpt-dot'),
+    from: { kind: 'agent', catId: createCatId('gpt-dot') },
     content: 'question',
     mentions: [createCatId('codex')],
     timestamp: 100,

@@ -1,9 +1,12 @@
 'use client';
 
+import { useThreadArtifacts } from '@/hooks/useThreadArtifacts';
 import { useChatStore } from '@/stores/chatStore';
 import { useTaskStore } from '@/stores/taskStore';
 import { AppTooltip } from '../AppTooltip';
+import { headerCountsCopy } from './header-counts.shell-copy';
 import { ShellGlyph, WorksIcon } from './ShellIcons';
+import { useShellCopy } from './shell-copy';
 
 function HeaderChip({
   icon,
@@ -23,7 +26,8 @@ function HeaderChip({
   onClick: () => void;
   testId: string;
 }) {
-  const accessibleName = count ? `${label} ${count}，${tip}` : `${label}，${tip}`;
+  const t = useShellCopy(headerCountsCopy);
+  const accessibleName = t.accessibleName(count !== undefined ? `${label} ${count}` : label, tip);
   return (
     <AppTooltip label={tip} detail={tipDetail} side="bottom">
       <button
@@ -36,24 +40,31 @@ function HeaderChip({
       >
         <span style={{ color: 'var(--shell-muted)' }}>{icon}</span>
         <span>{label}</span>
-        {count ? <span className="tabular-nums">{count}</span> : null}
+        {count !== undefined ? <span className="tabular-nums">{count}</span> : null}
       </button>
     </AppTooltip>
   );
 }
 
 /**
- * 作品 (this conversation). Opens the existing 产物 panel at its current-conversation scope.
- * No number on purpose: what counts as a "作品" (a family of versions the user opens, annotates and adopts) is F232/F309's
- * admission rule and is not implemented yet — attachment/artifact row counts must not stand in for it.
+ * Shares Home and All Works' canonical projection. Remounting the reader on a thread change prevents
+ * the previous conversation's total from appearing while the new owner's read starts.
  */
-export function ThreadWorksButton() {
+export function ThreadWorksButton({ threadId }: { threadId: string }) {
+  return <ThreadWorksCount key={threadId} threadId={threadId} />;
+}
+
+function ThreadWorksCount({ threadId }: { threadId: string | undefined }) {
+  const t = useShellCopy(headerCountsCopy);
   const setWorkspaceMode = useChatStore((s) => s.setWorkspaceMode);
+  const { total, complete, loading, error } = useThreadArtifacts(threadId, 'works');
+  const count = complete && !loading && !error && total !== null ? total : undefined;
   return (
     <HeaderChip
       icon={<WorksIcon className="h-4 w-4" />}
-      label="作品"
-      tip="这条对话的作品"
+      label={t.works}
+      count={count}
+      tip={t.worksTip}
       onClick={() => setWorkspaceMode('artifacts')}
       testId="header-works"
     />
@@ -65,16 +76,17 @@ export function ThreadWorksButton() {
  * loads for the open thread. Zero stays unnumbered because "not loaded yet" and "none" are indistinguishable in that store.
  */
 export function ThreadTasksButton() {
+  const t = useShellCopy(headerCountsCopy);
   const setWorkspaceMode = useChatStore((s) => s.setWorkspaceMode);
   const total = useTaskStore((s) => s.tasks.length);
   const open = useTaskStore((s) => s.tasks.filter((t) => t.status !== 'done').length);
   return (
     <HeaderChip
       icon={<ShellGlyph name="checkSquare" className="h-4 w-4" />}
-      label="任务"
-      count={open}
-      tip="这条对话的任务"
-      tipDetail={total > 0 ? `${open} 项未完成 · 共 ${total} 项` : undefined}
+      label={t.tasks}
+      count={open || undefined}
+      tip={t.tasksTip}
+      tipDetail={total > 0 ? t.taskDetail(open, total) : undefined}
       onClick={() => setWorkspaceMode('tasks')}
       testId="header-tasks"
     />

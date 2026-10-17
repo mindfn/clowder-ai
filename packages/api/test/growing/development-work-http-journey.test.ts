@@ -16,11 +16,11 @@ import {
   handleDevelopmentWork,
   handleResolveDevelopmentWork,
 } from '../../../mcp-server/src/tools/development-work-tools.js';
-import { InvocationRegistry } from '../../src/domains/cats/services/agents/invocation/InvocationRegistry.js';
 import {
   deriveGrowingSourceMessageRevision,
   MessageStore,
-} from '../../src/domains/cats/services/stores/ports/MessageStore.js';
+} from '../../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { InvocationRegistry } from '../../src/domains/cats/services/agents/invocation/InvocationRegistry.js';
 import { InMemoryProposalStore } from '../../src/domains/cats/services/stores/ports/ProposalStore.js';
 import { TaskStore } from '../../src/domains/cats/services/stores/ports/TaskStore.js';
 import { ThreadStore } from '../../src/domains/cats/services/stores/ports/ThreadStore.js';
@@ -149,7 +149,7 @@ test('untimed development crosses MCP, HTTP, original Task, publication, return 
   const human = (content: string) =>
     messages.append({
       userId: 'fixture-human',
-      catId: null,
+      from: { kind: 'user', userId: 'fixture-human' },
       threadId: thread.id,
       content,
       mentions: [],
@@ -200,7 +200,7 @@ test('untimed development crosses MCP, HTTP, original Task, publication, return 
   await writeFile(artifactPath, body);
   messages.append({
     userId: 'fixture-human',
-    catId: 'codex-sol',
+    from: { kind: 'agent', catId: 'codex-sol' },
     threadId: thread.id,
     content: 'Prepared isolated result',
     mentions: [],
@@ -289,7 +289,7 @@ test('untimed development crosses MCP, HTTP, original Task, publication, return 
   assert.equal(denied.isError, true);
   const report = messages.append({
     userId: 'fixture-human',
-    catId: 'codex-sol',
+    from: { kind: 'agent', catId: 'codex-sol' },
     threadId: child.id,
     content: 'Final isolated result, verified through HTTP',
     mentions: [],

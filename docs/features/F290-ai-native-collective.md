@@ -4,7 +4,7 @@ related_features: [F044, F077, F128, F168, F195, F202, F232, F246, F254, F276, F
 topics: [ai-native-collaboration, multi-human, multi-agent, collective, cafe, channel, topic, asset, annotation, rich-message, task, vote, team-memory]
 doc_kind: spec
 created: 2026-08-08
-updated: 2026-10-13
+updated: 2026-10-16
 tips_exempt: "首次带猫引导在用户进入 Collective 时直接出现，并在成员和我的 Café 中提供重播；另推 capability tip 会重复这段入场体验。"
 description: "让多个独立 Café 在同一个 Collective 中围绕对话、资产、工作与关系持续协同；私人空间不被吞并，承诺、来源与团队记忆也不会掉线。"
 description_source: human
@@ -16,6 +16,11 @@ design_gate_claim_contracts:
 mcp_admission_status: accepted
 mcp_admission_ref: "file:docs/features/F290-ai-native-collective.md"
 mcp_admission_claims:
+  - ref: "file:docs/features/F290-ai-native-collective.md"
+    toolName: cat_cafe_collective_artifact_command
+    resourceFamily: collective-participation
+    boundaryKind: resource-entry
+    decision: accepted
   - ref: "file:docs/features/F290-ai-native-collective.md"
     toolName: cat_cafe_collective_current_context
     resourceFamily: collective-participation
@@ -164,6 +169,14 @@ Workbench、内容协作、Cat Agent runtime 与工具权限仍由 F307/F309/既
 **通讯实现阅读入口（2026-09-30）**：[通讯模型与执行上下文](../architecture/f290-communication-model.md)。
 该文统一说明家内猫身份、每频道接收关系、事项续接、默认自决、公私上下文、并发与跨频道汇总；
 列出已定约束、代码差距及待定接口。本 spec 保留范围/验收，原计划保留实施顺序，文档更新不代表运行能力已交付。
+
+10-16 W4 的有界共同作品接线沿人类启动 `private-source-id`、
+已批准执行现场 `private-source-id` 与 F309 owner 裁决
+`private-source-id`，登记 `collective_artifact_command` 为上述 family 的同来源入口。
+Host 从当前 invocation / durable public source 派生作品坐标和具名 Cat；`read` 读取固定 owner 版本与原批注，
+`respond` 只向既有 F309 journal/proposal 返回修改建议。每次复核请求人、猫主人、参与声明与资源权限；
+采用仍由有权 Human 发起并消费 owner receipt，Work/Task 验收保持原协议。
+该登记覆盖已批准 W4 包必要的工具接线，完整旅程和部署状态见
 
 首猫 MCP admission 索引登记已冻结计划的 current-context/read/reply 三个来源与回流入口；A2
 另登记 cat-authored set-interest 入口，W3 登记只生成公共提议、不创建 Task 或承诺的 propose-work 入口，归正式

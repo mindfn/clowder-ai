@@ -12,10 +12,14 @@
  */
 
 import assert from 'node:assert/strict';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import Fastify from 'fastify';
 
 const { unifiedDriftRoutes } = await import('../dist/routes/drift.js');
+const { resolveStartupProjectRoot } = await import('../dist/utils/startup-root.js');
 
 /** Auth headers that pass requireDriftWriteAccess. */
 const AUTH_HEADERS = {
@@ -23,31 +27,44 @@ const AUTH_HEADERS = {
   host: 'localhost:3004',
   origin: 'http://localhost:3003',
 };
-const ORIGINAL_OWNER_USER_ID = process.env.DEFAULT_OWNER_USER_ID;
+const ENV_KEYS = ['DEFAULT_OWNER_USER_ID', 'CAT_CAFE_RUNTIME_ROOT', 'CAT_CAFE_WORKSPACE_ROOT', 'PROJECT_ALLOWED_ROOTS'];
+let previousEnv;
+let workspace;
+/** @type {import('fastify').FastifyInstance} */
+let app;
+
+beforeEach(async () => {
+  previousEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+  workspace = await realpath(await mkdtemp(join(tmpdir(), 'drift-global-resolve-')));
+  // Omitted projectPath must exercise the real global route, with writes confined to this fixture.
+  Object.assign(process.env, {
+    DEFAULT_OWNER_USER_ID: AUTH_HEADERS['x-test-session-user'],
+    CAT_CAFE_RUNTIME_ROOT: resolveStartupProjectRoot(),
+    CAT_CAFE_WORKSPACE_ROOT: workspace,
+    PROJECT_ALLOWED_ROOTS: workspace,
+  });
+  app = Fastify({ logger: false });
+  app.addHook('preHandler', async (request) => {
+    const raw = request.headers['x-test-session-user'];
+    if (typeof raw === 'string' && raw.trim()) request.sessionUserId = raw.trim();
+  });
+  await app.register(unifiedDriftRoutes);
+  await app.ready();
+});
+
+afterEach(async () => {
+  try {
+    await app?.close();
+  } finally {
+    for (const key of ENV_KEYS) {
+      if (previousEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = previousEnv[key];
+    }
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
 
 describe('#1050 — MCP drift resolve without projectPath', () => {
-  /** @type {import('fastify').FastifyInstance} */
-  let app;
-
-  beforeEach(async () => {
-    process.env.DEFAULT_OWNER_USER_ID = AUTH_HEADERS['x-test-session-user'];
-    app = Fastify({ logger: false });
-    app.addHook('preHandler', async (request) => {
-      const raw = request.headers['x-test-session-user'];
-      if (typeof raw === 'string' && raw.trim()) {
-        request.sessionUserId = raw.trim();
-      }
-    });
-    await app.register(unifiedDriftRoutes);
-    await app.ready();
-  });
-
-  afterEach(async () => {
-    await app?.close();
-    if (ORIGINAL_OWNER_USER_ID === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
-    else process.env.DEFAULT_OWNER_USER_ID = ORIGINAL_OWNER_USER_ID;
-  });
-
   it('does not reject MCP resolve when projectPath is absent', async () => {
     const res = await app.inject({
       method: 'POST',
@@ -55,10 +72,8 @@ describe('#1050 — MCP drift resolve without projectPath', () => {
       headers: AUTH_HEADERS,
       payload: { type: 'mcp', action: 'sync' },
     });
-    // The old behavior returned 400 with "Required: projectPath for MCP resolve".
-    // After fix: should NOT return that error — it may fail deeper (e.g. no drift),
-    // but not at the projectPath-required gate.
-    assert.notEqual(res.json().error, 'Required: projectPath for MCP resolve');
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json().action, 'sync');
   });
 
   it('does not reject MCP resolve when projectPath is explicitly undefined', async () => {
@@ -68,7 +83,8 @@ describe('#1050 — MCP drift resolve without projectPath', () => {
       headers: AUTH_HEADERS,
       payload: { type: 'mcp', action: 'sync', projectPath: undefined },
     });
-    assert.notEqual(res.json().error, 'Required: projectPath for MCP resolve');
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json().action, 'sync');
   });
 
   it('still rejects MCP resolve with invalid projectPath', async () => {
@@ -88,28 +104,6 @@ describe('#1050 — MCP drift resolve without projectPath', () => {
 });
 
 describe('#1049 Phase D — conflictPolicy parameter validation', () => {
-  /** @type {import('fastify').FastifyInstance} */
-  let app;
-
-  beforeEach(async () => {
-    process.env.DEFAULT_OWNER_USER_ID = AUTH_HEADERS['x-test-session-user'];
-    app = Fastify({ logger: false });
-    app.addHook('preHandler', async (request) => {
-      const raw = request.headers['x-test-session-user'];
-      if (typeof raw === 'string' && raw.trim()) {
-        request.sessionUserId = raw.trim();
-      }
-    });
-    await app.register(unifiedDriftRoutes);
-    await app.ready();
-  });
-
-  afterEach(async () => {
-    await app?.close();
-    if (ORIGINAL_OWNER_USER_ID === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
-    else process.env.DEFAULT_OWNER_USER_ID = ORIGINAL_OWNER_USER_ID;
-  });
-
   it('accepts conflictPolicy use-global without error', async () => {
     const res = await app.inject({
       method: 'POST',
@@ -117,8 +111,7 @@ describe('#1049 Phase D — conflictPolicy parameter validation', () => {
       headers: AUTH_HEADERS,
       payload: { type: 'mcp', action: 'sync', conflictPolicy: 'use-global' },
     });
-    // Should not fail at validation — may fail deeper (no drift), but not 400 for conflictPolicy
-    assert.notEqual(res.json().error?.includes?.('conflictPolicy'), true);
+    assert.equal(res.statusCode, 200, res.body);
   });
 
   it('accepts conflictPolicy keep-project without error', async () => {
@@ -128,7 +121,7 @@ describe('#1049 Phase D — conflictPolicy parameter validation', () => {
       headers: AUTH_HEADERS,
       payload: { type: 'mcp', action: 'sync', conflictPolicy: 'keep-project' },
     });
-    assert.notEqual(res.json().error?.includes?.('conflictPolicy'), true);
+    assert.equal(res.statusCode, 200, res.body);
   });
 
   it('rejects invalid conflictPolicy with 400', async () => {
@@ -149,8 +142,8 @@ describe('#1049 Phase D — conflictPolicy parameter validation', () => {
       headers: AUTH_HEADERS,
       payload: { type: 'skill', action: 'sync', conflictPolicy: 'keep-project' },
     });
-    // conflictPolicy is unified across MCP and skill — should not fail at validation
-    assert.notEqual(res.json().error?.includes?.('conflictPolicy'), true);
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json().projectRoot, workspace);
   });
 
   it('rejects invalid conflictPolicy for skill resolve too', async () => {

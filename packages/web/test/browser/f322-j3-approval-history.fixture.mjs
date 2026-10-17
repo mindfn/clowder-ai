@@ -18,14 +18,14 @@ export async function registerControlledApprovalHistory(app, threadId) {
     const origin = messages.append({
       userId: owner,
       threadId,
-      catId: 'codex61-sol',
+      from: { kind: 'agent', catId: 'codex61-sol' },
       content: `Controlled ${outcome} proposal origin`,
       timestamp: Date.now() - 5000,
     });
     const card = messages.append({
       userId: owner,
       threadId,
-      catId: 'codex61-sol',
+      from: { kind: 'agent', catId: 'codex61-sol' },
       content: `Controlled ${outcome} approval card`,
       timestamp: Date.now() - 4000,
     });

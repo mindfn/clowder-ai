@@ -192,9 +192,9 @@ test('absolute pinned gh wrapper retains the PR/API read contract', () => {
   fixtureEnvironment.PATH = `${guardedBin}:${dirname(process.execPath)}:${ordinary}:/usr/bin:/bin`;
   fixtureEnvironment.CAT_CAFE_REAL_GH_PATH = delegate;
   try {
-    parity(`${gh} pr view 5346 --repo zts212653/cat-cafe --json state,mergeCommit,headRefOid`, 'allow');
-    parity(`${gh} pr checks 5346 --repo zts212653/cat-cafe --json name,state`, 'allow');
-    parity(`${gh} pr list --repo zts212653/cat-cafe --state open --json number,files`, 'allow');
+    parity(`${gh} pr view 5346 --repo zts212653/clowder-ai --json state,mergeCommit,headRefOid`, 'allow');
+    parity(`${gh} pr checks 5346 --repo zts212653/clowder-ai --json name,state`, 'allow');
+    parity(`${gh} pr list --repo zts212653/clowder-ai --state open --json number,files`, 'allow');
     parity(`${gh} api repos/zts212653/cat-cafe/pulls/5346 --method GET`, 'allow');
     parity(`NODE_OPTIONS='--require ${runtime}/loader.js' ${gh} pr view 5346`, 'deny');
     parity(`${gh} api repos/zts212653/cat-cafe/issues --method POST`, 'deny');

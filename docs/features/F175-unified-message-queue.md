@@ -5,6 +5,7 @@ topics: [queue, dispatch, priority, invocation, connector, architecture]
 doc_kind: spec
 created: 2026-04-24
 intake_source: clowder-ai#575
+tips_exempt: 2026-09-03 ADR-043 replaces internal Queue custody and settlement mechanics while preserving the existing priority and reorder user journey
 ---
 
 # F175: 消息队列统一设计 — 优先级排序 + 用户可控编排
@@ -18,6 +19,8 @@ intake_source: clowder-ai#575
 > **Rename reason**: cat-cafe 本地 F169 已被 `agent-memory-reflex` vision 文档占用，同号不同物会污染 search_evidence（参见 `feedback_fake_feat_anchor_is_poison`）。已要求 mindfn 在 PR #575 源头完成 F169 → F175 rename。
 >
 > **Fixes**: clowder-ai#564 — urgent connector 消息不再通过 bypass 抢占 A2A 链，改走队列内优先级排序。
+
+> ⚠️ **2026-09-20 终态修订**：priority / position comparator 与拖拽重排语义**保持有效**；reorder 契约使用 `expectedQueueRevision + orderedVisibleEntryIds` 原子整批替换（RFC #1356 §4.1），且「吸走相邻条目」的 `exactSteerBatch` fence 已被 Lua 原子 claim 取代。持久模型是一条 source message 对应一条 Queue row，`targets[]` 保存全部尚未投递成员；普通 drain 以整条 source 为领取单位，完整 target set 可 admission 时一次并发 fan-out，不再做相邻 source 的前缀批处理，也不合并 Message identity 或正文。下方 Phase A 的 batching 方案仅保留为演进历史；当前真相源见 [ADR-043](../decisions/043-queue-durable-single-ledger.md) 与 [F117 Phase D](F117-message-delivery-lifecycle.md)。
 
 ## Why
 
@@ -70,12 +73,12 @@ peekOldestAcrossUsers(threadId):
 ```
 QueueProcessor 出队时：
   if entry.source === 'user':
-    收集队列中紧随其后的连续 entries，满足：
+    原子 claim 队列中紧随其后的连续 entries，满足：
       - source === 'user'
       - 同 userId
       - 同 intent
-      - 同完整 targetCats 集合（Set equality）
-    → 一起作为一次 invocation 的上下文
+      - 同一个标量 target
+    → 一起作为一次 invocation 的独立 prompt messages（不拼正文）
 
   if entry.source === 'connector' or 'agent':
     单条处理（当前行为不变）
@@ -120,13 +123,13 @@ QueueProcessor 出队时：
 - 设计决策记录
 - Guard story（connector/agent 深度护栏现有组合 + runaway 告警方案）
 
-## 实现不变量（maintainer review 要求）
+## 当前实现不变量
 
-1. **User-message batching 判定条件须等价现有 merge 语义**：source=user + 同 userId + 同 intent + 同完整 targetCats 集合（Set equality）
-2. **Drag > priority 的精确边界**：只有显式手动 position 的 entry 才覆盖 priority
-3. **Batching 不重新推断 target**：用 entry 上已解析好的 targetCats，不在 batching 逻辑里重新推断
+1. 一条 source 一条 Queue row；不批量吸收相邻 source，也不合并 Message identity 或正文。
+2. 显式 position、priority、FIFO 共享同一 comparator；同目标旧等待项不能被自动追加或新回合越过，无关目标继续。
+3. 共同 send 持久保存实际目标和发送策略；drain 复验当前执行、能力、授权和 exact parent，不按来源另建调度。
 
-## Acceptance Criteria
+## Acceptance Criteria（历史交付记录）
 
 ### Phase A（后端统一）— ✅ 全部完成
 - [x] AC-A1: `handleUrgentTrigger()` 和 urgent 分支已删除，active-slot 时所有 connector 消息走 `enqueueWhileActive()`（idle slot 保留 fast path）
@@ -134,7 +137,7 @@ QueueProcessor 出队时：
 - [x] AC-A3: 出队逻辑 priority-first — urgent 消息在 normal 前面被处理
 - [x] AC-A4: 用户手动 position 覆盖 priority 排序（仅显式设置时）
 - [x] AC-A5: 用户消息不再强制 merge — 每条独立 QueueEntry
-- [x] AC-A6: 出队时 user-message batching — 连续同 userId + 同 intent + 同 targetCats 的 user entries 汇聚为一次 invocation
+- [x] AC-A6: 出队时 user-message batching — 连续同 owner + 同 intent + 同标量 target 的 user rows 原子 claim，并作为独立 prompt messages 进入一次 invocation
 - [x] AC-A7: connector/agent 消息不受 MAX_QUEUE_DEPTH 限制
 - [x] AC-A8: reorder API 可用（`PATCH /queue/reorder`）
 - [x] AC-A9: 回归：urgent connector 不打断 A2A 链（#564 原始场景修复）
@@ -161,7 +164,7 @@ QueueProcessor 出队时：
 - **Related**: F133（CI/CD Tracking — urgent priority 语义变更）
 - **Related**: F167（A2A Chain Quality — #564 是 A2A 链断裂的具体案例）
 
-## Risk
+## Risk（历史方案）
 
 | 风险 | 缓解 |
 |------|------|
@@ -170,7 +173,7 @@ QueueProcessor 出队时：
 | connector/agent 队列无硬上限可能 runaway | 现有 guard 组合覆盖主要场景（去重 + depth limit + stale 清理），实践中监控 |
 | 前端拖动排序和后端 position 的一致性 | position 是 optional number，未设置时走默认排序，设置时同 userId 内优先（跨用户不干扰） |
 
-## Key Decisions
+## Key Decisions（历史）
 
 | # | 决策 | 理由 | 日期 |
 |---|------|------|------|

@@ -2,6 +2,16 @@ import { type EvolutionExplorationNodeV1, refIdentity } from '@cat-cafe/shared';
 
 export const LINEAGE_NODE_SIZE = { width: 176, height: 112 };
 
+export interface ExplorationLineageRegion {
+  key: 'owner' | 'registered' | 'parentless' | 'cortex';
+  label: string;
+  nodeKeys: string[];
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 export function lineageDetailLevel(zoom: number) {
   return zoom < 0.6 ? 'points' : zoom < 1.15 ? 'compact' : 'detail';
 }
@@ -59,4 +69,114 @@ export function layoutExplorationLineage(
     height: Math.max(160, ...placed.map((node) => node.y + LINEAGE_NODE_SIZE.height + 24)),
     hiddenCount: hidden.size,
   };
+}
+
+const CORTEX_ARCHIVE_PREFIX = 'cortex-archive-container:';
+
+/**
+ * The v2 overview keeps source classes inside the canvas instead of asking an
+ * external legend to explain one visually continuous column. Date/order never
+ * changes the grouping: only owner kind and recorded parent-edge structure do.
+ */
+export function layoutExplorationLineageV2(
+  nodes: EvolutionExplorationNodeV1[],
+  collapsed: string[],
+  direction: 'map' | 'vertical' = 'map',
+) {
+  const referencedParents = new Set(
+    nodes.flatMap((node) => node.parentEdges.map((edge) => refIdentity(edge.parentNodeRef))),
+  );
+  const groups = [
+    {
+      key: 'owner' as const,
+      label: '本项目版本',
+      matches: (node: EvolutionExplorationNodeV1) => node.kind === 'owner_version',
+    },
+    {
+      key: 'registered' as const,
+      label: '公开归档 · 已登记派生',
+      matches: (node: EvolutionExplorationNodeV1) =>
+        node.kind === 'public_archive' &&
+        !node.nodeRef.ownerStateRef.startsWith(CORTEX_ARCHIVE_PREFIX) &&
+        (node.parentEdges.length > 0 || referencedParents.has(refIdentity(node.nodeRef))),
+    },
+    {
+      key: 'parentless' as const,
+      label: '公开归档 · 父版未登记',
+      matches: (node: EvolutionExplorationNodeV1) =>
+        node.kind === 'public_archive' &&
+        !node.nodeRef.ownerStateRef.startsWith(CORTEX_ARCHIVE_PREFIX) &&
+        node.parentEdges.length === 0 &&
+        !referencedParents.has(refIdentity(node.nodeRef)),
+    },
+    {
+      key: 'cortex' as const,
+      label: 'Cortex · 比赛归档',
+      matches: (node: EvolutionExplorationNodeV1) => node.nodeRef.ownerStateRef.startsWith(CORTEX_ARCHIVE_PREFIX),
+    },
+  ];
+  const positioned: ReturnType<typeof layoutExplorationLineage>['nodes'] = [];
+  const regions: ExplorationLineageRegion[] = [];
+  let hiddenCount = 0;
+  let cursorY = 16;
+  let width = 240;
+
+  for (const group of groups) {
+    const members = nodes.filter(group.matches);
+    if (!members.length) continue;
+    const local = layoutExplorationLineage(members, collapsed, direction);
+    hiddenCount += local.hiddenCount;
+    const top = cursorY;
+    const contentOffsetY = top + 36;
+    const nodeKeys = local.nodes.map((entry) => entry.key);
+    positioned.push(...local.nodes.map((entry) => ({ ...entry, y: entry.y + contentOffsetY })));
+    const regionWidth = local.width + 184;
+    const regionHeight = local.height + 52;
+    regions.push({
+      key: group.key,
+      label: group.label,
+      nodeKeys,
+      left: 8,
+      top,
+      width: regionWidth,
+      height: regionHeight,
+    });
+    width = Math.max(width, regionWidth + 16);
+    cursorY += regionHeight + 28;
+  }
+
+  return {
+    nodes: positioned,
+    regions,
+    width,
+    height: Math.max(160, cursorY - 12),
+    hiddenCount,
+  };
+}
+
+export interface LineageRoutePoint {
+  x: number;
+  y: number;
+}
+
+/** Sparse v2 labels live to the right of fixed-size points, so edges leave and
+ * enter on the left and use a lower lane instead of visually cutting a name. */
+export function sparseLineageEdgeRoute(
+  parent: Pick<LineageRoutePoint, 'x' | 'y'>,
+  child: Pick<LineageRoutePoint, 'x' | 'y'>,
+  zoom: number,
+): LineageRoutePoint[] {
+  const safeZoom = Math.max(0.001, zoom);
+  const parentCenter = { x: parent.x + LINEAGE_NODE_SIZE.width / 2, y: parent.y + LINEAGE_NODE_SIZE.height / 2 };
+  const childCenter = { x: child.x + LINEAGE_NODE_SIZE.width / 2, y: child.y + LINEAGE_NODE_SIZE.height / 2 };
+  const portOffset = 12 / safeZoom;
+  const laneY = Math.max(parentCenter.y, childCenter.y) + 26 / safeZoom;
+  return [
+    parentCenter,
+    { x: parentCenter.x - portOffset, y: parentCenter.y },
+    { x: parentCenter.x - portOffset, y: laneY },
+    { x: childCenter.x - portOffset, y: laneY },
+    { x: childCenter.x - portOffset, y: childCenter.y },
+    childCenter,
+  ];
 }

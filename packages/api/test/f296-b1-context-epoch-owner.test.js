@@ -11,6 +11,55 @@ import { describe, test } from 'node:test';
 const { applyContinuityToEpoch, ContextEpochOwner, contextEpochScopeKey } = await import(
   '../dist/domains/cats/services/session/context/ContextEpochOwner.js'
 );
+
+test('a newly qualified carrier adopts a missing binding cold until that generation is actually consumed', async () => {
+  const { InMemoryContextEpochStore } = await import('../dist/domains/cats/services/stores/ports/ContextEpochStore.js');
+  const owner = new ContextEpochOwner(new InMemoryContextEpochStore());
+  const scope = { userId: 'adoption-user', catId: 'gemini38', threadId: 'native-upgrade' };
+  const prior = await owner.resolve({
+    ...scope,
+    disposition: { state: 'unknown', reason: 'carrier_unsupported', evidenceRef: 'old-carrier' },
+  });
+  await owner.confirmColdConsumed({ ...scope, contextEpoch: prior.contextEpoch });
+  const resume = () =>
+    owner.resolve({
+      ...scope,
+      disposition: {
+        state: 'resumed',
+        reason: 'resume_confirmed',
+        runtimeSessionId: 'observed-native-runtime',
+        evidenceRef: 'verified-native-init',
+      },
+    });
+  const adopted = await resume();
+  assert.equal(adopted.contextEpoch, prior.contextEpoch + 1);
+  assert.equal(adopted.contextMode, 'cold');
+  assert.equal(adopted.normalizedDisposition.state, 'unknown');
+  assert.equal(adopted.boundRuntimeSessionId, 'observed-native-runtime');
+  const unconfirmed = await resume();
+  assert.equal(unconfirmed.contextEpoch, adopted.contextEpoch);
+  assert.equal(unconfirmed.contextMode, 'cold', 'failed or undelivered generation cannot establish hot continuity');
+  await owner.confirmColdConsumed({ ...scope, contextEpoch: adopted.contextEpoch });
+  const confirmed = await resume();
+  assert.equal(confirmed.contextEpoch, adopted.contextEpoch);
+  assert.equal(confirmed.contextMode, 'hot');
+  const conflict = await owner.resolve({
+    ...scope,
+    disposition: {
+      state: 'resumed',
+      reason: 'resume_confirmed',
+      runtimeSessionId: 'different-runtime',
+      evidenceRef: 'conflict',
+    },
+  });
+  assert.equal(conflict.normalizedDisposition.reason, 'binding_mismatch');
+  assert.equal(conflict.contextMode, 'cold');
+  assert.equal(
+    conflict.boundRuntimeSessionId,
+    undefined,
+    'an existing conflicting binding is never adopted in that turn',
+  );
+});
 const { InMemoryContextEpochStore } = await import('../dist/domains/cats/services/stores/ports/ContextEpochStore.js');
 
 const SCOPE = { userId: 'user-1', catId: 'opus', threadId: 'thread-1' };

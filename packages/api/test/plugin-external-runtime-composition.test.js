@@ -232,6 +232,10 @@ test('production handshake policy covers verified external source readiness with
 
 test('production composition constructs and recovers K-2D but exposes no startup activation', () => {
   const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+  const catalogSource = readFileSync(
+    new URL('../src/domains/plugin/manager/host-official-catalog.ts', import.meta.url),
+    'utf8',
+  );
 
   const routeBootstrapIndex = source.indexOf('await ensureOfficialPluginSignalRoutes({');
   const runtimeCompositionIndex = source.indexOf('createDormantPluginRuntimeComposition({');
@@ -280,10 +284,30 @@ test('production composition constructs and recovers K-2D but exposes no startup
   assert.match(source, /createLarkCliFeishuArtifactInspector/);
   assert.match(source, /historyImport:/);
   assert.match(source, /createPluginManagerRuntimeComposition\(\{/);
-  assert.match(source, /new MachineOfficialPluginCatalog\(\{/);
-  assert.match(source, /validateCatalog: validatePluginCatalog/);
-  assert.match(source, /loadMachinePluginCatalog\(OFFICIAL_PLUGIN_CATALOG_URL\)/);
-  assert.match(source, /replacesRepositoryPluginId:\s*'video-analysis'/);
+  assert.match(
+    source,
+    /\{\s*createHostOfficialPluginCatalog,\s*PLUGIN_MANAGER_HOST_POLICIES:\s*pluginManagerHostPolicies\s*\}\s*=\s*await import\(\s*['"]\.\/domains\/plugin\/manager\/host-official-catalog\.js['"]/,
+    'production must import the Host catalog factory and its matching repository-replacement policy',
+  );
+  assert.match(source, /const pluginManagerCatalog = createHostOfficialPluginCatalog\(\)/);
+  assert.match(source, /catalogProvider:\s*pluginManagerCatalog/);
+  assert.match(source, /catalogManifests:\s*OFFICIAL_BUNDLED_MANIFESTS/);
+  assert.match(catalogSource, /new MachineOfficialPluginCatalog\(\{/);
+  assert.match(
+    catalogSource,
+    /bundledEntries:\s*OFFICIAL_BUNDLED_CATALOG_ENTRIES/,
+    'production Manager must discover the complete Host-shipped bundle list rather than selecting only dot',
+  );
+  assert.match(catalogSource, /validateCatalog: validatePluginCatalog/);
+  assert.match(catalogSource, /loadMachinePluginCatalog\(OFFICIAL_PLUGIN_CATALOG_URL\)/);
+  assert.match(catalogSource, /loadCatalog,\s*validateCatalog:/);
+  assert.match(catalogSource, /hostPolicies:\s*PLUGIN_MANAGER_HOST_POLICIES/);
+  assert.match(catalogSource, /replacesRepositoryPluginId:\s*'video-analysis'/);
+  assert.match(catalogSource, /effectiveGrants:\s*\['plugin.config.read', 'secret.read'\]/);
+  assert.match(
+    catalogSource,
+    /OFFICIAL_PLUGIN_POLICIES\.filter\(\(policy\) => policy.pluginId === 'official.companion'\)/,
+  );
   const managerCompatibilityIndex = source.indexOf('const repositoryPluginManagerCompatibility =');
   const managerComposition = source.slice(managerCompatibilityIndex, recoveryIndex);
   assert.ok(managerCompatibilityIndex >= 0, 'repository compatibility must be composed after catalog policy exists');
@@ -293,7 +317,10 @@ test('production composition constructs and recovers K-2D but exposes no startup
     'Train B Manager must project real repository plugins through its read-only compatibility boundary',
   );
   assert.match(managerComposition, /loadSuppressedPluginIds:/);
-  assert.match(managerComposition, /resolveRepositoryReplacementPluginIds\(/);
+  assert.match(
+    managerComposition,
+    /resolveRepositoryReplacementPluginIds\(\s*pluginManagerHostPolicies,\s*catalog.entries/,
+  );
   assert.match(managerComposition, /pluginRuntime\.inventoryStore\.snapshot\(\)/);
   assert.match(managerComposition, /instance\.lifecycleState === 'installed'/);
   assert.match(source, /registerPluginManagerRoutes\(managerApp/);

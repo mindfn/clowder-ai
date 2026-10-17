@@ -36,7 +36,7 @@ test('human-approved execution triggered by an exact Task review can return to i
   const report = f.messages.append({
     userId: f.actor.userId,
     threadId: execution.child.id,
-    catId: f.actor.catId,
+    from: { kind: 'agent', catId: f.actor.catId },
     content: 'Implementation returned for parent judgment',
     mentions: [],
     timestamp: f.service.now() + 1,
@@ -118,7 +118,7 @@ test('review linkage rejects unsupported authority, actors, subjects and orderin
           const other = f.messages.append({
             userId: f.actor.userId,
             threadId: f.actor.threadId,
-            catId: null,
+            from: { kind: 'user', userId: f.actor.userId },
             content: 'Unrelated work',
             mentions: [],
             timestamp: x.review.timestamp,

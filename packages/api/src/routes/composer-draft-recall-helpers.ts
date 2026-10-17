@@ -4,8 +4,14 @@ import {
   ContextAttachmentsSchema,
 } from '@cat-cafe/shared';
 import { z } from 'zod';
-import type { QueueEntry } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
+
+/** Keep internal Host recovery metadata out of the existing composer HTTP contract. */
+export function projectComposerDraft(draft: Awaited<ReturnType<IMessageStore['getOwnerComposerDraft']>>) {
+  if (!draft) return null;
+  const { companionSubmissions: _hostOnly, ...publicDraft } = draft;
+  return publicDraft;
+}
 
 const composerDraftImageBlockSchema = z
   .object({
@@ -67,30 +73,6 @@ export function projectRecallMessage(message: Awaited<ReturnType<IMessageStore['
     threadId: message.threadId,
     deliveryStatus: message.deliveryStatus,
     recall: message.recall,
-    queueCustody: message.queueCustody,
     _tombstone: message._tombstone,
-  };
-}
-
-export function queueEntryMessageIds(entry: Pick<QueueEntry, 'messageId' | 'mergedMessageIds'>): string[] {
-  return [entry.messageId ?? '', ...entry.mergedMessageIds].filter(Boolean);
-}
-
-export function rebuildCarrierWithout(
-  removed: QueueEntry,
-  recalledMessageId: string,
-  storedMembers: ReadonlyMap<string, { id: string; content: string }>,
-): QueueEntry | null {
-  const remaining = queueEntryMessageIds(removed)
-    .filter((messageId) => messageId !== recalledMessageId)
-    .map((messageId) => storedMembers.get(messageId))
-    .filter((message): message is { id: string; content: string } => Boolean(message));
-  const primary = remaining[0];
-  if (!primary) return null;
-  return {
-    ...removed,
-    content: remaining.map((message) => message.content).join('\n\n'),
-    messageId: primary.id,
-    mergedMessageIds: remaining.slice(1).map((message) => message.id),
   };
 }

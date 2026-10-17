@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const CHAT_LAYOUT_CHANGED_EVENT = 'catcafe:chat-layout-changed';
 
@@ -15,6 +15,7 @@ export function ScrollToBottomButton({
   onJumpToLatest,
   thresholdPx = 120,
   recomputeSignal,
+  placement = 'overlay',
 }: {
   scrollContainerRef: React.RefObject<HTMLElement | null>;
   messagesEndRef: React.RefObject<HTMLElement | null>;
@@ -24,14 +25,25 @@ export function ScrollToBottomButton({
   recomputeSignal?: unknown;
   /** Changes when the scroll container / end sentinel is replaced (e.g. thread switch). */
   observerKey?: unknown;
+  /** v2 reserves a row outside the reading viewport; classic keeps its overlay. */
+  placement?: 'overlay' | 'flow';
 }) {
   const [visible, setVisible] = useState(false);
+  // The visibility last handed to React. While a reply streams, `recomputeSignal` changes on nearly every commit; a
+  // same-value setState from an effect is still a scheduled update while this component has work pending, and a
+  // long chain of those trips React's nested-update limit (F117 baseline B). Only a real change goes to React.
+  const visibleRef = useRef(false);
+  const applyVisible = useCallback((next: boolean) => {
+    if (visibleRef.current === next) return;
+    visibleRef.current = next;
+    setVisible(next);
+  }, []);
 
   const update = useCallback(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
-    setVisible(!isAtBottom(el, thresholdPx));
-  }, [scrollContainerRef, thresholdPx]);
+    applyVisible(!isAtBottom(el, thresholdPx));
+  }, [applyVisible, scrollContainerRef, thresholdPx]);
 
   useEffect(() => {
     const el = scrollContainerRef.current;
@@ -59,7 +71,7 @@ export function ScrollToBottomButton({
         if (!entry) return;
         // When the end sentinel is not intersecting the viewport (+threshold margin),
         // the user is no longer near bottom → show the button.
-        setVisible(!entry.isIntersecting);
+        applyVisible(!entry.isIntersecting);
       },
       {
         root: scrollEl,
@@ -70,7 +82,7 @@ export function ScrollToBottomButton({
 
     observer.observe(endEl);
     return () => observer.disconnect();
-  }, [scrollContainerRef, messagesEndRef, thresholdPx]);
+  }, [applyVisible, scrollContainerRef, messagesEndRef, thresholdPx]);
 
   // Cloud P2: local UI toggles can change scrollHeight without scroll/resize events.
   useEffect(() => {
@@ -91,11 +103,11 @@ export function ScrollToBottomButton({
 
   const classes = useMemo(
     () =>
-      'absolute bottom-3 right-8 z-20 ' +
+      (placement === 'flow' ? 'shrink-0 self-end mr-8 mt-2 mb-3 ' : 'absolute bottom-3 right-8 z-20 ') +
       'rounded-full border border-cafe bg-cafe-surface/90 shadow-sm ' +
       'px-3 py-1.5 text-xs text-cafe-secondary ' +
       'hover:bg-cafe-surface hover:border-cafe transition-colors',
-    [],
+    [placement],
   );
 
   if (!visible) return null;

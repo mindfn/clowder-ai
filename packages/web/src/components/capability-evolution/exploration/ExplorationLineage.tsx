@@ -3,50 +3,88 @@
 import { type EvolutionExplorationNodeV1, refIdentity } from '@cat-cafe/shared';
 import { type ReactNode, useId, useMemo, useRef } from 'react';
 import { ExplorationIcon } from './ExplorationIcon';
-import { LINEAGE_NODE_SIZE, layoutExplorationLineage, lineageDetailLevel } from './exploration-lineage';
+import { isHistoricalStep } from './exploration-history';
+import {
+  LINEAGE_NODE_SIZE,
+  layoutExplorationLineage,
+  layoutExplorationLineageV2,
+  lineageDetailLevel,
+  sparseLineageEdgeRoute,
+} from './exploration-lineage';
 import type { ExplorationReading } from './exploration-reading';
 import { lineageLabels } from './lineage-labels';
 import { useLineageCamera } from './use-lineage-camera';
 
 type Viewport = ExplorationReading['viewport'];
+const EMPTY_KEYS = new Set<string>();
+
+function lineageNodeMeta(
+  key: string,
+  currentKeys: ReadonlySet<string>,
+  adoptedKeys: ReadonlySet<string>,
+  nodeNotes?: ReadonlyMap<string, string>,
+): string | undefined {
+  const labels = [];
+  if (currentKeys.has(key)) labels.push('来源当前版本');
+  if (adoptedKeys.has(key)) labels.push('当前采用');
+  if (!labels.length && nodeNotes?.has(key)) labels.push(nodeNotes.get(key));
+  return labels.filter((label): label is string => Boolean(label)).join(' · ') || undefined;
+}
+
+function positionLineage(
+  nodes: EvolutionExplorationNodeV1[],
+  collapsed: string[],
+  direction: 'map' | 'vertical',
+  v2: boolean,
+) {
+  return v2
+    ? layoutExplorationLineageV2(nodes, collapsed, direction)
+    : { ...layoutExplorationLineage(nodes, collapsed, direction), regions: [] };
+}
+
 export function ExplorationLineage({
   nodes,
   selected,
   currentKeys,
+  adoptedKeys = EMPTY_KEYS,
   nodeNotes,
   toolbarEnd,
   viewport,
   onViewport,
   onSelect,
   direction = 'map',
+  v2 = false,
 }: {
   nodes: EvolutionExplorationNodeV1[];
   selected?: string;
   currentKeys: Set<string>;
+  adoptedKeys?: Set<string>;
   nodeNotes?: ReadonlyMap<string, string>;
   toolbarEnd?: ReactNode;
   viewport: Viewport;
   onViewport(value: Viewport): void;
   onSelect(node: EvolutionExplorationNodeV1): void;
   direction?: 'map' | 'vertical';
+  v2?: boolean;
 }) {
+  const historical = nodes.length > 0 && nodes.every(isHistoricalStep);
   const instructionsId = useId();
   const drag = useRef<{ id: number; x: number; y: number; start: Viewport; moved: boolean } | null>(null);
   const positioned = useMemo(
-    () => layoutExplorationLineage(nodes, viewport.collapsed, direction),
-    [nodes, viewport.collapsed, direction],
+    () => positionLineage(nodes, viewport.collapsed, direction, v2),
+    [nodes, viewport.collapsed, direction, v2],
   );
+  const expandedPositioned = useMemo(() => positionLineage(nodes, [], direction, v2), [nodes, direction, v2]);
   const density = lineageDetailLevel(viewport.zoom);
   const { host, size } = useLineageCamera(positioned, selected, viewport, onViewport);
   const minimumZoom = Math.max(
     0.001,
     Math.min(1, size.width / positioned.width, size.height / positioned.height) * 0.8,
   );
-  const labels = lineageLabels(positioned, viewport, size, selected);
+  const labels = lineageLabels(positioned, viewport, size, selected, v2);
   const suppressClick = useRef(false);
   const locate = () => {
-    const all = layoutExplorationLineage(nodes, [], direction);
-    const target = all.nodes.find((node) => node.key === selected);
+    const target = expandedPositioned.nodes.find((node) => node.key === selected);
     const readableZoom = Math.max(1, viewport.zoom);
     if (target)
       onViewport({
@@ -62,14 +100,15 @@ export function ExplorationLineage({
     const width = host.current?.clientWidth;
     const height = host.current?.clientHeight;
     if (!width || !height) return;
-    const all = layoutExplorationLineage(nodes, [], direction);
-    const scale = Math.max(0.001, Math.min(1, width / all.width, height / all.height));
+    const paddedWidth = expandedPositioned.width;
+    const paddedHeight = expandedPositioned.height;
+    const scale = Math.max(0.001, Math.min(1, width / paddedWidth, height / paddedHeight));
     onViewport({
       ...viewport,
       collapsed: [],
       framing: 'fit',
-      x: (width - all.width * scale) / 2,
-      y: (height - all.height * scale) / 2,
+      x: (width - paddedWidth * scale) / 2,
+      y: (height - paddedHeight * scale) / 2,
       zoom: scale,
     });
   };
@@ -85,7 +124,7 @@ export function ExplorationLineage({
     });
   };
   return (
-    <section className="exploration-lineage" aria-label="版本谱系画布" data-density={density}>
+    <section className="exploration-lineage" aria-label="版本谱系画布" data-density={density} data-label-beside={v2}>
       <div className="exploration-section-heading">
         <div className="exploration-canvas-tools" role="group" aria-label="谱系导航">
           <button
@@ -178,18 +217,38 @@ export function ExplorationLineage({
             transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
           }}
         >
+          {positioned.regions.map((region) => (
+            <section
+              key={region.key}
+              className="exploration-canvas-region"
+              aria-label={`谱系分组：${region.label}`}
+              style={{
+                left: region.left,
+                top: region.top,
+                width: region.width,
+                height: region.height,
+              }}
+            >
+              <h4 style={{ transform: `scale(${1 / viewport.zoom})` }}>{region.label}</h4>
+            </section>
+          ))}
           <svg aria-hidden="true" width={positioned.width} height={positioned.height} className="exploration-edges">
             {positioned.nodes.flatMap((item) =>
               item.node.parentEdges.map((edge) => {
                 const parent = positioned.nodes.find((node) => node.key === refIdentity(edge.parentNodeRef));
                 if (!parent) return null;
+                const sparseRoute =
+                  v2 && density === 'points' ? sparseLineageEdgeRoute(parent, item, viewport.zoom) : null;
                 return (
                   <path
                     key={`${parent.key}:${item.key}`}
+                    data-edge-route={sparseRoute ? 'label-clear' : 'direct'}
                     d={
-                      direction === 'vertical'
-                        ? `M${parent.x + 88},${parent.y + 56} C${parent.x + 88},${(parent.y + item.y) / 2 + 56} ${item.x + 88},${(parent.y + item.y) / 2 + 56} ${item.x + 88},${item.y + 56}`
-                        : `M${parent.x + 88},${parent.y + 56} C${(parent.x + item.x) / 2 + 88},${parent.y + 56} ${(parent.x + item.x) / 2 + 88},${item.y + 56} ${item.x + 88},${item.y + 56}`
+                      sparseRoute
+                        ? sparseRoute.map((point, index) => `${index ? 'L' : 'M'}${point.x},${point.y}`).join(' ')
+                        : direction === 'vertical'
+                          ? `M${parent.x + 88},${parent.y + 56} C${parent.x + 88},${(parent.y + item.y) / 2 + 56} ${item.x + 88},${(parent.y + item.y) / 2 + 56} ${item.x + 88},${item.y + 56}`
+                          : `M${parent.x + 88},${parent.y + 56} C${(parent.x + item.x) / 2 + 88},${parent.y + 56} ${(parent.x + item.x) / 2 + 88},${item.y + 56} ${item.x + 88},${item.y + 56}`
                     }
                     vectorEffect="non-scaling-stroke"
                     style={{ strokeWidth: 1.2 / viewport.zoom }}
@@ -205,6 +264,7 @@ export function ExplorationLineage({
               data-key={key}
               data-selected={key === selected}
               data-current={currentKeys.has(key)}
+              data-adopted={adoptedKeys.has(key)}
               data-label-side={labels.get(key)?.side ?? (x > positioned.width / 2 ? 'end' : 'start')}
               data-label-visible={labels.has(key)}
               data-label-above={labels.get(key)?.above ?? false}
@@ -224,9 +284,9 @@ export function ExplorationLineage({
                   <span>{node.title}</span>
                 </span>
                 <span className="exploration-node-summary">{node.changes[0]?.detail ?? node.summary}</span>
-                {(currentKeys.has(key) || nodeNotes?.has(key)) && (
+                {lineageNodeMeta(key, currentKeys, adoptedKeys, nodeNotes) && (
                   <span className="exploration-node-meta">
-                    {currentKeys.has(key) ? '当前沿用' : nodeNotes?.get(key)}
+                    {lineageNodeMeta(key, currentKeys, adoptedKeys, nodeNotes)}
                   </span>
                 )}
               </button>
@@ -253,8 +313,12 @@ export function ExplorationLineage({
       </div>
       <p className="exploration-caption" id={instructionsId}>
         拖动画布或聚焦后使用方向键；Home 定位阅读版。
-        {density === 'points' ? ' 远看来源关系，放大读版本。' : ' 仅表示版本来源；成绩与条件在右侧按实验阅读。'}
-        {nodes.every((node) => node.kind === 'public_archive') && ' 公开归档不表示已采用。'}
+        {historical
+          ? ' 点选一步，阅读当时的改变与错题。连线的理由写在正文里。'
+          : density === 'points'
+            ? ' 远看来源关系，放大读版本。'
+            : ' 仅表示版本来源；成绩与条件在右侧按实验阅读。'}
+        {!historical && nodes.every((node) => node.kind === 'public_archive') && ' 公开归档不表示已采用。'}
         {positioned.hiddenCount > 0 && ` ${positioned.hiddenCount} 个节点已折叠，定位可重新展开。`}
       </p>
     </section>

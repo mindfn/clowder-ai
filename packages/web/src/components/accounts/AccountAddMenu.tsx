@@ -4,7 +4,13 @@ import type { ProfileAuthType } from '../hub-accounts.types';
 import { useShellCopy } from '../shell/shell-copy';
 import { accountsCopy } from './accounts.shell-copy';
 
-export function AccountAddMenu({ onAdd }: { onAdd: (type: ProfileAuthType) => void }) {
+export function AccountAddMenu({
+  onAdd,
+  onAddClaude,
+}: {
+  onAdd: (type: ProfileAuthType) => void;
+  onAddClaude?: () => void;
+}) {
   const t = useShellCopy(accountsCopy);
   const [open, setOpen] = useState(false);
   const owner = useRef<HTMLDivElement>(null);
@@ -43,6 +49,17 @@ export function AccountAddMenu({ onAdd }: { onAdd: (type: ProfileAuthType) => vo
           <button type="button" onClick={() => choose('oauth')}>
             {t.addCodex}
           </button>
+          {onAddClaude && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onAddClaude();
+              }}
+            >
+              {t.addClaude}
+            </button>
+          )}
           <small>{t.addNotice}</small>
           <hr />
           <button type="button" onClick={() => choose('api_key')}>

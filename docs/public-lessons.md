@@ -992,7 +992,7 @@ created: 2026-02-26
   4. request-review 模板强制证据字段（reviewer 必须填沙盒路径和端口）
 - 来源锚点：
   - 事故报告：`docs/bug-report/2026-04-10-review-dev-direct-runtime-interruption/bug-report.md`
-  - 修复 PR：zts212653/cat-cafe#1077
+  - 修复 PR：zts212653/clowder-ai#1077
   - 端口归属 guard：`scripts/start-dev.sh:450`（`guard_port_kill_ownership`）
   - review 入口：`scripts/review-start.sh`
 - 原理：**"默认安全"优于"靠人记得"**。LL-045 证明纪律文档拦不住猫——写了"不要动 runtime"但多个 session 仍然直接操作。端口保护和 Redis production Redis (sacred)一样，必须在工具层面做到"默认不可能发生"，而非"读了文档就不会发生"。

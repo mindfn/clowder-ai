@@ -13,20 +13,20 @@ import {
   isDelivered,
   type StoredMessage,
 } from '../../../cats/services/stores/ports/MessageStore.js';
-import { projectQueueReceipt } from '../../../cats/services/stores/ports/queued-message-receipt.js';
 import type { ITaskStore } from '../../../cats/services/stores/ports/TaskStore.js';
-import type { ITurnExecutionStore } from '../../../cats/services/stores/ports/TurnExecutionStore.js';
+import type { TurnExecutionSourceReadPort } from '../../../cats/services/stores/ports/TurnExecutionStore.js';
 import type { PublishedMediaService } from '../../../video-studio/content-owner/published-media-service.js';
 import { currentReviewModification } from '../../artifact-review/modification-request-reference.js';
 import { reviewAuthorityState } from '../../artifact-review/review-authority.js';
 import type { ArtifactReviewStore } from '../../artifact-review/store.js';
 import { sameAudience, witnessedPublicationCaller } from './media-publication-caller.js';
 import type { MediaPublicationReturnIntent } from './media-publication-return.js';
+import { readModificationSourceExecution } from './source-execution.js';
 
 export { sameAudience } from './media-publication-caller.js';
 
 import { hasUniqueMediaProducerRequest, isBoundMediaModificationReturn } from '../bindings/media-return-binding.js';
-import { assertModificationSourceAuthority, hasCurrentModificationQueueExposure } from '../request-authority.js';
+import { assertModificationSourceAuthority } from '../request-authority.js';
 
 export class MediaPublicationBinding {
   constructor(
@@ -34,7 +34,7 @@ export class MediaPublicationBinding {
       store: ArtifactReviewStore;
       messages: Pick<IMessageStore, 'getById' | 'getByIdempotencyKey'>;
       tasks: Pick<ITaskStore, 'get'>;
-      turns?: Pick<ITurnExecutionStore, 'get'>;
+      turns?: TurnExecutionSourceReadPort;
       nativeImages: CodexNativeImageEvidenceReader;
       uploadDir: string;
       media: Pick<PublishedMediaService, 'currentRevision'>;
@@ -92,16 +92,15 @@ export class MediaPublicationBinding {
       carrier.userId !== record.ownerUserId ||
       carrier.threadId !== record.payload.threadId ||
       carrier.source?.connector !== 'content-review' ||
-      !carrier.queueCustody ||
-      carrier.queueCustody.ownerUserId !== record.ownerUserId ||
       !carrier.mentions.includes(record.payload.targetCatId as (typeof carrier.mentions)[number])
     )
       return;
-    const target = projectQueueReceipt(carrier.queueCustody).targets.find(
-      (item) => item.catId === record.payload.targetCatId,
+    const child = await readModificationSourceExecution(
+      this.deps.messages,
+      this.deps.turns,
+      carrier,
+      record.payload.targetCatId,
     );
-    const childId = target?.attempts?.at(-1)?.invocationId ?? target?.invocationId;
-    const child = childId ? await this.deps.turns.get(childId) : null;
     if (
       !child ||
       child.status === 'running' ||
@@ -147,22 +146,7 @@ export class MediaPublicationBinding {
       !sameAudience(source, record.progress.sourceVisibility)
     )
       return;
-    if (
-      isDelivered(source) ||
-      hasCurrentModificationQueueExposure(source, record.payload.targetCatId, producer.invocationId)
-    )
-      return source;
-    const custody = source.queueCustody;
-    if (
-      source.deliveryStatus !== 'queued' ||
-      custody?.ownerUserId !== record.ownerUserId ||
-      !custody.handledByCatIds?.includes(record.payload.targetCatId as (typeof custody.handledByCatIds)[number]) ||
-      custody.targetOutcomeByCatId?.[record.payload.targetCatId]?.invocationId !== producer.invocationId ||
-      !custody.bodyExposures?.some(
-        (item) => item.targetCatId === record.payload.targetCatId && item.invocationId === producer.invocationId,
-      )
-    )
-      return;
+    if (!isDelivered(source)) return;
     return source;
   }
 

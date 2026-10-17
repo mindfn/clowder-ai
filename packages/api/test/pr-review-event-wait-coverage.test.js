@@ -3,7 +3,7 @@ import { describe, test } from 'node:test';
 import { verifyPrReviewEventWaitCoverage } from '../dist/infrastructure/github/pr-review-event-wait-coverage.js';
 
 const INPUT = {
-  repoFullName: 'zts212653/cat-cafe',
+  repoFullName: 'fixture-owner/fixture-repo',
   prNumber: 2856,
   triggerCommentId: 4936000000,
 };
@@ -51,7 +51,7 @@ function execFixture({
       stdout: `${JSON.stringify({
         id: INPUT.triggerCommentId,
         body,
-        issue_url: `https://api.github.com/repos/zts212653/cat-cafe/issues/${issueNumber}`,
+        issue_url: `https://api.github.com/repos/${INPUT.repoFullName}/issues/${issueNumber}`,
         created_at: '2026-07-11T08:47:43Z',
       })}\n`,
     };

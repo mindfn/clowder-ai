@@ -182,7 +182,7 @@ test('actual sequence: high demand → successful tool → processing retries �
   const stored = await store.append({
     userId: 'fixture-user',
     threadId: 'fixture-thread',
-    catId: 'codex',
+    from: { kind: 'agent', catId: 'codex' },
     content: 'Error: upstream',
     timestamp: Date.now(),
     mentions: [],

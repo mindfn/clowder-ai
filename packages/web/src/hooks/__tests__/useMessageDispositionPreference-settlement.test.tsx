@@ -17,7 +17,6 @@ const SNAPSHOT: MessageDispositionPreferenceSnapshot = {
   thread: null,
   effective: 'continue_current',
   source: 'global',
-  onboardingSeen: false,
 };
 
 describe('useMessageDispositionPreference settlement', () => {
@@ -63,6 +62,16 @@ describe('useMessageDispositionPreference settlement', () => {
     expect(latest?.loading).toBe(false);
     expect(latest?.error).toBeNull();
     expect(latest?.snapshot).toEqual(SNAPSHOT);
+  });
+
+  it('an earlier send acknowledgement cannot clear the next one-shot selection', () => {
+    React.act(() => latest?.setOneShot('continue_current'));
+    const settleEarlierSend = latest!.clearOneShot;
+    React.act(() => latest?.setOneShot('continue_current'));
+    React.act(() => settleEarlierSend());
+    expect(latest?.oneShot).toBe('continue_current');
+    React.act(() => latest?.clearOneShot());
+    expect(latest?.oneShot).toBeNull();
   });
 
   it.each([

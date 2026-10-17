@@ -114,21 +114,25 @@ describe('mediaRequestsForMessage', () => {
     expect(joined.map((item) => item.requestId)).toEqual(['r-a', 'r-b', 'r-c']);
   });
 
-  it('names the cat from the owner context first, then the roster, then the id itself', () => {
+  it('names the original target id from the roster, retaining a historical context name when that cat is unavailable', () => {
     const joined = mediaRequestsForMessage(
       catalogue(
         [
           request({ id: 'r-ctx', sourceMessageId: 'message-1', targetCatId: 'cat-a', createdAt: 1 }),
           request({ id: 'r-roster', sourceMessageId: 'message-1', targetCatId: 'cat-a', createdAt: 2 }),
           request({ id: 'r-raw', sourceMessageId: 'message-1', targetCatId: 'cat-z', createdAt: 3 }),
+          request({ id: 'r-history', sourceMessageId: 'message-1', targetCatId: 'cat-old', createdAt: 4 }),
         ],
-        [{ requestIds: ['r-ctx'], targetName: '烁烁' }],
+        [
+          { requestIds: ['r-ctx'], targetName: '原具名猫' },
+          { requestIds: ['r-history'], targetName: '团团' },
+        ],
       ),
       'message-1',
       media(),
       nameOf,
     );
-    expect(joined.map((item) => item.targetName)).toEqual(['烁烁', '花花', 'cat-z']);
+    expect(joined.map((item) => item.targetName)).toEqual(['花花', '花花', 'cat-z', '团团']);
   });
 
   it('carries the media title and how many places the message covered; the whole work covers none', () => {

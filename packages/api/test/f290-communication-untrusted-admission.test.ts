@@ -207,7 +207,7 @@ test('ordinary history reply previews cannot re-expose raw markup from a recover
     const reply = f.messages.append({
       userId: f.cafe.ownerUserId,
       threadId: f.legacyReceipt.threadId,
-      catId: CAT,
+      from: { kind: 'agent', catId: CAT },
       mentions: [],
       timestamp: Date.now(),
       replyTo: f.legacyReceipt.id,
@@ -233,6 +233,7 @@ test('Collective admission and execution reply previews use their Host data boun
       const reply = {
         ...parent,
         id: `reply-${parent.id}`,
+        from: { kind: 'agent' as const, catId: CAT },
         catId: CAT,
         extra: undefined,
         replyTo: parent.id,
@@ -244,10 +245,24 @@ test('Collective admission and execution reply previews use their Host data boun
       assert.equal(rendered.split('</collective_untrusted_receipt>').length, 2);
       assert.doesNotMatch(rendered, /<system>/);
     }
-    const ordinary = { ...f.receipt, id: 'ordinary-parent', extra: undefined, content: 'Keep this ordinary preview.' };
-    const reply = { ...ordinary, id: 'ordinary-reply', catId: CAT, replyTo: ordinary.id, content: 'Acknowledged.' };
+    const ordinary = {
+      ...f.receipt,
+      from: { kind: 'user' as const, userId: f.cafe.ownerUserId },
+      catId: null,
+      id: 'ordinary-parent',
+      extra: undefined,
+      content: 'Keep this ordinary preview.',
+    };
+    const reply = {
+      ...ordinary,
+      from: { kind: 'agent' as const, catId: CAT },
+      id: 'ordinary-reply',
+      catId: CAT,
+      replyTo: ordinary.id,
+      content: 'Acknowledged.',
+    };
     const rendered = formatMessage(reply, { messageMap: new Map([[ordinary.id, ordinary]]) });
-    assert.match(rendered, /\[↩ 'co-creator': Keep this ordinary preview\.\] Acknowledged\./);
+    assert.match(rendered, /\[↩ co-creator: Keep this ordinary preview\.\] Acknowledged\./);
     assert.doesNotMatch(rendered, /collective_untrusted_receipt/);
   } finally {
     await f.close();

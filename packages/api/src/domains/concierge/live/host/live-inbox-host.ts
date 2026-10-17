@@ -110,12 +110,16 @@ export function bindLiveInboxHost(input: {
 }): LiveInboxHost | undefined {
   const { inbox } = input.options;
   if (!inbox) return undefined;
-  const scope = input.context.boundScope({
+  const boundScope = input.context.boundScope({
     invocationId: input.callbackEnv.CAT_CAFE_INVOCATION_ID,
     catId: input.options.binding.catId,
     threadId: input.options.binding.threadId,
   });
-  if (!scope) throw new LiveCarrierUnavailableError();
+  if (!boundScope) throw new LiveCarrierUnavailableError();
+  const scope = {
+    ...boundScope,
+    ...(input.callbackEnv.CAT_CAFE_EXECUTION_ID ? { parentInvocationId: input.callbackEnv.CAT_CAFE_EXECUTION_ID } : {}),
+  };
   return new LiveInboxHost({
     scope,
     source: inbox.source(scope, (candidate) => input.context.canRead(candidate), input.isSameCallExposure),

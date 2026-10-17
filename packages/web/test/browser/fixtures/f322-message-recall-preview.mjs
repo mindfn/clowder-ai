@@ -14,6 +14,8 @@ const port = Number(process.argv[2] ?? 5333);
 assert.ok(Number.isInteger(port) && port >= 1024 && port < 65535);
 assert.ok(![3001, 3002, 3011, 3012, 4111, 6397, 6398, 6399].includes(port));
 export const previewRecords = Array.from({ length: 22 }, (_, i) => ({
+  from:
+    i % 5 === 4 ? { kind: 'user', userId: 'default-user' } : { kind: 'agent', catId: i % 2 ? 'codex61-sol' : 'opus55' },
   id: `recall-preview-${i}`,
   type: i % 5 === 4 ? 'user' : 'assistant',
   ...(i % 5 === 4 ? {} : { catId: i % 2 ? 'codex61-sol' : 'opus55' }),
@@ -29,6 +31,7 @@ const cats = [
     displayName: '小太阳·砚砚',
     breedId: 'maine-coon',
     avatar: '/avatars/codex.png',
+    carrier: 'cli',
     clientId: 'openai',
     defaultModel: 'gpt-6.1-sol',
     mentionPatterns: ['@codex61-sol'],
@@ -40,6 +43,7 @@ const cats = [
     displayName: '宪宪',
     breedId: 'ragdoll',
     avatar: '/avatars/opus.png',
+    carrier: 'cli',
     clientId: 'anthropic',
     defaultModel: 'claude-opus-5-5',
     mentionPatterns: ['@opus55'],

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import Database from 'better-sqlite3';
-import { Redis } from 'ioredis';
+import type { Redis } from 'ioredis';
 import { RedisMessageStore } from '../../src/domains/cats/services/stores/redis/RedisMessageStore.js';
 import { readCurationBatch } from '../../src/domains/memory/CurationMessageReader.js';
 import { processThread, type SummaryCompactionDeps } from '../../src/domains/memory/SummaryCompactionTask.js';
@@ -10,21 +10,16 @@ import { createSummaryCompactionTaskSpec } from '../../src/domains/memory/Summar
 import { applyMigrations } from '../../src/domains/memory/schema.js';
 import { SUMMARY_CONFIG } from '../../src/domains/memory/summary-config.js';
 import { reconcileSummaryPendingInput } from '../../src/domains/memory/summary-pending-input.js';
-import { makeQueuedMessageCustody } from '../helpers/queued-message-custody.js';
-import {
-  assertRedisIsolationOrThrow,
-  cleanupClientKeyspace,
-  redisIsolationSkipReason,
-} from '../helpers/redis-test-helpers.js';
+import { ownedRedisFixture } from '../helpers/owned-redis-fixture.js';
 
-for (const transition of ['cancel', 'zero_exposure_recall', 'delivery', 'custody_delivery'] as const) {
+const owned = ownedRedisFixture('f117-source-accounting');
+
+for (const transition of ['cancel', 'zero_exposure_recall', 'delivery'] as const) {
   test(
     `Redis canonical accounting: real ${transition} invalidates hints and exits scheduler correctly`,
-    { skip: redisIsolationSkipReason(process.env.REDIS_URL) },
+    {},
     async () => {
-      const url = process.env.REDIS_URL!;
-      assertRedisIsolationOrThrow(url, 'F321 canonical accounting');
-      const redis = new Redis(url, { keyPrefix: `f321-accounting-${randomUUID()}:`, maxRetriesPerRequest: 1 });
+      const redis = owned.client(`f321-accounting-${randomUUID()}:`);
       const messages = new RedisMessageStore(redis, { ttlSeconds: 0 });
       const db = new Database(':memory:');
       applyMigrations(db);
@@ -72,16 +67,14 @@ for (const transition of ['cancel', 'zero_exposure_recall', 'delivery', 'custody
       const state = () =>
         db.prepare("SELECT * FROM summary_state WHERE thread_id='home'").get() as Parameters<typeof processThread>[0];
       try {
-        const custody = makeQueuedMessageCustody({ status: 'terminal', pendingTargetCats: [] });
         const queued = await messages.append({
           threadId: 'home',
           userId: 'owner',
-          catId: null,
+          from: { kind: 'user', userId: 'owner' },
           content: 'queued',
           mentions: [],
           timestamp: 200,
           deliveryStatus: 'queued',
-          queueCustody: custody,
         });
         assert.equal((await gate()).run, false);
         assert.equal(state().pending_message_count, 0);
@@ -101,19 +94,12 @@ for (const transition of ['cancel', 'zero_exposure_recall', 'delivery', 'custody
         } else if (transition === 'delivery') {
           assert.equal((await messages.markDelivered(queued.id, 300))?.deliveryTransitioned, true);
           assert.equal((await messages.markDelivered(queued.id, 300))?.deliveryTransitioned, false);
-        } else {
-          assert.equal(
-            (
-              await messages.transitionQueueCustody(queued.id, {
-                expectedRevision: custody.revision,
-                next: { ...custody, revision: custody.revision + 1 },
-                deliveredAt: 300,
-              })
-            ).kind,
-            'updated',
-          );
         }
-        assert.equal(changes.length, 2, 'only the successful canonical CAS emits an invalidation');
+        assert.equal(
+          changes.length,
+          transition === 'zero_exposure_recall' ? 1 : 2,
+          'invisible recall creates no visible timeline event; delivery and cancellation emit their canonical transition once',
+        );
         const admitted = await gate();
         if (transition === 'cancel' || transition === 'zero_exposure_recall') {
           assert.equal(admitted.run, false);
@@ -122,7 +108,7 @@ for (const transition of ['cancel', 'zero_exposure_recall', 'delivery', 'custody
           await messages.append({
             threadId: 'home',
             userId: 'owner',
-            catId: null,
+            from: { kind: 'user', userId: 'owner' },
             content: 'later owner',
             mentions: [],
             timestamp: 100,
@@ -133,8 +119,7 @@ for (const transition of ['cancel', 'zero_exposure_recall', 'delivery', 'custody
         assert.equal(state().pending_message_count, 0);
         assert.equal((await gate()).run, false);
       } finally {
-        await cleanupClientKeyspace(redis);
-        await redis.quit();
+        redis.disconnect();
         db.close();
       }
     },

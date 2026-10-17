@@ -210,7 +210,7 @@ test('with-test-home pins REDIS_URL when the outer shell has none', () => {
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.trim(), 'redis://127.0.0.1:6398');
+  assert.equal(result.stdout.trim(), 'redis://127.0.0.1:0');
 });
 
 test('with-test-home overrides an inherited REDIS_URL instead of trusting it', () => {
@@ -225,7 +225,7 @@ test('with-test-home overrides an inherited REDIS_URL instead of trusting it', (
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.trim(), 'redis://127.0.0.1:6398');
+  assert.equal(result.stdout.trim(), 'redis://127.0.0.1:0');
 });
 
 test('with-test-home rejects an isolated flag without a runner lease before executing the command', () => {
@@ -241,4 +241,32 @@ test('with-test-home rejects an isolated flag without a runner lease before exec
   assert.notEqual(result.status, 0);
   assert.equal(result.stdout, '');
   assert.match(result.stderr, /refusing sandbox reentry/);
+});
+
+test('non-isolated sandbox clears inherited Redis paths and binds an unreachable endpoint', () => {
+  const result = spawnSync(
+    'bash',
+    [
+      withTestHome,
+      'node',
+      '-e',
+      `console.log(JSON.stringify([
+    process.env.REDIS_URL, ...['REDIS_PORT','REDIS_DATA_DIR','REDIS_BACKUP_DIR','REDIS_KEY_PREFIX'].map(k => process.env[k] ?? null)
+  ]))`,
+    ],
+    {
+      env: {
+        ...process.env,
+        CAT_CAFE_REDIS_TEST_ISOLATED: '',
+        REDIS_URL: 'redis://127.0.0.1:6399',
+        REDIS_PORT: '6399',
+        REDIS_DATA_DIR: '/runtime-sentinel',
+        REDIS_BACKUP_DIR: '/backup-sentinel',
+        REDIS_KEY_PREFIX: 'runtime:',
+      },
+      encoding: 'utf8',
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), ['redis://127.0.0.1:0', null, null, null, null]);
 });

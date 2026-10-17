@@ -58,10 +58,15 @@ export function ArtifactRoundLanding({
   const draft = useReviewDraft(`${prefix}round:${round.number}:annotation`);
   const isV2 = useShellPresentation() === 'v2';
   const workTitle = isV2
-    ? artworkTitle(title ?? view.review.title, round.asset.mediaType === 'image/png' ? '图片' : '作品')
+    ? artworkTitle(title ?? view.review.title, round.asset.media.kind === 'image' ? '图片' : '作品')
     : view.review.title;
   const discussion = useArtifactChatDiscussion(view, round, workTitle);
-  const source = useReviewMediaSource(view.review.reviewId, round.number, controller.revokeAccess);
+  const source = useReviewMediaSource(
+    view.review.reviewId,
+    round.number,
+    controller.revokeAccess,
+    round.asset.mediaType,
+  );
   const [active, setActive] = useState<string | null>(null);
   const [panel, setPanel] = useState<'decision' | 'details' | null>(null);
   const originalSurface = useRef<HTMLDivElement>(null);
@@ -231,7 +236,7 @@ export function ArtifactRoundLanding({
                 round={round}
                 draft={selectedDraft}
                 disabled={!projection.canWrite || !canWrite}
-                allowNewRequest={round.asset.mediaType !== 'image/png'}
+                allowNewRequest={round.asset.media.kind !== 'image'}
                 onRegionHandedOff={() => effective.setTarget(null)}
               />
             ),

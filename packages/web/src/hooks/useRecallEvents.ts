@@ -1,6 +1,5 @@
 import type { RecallResolverFamily } from '@cat-cafe/shared';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
 import type { ChatMessage } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
@@ -63,7 +62,10 @@ export function useThreadRecall(options: { threadId?: string; messages?: readonl
   const live = useMemo(
     () =>
       messages.flatMap((message) => {
-        const invocationId = getBubbleInvocationId(message);
+        const invocationId =
+          message.lifecycle?.kind === 'response'
+            ? message.lifecycle.invocationId
+            : (message.extra?.stream?.turnInvocationId ?? message.extra?.stream?.invocationId);
         return filterRecallEvents(message.toolEvents ?? []).map((event) => ({
           ...event,
           catId: message.catId,
@@ -155,13 +157,22 @@ export function useThreadRecall(options: { threadId?: string; messages?: readonl
       ...new Set(
         [
           ...(history.threadId === threadId ? (history.cueInvocationIds ?? []) : []),
-          ...messages.map(getBubbleInvocationId),
+          ...messages.map((message) =>
+            message.lifecycle?.kind === 'response'
+              ? message.lifecycle.invocationId
+              : (message.extra?.stream?.turnInvocationId ?? message.extra?.stream?.invocationId),
+          ),
         ].filter((id): id is string => !!id),
       ),
     ]
       .sort()
       .map((id) => {
-        const message = messages.find((message) => getBubbleInvocationId(message) === id);
+        const message = messages.find(
+          (message) =>
+            (message.lifecycle?.kind === 'response'
+              ? message.lifecycle.invocationId
+              : (message.extra?.stream?.turnInvocationId ?? message.extra?.stream?.invocationId)) === id,
+        );
         return {
           id,
           token: `${generation}:${message ? `${message.isStreaming}:${message.toolEvents?.length ?? 0}` : 'history'}`,

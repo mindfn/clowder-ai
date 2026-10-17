@@ -66,7 +66,6 @@ function destinationRow(
 }
 
 export const HOME_ROWS: readonly HomeRow[] = [
-  destinationRow('activity', 'running', 'host', 'now'),
   destinationRow('activity', 'activity', 'host', 'status', '成员'),
   destinationRow('activity', 'history', 'mode', 'trajectory'),
   destinationRow('activity', 'play', 'action', 'theater'),

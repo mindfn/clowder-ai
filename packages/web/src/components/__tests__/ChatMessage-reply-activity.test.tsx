@@ -75,13 +75,13 @@ describe('F322: observed activity on the reply last line', () => {
     expect(harness.q('reply-activity-cat')?.getAttribute('data-pulse')).toBe('true');
   });
 
-  it('the v2 nameplate stays still, while classic retains its original streaming avatar', () => {
+  it('the v2 nameplate stays still and classic leaves working status to the single execution strip', () => {
     harness.render(working('first'));
     expect(harness.q('cat-nameplate-avatar')?.querySelector('.animate-pulse')).toBeNull();
     window.localStorage.clear();
     harness.render({ ...working('second'), id: 'classic-reply' });
     expect(harness.q('reply-activity-cat')).toBeNull();
-    expect(harness.container.querySelector('.animate-pulse')).not.toBeNull();
+    expect(harness.container.querySelector('.animate-pulse')).toBeNull();
   });
 
   it('terminal replies remove activity and keep the actual provider duration fixed', () => {

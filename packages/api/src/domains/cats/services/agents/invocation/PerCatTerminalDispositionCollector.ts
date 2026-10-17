@@ -6,18 +6,12 @@
  * producer applies the same fail-closed terminal contract.
  */
 
-import type { QueueTerminalConsumptionWitness } from '@cat-cafe/shared';
-import { normalizeQueueTerminalConsumptions } from './queue-terminal-consumption.js';
-
 export interface TerminalDispositionEvent {
   type: string;
   catId?: string;
   error?: unknown;
   errorCode?: unknown;
   errorDisposition?: 'transient' | 'terminal';
-  invocationId?: string;
-  turnCustodyTerminalWitness?: QueueTerminalConsumptionWitness;
-  turnCustodyTerminalWitnesses?: readonly QueueTerminalConsumptionWitness[];
 }
 
 export interface PerCatTerminalDispositionCollectorOptions {
@@ -38,14 +32,12 @@ export function isTerminalDispositionEvent(event: TerminalDispositionEvent): boo
 
 export class PerCatTerminalDispositionCollector {
   private readonly disqualifiedCatIds = new Set<string>();
-  private readonly successfulCatIds = new Set<string>();
-  private readonly preflightRejectedCatIds = new Set<string>();
+  private readonly failedCatIds = new Set<string>();
   private readonly canceledCatIds = new Set<string>();
+  private readonly successfulCatIds = new Set<string>();
   private readonly targetCatIds: Set<string>;
   private readonly isCanceled: (catId: string) => boolean;
   private primaryTerminalError: string | undefined;
-  private readonly terminalInvocationIdByCatId = new Map<string, string>();
-  private readonly terminalConsumptionByInvocationId = new Map<string, readonly QueueTerminalConsumptionWitness[]>();
 
   constructor(options: PerCatTerminalDispositionCollectorOptions) {
     this.targetCatIds = new Set(options.targetCatIds);
@@ -53,7 +45,6 @@ export class PerCatTerminalDispositionCollector {
   }
 
   observe(event: TerminalDispositionEvent): void {
-    this.observeCustody(event);
     const { catId } = event;
     if (!catId || !this.targetCatIds.has(catId)) return;
 
@@ -65,8 +56,8 @@ export class PerCatTerminalDispositionCollector {
 
     if (event.type === 'error') {
       if (event.errorDisposition === 'transient') return;
-      if (event.errorCode === 'routing_preflight_rejected') this.preflightRejectedCatIds.add(catId);
       this.primaryTerminalError ??= this.readTerminalError(event.error, event.errorCode, catId);
+      this.failedCatIds.add(catId);
       this.disqualify(catId);
       return;
     }
@@ -76,6 +67,9 @@ export class PerCatTerminalDispositionCollector {
     if (event.errorCode !== undefined || this.isCanceled(catId)) {
       if (event.errorCode !== undefined) {
         this.primaryTerminalError ??= this.readTerminalError(undefined, event.errorCode, catId);
+        this.failedCatIds.add(catId);
+      } else {
+        this.canceledCatIds.add(catId);
       }
       this.disqualify(catId);
       return;
@@ -83,33 +77,6 @@ export class PerCatTerminalDispositionCollector {
 
     if (!this.disqualifiedCatIds.has(catId)) {
       this.successfulCatIds.add(catId);
-    }
-  }
-
-  private observeCustody(event: TerminalDispositionEvent): void {
-    // Custody belongs to an exact child/source, including adopted wakes. Every
-    // route consumer must forward it independently of aggregate parent success.
-    if (
-      event.catId &&
-      typeof event.invocationId === 'string' &&
-      event.invocationId.length > 0 &&
-      isTerminalDispositionEvent(event)
-    ) {
-      this.terminalInvocationIdByCatId.set(event.catId, event.invocationId);
-      if (event.type === 'done') {
-        const witnesses = normalizeQueueTerminalConsumptions(
-          event.turnCustodyTerminalWitnesses ?? event.turnCustodyTerminalWitness,
-        );
-        if (witnesses.length > 0) {
-          this.terminalConsumptionByInvocationId.set(
-            event.invocationId,
-            normalizeQueueTerminalConsumptions([
-              ...(this.terminalConsumptionByInvocationId.get(event.invocationId) ?? []),
-              ...witnesses,
-            ]),
-          );
-        }
-      }
     }
   }
 
@@ -121,24 +88,19 @@ export class PerCatTerminalDispositionCollector {
     return this.primaryTerminalError;
   }
 
+  getTerminalStatus(catId: string): 'succeeded' | 'failed' | 'canceled' | undefined {
+    if (this.successfulCatIds.has(catId)) return 'succeeded';
+    if (this.failedCatIds.has(catId)) return 'failed';
+    if (this.canceledCatIds.has(catId)) return 'canceled';
+    return undefined;
+  }
+
   areAllTargetsCanceled(): boolean {
     return (
       !this.primaryTerminalError &&
       this.targetCatIds.size > 0 &&
       [...this.targetCatIds].every((catId) => this.canceledCatIds.has(catId) || this.isCanceled(catId))
     );
-  }
-
-  getTerminalInvocationIdByCatId(): Record<string, string> {
-    return Object.fromEntries(this.terminalInvocationIdByCatId);
-  }
-
-  getTerminalConsumptionByInvocationId(): Record<string, readonly QueueTerminalConsumptionWitness[]> {
-    return Object.fromEntries(this.terminalConsumptionByInvocationId);
-  }
-
-  getPreflightRejectedCatIds(): string[] {
-    return [...this.preflightRejectedCatIds];
   }
 
   private readTerminalError(error: unknown, errorCode: unknown, catId: string): string {

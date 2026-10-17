@@ -5,7 +5,7 @@ import {
   compareOfficialPluginVersions,
   type OfficialPluginCatalogProvider,
   type OfficialPluginCatalogSnapshot,
-} from '../official-catalog-provider.js';
+} from './official-catalog-provider.js';
 
 export const OFFICIAL_PLUGIN_CATALOG_URL =
   'https://raw.githubusercontent.com/zts212653/clowder-ai-plugins/main/catalog/catalog.json';

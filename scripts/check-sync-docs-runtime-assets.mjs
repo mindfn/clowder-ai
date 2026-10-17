@@ -83,6 +83,19 @@ export const IGNORE_PATHS = [
       'the required preparation/publication materials and selected media remain individually covered by the runtime allowlist.',
   },
   {
+    exact: 'docs/videos/f311-microduck-roadshow/pipeline/cortex/evidence/20260910',
+    reason:
+      'F311 optional installation archive container. The Cortex reader resolves only two signed public runs from it; ' +
+      'their manifest, observation, media and poster files are individually covered by the runtime allowlist. ' +
+      'Keeping this exception exact prevents the remaining raw trajectories, events, clips and calibration captures from leaking.',
+  },
+  {
+    exact: 'docs/discussions/f314-incident-archive',
+    reason:
+      'F311 exploration uses this literal only to build commit-pinned source links. The sole runtime read is the ' +
+      'owner-reviewed lineage-index.json, which is individually covered by the runtime allowlist; internal discussion files stay private.',
+  },
+  {
     pathOrPrefix: 'docs/markers',
     reason:
       'MarkerQueue user runtime state (YAML files generated per-install by MarkerQueue). ' +
