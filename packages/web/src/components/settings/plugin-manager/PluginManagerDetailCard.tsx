@@ -51,6 +51,18 @@ const contributionKindLabel: Record<string, string> = {
   'desktop-window': 'Desktop Window',
 };
 
+// The full manifest remains available to Host consumers; this is the owner-facing capability view.
+const userCapabilityKinds = new Set([
+  'mcp',
+  'skill',
+  'schedule',
+  'direct-tool',
+  'limb',
+  'ui',
+  'content-editor-provider',
+  'desktop-window',
+]);
+
 interface CapabilityDocItem {
   key: string;
   kind: string;
@@ -79,6 +91,7 @@ function capabilityDocItems(
   presentation: PluginManagerPresentation,
 ): CapabilityDocItem[] {
   const items: CapabilityDocItem[] = (plugin.contributions ?? []).flatMap((contribution) => {
+    if (!userCapabilityKinds.has(contribution.kind)) return [];
     const tools =
       contribution.kind === 'mcp' ? (plugin.tools ?? []).filter((tool) => tool.contributionId === contribution.id) : [];
     if (tools.length > 0) {

@@ -118,7 +118,7 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     expect(detail?.querySelector('button[aria-label^="卸载"]')).toBeNull();
     expect(detail?.textContent).not.toContain('已安装');
     expect(detail?.textContent).not.toContain('未安装');
-    expect(detail?.textContent).toContain('事件输入');
+    expect(detail?.textContent).not.toContain('事件输入');
     expect(container.textContent).not.toContain('更新');
     expect(container.textContent).not.toContain('修复');
   });
@@ -400,6 +400,37 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     expect(capabilityRow?.querySelectorAll('p')).toHaveLength(1);
     expect(detail?.textContent?.match(/Analyze video/g) ?? []).toHaveLength(0);
     expect(detail?.textContent).not.toContain('插件未提供用途说明。');
+  });
+
+  it.each(['v1', 'v2'] as const)('shows callable capabilities without internal wiring in %s', async (presentation) => {
+    const contributions = [
+      ...Array.from({ length: 29 }, (_, i) => ({
+        id: `community-http-${i + 1}`,
+        name: `community-http-${i + 1}`,
+        kind: 'webhook' as const,
+      })),
+      { id: 'review-predicate', name: 'review-predicate', kind: 'terminal-predicate-provider' as const },
+      { id: 'github-notification', name: 'github-notification', kind: 'identity' as const },
+      { id: 'github-wait', name: 'github-wait', kind: 'identity' as const },
+      ...(['mcp', 'skill', 'schedule', 'direct-tool', 'limb', 'ui', 'desktop-window'] as const).map((kind) => ({
+        id: `public-${kind}`,
+        name: `public-${kind}`,
+        kind,
+      })),
+    ];
+    const plugin = {
+      ...PLUGIN_MANAGER_DESIGN_FIXTURES[0],
+      contributions,
+      tools: [{ contributionId: 'public-mcp', name: 'github_read' }],
+    };
+    await act(async () => root.render(<PluginManagerContent fixtures={[plugin]} presentation={presentation} />));
+    const detail = container.querySelector('[data-testid="plugin-manager-detail"]');
+    expect(detail?.textContent).not.toMatch(/community-http|review-predicate|github-notification|github-wait/);
+    expect(detail?.textContent).toContain('github_read');
+    for (const kind of ['mcp', 'skill', 'schedule', 'direct-tool', 'limb', 'ui', 'desktop-window']) {
+      expect(detail?.querySelector(`[data-contribution-kind="${kind}"]`)).not.toBeNull();
+    }
+    expect(plugin.contributions).toHaveLength(39);
   });
 
   it('labels content editor provider contributions from the manifest without Host-specific copy', async () => {
