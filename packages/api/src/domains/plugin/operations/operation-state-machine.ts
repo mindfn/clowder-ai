@@ -107,8 +107,12 @@ export function transitionOperationState(input: TransitionOperationStateInput): 
   }
 
   const nextAction = action.next ?? action.id;
+  // Returning to the beginning ends this operation cycle. Its status receipt is
+  // response feedback, not state to replay whenever settings are reopened.
+  const resetStatus =
+    action.id !== input.actions[0]?.id && nextAction === input.actions[0]?.id && input.result.render === 'status';
   return {
-    state: { currentAction: nextAction, lastResult, updatedAt: input.now },
+    state: { currentAction: nextAction, ...(resetStatus ? {} : { lastResult }), updatedAt: input.now },
     decision: { kind: 'next', actionId: nextAction },
     targetValues: declaredTargetValues(input.targetKeys ?? [], input.result),
     preserveUpdatedAt: false,

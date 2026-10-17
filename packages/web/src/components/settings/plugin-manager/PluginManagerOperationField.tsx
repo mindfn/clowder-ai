@@ -1,6 +1,7 @@
 'use client';
 
 import type { PluginManagerConfigField } from '@cat-cafe/shared';
+import { useMemo } from 'react';
 import type { PlatformOperationStatus } from '../../HubConfigIcons';
 import { ActionRenderer } from '../primitives/ActionRenderer';
 
@@ -15,16 +16,21 @@ export function PluginManagerOperationField({
   pendingConfigValues: Readonly<Record<string, string>>;
   onStatusChange?: () => void;
 }) {
+  const operation = useMemo<PlatformOperationStatus>(
+    () => ({
+      name: field.key,
+      label: field.label,
+      actions: field.actions ?? [],
+      ...(field.rowActions === undefined ? {} : { rowActions: field.rowActions }),
+      ...(field.operationState?.currentAction === undefined
+        ? {}
+        : { currentAction: field.operationState.currentAction }),
+      ...(field.operationState?.lastResult === undefined ? {} : { lastResult: field.operationState.lastResult }),
+      ...(field.operationState?.updatedAt === undefined ? {} : { updatedAt: field.operationState.updatedAt }),
+    }),
+    [field],
+  );
   if (field.kind !== 'operation' || !field.actions?.length) return null;
-  const operation: PlatformOperationStatus = {
-    name: field.key,
-    label: field.label,
-    actions: field.actions,
-    ...(field.rowActions === undefined ? {} : { rowActions: field.rowActions }),
-    ...(field.operationState?.currentAction === undefined ? {} : { currentAction: field.operationState.currentAction }),
-    ...(field.operationState?.lastResult === undefined ? {} : { lastResult: field.operationState.lastResult }),
-    ...(field.operationState?.updatedAt === undefined ? {} : { updatedAt: field.operationState.updatedAt }),
-  };
   return (
     <ActionRenderer
       target={{ kind: 'plugin', id: pluginId }}

@@ -102,7 +102,7 @@ export function PluginManagerConfigurationSection({
   validationRequest,
   saved,
   presentation = 'v1',
-  renderBefore,
+  beforeConfiguration,
 }: {
   plugin: PluginManagerDesignFixture;
   busy: boolean;
@@ -111,8 +111,8 @@ export function PluginManagerConfigurationSection({
   validationRequest: number;
   saved: boolean;
   presentation?: PluginManagerPresentation;
-  /** v2 detail composes its introduction and the SAME operation instances before value fields. */
-  renderBefore?: (operations: ReactNode) => ReactNode;
+  /** Status and introduction; operations remain in manifest configuration order. */
+  beforeConfiguration?: ReactNode;
 }) {
   const installed = plugin.artifact === 'installed';
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
@@ -137,8 +137,22 @@ export function PluginManagerConfigurationSection({
   const selectedMode = modeField ? effectiveFieldValue(modeField, fieldValues) : undefined;
   const steps = declaredSteps.filter((step) => !step.mode || step.mode === selectedMode).map((step) => step.text);
   const updates = configurationUpdates(fields, fieldValues);
-  const prelude = presentation === 'v2' ? renderBefore : undefined;
-  const displayedFields = configurableFields;
+  const displayedFields = fields.filter((field) => field.hidden !== true);
+  const [operationRevision, setOperationRevision] = useState(0);
+  const handleOperationChange = () => {
+    setOperationRevision((value) => value + 1);
+    onOperationChange?.();
+  };
+  const feedbackKey = JSON.stringify([
+    plugin.id,
+    plugin.config,
+    plugin.auth,
+    plugin.intent,
+    plugin.live,
+    fieldValues,
+    fields.map((field) => [field.key, field.currentValue, field.configured, field.operationState]),
+    operationRevision,
+  ]);
   const fieldLabel = (field: ConfigurationField) =>
     presentation === 'v2' ? pluginFieldLabel(plugin.id, field) : field.label;
   const changeField = (key: string, value: string) => {
@@ -184,25 +198,14 @@ export function PluginManagerConfigurationSection({
       setFieldValues({});
       setFieldErrors({});
     }
+    if (!saved) return;
+    const timer = setTimeout(() => setShowSaved(false), 4000);
+    return () => clearTimeout(timer);
   }, [saved]);
 
   return (
     <>
-      {prelude?.(
-        installed
-          ? fields
-              .filter((field) => field.kind === 'operation')
-              .map((field) => (
-                <PluginManagerOperationField
-                  key={operationKey(field)}
-                  pluginId={plugin.id}
-                  field={field}
-                  pendingConfigValues={fieldValues}
-                  onStatusChange={onOperationChange}
-                />
-              ))
-          : null,
-      )}
+      {beforeConfiguration}
       <section className="space-y-3" data-plugin-detail-section="configuration">
         <SettingsText as="h4" variant="xs" tone="muted" className="font-semibold">
           {presentation === 'v2' ? '配置' : '插件配置'}
@@ -218,28 +221,17 @@ export function PluginManagerConfigurationSection({
               </div>
             ))}
 
-            {!prelude &&
-              fields
-                .filter((field) => field.kind === 'operation')
-                .map((field) => (
-                  <PluginManagerOperationField
-                    key={operationKey(field)}
-                    pluginId={plugin.id}
-                    field={field}
-                    pendingConfigValues={fieldValues}
-                    onStatusChange={onOperationChange}
-                  />
-                ))}
-
             {displayedFields.length > 0 && (
               <div className="space-y-2.5">
-                <div className="flex items-center gap-1.5">
-                  <StepBadge num={steps.length + 1} />
-                  <SettingsText as="span" variant="sm" tone="default" className="font-medium">
-                    填写插件配置
-                  </SettingsText>
-                </div>
-                <div className="ml-[26px] space-y-2.5">
+                {configurableFields.length > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <StepBadge num={steps.length + 1} />
+                    <SettingsText as="span" variant="sm" tone="default" className="font-medium">
+                      配置项
+                    </SettingsText>
+                  </div>
+                )}
+                <div className="space-y-2.5">
                   {displayedFields.map((field) => {
                     const listFormat = presentation === 'v2' ? pluginListFormat(plugin.id, field) : undefined;
                     return field.kind === 'operation' ? (
@@ -248,7 +240,7 @@ export function PluginManagerConfigurationSection({
                         pluginId={plugin.id}
                         field={field}
                         pendingConfigValues={fieldValues}
-                        onStatusChange={onOperationChange}
+                        onStatusChange={handleOperationChange}
                       />
                     ) : listFormat ? (
                       <PluginManagerStringList
@@ -290,6 +282,7 @@ export function PluginManagerConfigurationSection({
 
         {installed && (plugin.testable === true || (configurableFields.length > 0 && onSaveConfig)) && (
           <PluginManagerConfigurationActions
+            feedbackKey={feedbackKey}
             pluginId={plugin.id}
             busy={busy}
             saved={showSaved}

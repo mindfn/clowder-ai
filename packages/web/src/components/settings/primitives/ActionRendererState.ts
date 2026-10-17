@@ -117,6 +117,20 @@ export function deriveActionState(
   if (!operation.currentAction && configured && disconnectId) {
     return { currentActionId, lastResult: operation.lastResult, phase: 'connected' };
   }
+  // Older stores retained a status receipt after the cycle returned to start.
+  // Keep the cursor, but do not resurrect that receipt as a permanent success.
+  if (
+    persistedActionId === firstActionId &&
+    disconnectId &&
+    disconnectId !== firstActionId &&
+    operation.lastResult?.render === 'status' &&
+    operation.lastResult.data !== null &&
+    typeof operation.lastResult.data === 'object' &&
+    'status' in operation.lastResult.data &&
+    operation.lastResult.data.status === 'disconnected'
+  ) {
+    return { currentActionId, lastResult: undefined, phase: 'idle' };
+  }
   const initial = phaseForAction(operation.currentAction, actions, disconnectId);
   return {
     currentActionId,

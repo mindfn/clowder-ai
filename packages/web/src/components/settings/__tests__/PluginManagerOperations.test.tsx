@@ -71,6 +71,106 @@ describe('Plugin Manager operation fields', () => {
   it.each([
     'v1',
     'v2',
+  ] as const)('keeps instructions, inputs and operations in declared configuration order (%s)', async (presentation) => {
+    await act(async () =>
+      root.render(
+        <PluginManagerConfigurationSection
+          plugin={{
+            ...plugin,
+            steps: ['Read before configuring'],
+            configFields: [
+              plugin.configFields[0],
+              plugin.configFields[1],
+              { ...plugin.configFields[0], key: 'after', label: 'After action' },
+            ],
+          }}
+          busy={false}
+          saved={false}
+          validationRequest={0}
+          presentation={presentation}
+          beforeConfiguration={<p>Introduction</p>}
+        />,
+      ),
+    );
+    const before = container.querySelector('input');
+    const action = container.querySelector('[data-testid="dev.clowder.fixture-action-generate"]');
+    const after = container.querySelectorAll('input')[1];
+    if (!before || !action || !after) throw new Error('Expected inputs and action');
+    expect(before.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(action.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect((container.textContent ?? '').indexOf('Read before configuring')).toBeLessThan(
+      (container.textContent ?? '').indexOf('Generate QR'),
+    );
+  });
+
+  it('expires test success and invalidates in-flight results after a configuration change', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveTest!: (value: Response) => void;
+      mockApiFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
+      const render = async (config: 'ready' | 'incomplete') => {
+        await act(async () =>
+          root.render(
+            <PluginManagerConfigurationSection
+              plugin={{ ...plugin, config, testable: true }}
+              busy={false}
+              saved={false}
+              validationRequest={0}
+            />,
+          ),
+        );
+      };
+      const test = () => {
+        const button = Array.from(container.querySelectorAll('button')).find((b) =>
+          b.textContent?.includes('测试连接'),
+        );
+        if (!button) throw new Error('Missing test connection button');
+        return button;
+      };
+      await render('ready');
+      await act(async () => test().click());
+      expect(container.textContent).toContain('连接测试成功');
+      await act(async () => vi.advanceTimersByTime(5000));
+      expect(container.textContent).not.toContain('连接测试成功');
+      mockApiFetch.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveTest = resolve;
+          }),
+      );
+      await act(async () => test().click());
+      await render('incomplete');
+      expect(mockApiFetch.mock.calls.at(-1)?.[1]?.signal?.aborted).toBe(true);
+      await act(async () => resolveTest(new Response(JSON.stringify({ ok: true }))));
+      expect(container.textContent).not.toContain('连接测试成功');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears test success when an owner operation changes connection state', async () => {
+    mockApiFetch.mockImplementation(async () => new Response(JSON.stringify({ ok: true, render: 'status', data: {} })));
+    await act(async () =>
+      root.render(
+        <PluginManagerConfigurationSection
+          plugin={{ ...plugin, testable: true }}
+          busy={false}
+          saved={false}
+          validationRequest={0}
+        />,
+      ),
+    );
+    const test = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('测试连接'));
+    await act(async () => test?.click());
+    expect(container.textContent).toContain('连接测试成功');
+    const action = container.querySelector<HTMLButtonElement>('[data-testid="dev.clowder.fixture-action-generate"]');
+    await act(async () => action?.click());
+    expect(container.textContent).not.toContain('连接测试成功');
+  });
+
+  it.each([
+    'v1',
+    'v2',
   ] as const)('refreshes rows after enable without clearing configuration drafts (%s)', async (presentation) => {
     let enabled = false;
     mockApiFetch.mockImplementation(
@@ -110,7 +210,7 @@ describe('Plugin Manager operation fields', () => {
             validationRequest={0}
             saved={false}
             presentation={presentation}
-            renderBefore={(operations) => <div>{operations}</div>}
+            beforeConfiguration={<p>Introduction</p>}
           />,
         ),
       );

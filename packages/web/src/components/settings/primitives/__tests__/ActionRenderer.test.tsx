@@ -57,6 +57,30 @@ describe('ActionRenderer', () => {
     vi.clearAllMocks();
   });
 
+  it('does not resurrect old disconnect feedback when reopening a reset operation', async () => {
+    await act(async () =>
+      root.render(
+        <ActionRenderer
+          target={{ kind: 'plugin', id: 'fixture' }}
+          configured={false}
+          operation={{
+            name: 'login',
+            label: 'Login',
+            currentAction: 'start',
+            lastResult: { render: 'status', data: { status: 'disconnected' }, label: '已断开' },
+            actions: [
+              { id: 'start', label: 'Start', render: 'button', next: 'poll' },
+              { id: 'poll', label: 'Poll', render: 'polling', next: 'disconnect' },
+              { id: 'disconnect', label: 'Disconnect', render: 'button', next: 'start' },
+            ],
+          }}
+        />,
+      ),
+    );
+    expect(container.textContent).not.toContain('已断开');
+    expect(queryButton(container, 'Start')).toBeDefined();
+  });
+
   it('resets rollback state without executing the rollback action when a polling operation times out', async () => {
     mockApiFetch.mockImplementation(async (url) => {
       const path = String(url);

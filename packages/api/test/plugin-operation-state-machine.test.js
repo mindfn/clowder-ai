@@ -9,6 +9,37 @@ const actions = [
 ];
 
 describe('plugin operation state machine', () => {
+  it('retains the reset cursor and cleared targets without persisting disconnect feedback', () => {
+    const transition = transitionOperationState({
+      actions: [
+        { id: 'start', next: 'poll' },
+        { id: 'poll', next: 'disconnect' },
+        { id: 'disconnect', next: 'start' },
+      ],
+      actionId: 'disconnect',
+      targetKeys: ['token'],
+      result: { render: 'status', data: { status: 'disconnected' }, label: '已断开', targetValues: { token: '' } },
+      now: 42,
+    });
+    assert.deepEqual(transition.state, { currentAction: 'start', updatedAt: 42 });
+    assert.deepEqual(transition.targetValues, { token: '' });
+  });
+
+  it('retains an established connection result and a standalone status result', () => {
+    for (const definitions of [
+      [
+        { id: 'start', next: 'poll' },
+        { id: 'poll', next: 'disconnect' },
+        { id: 'disconnect', next: 'start' },
+      ],
+      [{ id: 'poll' }],
+    ]) {
+      const result = { render: 'status', data: { status: 'connected' }, label: 'Connected' };
+      const transition = transitionOperationState({ actions: definitions, actionId: 'poll', result, now: 42 });
+      assert.deepEqual(transition.state.lastResult, result);
+    }
+  });
+
   it('advances, filters declared target values, and stamps a fresh state', () => {
     const transition = transitionOperationState({
       actions,

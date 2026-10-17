@@ -315,12 +315,10 @@ export function PluginManagerDetailCard({
             <PluginManagerConfigurationSection
               plugin={plugin}
               presentation={presentation}
-              renderBefore={
-                presentation === 'v2'
-                  ? (operations) => (
-                      <PluginManagerDetailPrelude plugin={plugin} description={description} operations={operations} />
-                    )
-                  : undefined
+              beforeConfiguration={
+                presentation === 'v2' ? (
+                  <PluginManagerDetailPrelude plugin={plugin} description={description} />
+                ) : undefined
               }
               onOperationChange={onOperationChange}
               busy={busy}
