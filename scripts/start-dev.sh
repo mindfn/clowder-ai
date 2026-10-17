@@ -1327,20 +1327,10 @@ maybe_quarantine_stale_aof_dir() {
 }
 
 prune_redis_backups() {
-    local keep="${1:-20}"
-    local files=()
-    while IFS= read -r f; do
-        files+=("$f")
-    done < <(ls -1t "$REDIS_BACKUP_DIR"/"${REDIS_STORAGE_KEY}"-*.rdb 2>/dev/null || true)
-
-    if [ "${#files[@]}" -le "$keep" ]; then
-        return
-    fi
-
-    local i
-    for ((i=keep; i<${#files[@]}; i++)); do
-        /bin/rm -f "${files[$i]}"
-    done
+    # Three recent + seven daily snapshots + the oldest anchor; manual copies stay untouched.
+    # A refusal preserves backups and must not prevent the application from starting/stopping.
+    node "$SCRIPT_DIR/redis-backup-retention.mjs" "$REDIS_BACKUP_DIR" "$REDIS_STORAGE_KEY" --apply >/dev/null ||
+        echo '[backup-retention] retained existing snapshots after a failed retention check' >&2
 }
 
 archive_redis_snapshot() {
@@ -1372,13 +1362,18 @@ archive_redis_snapshot() {
     local stamp
     stamp=$(date '+%Y%m%d-%H%M%S')
     local target="$REDIS_BACKUP_DIR/${REDIS_STORAGE_KEY}-${reason}-${stamp}.rdb"
-    if cp -p "$source" "$target" 2>/dev/null || cp "$source" "$target" 2>/dev/null; then
+    local partial=""
+    if partial=$(mktemp "${target}.partial.XXXXXX" 2>/dev/null) &&
+        { cp -p "$source" "$partial" 2>/dev/null || cp "$source" "$partial" 2>/dev/null; } &&
+        node "$SCRIPT_DIR/redis-backup-retention.mjs" --check-snapshot "$partial" &&
+        mv -f "$partial" "$target"; then
         echo -e "${GREEN}  ✓ Redis 快照归档: $target${NC}"
     else
+        [ -z "$partial" ] || /bin/rm -f -- "$partial"
         echo -e "${YELLOW}  ⚠ Redis 快照归档失败，继续启动: $target${NC}"
         return 0
     fi
-    prune_redis_backups 20
+    prune_redis_backups
 }
 
 print_redis_runtime_info() {

@@ -42,6 +42,7 @@ const cats = [
   avatar: `/avatars/${id}.png`,
   color: { primary, secondary: '#eeeeee' },
   mentionPatterns: [`@${id}`],
+  carrier: 'cli',
   clientId: 'fixture',
   defaultModel: 'fixture',
 }));
@@ -225,7 +226,7 @@ const STATES = [
   ['r-working', 'working', '正在运行命令 pnpm'],
   ['r-working-long', 'working', '正在运行命令 pnpm'],
   ['r-quiet', 'quiet', '没有动静'],
-  ['r-unverified', 'unverified', '状态暂不可核对'],
+  ['r-durable-processing', 'working', '正在写回复'],
   ['r-failed', 'failed', '没有完成：等待回复超时'],
   ['r-stopped', 'stopped', '已停止'],
 ];
@@ -480,17 +481,22 @@ test('the settled reply: record line with duration and errors, trajectory at its
   assert.deepEqual(errors, []);
 });
 
-test('S3/S4: the real reply projects a parallel handoff and terminal recall on the same line, with carriers kept invisible', async () => {
+test('S3/S4: canonical dispatch avatars and terminal recall retain exact sources, with linked and legacy carriers invisible', async () => {
   const { page, errors, unexpected } = await open({ width: 400 });
   const reply = page.locator('[data-message-id="r-handoff-recall"]');
-  const handoff = reply.locator('[data-testid="reply-handoff"]');
-  assert.equal(await handoff.count(), 1);
-  assert.match((await handoff.innerText()).replace(/\s+/g, ' '), /同时交给.*缅因猫.*暹罗猫/);
+  const dispatch = reply.locator('xpath=following-sibling::ul[@data-testid="message-dispatch-avatars"]');
+  assert.deepEqual(
+    await dispatch
+      .locator('[data-dispatch-target]')
+      .evaluateAll((items) => items.map((item) => [item.dataset.dispatchTarget, item.dataset.dispatchPhase])),
+    [
+      ['codex', 'settled'],
+      ['gemini', 'settled'],
+    ],
+  );
   assert.equal(await reply.locator('[data-testid="reply-recall"]').innerText(), '召回 1');
-  for (const id of ['r-handoff-route-1', 'r-handoff-route-2']) {
-    const carrier = page.locator(`[data-message-id="${id}"]`);
-    assert.equal(await carrier.getAttribute('data-projected-a2a-routing'), 'true', `${id}: carrier is projection-only`);
-    assert.equal((await carrier.innerText()).trim(), '', `${id}: no separate blue capsule remains`);
+  for (const id of ['r-handoff-route-1', 'r-handoff-route-2', 'r-dispatch-failure-1', 'r-dispatch-failure-2']) {
+    assert.equal(await page.locator(`[data-message-id="${id}"]`).count(), 0, `${id}: no separate carrier row`);
   }
   await reply.locator('[data-testid="reply-record-toggle"]').click();
   assert.equal(await reply.locator('[data-testid="reply-record"] > :first-child').innerText(), '检索 1');
@@ -499,10 +505,10 @@ test('S3/S4: the real reply projects a parallel handoff and terminal recall on t
   assert.equal(url.searchParams.get('workspaceMode'), 'recall');
   assert.equal(url.searchParams.get('recallInv'), 'r-handoff-recall');
   assert.equal(url.searchParams.get('recallCat'), 'opus');
-  const fallback = page.locator('[data-message-id="r-hidden-handoff-route"]');
-  assert.equal(await page.locator('[data-message-id="r-hidden-handoff-source"]').count(), 0);
-  assert.equal(await fallback.locator('[data-testid="reply-handoff"]').count(), 1);
-  assert.match((await fallback.innerText()).replace(/\s+/g, ' '), /交给.*缅因猫/);
+  const fallback = page.locator('[data-message-id="r-orphan-dispatch-failure"]');
+  assert.equal(await page.locator('[data-message-id="r-source-not-in-timeline"]').count(), 0);
+  assert.equal(await fallback.isVisible(), true, 'an unlinked failure remains visible instead of disappearing');
+  assert.match(await fallback.innerText(), /唤起处理成员失败/);
   const m = await measure(page, 'r-handoff-recall');
   assert.ok(m.columnScroll.scrollWidth <= m.columnScroll.clientWidth, 'the 400px column does not overflow');
   assert.deepEqual(errors, []);
@@ -640,7 +646,8 @@ test('v2 reading actions remain transient and forwarding keeps the ordered autho
     await actions.getByRole('button', { name: '更多消息操作' }).click();
     await actions.getByRole('menu', { name: '更多消息操作', exact: true }).waitFor();
     assert.equal(await actions.getByRole('menuitem', { name: '复制消息 ID' }).count(), 1);
-    assert.equal(await actions.getByRole('separator').count(), 1);
+    assert.equal(await actions.getByRole('menuitem').count(), 1, 'More keeps only Copy ID; actions live on the dock');
+    assert.equal(await actions.getByRole('separator').count(), 0);
     await actions.getByRole('button', { name: '多选消息' }).click();
     assert.equal(await host.getByRole('checkbox', { checked: true }).count(), 1);
     const selected = host.getByTestId('message-selection-toolbar');

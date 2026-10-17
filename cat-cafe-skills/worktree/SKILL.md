@@ -1,6 +1,6 @@
 ---
 name: worktree
-tips_exempt: "Renewed 2026-10-07 for owner-bound finish/check and the 30-day retention limit; this internal developer lifecycle is discovered through worktree/review/merge skills, with no end-user Hub operation."
+tips_exempt: "Renewed 2026-10-15 for light creation, branch-local assets and explicit compiler-cache trimming; internal developer commands are discovered through this skill, with no end-user Hub operation."
 description: "Use when: 创建代码/脚本/API工位或收尾。Not for: docs直推、代清其他owner。Output: 隔离worktree（Redis6398）、实际移除工位的released回执或具名retained回执。"
 triggers:
   - "开始开发"
@@ -106,8 +106,9 @@ gh pr diff <n> --name-only          # 或 gh pr view <n> --json files --jq '.fil
 pnpm worktree:new ../cat-cafe-{feature-name} --branch feat/{feature-name}
 cd ../cat-cafe-{feature-name}
 
-# 2. 安装依赖（必须清除 NODE_ENV，否则跳过 devDeps 导致 build 失败！）
-env -u NODE_ENV pnpm install
+# 2. 只有任务需要编译/依赖测试时才安装；只读/纯文档/Node 内置脚本无需先铺依赖。
+#    清除 NODE_ENV，使用本分支锁文件。开发中的依赖和构建缓存保留，不在每次 gate 后删除。
+env -u NODE_ENV pnpm install --frozen-lockfile
 
 # 3. 创建 .env（Redis 隔离，必须！）
 cat > .env <<EOF
@@ -122,6 +123,29 @@ echo $REDIS_URL   # 必须是 redis://localhost:6398，不能是 6399
 pnpm check:skills   # skill surface
 pnpm test           # 仅在跨包行为 / high-assurance 需要全量 baseline 时
 ```
+
+新工位默认延后检出大型历史媒体，代码、文字、元数据及已识别的运行/测试素材照常保留。
+要查历史图片/视频时，在工位内用 `pnpm worktree:assets project-evidence/<目录>` 补齐；
+裸 `pnpm worktree:assets` 列出尚未检出的路径，`pnpm worktree:assets --all` 补齐全部。
+从创建起就需要完整素材的任务，在 `worktree:new` 加 `--full`。
+补齐取当前工位分支，不能把 main 的资料目录或整个 `node_modules` 链过来。
+动态拼接的素材路径可能需要主动补齐；检查缺素材时先补本分支文件，不伪造替代图片。
+
+pnpm 复用它自己的 store；每个工位保有独立 workspace 链接和构建产物。
+不把目录显示的 `node_modules` 大小当独占占盘量，不承诺固定恢复秒数。
+
+暂时不用且希望回收空间时，从工位外显式执行：
+
+```bash
+pnpm worktree:trim ../cat-cafe-{feature-name} --source-ref {原Task或PR的ref}
+```
+
+它先核本人登记、保护对象、进程和排队任务，只回收 `.next/cache` 下的 webpack / swc / next-minifier。
+依赖、dist、生产构建、运行缓存、配置和证据保留；继续工作时直接 dev/build，编译器会重建缓存。
+没有 paused 状态，无需 resume。`--retain` 不会自动 trim，也不在每次 gate 后 trim。
+回执分别列目录逻辑大小和文件系统可用空间前后值；后者包含同期其他写入，不等于可归因释放量。
+这是进程/持久记录检查后 rename，不是新任务 admission 锁；别与同一工位的编译同时发起。
+rename 或删除中断时原件不受影响，再次显式 trim 会清理已移开的缓存；EXDEV 不会退回原地删除。
 
 ## Redis 隔离（数据安全红线）
 

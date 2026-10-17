@@ -862,7 +862,7 @@ describe('live member carriers', () => {
       { text: 'must not be appended after an unacknowledged interrupt' },
       { expectedInvocationId: registration.invocationId, force: true },
     );
-    assert.deepEqual(rejected, { accepted: false, reason: 'provider_rejected' });
+    assert.deepEqual(rejected, { accepted: false, reason: 'exception', acceptance: 'not_accepted' });
 
     events.close();
     const failure = await output.next();

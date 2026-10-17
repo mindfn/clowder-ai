@@ -65,7 +65,7 @@ describe('formatVisibleSystemInfo — routing_preflight', () => {
     );
 
     expect(visible).toEqual({
-      content: '宪宪：当前暂不可用。本次未执行。',
+      content: '宪宪：当前暂不可用。本次未执行，这条消息会等待你重试。',
       variant: 'info',
     });
   });

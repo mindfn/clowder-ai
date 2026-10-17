@@ -47,7 +47,7 @@ export function PianoMessageNavigator({
     return actorCatId
       ? `var(--color-${catSlug(getCatById(actorCatId.toLowerCase())?.id ?? actorCatId)}-primary, var(--console-cat-fallback))`
       : message.from?.kind === 'user'
-        ? 'var(--color-cocreator-primary)'
+        ? 'var(--cafe-text-muted)'
         : 'var(--cafe-text-muted)';
   };
 

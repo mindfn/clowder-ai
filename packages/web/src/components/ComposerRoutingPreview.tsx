@@ -27,6 +27,7 @@ interface RoutingPreviewPresentation {
   reason: string;
   stateLabel: string;
   whisperPreview: boolean;
+  unavailableNotice?: string;
 }
 
 function buildRecipientOptions(
@@ -113,11 +114,20 @@ function presentRoutingPreview(
   const joinedNames = names.join(language === 'zh' ? '、' : ', ');
   const whisperPreview = preview.status === 'ready' && preview.reason.kind === 'whisper_recipients';
   if (joinedNames && preview.status === 'ready') {
+    const unavailableNames = preview.unavailableTargets
+      ?.map(
+        (catId) =>
+          identities.get(catId)?.label ?? composerCatName(catId, getCatById, language === 'zh' ? '猫猫' : 'Cat'),
+      )
+      .join(language === 'zh' ? '、' : ', ');
+    const unavailableNotice =
+      !whisperPreview && unavailableNames ? copy.unavailableRedirect(unavailableNames, joinedNames) : undefined;
     return {
       joinedNames,
-      reason: explainReason(preview.reason, joinedNames, copy),
+      reason: unavailableNotice ?? explainReason(preview.reason, joinedNames, copy),
       stateLabel: joinedNames,
       whisperPreview,
+      unavailableNotice,
     };
   }
   if (whisperPreview) {
@@ -151,7 +161,13 @@ export function ComposerRoutingPreview({
   const [open, setOpen] = useState(false);
   const identities = useMemo(() => buildComposerRecipientIdentities(cats), [cats]);
   const options = useMemo(() => buildRecipientOptions(cats, identities), [cats, identities]);
-  const { reason, stateLabel, whisperPreview } = presentRoutingPreview(preview, copy, language, getCatById, identities);
+  const { reason, stateLabel, whisperPreview, unavailableNotice } = presentRoutingPreview(
+    preview,
+    copy,
+    language,
+    getCatById,
+    identities,
+  );
   const readyWithRecipients = preview.status === 'ready' && preview.targetCats.length > 0;
   const visibleRecipientCount = readyWithRecipients ? Math.min(preview.targetCats.length, 3) : 0;
   const recipientName = useWholeRecipientName(stateLabel, readyWithRecipients && !compact);
@@ -261,6 +277,11 @@ export function ComposerRoutingPreview({
           ) : null}
         </button>
       </AppTooltip>
+      {unavailableNotice ? (
+        <output className="block whitespace-normal break-words px-1.5 text-xs text-[var(--shell-muted)]">
+          {unavailableNotice}
+        </output>
+      ) : null}
       {open && !whisperPreview ? (
         <ComposerRecipientMenu
           anchor={trigger}

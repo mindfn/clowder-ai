@@ -68,7 +68,7 @@ export function createWorkspaceV3Fixture() {
       catId: 'codex61-sol',
       createdAt: 1791710900000,
       sourceMessageId: null,
-      ref: 'zts212653/cat-cafe#5385',
+      ref: 'zts212653/clowder-ai#5385',
     },
     {
       type: 'file',

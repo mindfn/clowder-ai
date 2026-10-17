@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { after, before, test } from 'node:test';
+import { registerDocumentProgressLayoutJourneys } from './f309-document-progress-layout.journey.mjs';
 import { probeDocumentReceiptClick } from './f309-document-receipt-stability.mjs';
 import { registerFirstFileJourney } from './f309-first-file-journey.mjs';
 import { registerNativeSendAckCloseJourneys } from './f309-native-send-ack-close.mjs';
@@ -55,6 +56,7 @@ registerOrdinaryChatTextRequestJourney(() => suite);
 registerOrdinaryChatCompareJourney(() => suite);
 registerOrdinaryChatCompareRoundJourney(() => suite);
 registerOrdinaryDocumentJourney(() => suite);
+registerDocumentProgressLayoutJourneys(() => suite);
 registerDocumentReopenJourney(() => suite);
 registerFirstFileJourney(() => suite);
 registerPublishedTextJourneys(() => suite);

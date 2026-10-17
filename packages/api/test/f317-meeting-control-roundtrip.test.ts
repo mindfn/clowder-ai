@@ -41,7 +41,6 @@ async function fixture(t: Parameters<Parameters<typeof test>[1]>[0]) {
       from: { kind: 'user', userId: scope.userId },
       userId: scope.userId,
       threadId: thread.id,
-
       content: text,
       mentions: [],
       timestamp: Date.now(),

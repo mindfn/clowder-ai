@@ -491,6 +491,74 @@ describe('F307 zero-surface canonical Home invariant', () => {
   });
 
   it.each([
+    'v2',
+    'classic',
+  ] as const)('preserves %s status identity while recently closed titles follow presentation and language', async (presentation) => {
+    writeShellPresentation(presentation);
+    writeShellLanguage('zh');
+    const status = createWorkspaceDestinationSurface(
+      { kind: 'host', id: 'status', label: '状态与会话', description: '来源原文', searchTerms: 'status' },
+      'thread-a',
+    )!;
+    useF307ExperienceWorkbenchStore.setState({
+      layout: createInitialWorkbenchState([status]),
+      hydrated: true,
+    });
+    await renderWorkbench();
+    const close = container.querySelector<HTMLButtonElement>(
+      presentation === 'v2'
+        ? '[data-tab-surface-id="workspace:host:status"] [data-workbench-tab-control="close"]'
+        : '[data-testid="f307-close-workspace"]',
+    )!;
+    await act(async () => close.click());
+    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="f307-recently-closed-toggle"]')!;
+    await act(async () => toggle.click());
+    const restore = container.querySelector<HTMLButtonElement>('[data-testid="f307-restore-workspace"]')!;
+    expect(restore.textContent).toBe('恢复 状态与会话');
+    await act(async () => writeShellLanguage('en'));
+    expect(container.querySelector('[data-testid="f307-restore-workspace"]')).toBe(restore);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(restore.textContent).toBe(presentation === 'v2' ? 'Restore Status & sessions' : '恢复 状态与会话');
+    expect(useF307ExperienceWorkbenchStore.getState().layout.recentlyClosed).toEqual([status]);
+    await act(async () => writeShellLanguage('zh'));
+    expect(restore.textContent).toBe('恢复 状态与会话');
+    await act(async () => writeShellLanguage('en'));
+    await act(async () => restore.click());
+    expect(useF307ExperienceWorkbenchStore.getState().layout).toMatchObject({
+      surfaces: [status],
+      activeSurfaceId: status.id,
+      recentlyClosed: [],
+    });
+  });
+
+  it('turns a wide Program into explicit full-window and restores the same Chat split from a named control', async () => {
+    const presentation = { kind: 'chat-workspace' as const, threadId: 'thread-a', chatBasis: 37 };
+    useF307ExperienceWorkbenchStore.setState({
+      layout: createInitialWorkbenchState([PROGRAM_SURFACE]),
+      hydrated: true,
+      mainAreaAttentionSurfaceId: PROGRAM_SURFACE.id,
+      mainAreaAttentionPresentation: presentation,
+    });
+    await renderWorkbench();
+
+    const enter = container.querySelector<HTMLButtonElement>('[data-testid="f307-enter-main-area"]');
+    expect(enter?.getAttribute('aria-label')).toBe(`整窗打开 ${PROGRAM_SURFACE.title}`);
+    await act(async () => enter?.click());
+    expect(useF307ExperienceWorkbenchStore.getState().mainAreaAttentionPresentation).toEqual({
+      ...presentation,
+      mode: 'full-window',
+    });
+
+    const back = container.querySelector<HTMLButtonElement>('[data-testid="f307-return-from-main-area"]');
+    expect(back?.textContent).toContain('回到聊天');
+    await act(async () => back?.click());
+    expect(useF307ExperienceWorkbenchStore.getState()).toMatchObject({
+      mainAreaAttentionSurfaceId: PROGRAM_SURFACE.id,
+      mainAreaAttentionPresentation: presentation,
+    });
+  });
+
+  it.each([
     ['artifacts', 'launcher'],
     ['schedule', 'launcher'],
     ['artifacts', 'tab'],
@@ -1185,6 +1253,11 @@ describe('F307 zero-surface canonical Home invariant', () => {
     const state = useF307ExperienceWorkbenchStore.getState();
     expect(state.layout.activeSurfaceId).toBe(`evolution-program:${programId}`);
     expect(state.mainAreaAttentionSurfaceId).toBe(state.layout.activeSurfaceId);
+    expect(state.mainAreaAttentionPresentation).toEqual({
+      kind: 'chat-workspace',
+      threadId: 'thread-a',
+      chatBasis: 30,
+    });
     expect(onConsumed).toHaveBeenCalledWith(1);
   });
 

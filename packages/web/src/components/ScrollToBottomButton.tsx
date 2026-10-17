@@ -15,6 +15,7 @@ export function ScrollToBottomButton({
   onJumpToLatest,
   thresholdPx = 120,
   recomputeSignal,
+  placement = 'overlay',
 }: {
   scrollContainerRef: React.RefObject<HTMLElement | null>;
   messagesEndRef: React.RefObject<HTMLElement | null>;
@@ -24,6 +25,8 @@ export function ScrollToBottomButton({
   recomputeSignal?: unknown;
   /** Changes when the scroll container / end sentinel is replaced (e.g. thread switch). */
   observerKey?: unknown;
+  /** v2 reserves a row outside the reading viewport; classic keeps its overlay. */
+  placement?: 'overlay' | 'flow';
 }) {
   const [visible, setVisible] = useState(false);
   // The visibility last handed to React. While a reply streams, `recomputeSignal` changes on nearly every commit; a
@@ -100,11 +103,11 @@ export function ScrollToBottomButton({
 
   const classes = useMemo(
     () =>
-      'absolute bottom-3 right-8 z-20 ' +
+      (placement === 'flow' ? 'shrink-0 self-end mr-8 mt-2 mb-3 ' : 'absolute bottom-3 right-8 z-20 ') +
       'rounded-full border border-cafe bg-cafe-surface/90 shadow-sm ' +
       'px-3 py-1.5 text-xs text-cafe-secondary ' +
       'hover:bg-cafe-surface hover:border-cafe transition-colors',
-    [],
+    [placement],
   );
 
   if (!visible) return null;

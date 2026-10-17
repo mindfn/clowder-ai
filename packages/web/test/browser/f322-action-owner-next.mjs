@@ -17,6 +17,7 @@ import {
 import {
   beginNativeReadingGesture,
   finishScrollProbeTrace,
+  placeNativeAuthorEdge,
   startScrollProbeTrace,
   waitForScrollProbe,
 } from './f322-native-scroll-probe-state.mjs';
@@ -37,7 +38,14 @@ async function openOwnedRow(browser, host, trace, user, width) {
   });
   const page = await context.newPage();
   const message = user
-    ? { ...trace.api, type: 'user', catId: undefined, extra: undefined, content: '用户完整消息。' }
+    ? {
+        ...trace.api,
+        from: { kind: 'user', userId: trace.userId },
+        type: 'user',
+        catId: undefined,
+        extra: undefined,
+        content: '用户完整消息。',
+      }
     : trace.api;
   await page.route('**/api/**', async (route) => {
     const response = readbackResponse(route.request(), trace, message);
@@ -95,25 +103,13 @@ async function addEdgeSpacers(row) {
   });
 }
 
-async function placeAuthorEdge(row, edge) {
-  await row.evaluate((node, edge) => {
-    const port = node.closest('[data-chat-container]');
-    const bounds = port.getBoundingClientRect();
-    const top = Math.max(0, bounds.top + port.clientTop),
-      bottom = Math.min(window.innerHeight, bounds.top + port.clientTop + port.clientHeight);
-    const target = { above: top - 1, top: top + 1, middle: (top + bottom) / 2, bottom: bottom - 1 }[edge];
-    const slot = node.querySelector('[data-message-action-slot]').getBoundingClientRect();
-    port.scrollTop += slot.top - target;
-  }, edge);
-}
-
 async function hideOpenSheet({ page, row, id }, overflow, offscreen, out, name) {
   const history = page.locator('[data-thread-chat-history]');
   if (offscreen) {
     await addEdgeSpacers(row);
     await startScrollProbeTrace(row);
     await beginNativeReadingGesture(page, row);
-    await placeAuthorEdge(row, 'middle');
+    await placeNativeAuthorEdge(page, row, 'middle');
     await waitForScrollProbe(page, id, 'middle', 300, out, name);
   }
   await recordSheetPhase(page, id, 'before-initial-focus');
@@ -133,8 +129,15 @@ async function hideOpenSheet({ page, row, id }, overflow, offscreen, out, name) 
   const handle = await surface.elementHandle();
   await surface.locator('button').first().focus();
   if (offscreen) {
-    await placeAuthorEdge(row, 'above');
-    await waitForScrollProbe(page, id, 'above', 300, out, name);
+    // The modal backdrop correctly receives wheel input. Resize the actual
+    // viewport to clip its author while the sheet remains open instead.
+    await page.setViewportSize({ width: 300, height: 350 });
+    await page.waitForFunction((id) => {
+      const row = document.querySelector(`[data-message-id="${id}"]`);
+      const port = row.closest('[data-chat-container]').getBoundingClientRect();
+      const slot = row.querySelector('[data-message-action-slot]').getBoundingClientRect();
+      return slot.top < port.top || slot.top > port.bottom;
+    }, id);
   } else {
     await history.evaluate((node) => {
       node.setAttribute('inert', '');
@@ -159,8 +162,9 @@ async function hideOpenSheet({ page, row, id }, overflow, offscreen, out, name) 
     node.removeAttribute('aria-hidden');
   });
   if (offscreen) {
+    await page.setViewportSize({ width: 300, height: 1000 });
     await beginNativeReadingGesture(page, row);
-    await placeAuthorEdge(row, 'middle');
+    await placeNativeAuthorEdge(page, row, 'middle');
     await waitForScrollProbe(page, id, 'middle', 300, out, name);
   }
   await waitForNativeActionMeasurement(page, id, 300);
@@ -193,7 +197,7 @@ async function openEdgeMenus({ page, row, id }, out, name) {
   const observations = [];
   try {
     for (const edge of ['top', 'bottom']) {
-      await placeAuthorEdge(row, edge);
+      await placeNativeAuthorEdge(page, row, edge);
       await waitForScrollProbe(page, id, edge, 1440, out, name);
       const plane = page.locator(`[data-message-actions-owner="${id}"]`);
       await plane.getByRole('button', { name: '更多消息操作', exact: true }).focus();

@@ -1,6 +1,7 @@
 'use client';
 import type { ThreadArtifactDTO } from '@cat-cafe/shared';
 import { type ReactNode, useCallback, useRef, useState } from 'react';
+import { useArtifactLightbox } from '@/components/content-review/useArtifactLightbox';
 import { useShellCopy } from '@/components/shell/shell-copy';
 import {
   canonicalLauncherDestination,
@@ -77,6 +78,7 @@ function ThreadWorksSummary({
   returnArtifactId,
 }: HomeWorksSummaryProps) {
   const t = useShellCopy(workspaceV3Copy);
+  const floating = useArtifactLightbox(threadId ?? '');
   const { getCatById } = useCatData();
   const { artifacts, works, total, complete, loading, error } = useThreadArtifacts(threadId, 'works');
   const [selected, setSelected] = useState<{ threadId: string; artifact: ThreadArtifactDTO } | null>(null);
@@ -113,6 +115,8 @@ function ThreadWorksSummary({
     origin.current = captureHomeArtifactOrigin(threadId, artifact, card, viewport);
     originFocus.current = { threadId, artifactId: artifactObjectId(artifact), viewport };
     setUnavailable(false);
+    const navigationOrigin = origin.current;
+    if (floating.open(artifact, navigationOrigin)) return;
     if (artifact.type === 'image' && artifact.url) setSelected({ threadId, artifact });
     else if (onOpenArtifact) {
       originFocus.current = null;
@@ -164,6 +168,7 @@ function ThreadWorksSummary({
       </header>
       {!loading && !error && !complete && <output className="text-xs text-cafe-muted">{t.worksIncomplete}</output>}
       <WorksCatalogue loading={loading} error={error} empty={complete && artifacts.length === 0}>
+        {floating.error && <p role="alert">{floating.error}</p>}
         <div className="home-works">
           {visible.map((artifact, index) => (
             <WorkCard

@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import { type TestContext, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { GitMarketplaceRepository } from '../src/domains/plugin/manager/git-marketplace-repository.js';
-import { GitMarketplaceSources } from '../src/domains/plugin/manager/git-marketplace-sources.js';
+import { GitMarketplaceRepository } from '../src/domains/plugin/manager/marketplace/git-marketplace-repository.js';
+import { GitMarketplaceSources } from '../src/domains/plugin/manager/marketplace/git-marketplace-sources.js';
 
 const exec = promisify(execFile);
 

@@ -85,13 +85,28 @@ import {
   FilesystemBuiltinPluginPackageMaterializer,
 } from './manager/builtin-package-materializer.js';
 import { connectorPermissionsProjection } from './manager/connector-settings.js';
-import { GitMarketplaceCatalog } from './manager/git-marketplace-catalog.js';
-import { prepareMarketplaceDirectory } from './manager/git-marketplace-preparation.js';
-import type { GitMarketplaceRepository } from './manager/git-marketplace-repository.js';
-import type { GitMarketplaceSources } from './manager/git-marketplace-sources.js';
 import { GitPluginPackageAdmission } from './manager/git-package-admission.js';
 import { LocalPluginPackageAdmission } from './manager/local-package-admission.js';
+import { GitMarketplaceCatalog } from './manager/marketplace/git-marketplace-catalog.js';
+import { prepareMarketplaceDirectory } from './manager/marketplace/git-marketplace-preparation.js';
+import type { GitMarketplaceRepository } from './manager/marketplace/git-marketplace-repository.js';
+import type { GitMarketplaceSources } from './manager/marketplace/git-marketplace-sources.js';
+import type { OfficialPluginCatalogProvider } from './manager/official-catalog-provider.js';
 import { HostPluginConfigurationService } from './manager/plugin-manager-configuration.js';
+import {
+  type PluginManagerCatalogCandidate,
+  pluginManagerCapabilitiesFromManifest,
+  pluginManagerContributionsFromManifest,
+  projectPluginManagerCatalogCandidate,
+} from './manager/plugin-manager-projection.js';
+import {
+  type PluginManagerCatalogPort,
+  type PluginManagerCatalogSnapshot,
+  type PluginManagerInstalledPackagesPort,
+  PluginManagerService,
+  PluginManagerServiceError,
+  type PluginManagerStateProjectionPort,
+} from './manager/plugin-manager-service.js';
 import { PluginManagerPackageAssetService } from './manager/plugin-package-assets.js';
 import {
   FilePluginPackageQuarantineStore,
@@ -100,23 +115,8 @@ import {
 import type { PluginRuntimeConfigurationPort } from './manifest-configuration-projection.js';
 import { HostMediaSourceImporter } from './media-source-importer.js';
 import { type OfficialPluginCatalogEntry, officialPluginPresentationMatches } from './official-catalog.js';
-import type { OfficialPluginCatalogProvider } from './official-catalog-provider.js';
 import { OfficialPluginPackageInstaller } from './official-package-installer.js';
 import { readPluginConfig } from './plugin-config-store.js';
-import {
-  type PluginManagerCatalogCandidate,
-  pluginManagerCapabilitiesFromManifest,
-  pluginManagerContributionsFromManifest,
-  projectPluginManagerCatalogCandidate,
-} from './plugin-manager-projection.js';
-import {
-  type PluginManagerCatalogPort,
-  type PluginManagerCatalogSnapshot,
-  type PluginManagerInstalledPackagesPort,
-  PluginManagerService,
-  PluginManagerServiceError,
-  type PluginManagerStateProjectionPort,
-} from './plugin-manager-service.js';
 
 type BuiltinPluginRuntime = Pick<BundledPluginRuntime, 'start' | 'stop'>;
 
@@ -1121,10 +1121,13 @@ export function createPluginManagerRuntimeComposition(
       install: async ({ request, candidate }) => {
         if ('expectedVersion' in request) {
           if (!candidate) throw new PluginManagerServiceError('PLUGIN_NOT_FOUND', 'Catalog plugin is unavailable');
-          const installed = await officialInstaller.install(request.source.catalogId, {
-            version: request.expectedVersion,
-            packageDigest: request.expectedDigest,
-          });
+          // Capture current identity/grants before preparation; all sources share the same fenced rollback.
+          const inventoryAtRequest = await options.runtime.inventoryStore.snapshot();
+          const installed = await officialInstaller.install(
+            request.source.catalogId,
+            { version: request.expectedVersion, packageDigest: request.expectedDigest },
+            (verified) => localAdmission.admitVerifiedCatalogCandidate(inventoryAtRequest, verified),
+          );
           return { pluginId: candidate.pluginId, pluginInstanceId: installed.pluginInstanceId };
         }
         if (request.source.kind === 'git' && request.source.marketplace) {

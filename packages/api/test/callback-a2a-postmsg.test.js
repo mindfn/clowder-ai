@@ -587,13 +587,17 @@ describe('F052: cross-thread A2A mention routing', () => {
     assert.ok(crossMsg.mentions.includes('codex'), 'cross-thread @codex should be in mentions');
   });
 
-  test('cross-thread same-member source enters durable Queue without consulting availability', async () => {
+  test('cross-thread same-member source enters durable Queue before advisory availability is read', async () => {
     const retryAt = Date.now() + 300_000;
     let availabilityChecks = 0;
+    let targetThreadId;
     const app = await createAppWithThreadStore({
       routingDispatchPreflight: {
         async preflight(input) {
           availabilityChecks++;
+          const admitted = invocationQueue.list(targetThreadId, 'user-1');
+          assert.equal(admitted.length, 1, 'availability is read only after durable admission');
+          assert.deepEqual(admitted[0].targets, ['codex']);
           return {
             v: 1,
             ownerId: input.ownerId,
@@ -614,6 +618,7 @@ describe('F052: cross-thread A2A mention routing', () => {
     });
     const source = await threadStore.create('user-1', 'Source');
     const target = await threadStore.create('user-1', 'Target');
+    targetThreadId = target.id;
     const { invocationId, callbackToken } = await registry.create('user-1', 'codex', source.id);
     const request = {
       method: 'POST',
@@ -631,7 +636,8 @@ describe('F052: cross-thread A2A mention routing', () => {
     assert.equal(response.statusCode, 200);
     const body = response.json();
     assert.deepEqual(body.routed, ['codex'], 'requested recipient owns the durable wake');
-    assert.equal(availabilityChecks, 0, 'message sending does not resolve availability');
+    assert.equal(availabilityChecks, 1, 'availability annotates the admitted source');
+    assert.equal(body.routing_preflight.targets[0].disposition, 'rejected');
     const entries = invocationQueue.list(target.id, 'user-1');
     assert.equal(entries.length, 1);
     assert.deepEqual(entries[0].targets, ['codex']);

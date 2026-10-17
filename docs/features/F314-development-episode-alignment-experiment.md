@@ -2,10 +2,10 @@
 feature_ids: [F314]
 related_features: [F100, F153, F167, F192, F267, F281, F298, F303, F310, F311, F321, F322, F323]
 topics: [development-process, intent-alignment, review, merge-gate, process-cost, main-health, soft-surface-convergence, experiment, self-evolution]
-tips_exempt: "Renewed 2026-10-14: this F314 delta records planned F311 lineage wiring and an internal case/version draft. It adds no shipped user entry or runtime capability and establishes no efficacy verdict; future user-facing F311 delivery retains its own discovery requirement."
+tips_exempt: "Renewed 2026-10-15: this delta records the internal F314-to-F311 coordination and evidence handoff. It adds no shipped user entry or runtime capability and establishes no efficacy verdict; future user-facing F311 delivery retains its own discovery requirement."
 doc_kind: spec
 created: 2026-09-02
-updated: 2026-10-14
+updated: 2026-10-16
 description: "让一项托付跨阶段持续做对，尽早交付真实可用结果，以充分且相称的验证减少等待，并让猫自主续办、少占用人的协调注意力。现有 anchor 实验是其中一个有界机制。"
 description_source: human
 description_author: codex-astra
@@ -126,9 +126,15 @@ Phase B 的 exact version、证据与 owner receipts 进入既有 Evolution Prog
   版本照 F100 适配器现有的做法从 git 历史读出（#4517 目前只覆盖 request-review 一个文件）。一次发布打包成一个版本，写清改了哪些成员；能追到事故的写出处，追不到的写「未关联」。F311 只投影，不复制资产。
 - **实验**：事故档案里的案例和「16 张 PR 有界对照」里的交付，挂在当时实际生效的那一版下面。每个案例写清偏离、人的代价、同类是否复发。档案不是全量普查，不能算成翻车率。
 
-**请 F314 帮的两件事**（都不急，手头工作做完再做）
-1. 以后新归档的案例多写两项：当时生效的流程版本；这次处置改了哪个成员、哪次提交。没写的，抽取时如实标「未关联」，不替原作者补因果。
-2. F311 v2 走通后，在 Alpha 上以真实使用者身份走一遍：从能力进化首页进到这条谱系，核对版本和案例有没有挂对。
+### F314 主线对接 F311 指挥现场（2026-10-15）
+
+**直接授权**：operator `[thread-id]#private-source-id` 要求“拉上……对接到你们这……按照你们这的来”。这项当前对接替代上一版“都不急，手头工作做完再做”的协作安排；主线按 [F311 新版旅程与北极星计划](F311-capability-evolution-workspace.md#v2-用户旅程开发计划2026-10-14-起)组织下一份整合交付。
+
+- **F314 原现场** `[thread-id]` 的 Astra 继续持有整体方向与 Task `private-source-id`；原执行 Task `private-source-id` 与其 owner 保留。由该现场续接原任务并安排已有执行责任，不把它们搬成另一套任务或让 You 再次路由。
+- **F311 指挥现场** `[thread-id]` 接收整合结果，对齐准备四块 → 探索中的版本/案例/原件 → 具体判断 → 后续实际使用与结果。界面及 adapter 的已有执行现场为 `[thread-id]`；精确接线缺口仍由对应 owner 处理。
+- **下一份交付**：F314 原 owner 回读当前 Program 与任务，给出一份能执行的对接结果：已进入 F311 的材料与精确修订、尚缺的真实使用/观测证据、下一项有事实支持的工作及具名执行者、前后端各自落点和完成条件。并以真实使用者核对现有 F314 页面中的版本/案例来源，将具体缺项交已有实现现场，结果回到 F311 指挥现场。当前只是对接已发起，尚不声称这份交付已经返回。
+- **问题处理随整体结果归位**：确定的 bug 在原实现 owner 处修复，修复与后续自然使用证据回到同一项目；F314 主线程继续承担整合与方法判断。公开同步、CI 或其他 feature 的日常修复沿各自已有责任完成，不再用其局部完成代替 F314 的下一份整合交付。
+- **记录与权限边界**：新案例分别记录可核的实际使用版本、处置成员与提交；未知就写未确认，不从日期或引用补因果。复用 `ba0f4524` Program，保留 operator B 的本期不足结论、旧样本与关闭边界；本次对接不自动开新 anchor 窗口、改变量/分母、批准候选或扩大资产写权。需要新的效用实验时先提交具体对象、问题与证据边界，按既有授权另行判断。
 
 ## User Journey
 
@@ -293,7 +299,7 @@ cvo_signoff:
 
 - [x] 每个需求点映射到至少一个 AC。
 - [x] 每个 AC 均有可执行的命令、source ref、owner projection 或真实运行证据。
-- [x] 本 Feature 无新 UI，前端需求→证据映射不适用。
+- [x] 原 Phase A/B 未新建独立 UI；10-16 的 F311 历史读面已有需求→作者实页证据映射，见上方“历史读面细化”。合入、Alpha 与正式加载按各自实际结果记录，不能沿用旧“不适用”判断。
 
 ## Phase B Landed Acceptance / 2026-09-03
 

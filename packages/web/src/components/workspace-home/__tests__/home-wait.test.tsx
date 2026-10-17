@@ -39,6 +39,7 @@ vi.mock('@/components/ChatVoiceFeatureControls', () => ({
   ChatVoiceFeatureControls: () => <div data-testid="voice-controls">语音控件</div>,
 }));
 
+import { writeShellLanguage } from '@/components/shell/shell-language';
 import { cancelProjectedExecution } from '@/hooks/useActiveExecutionProjection';
 import { HomeWaitCard } from '../HomeWaitCard';
 import { NOW, waitItem } from './home-fixtures';
@@ -55,6 +56,7 @@ describe('F322 new-shell Workspace home · 等待与接回', () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     vi.setSystemTime(NOW);
+    writeShellLanguage('zh');
     useActiveExecutionStore.getState().reset();
     mocks.projection = null;
     mocks.hydration = 'idle';
@@ -75,6 +77,7 @@ describe('F322 new-shell Workspace home · 等待与接回', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    writeShellLanguage('zh');
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -97,6 +100,30 @@ describe('F322 new-shell Workspace home · 等待与接回', () => {
   const qa = (selector: string) => Array.from(container.querySelectorAll<HTMLElement>(selector));
 
   describe('等待与接回', () => {
+    it('keeps the wait summary neutral, hides cat instructions until expanded, and explains the candidate count', async () => {
+      mocks.hydration = 'ready';
+      mocks.projection = {
+        projectPath: '/project',
+        candidate: { revision: '630c66bc19d2', observedAt: NOW, satisfiableCount: 2, unknownCount: 1 },
+        items: [waitItem({ state: 'unknown', stateReason: 'deployment_evidence_incomplete' })],
+      };
+      await renderHome();
+      const row = q('[data-testid="workspace-deployment-wait-item"]');
+      expect(row?.querySelector('.home-wait-main')?.textContent).toContain('还没确认正式环境已包含');
+      expect(row?.querySelector('[data-tone="warn"]')).toBeNull();
+      const details = row?.querySelector('details');
+      expect(details).not.toBeNull();
+      expect(details?.open).toBe(false);
+      expect(details?.textContent).toContain('请在原对话中完成验收');
+      expect(q('[data-testid="deployment-candidate-preview"]')?.textContent).toContain(
+        'main 上已有新版本，正式环境更新后这 2 件会接回',
+      );
+      act(() => writeShellLanguage('en'));
+      expect(row?.querySelector('.home-wait-main')?.textContent).toContain(
+        "Haven't confirmed the live version includes this fix",
+      );
+      expect(details?.querySelector('summary')?.textContent).toBe('After resuming');
+    });
     it('stays out of the way until the projection has been asked for', async () => {
       await renderHome();
       expect(q('[data-testid="workspace-deployment-waits"]')).toBeNull();
@@ -137,15 +164,17 @@ describe('F322 new-shell Workspace home · 等待与接回', () => {
       expect(q('[data-testid="workspace-deployment-waits"]')?.textContent).toContain('全局 · 4');
 
       // ready: frozen at matchedAt (2h of the 3h elapsed), new boot wording, 可以继续
-      expect(rows[0]?.textContent).toContain('已等待 2 小时 · 小太阳 · 已出现新启动，API + WEB 已就绪');
+      expect(rows[0]?.textContent).toContain('已等待 2 小时 · 小太阳');
+      expect(rows[0]?.querySelector('details')?.textContent).toContain('已出现新启动，API + WEB 已就绪');
       expect(rows[0]?.textContent).toContain('可以继续：请在原对话中完成验收');
       // unknown with a reason: the reason, and the next step is still written
-      expect(rows[1]?.textContent).toContain('运行状态信息不足，还不能确认条件已满足');
+      expect(rows[1]?.textContent).toContain('还没确认正式环境已包含');
       expect(rows[1]?.textContent).toContain('接回后：请在原对话中完成验收');
       // unknown without one: the flat list has no heading, so the row says it itself
       expect(rows[2]?.textContent).toContain('暂时无法判定条件是否已满足');
       // waiting: version wording, no feature id on the screen
-      expect(rows[3]?.textContent).toContain('已等待 3 小时 · 小太阳 · 等待运行版本包含 bbbbbbbb，API 就绪');
+      expect(rows[3]?.textContent).toContain('等正式环境更新到包含这次修复 · 已等待 3 小时 · 小太阳');
+      expect(rows[3]?.querySelector('details')?.textContent).toContain('等待运行版本包含 bbbbbbbb，API 就绪');
       expect(container.textContent).not.toContain('F323');
       expect(rows.every((row) => row.querySelector('a')?.getAttribute('href') === '/thread/thread-w')).toBe(true);
     });
@@ -227,7 +256,7 @@ describe('F322 new-shell Workspace home · 等待与接回', () => {
       expect(card?.textContent).toContain('猫会在原任务里登记');
       expect(card?.textContent).not.toContain('全局');
       expect(q('[data-testid="deployment-candidate-preview"]')?.textContent).toBe(
-        '候选 630c66bc · 截至 4 分钟前 · 预计满足 2 项 · 另有 1 项证据待确认',
+        'main 上已有新版本，正式环境更新后这 2 件会接回 · 另有 1 项证据待确认',
       );
     });
 

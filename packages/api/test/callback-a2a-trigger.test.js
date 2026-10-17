@@ -96,6 +96,30 @@ describe('enqueueA2ATargets single durable ledger', () => {
     ]);
   });
 
+  it('annotates unavailable targets without dropping their durable Queue admission', async () => {
+    const { deps, invocationQueue, appendTrigger } = setup();
+    const decision = {
+      v: 1,
+      ownerId: 'u1',
+      observedAt: Date.now(),
+      resolverState: 'fresh',
+      targets: [
+        {
+          targetCatId: 'codex',
+          disposition: 'rejected',
+          reasons: [{ code: 'quota_exhausted', summary: 'Wait for recovery', sourceRefs: ['quota:1'] }],
+          alternatives: [{ catId: 'fable5', displayName: 'Fable', reason: 'Available' }],
+        },
+      ],
+    };
+    deps.routingDispatchPreflight = { preflight: mock.fn(async () => decision) };
+    const result = await enqueue(deps, appendTrigger('a2a-unavailable'));
+    assert.deepEqual(result.enqueued, ['codex']);
+    assert.deepEqual(invocationQueue.list('t1', 'u1')[0].targets, ['codex']);
+    assert.equal(result.routingPreflight, decision, 'the caller receives typed reasons and alternatives');
+    assert.equal(deps.routingDispatchPreflight.preflight.mock.calls[0].arguments[0].ownerRequestedAttempt, undefined);
+  });
+
   it('replay converges by source id and target without duplicating a row', async () => {
     const { deps, invocationQueue, appendTrigger } = setup();
     const trigger = appendTrigger('a2a-source-replay');

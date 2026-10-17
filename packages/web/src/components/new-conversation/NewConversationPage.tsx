@@ -7,9 +7,12 @@ import { useChatStore } from '@/stores/chatStore';
 import { useSidebarProjectionStore } from '@/stores/sidebarProjectionStore';
 import { AppTooltip } from '../AppTooltip';
 import { ChatInput } from '../ChatInput';
+import { useArtworkLightboxScope } from '../content-review/ArtworkLightboxScope';
+import { useArtifactLightbox } from '../content-review/useArtifactLightbox';
 import { ShellGlyph } from '../shell/ShellIcons';
 import { useShellCopy } from '../shell/shell-copy';
 import { getProjectPaths } from '../ThreadSidebar/thread-utils';
+import { ThreadComposerHost } from '../thread-chat/ThreadComposerHost';
 import { NewConversationComposerContext } from './NewConversationComposerContext';
 import { newConversationCopy } from './new-conversation.shell-copy';
 import { RecentWorks } from './RecentWorks';
@@ -164,6 +167,8 @@ export interface NewConversationPageProps {
 
 export function NewConversationPage(props: NewConversationPageProps) {
   const copy = useShellCopy(newConversationCopy);
+  const floating = useArtifactLightbox('default');
+  const floatingScope = useArtworkLightboxScope();
   const admission = useNewConversationAdmission(props.onNavigate);
   const sidebarRows = useSidebarProjectionStore((state) => state.rows);
   const existingProjects = useMemo(() => getProjectPaths(sidebarRows), [sidebarRows]);
@@ -173,8 +178,10 @@ export function NewConversationPage(props: NewConversationPageProps) {
   useEffect(() => setArtwork(landingArtworkForHour(new Date().getHours())), []);
 
   const openWork = useCallback(
-    (artifact: GlobalArtifactDTO) => openPublishedArtifact('default', artifact),
-    [openPublishedArtifact],
+    (artifact: GlobalArtifactDTO) => {
+      if (!floating.open(artifact, undefined)) openPublishedArtifact('default', artifact);
+    },
+    [openPublishedArtifact, floating.open],
   );
   const busy = admission.phase === 'creating' || admission.phase === 'sending';
   const titleBreak = copy.heroTitle.indexOf('，');
@@ -222,57 +229,60 @@ export function NewConversationPage(props: NewConversationPageProps) {
 
       <div className="relative z-10 mx-auto -mt-10 w-full max-w-[752px] px-4 pb-16 sm:px-4">
         {admission.ready && admission.intent ? (
-          <ChatInput
-            key="new-conversation-default-draft"
-            presentation="v2"
-            threadId="default"
-            disabled={busy}
-            uploadStatus={admission.uploadStatus}
-            uploadError={admission.uploadError}
-            placeholder={copy.composerPlaceholder}
-            composerHeader={
-              <label className="block">
-                <span className="sr-only">{copy.conversationNameOptional}</span>
-                <input
-                  type="text"
-                  value={admission.intent.title ?? ''}
-                  maxLength={200}
-                  disabled={admission.optionsLocked}
-                  data-testid="new-conversation-title"
-                  aria-label={copy.conversationNameOptional}
-                  placeholder={copy.conversationNameOptional}
-                  className="block h-8 w-full border-0 bg-transparent px-1 text-sm text-[var(--shell-ink)] outline-none placeholder:text-[var(--shell-muted)] disabled:cursor-not-allowed disabled:opacity-60 max-sm:pr-14"
-                  onChange={(event) => admission.updateTitle(event.target.value)}
+          <ThreadComposerHost threadId="default">
+            <div ref={floatingScope?.setToolsSlot} data-artwork-tools-slot />
+            <ChatInput
+              key="new-conversation-default-draft"
+              presentation="v2"
+              threadId="default"
+              disabled={busy}
+              uploadStatus={admission.uploadStatus}
+              uploadError={admission.uploadError}
+              placeholder={copy.composerPlaceholder}
+              composerHeader={
+                <label className="block">
+                  <span className="sr-only">{copy.conversationNameOptional}</span>
+                  <input
+                    type="text"
+                    value={admission.intent.title ?? ''}
+                    maxLength={200}
+                    disabled={admission.optionsLocked}
+                    data-testid="new-conversation-title"
+                    aria-label={copy.conversationNameOptional}
+                    placeholder={copy.conversationNameOptional}
+                    className="block h-8 w-full border-0 bg-transparent px-1 text-sm text-[var(--shell-ink)] outline-none placeholder:text-[var(--shell-muted)] disabled:cursor-not-allowed disabled:opacity-60 max-sm:pr-14"
+                    onChange={(event) => admission.updateTitle(event.target.value)}
+                  />
+                </label>
+              }
+              onDraftChange={admission.onDraftChange}
+              prospectiveThread={{
+                preferredCats: admission.intent.preferredCats,
+                optionsLocked: admission.optionsLocked,
+                onPreferredCatsChange: admission.updatePreferredCats,
+              }}
+              composerContext={
+                <NewConversationComposerContext
+                  projectPath={admission.intent.projectPath}
+                  existingProjects={existingProjects}
+                  locked={admission.optionsLocked}
+                  pinned={admission.intent.pinned ?? false}
+                  onProjectChange={admission.updateProject}
+                  onPinnedChange={admission.updatePinned}
                 />
-              </label>
-            }
-            onDraftChange={admission.onDraftChange}
-            prospectiveThread={{
-              preferredCats: admission.intent.preferredCats,
-              optionsLocked: admission.optionsLocked,
-              onPreferredCatsChange: admission.updatePreferredCats,
-            }}
-            composerContext={
-              <NewConversationComposerContext
-                projectPath={admission.intent.projectPath}
-                existingProjects={existingProjects}
-                locked={admission.optionsLocked}
-                pinned={admission.intent.pinned ?? false}
-                onProjectChange={admission.updateProject}
-                onPinnedChange={admission.updatePinned}
-              />
-            }
-            onSend={(content, images, whisper, replyToId, contextAttachments, explicitTargetCats) =>
-              admission.send({
-                content,
-                images,
-                whisper,
-                replyToId,
-                explicitTargetCats,
-                contextAttachments,
-              })
-            }
-          />
+              }
+              onSend={(content, images, whisper, replyToId, contextAttachments, explicitTargetCats) =>
+                admission.send({
+                  content,
+                  images,
+                  whisper,
+                  replyToId,
+                  explicitTargetCats,
+                  contextAttachments,
+                })
+              }
+            />
+          </ThreadComposerHost>
         ) : (
           <div
             className="mx-4 h-[112px] animate-pulse rounded-2xl border border-[var(--shell-hairline-strong)] bg-[var(--shell-paper)] shadow-sm"
@@ -286,6 +296,7 @@ export function NewConversationPage(props: NewConversationPageProps) {
           localSaveFailed={admission.localSaveFailed}
           onRetry={admission.retryLoad}
         />
+        {floating.error && <p role="alert">{floating.error}</p>}
         <div className="mt-8">
           <RecentWorks onOpen={openWork} onOpenAll={() => setWorkspaceMode('artifacts')} />
         </div>

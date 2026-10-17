@@ -65,7 +65,7 @@ export function registerPublishedTextJourneys(suite) {
         const original = owner.messages.append({
           userId: 'operator',
           threadId: owner.thread.id,
-          catId: owner.catId,
+          from: { kind: 'agent', catId: owner.catId },
           content: 'Published document.',
           timestamp: 41,
           extra: { rich: { blocks: [file] } },
@@ -101,7 +101,7 @@ export function registerPublishedTextJourneys(suite) {
                 const message = owner.messages.append({
                   userId: 'operator',
                   threadId: owner.thread.id,
-                  catId: null,
+                  from: { kind: 'user', userId: 'operator' },
                   timestamp: Date.now(),
                   content: input.content,
                   contentBlocks: buildMessageContentBlocks(input.content, input.contextAttachments),
@@ -111,7 +111,7 @@ export function registerPublishedTextJourneys(suite) {
                 await route.fulfill({
                   status: 200,
                   contentType: 'application/json',
-                  body: JSON.stringify({ userMessageId: message.id, threadId: owner.thread.id }),
+                  body: JSON.stringify({ status: 'queued', userMessageId: message.id, threadId: owner.thread.id }),
                 });
               });
             },

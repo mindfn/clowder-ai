@@ -1,5 +1,30 @@
 [
   {
+    "id": "feature-f328-tripo-background-review",
+    "kind": "feature",
+    "sourceRef": {
+      "path": "docs/features/F328-tripo-studio-plugin.md",
+      "anchor": "## User Journey"
+    },
+    "structureSource": {
+      "path": "packages/api/src/domains/plugin/manager/host-official-catalog.ts",
+      "anchor": "official.tripo-studio"
+    },
+    "bodySource": {
+      "path": "docs/features/F328-tripo-studio-plugin.md",
+      "anchor": "## User Journey"
+    },
+    "contexts": ["concierge_open", "feature_dev"],
+    "audience": ["cvo"],
+    "body": "想让猫比较 Tripo 白模？安装并启用 Tripo Studio 插件，把模型分享链接和保存目录发给猫，就能在后台采集旋转视角，不用逐张截图。分享页无需登录；截图和正式导出状态会分开说明。",
+    "action": {
+      "type": "open_capability_surface",
+      "label": "查看 Tripo 插件",
+      "surfaceId": "settings.plugins"
+    },
+    "owner": "codex61-sol"
+  },
+  {
     "id": "feature-f326-screening-exceptions",
     "kind": "feature",
     "sourceRef": {
@@ -44,11 +69,11 @@
     },
     "contexts": ["concierge_open"],
     "audience": ["cvo"],
-    "body": "想把 Claude Code 或 Codex 里已有的会话接到猫咖？先在原工具里关掉它，再点新对话输入框下面的「接上已有的会话」，选同工具的猫，再选最近的会话；找不到时可以贴会话 ID。不用先发一句；已经接过的可以直接打开原对话。",
+    "body": "想把本机已有的 Claude Code、Codex 或 OpenCode 会话接到猫咖？先在原工具里关掉它，再点新对话输入框下面的「接上本机已有的会话」，选同工具的猫，再选最近的会话；找不到时可以贴会话 ID。不用先发一句；已经接过的可以直接打开原对话。",
     "action": {
       "type": "open_concierge_draft",
       "label": "了解怎样接上原会话",
-      "draftPrompt": "请带我从新对话页接上一个 Claude Code 或 Codex 里已有的会话，说明怎样选猫、找会话 ID，以及正在运行或已经接过时怎样处理。"
+      "draftPrompt": "请带我从新对话页接上一个本机已有的会话，说明当前支持哪些工具、怎样选猫和找会话 ID，以及正在运行或已经接过时怎样处理。"
     },
     "owner": "codex61-sol"
   },
@@ -3111,5 +3136,55 @@
       "draftPrompt": "请带我在桌面工作区的产物入口查找这条对话已经生成的内容，说明怎样按类型或名字片段筛选并回到原消息。"
     },
     "owner": "codex61-sol"
+  },
+  {
+    "id": "feature-f314-mistake-lineage",
+    "kind": "feature",
+    "sourceRef": {
+      "path": "docs/features/F314-development-episode-alignment-experiment.md",
+      "anchor": "F314"
+    },
+    "structureSource": {
+      "path": "packages/web/src/components/capability-evolution/exploration/ExplorationHistory.tsx",
+      "anchor": "ExplorationHistory"
+    },
+    "bodySource": {
+      "path": "packages/web/src/components/capability-evolution/exploration/ExplorationHistory.tsx",
+      "anchor": "一路走来踩过的坑、当时怎么改、后来怎样了。"
+    },
+    "contexts": ["thinking", "feature_dev", "concierge_open"],
+    "audience": ["cvo", "developer"],
+    "body": "在开发交付进化项目里打开“探索进化”，可以从最早一步沿谱系阅读错题：踩了什么坑、当时怎么应对、后来怎样。点“下一步”继续，或点“看原案例”在 Workspace 读原文。",
+    "action": {
+      "type": "open_concierge_draft",
+      "label": "阅读错题谱系",
+      "draftPrompt": "请打开现有开发交付进化项目的探索进化，带我读已有错题的应对与后续结果；沿用已有项目。"
+    },
+    "owner": "codex-astra"
+  },
+  {
+    "id": "feature-f314-history-update",
+    "kind": "feature",
+    "sourceRef": {
+      "path": "docs/features/F314-development-episode-alignment-experiment.md",
+      "anchor": "F314"
+    },
+    "structureSource": {
+      "path": "packages/web/src/components/capability-evolution/exploration/ExplorationHistoryPublication.tsx",
+      "anchor": "ExplorationHistoryPublicationNotice"
+    },
+    "bodySource": {
+      "path": "packages/web/src/components/capability-evolution/exploration/ExplorationHistoryPublication.tsx",
+      "anchor": "历史内容已有更新，当前阅读内容保留。"
+    },
+    "contexts": ["thinking", "feature_dev", "concierge_open"],
+    "audience": ["cvo", "developer"],
+    "body": "谱系有新版时，可以先读完眼前这一步，再点“查看新版”。猫发布历史内容不会改变项目阶段或正式采用；发布失败时继续保留上一份完整稿。",
+    "action": {
+      "type": "open_concierge_draft",
+      "label": "查看历史更新",
+      "draftPrompt": "请在现有开发交付进化项目里查看错题谱系的最新内容；保留我当前阅读位置，需要换稿时提示我。"
+    },
+    "owner": "codex-astra"
   }
 ]

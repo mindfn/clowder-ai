@@ -95,6 +95,10 @@ export function projectLifecycleAppendAction(input: {
   const expectedRuns: LifecycleAppendExpectedRun[] = [];
   let unavailableReason: Extract<LifecycleAppendProjection, { available: false }>['reason'] = 'active_run_missing';
   for (const targetId of targetCats) {
+    if (entry.delivery.appendRecoveryByTarget?.[targetId]) {
+      unavailableReason = 'entry_ineligible';
+      continue;
+    }
     const capability = projectLifecycleAppendCapability({
       threadId: input.threadId,
       userId: input.userId,

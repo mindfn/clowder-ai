@@ -68,6 +68,60 @@ describe('RFC #1356 Redis Queue ledger', { skip: redisIsolationSkipReason(REDIS_
     assert.deepEqual((await store.getByMessageIds('thread-redis', ['m1', 'missing'])).get('m1'), [entry]);
   });
 
+  it('persists an exact routing hold through sibling handoff, claim recovery and a fresh Queue instance', async () => {
+    const source = await messageStore.append({
+      userId: 'owner-1',
+      threadId: 'thread-redis',
+      from: { kind: 'user', userId: 'owner-1' },
+      content: 'Routing-held source',
+      mentions: ['opus', 'codex'],
+      timestamp: 100,
+    });
+    const entry = row(source.id, ['opus', 'codex']);
+    await store.enqueue([entry]);
+    const queue = new InvocationQueue(store);
+    await queue.hydrateFromLedger();
+    const claimed = await queue.markProcessingGroupAcrossUsersDurable(
+      'thread-redis',
+      {
+        entryId: entry.id,
+        targetCats: ['opus', 'codex'],
+      },
+      [entry.id],
+    );
+    assert.ok(claimed);
+    await queue.holdClaimedRoutingTarget('thread-redis', [entry.id], 'opus', messageStore);
+    assert.equal((await queue.retireClaimedLifecycleTarget('thread-redis', entry.id, 'codex')).outcome, 'retired');
+    // Simulate a process disappearing before the short claim was restored.
+    const restarted = new InvocationQueue(store);
+    await restarted.hydrateFromLedger();
+    const pending = await restarted.getDurableEntry('thread-redis', entry.id);
+    assert.equal(pending.status, 'queued');
+    assert.deepEqual(pending.targets, ['opus']);
+    assert.deepEqual(pending.delivery.routingHeldTargetIds, ['opus']);
+    const { isOrdinaryQueueTargetEligible } = await import(
+      '../dist/domains/cats/services/agents/invocation/InvocationQueue.js'
+    );
+    assert.equal(isOrdinaryQueueTargetEligible(pending, 'opus'), false);
+    assert.equal(
+      (await restarted.claimExactSteerEntryDurable('thread-redis', 'owner-1', entry.id, 'opus')).outcome,
+      'rejected',
+    );
+    const retry = await restarted.claimExactSteerEntryDurable(
+      'thread-redis',
+      'owner-1',
+      entry.id,
+      'opus',
+      Date.now(),
+      true,
+    );
+    assert.equal(retry.outcome, 'claimed');
+    const stale = await store.commit('thread-redis', entry.id, 'old-claim', 'claimed', Date.now(), pending);
+    assert.equal(stale.outcome, 'state_changed');
+    await restarted.restoreClaimedEntries('thread-redis', [entry.id]);
+    assert.deepEqual((await store.get('thread-redis', entry.id)).delivery.routingHeldTargetIds, ['opus']);
+  });
+
   it('atomically migrates v1 scalar rows without resurrecting admitted targets', async () => {
     const threadId = 'thread-legacy-v1';
     const rowsKey = `queue:{${threadId}}:entries`;
@@ -601,6 +655,19 @@ describe('RFC #1356 Redis Queue ledger', { skip: redisIsolationSkipReason(REDIS_
       mentions: ['codex', 'sonnet'],
       origin: 'stream',
     };
+
+    await assert.rejects(
+      queue.terminalizeResponseAndEnqueueDurable(
+        messageStore,
+        response.id,
+        { ...patch, expectedInputMessageIds: [] },
+        input,
+      ),
+      /inputs_changed/,
+    );
+    assert.equal((await store.list('thread-redis')).length, 0, 'stale snapshot must not enqueue');
+    assert.equal((await messageStore.getById(response.id)).lifecycle.status, 'processing');
+    patch.expectedInputMessageIds = ['message-input'];
 
     const applied = await queue.terminalizeResponseAndEnqueueDurable(messageStore, response.id, patch, input);
     assert.equal(applied.outcome, 'enqueued');

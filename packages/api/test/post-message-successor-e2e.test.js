@@ -130,7 +130,7 @@ function toolJson(result) {
 }
 
 const REVIEW_ANCHOR = {
-  reviewSubjectRef: 'pr:zts212653/cat-cafe#4255',
+  reviewSubjectRef: 'pr:zts212653/clowder-ai#4255',
   acceptedSourceRef: 'docs/features/F314-development-episode-alignment-experiment.md',
   acceptedRevision: '1'.repeat(40),
 };

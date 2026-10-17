@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { mediaModificationSelectionItemSchema } from './artifact-review-media.js';
+import { mediaModificationSelectionItemSchema, reviewedMediaTypeSchema } from './artifact-review-media.js';
 import { contentModificationSourceSchema } from './content-modification.js';
 
 const id = z.string().trim().min(1).max(128);
@@ -12,7 +12,7 @@ export const MediaContextAttachmentSchema = z
     id,
     kind: z.literal('media'),
     title: z.string().trim().min(1).max(300),
-    mediaType: z.enum(['image/png', 'video/mp4']),
+    mediaType: reviewedMediaTypeSchema,
     source: contentModificationSourceSchema,
     selections: z.array(mediaModificationSelectionItemSchema).max(12),
     taskContext: z

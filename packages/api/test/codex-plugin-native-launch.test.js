@@ -248,6 +248,8 @@ test(
     assert.equal(filesystem.length, 1);
     assert.match(filesystem[0][1], /deny/);
     assert.equal(filesystem[0][1].includes('write'), false);
+    assert.match(filesystem[0][1], /":tmpdir"="deny"/);
+    assert.match(filesystem[0][1], /":slash_tmp"="deny"/);
   },
 );
 

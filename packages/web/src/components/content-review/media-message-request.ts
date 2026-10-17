@@ -58,8 +58,9 @@ export function mediaRequestsForMessage(
     .map(({ record }) => ({
       requestId: record.requestId,
       targetName:
-        catalogue.contexts.find((context) => context.requestIds.includes(record.requestId))?.targetName ??
+        // The persisted target id owns identity; its current roster name outranks a generic context label.
         resolveCatName(record.payload.targetCatId) ??
+        catalogue.contexts.find((context) => context.requestIds.includes(record.requestId))?.targetName ??
         record.payload.targetCatId,
       contentTitle: attachment.title,
       placeCount: attachment.selections.length,

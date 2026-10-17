@@ -19,6 +19,7 @@ import { SchedulePanel } from '@/components/workspace/SchedulePanel';
 import { TrajectoryPanel } from '@/components/workspace/trajectory/TrajectoryPanel';
 import { useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
+import { DEFAULT_ARTIFACT_WORK_CHAT_BASIS } from './artifact-work-presentation';
 import {
   isCapabilityEvolutionWorkspaceSurface,
   resolveCapabilityEvolutionTargetThreadId,
@@ -226,7 +227,13 @@ export function WorkspaceDestinationOwnerSurface({
         onOpenProgram={(programId, displayName, origin) => {
           const programSurface = createEvolutionProgramSurface(programId, displayName, origin);
           onOpenSurface(programSurface);
-          useF307ExperienceWorkbenchStore.getState().enterMainAreaAttention(programSurface.id);
+          const threadId = resolveCapabilityEvolutionTargetThreadId(surface) ?? useChatStore.getState().currentThreadId;
+          useF307ExperienceWorkbenchStore
+            .getState()
+            .enterMainAreaAttention(
+              programSurface.id,
+              threadId ? { kind: 'chat-workspace', threadId, chatBasis: DEFAULT_ARTIFACT_WORK_CHAT_BASIS } : undefined,
+            );
         }}
       />
     );

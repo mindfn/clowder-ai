@@ -5,6 +5,8 @@ import {
   type DurableGateFrozenIdentity,
 } from '../domains/ball-custody/durable-managed-gate-recovery.js';
 import {
+  ALPHA_RECOVERY_JOURNAL_ENV,
+  alphaRecoveryJournalPath,
   DURABLE_GATE_ATTEMPT_TOKEN_ENV,
   DURABLE_GATE_FROZEN_IDENTITY_ENV,
   DURABLE_GATE_RECONCILE_FROM_ENV,
@@ -54,6 +56,9 @@ export function createDurableManagedGateAttempt(
     environment: {
       [DURABLE_GATE_ATTEMPT_TOKEN_ENV]: attemptToken,
       [DURABLE_GATE_RECOVERY_READY_PATH_ENV]: durableGateRecoveryReadyPath(job, attemptToken),
+      ...(job.kind === 'alpha_revision_v1'
+        ? { [ALPHA_RECOVERY_JOURNAL_ENV]: alphaRecoveryJournalPath(job, attemptToken) }
+        : {}),
       ...(resumeEpoch === null ? {} : { [DURABLE_GATE_RESUME_EPOCH_ENV]: String(resumeEpoch) }),
       ...(reconcileFrom === null ? {} : { [DURABLE_GATE_RECONCILE_FROM_ENV]: String(reconcileFrom) }),
       ...(frozenIdentity === null

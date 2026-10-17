@@ -119,6 +119,7 @@ export * from './types/output-message.js';
 export * from './types/video-project.js';
 export * from './types/video-project-review.js';
 export * from './types/workspace-content-review.js';
+export * from './utils/local-session-import.js';
 export * from './utils/pull-request-changes-target.js';
 // Export subject key utilities (#320)
 export * from './utils/subject-key.js';

@@ -375,7 +375,11 @@ export class IndexBuilder implements IIndexBuilder {
       }
 
       this.pendingMentionDocAnchors.add(item.anchor);
-      await this.store.upsertForDocumentIndex(item);
+      // A matching hash means passages completed, not merely metadata written.
+      // Persist an incomplete stamp until the replacement transaction commits.
+      await this.store.upsertForDocumentIndex(
+        isMarkdownSourcePath(item.sourcePath) ? { ...item, sourceHash: undefined } : item,
+      );
       this.pendingDocumentVectorAnchors.add(item.anchor);
       if (isMarkdownSourcePath(item.sourcePath)) {
         documentPassageSources.push({ item, passages: scanned.passages });
@@ -886,7 +890,9 @@ export class IndexBuilder implements IIndexBuilder {
         }
       }
       this.pendingMentionDocAnchors.add(parsed.anchor);
-      await this.store.upsertForDocumentIndex(parsed);
+      await this.store.upsertForDocumentIndex(
+        isMarkdownSourcePath(parsed.sourcePath) ? { ...parsed, sourceHash: undefined } : parsed,
+      );
       this.pendingDocumentVectorAnchors.add(parsed.anchor);
       await this.refreshFrontmatterSupersedesEdges(parsed.anchor, rawContent);
       if (isMarkdownSourcePath(parsed.sourcePath)) {
@@ -1516,16 +1522,23 @@ export class IndexBuilder implements IIndexBuilder {
     const dirtySnapshots = dirtyIds
       .map((id) => threadMap.get(id))
       .filter((thread): thread is ThreadSnapshot => thread !== undefined);
-    const documentsToEmbed = await this.upsertDirtyThreadDocuments(dirtySnapshots);
+    try {
+      const documentsToEmbed = await this.upsertDirtyThreadDocuments(dirtySnapshots);
 
-    // Lexical message recall must be available for the entire dirty batch before
-    // any document embedding can wait on a provider. Vectors remain accelerators.
-    if (dirtySnapshots.length > 0) await this.indexPassages(dirtySnapshots);
-    await this.embedDirtyThreadDocuments(documentsToEmbed);
-    if (dirtySnapshots.length > 0) {
-      await this.embedMissingPassages(dirtySnapshots.map((t) => `thread-${t.id}`));
+      // Lexical message recall must be available for the entire dirty batch before
+      // any document embedding can wait on a provider. Vectors remain accelerators.
+      if (dirtySnapshots.length > 0) await this.indexPassages(dirtySnapshots);
+      await this.embedDirtyThreadDocuments(documentsToEmbed);
+      if (dirtySnapshots.length > 0) {
+        await this.embedMissingPassages(dirtySnapshots.map((t) => `thread-${t.id}`));
+      }
+      return documentsToEmbed.length;
+    } catch (error) {
+      // A batch may already be committed. Idempotent retry must still visit the
+      // remaining messages/threads, preserving marks that arrived during flush.
+      for (const threadId of dirtyIds) this.dirtyThreads.add(threadId);
+      throw error;
     }
-    return documentsToEmbed.length;
   }
 
   private async upsertDirtyThreadDocuments(threads: ThreadSnapshot[]): Promise<EvidenceItem[]> {
@@ -1646,13 +1659,14 @@ export class IndexBuilder implements IIndexBuilder {
 
     // A document is the atomic replacement unit. A corpus-sized transaction
     // blocks both the API loop and unrelated writers sharing evidence.sqlite.
+    const db = this.store.getDb();
+    const complete = db.prepare('UPDATE evidence_docs SET source_hash = ? WHERE anchor = ?');
     for (const source of docs) {
-      await this.store.runExclusive(() =>
-        replaceDocumentPassages(
-          this.store.getDb(),
-          [source],
-          createVectorInvalidator(this.store.getDb(), 'passage_vectors'),
-        ),
+      await this.store.runCheckpointedBatch(() =>
+        db.transaction(() => {
+          replaceDocumentPassages(db, [source], createVectorInvalidator(db, 'passage_vectors'));
+          complete.run(source.item.sourceHash ?? null, source.item.anchor);
+        })(),
       );
     }
     for (const doc of docs) this.pendingMentionDocAnchors.add(doc.item.anchor);
@@ -1700,7 +1714,6 @@ export class IndexBuilder implements IIndexBuilder {
         (msgs: StoredMessageSnapshot[], offset: number, invalidateVector: (key: string) => void) => {
           signal?.throwIfAborted();
           const suppressed = this.suppressedMessageIds(thread.id);
-          let changed = false;
           for (let i = 0; i < msgs.length; i++) {
             const msg = msgs[i];
             if (suppressed.has(msg.id)) continue;
@@ -1718,27 +1731,28 @@ export class IndexBuilder implements IIndexBuilder {
               new Date(msg.timestamp).toISOString(),
             );
             if (result.changes > 0) {
-              changed = true;
               if (previous?.changed !== 0) invalidateVector(passageVectorKey(docAnchor, passageId));
             }
           }
-          return changed;
         },
       );
 
       // Route batch insert through single-writer queue (F163 AC-A5)
-      let changed = false;
       for (let offset = 0; offset < messages.length; offset += PASSAGE_WRITE_BATCH_SIZE) {
-        const batchChanged = await this.store.runExclusive(() =>
+        await this.store.runCheckpointedBatch(() =>
           tx(
             messages.slice(offset, offset + PASSAGE_WRITE_BATCH_SIZE),
             offset,
             createVectorInvalidator(db, 'passage_vectors'),
           ),
         );
-        changed ||= batchChanged;
       }
-      if (changed) await this.store.refreshEntityMentions([`thread-${thread.id}`]);
+      // Passage triggers persist this marker in the same transaction as the
+      // source rows. Maintenance can reject after commit; unchanged retry must
+      // still finish the publication (startup consumes the same durable queue).
+      const docAnchor = `thread-${thread.id}`;
+      const pending = db.prepare('SELECT 1 FROM entity_mention_pending_docs WHERE doc_anchor = ?').get(docAnchor);
+      if (pending) await this.store.refreshEntityMentions([docAnchor]);
     }
   }
 
@@ -1864,7 +1878,7 @@ export class IndexBuilder implements IIndexBuilder {
         });
         const entries = [...invocationTexts];
         for (let offset = 0; offset < entries.length; offset += PASSAGE_WRITE_BATCH_SIZE) {
-          await this.store.runExclusive(() => tx(entries.slice(offset, offset + PASSAGE_WRITE_BATCH_SIZE)));
+          await this.store.runCheckpointedBatch(() => tx(entries.slice(offset, offset + PASSAGE_WRITE_BATCH_SIZE)));
         }
         completedFiles.push({ path: checkpointPath, fingerprint });
         if (completedFiles.length % 16 === 0) await new Promise<void>((resolve) => setImmediate(resolve));

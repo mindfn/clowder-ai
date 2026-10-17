@@ -5,7 +5,7 @@
 
 import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -1760,6 +1760,74 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       status: 'active',
       missingCapabilities: [],
     });
+  });
+
+  it('F325 records authoritative usage without an unresolved window authorizing handoff', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    const record = sessionChainStore.create({
+      cliSessionId: 'cli-unresolved-window',
+      threadId: 'thread-unresolved-window',
+      catId: 'gemini',
+      userId: 'user1',
+    });
+    const capacitySnapshot = makeUnresolvedCapacitySnapshot('gemini', 'agy_stream_json');
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      contextCapability: () => capacitySnapshot.capability,
+      async *invoke() {
+        yield {
+          type: 'done',
+          catId: 'gemini',
+          timestamp: Date.now(),
+          metadata: { usage: { lastTurnInputTokens: 66_525, inputTokens: 200_000, isCumulativeUsage: true } },
+        };
+      },
+    };
+    const messages = await collect(
+      invokeSingleCat(
+        {
+          ...makeDeps(),
+          sessionChainStore,
+          sessionSealer: {
+            async requestSeal() {
+              assert.fail('unknown capacity cannot authorize a handoff');
+            },
+            async finalize() {},
+          },
+        },
+        {
+          catId: 'gemini',
+          service,
+          capacitySnapshot,
+          prompt: 'test',
+          userId: 'user1',
+          threadId: 'thread-unresolved-window',
+          isLastCat: true,
+          rebuildPromptAfterSessionSeal: async () => 'rebuilt',
+        },
+      ),
+    );
+    const infos = messages
+      .filter((message) => message.type === 'system_info')
+      .map((message) => JSON.parse(message.content));
+    const created = infos.find((payload) => payload.type === 'invocation_created');
+    assert.ok(created.effectiveStrategy.execution.missingCapabilities.includes('authoritative_usage'));
+    const persisted = sessionChainStore.get(record.id).appliedPolicy.execution;
+    assert.equal(persisted.status, 'unavailable');
+    assert.ok(
+      !persisted.missingCapabilities.includes('authoritative_usage'),
+      'current per-turn usage must be recorded even without capacity',
+    );
+    assert.ok(persisted.missingCapabilities.includes('effective_input_ceiling'));
+    assert.ok(persisted.missingCapabilities.includes('carrier_binding'));
+    const transition = infos.find((payload) => payload.type === 'session_policy_execution');
+    assert.deepEqual(transition.effectiveStrategy.execution, persisted);
+    assert.equal(
+      infos.some((payload) => payload.type === 'context_health'),
+      false,
+    );
+    assert.equal(sessionChainStore.get(record.id).capacityPin, undefined);
   });
 
   it('F211 A2: repeated Antigravity cascade updates runtime metadata without creating a new SessionRecord', async () => {
@@ -4536,93 +4604,239 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.ok(sessionStores.includes('new-sess'), 'new session should be stored after recovery');
   });
 
-  it('F325 replaces a changed Native binding through a visible seal and a cold history rebuild', async () => {
-    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
-    const { SessionSealer } = await import('../dist/domains/cats/services/session/SessionSealer.js');
-    const { AgyNativeAgentService } = await import(
-      '../dist/domains/cats/services/agents/providers/agy-native/AgyNativeAgentService.js'
-    );
-    const chain = new SessionChainStore();
-    const old = await chain.create({ catId: 'gemini38', threadId: 'native-binding-change', userId: 'owner' });
-    await chain.update(old.id, { cliSessionId: 'old-native-session' });
-    let sessionId = 'old-native-session';
-    const service = new AgyNativeAgentService({
-      catId: 'gemini38',
-      profile: {
-        enabled: true,
-        profileId: 'gemini38',
+  for (const failure of [undefined, 'create', 'record'])
+    it(`F325 replaces a changed Native binding with durable request ownership (${failure ?? 'success'})`, async () => {
+      const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+      const { SessionSealer } = await import('../dist/domains/cats/services/session/SessionSealer.js');
+      const { TranscriptWriter } = await import('../dist/domains/cats/services/session/TranscriptWriter.js');
+      const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+      const { AgyNativeAgentService } = await import(
+        '../dist/domains/cats/services/agents/providers/agy-native/AgyNativeAgentService.js'
+      );
+      const base = join(testGlobalConfigRoot, 'native-binding-change');
+      await mkdir(join(base, 'workspace'), { recursive: true });
+      const workspace = await realpath(join(base, 'workspace'));
+      const dataDir = join(base, 'transcripts');
+      const writer = new TranscriptWriter({ dataDir });
+      const chain = new SessionChainStore();
+      const old = await chain.create({ catId: 'gemini38', threadId: 'native-binding-change', userId: 'owner' });
+      const priorBinding = {
+        v: 1,
+        carrier: 'agy_stream_json',
         model: 'gemini-3.8-flash-high',
-      },
-    });
-    const calls = [];
-    service.invokeWithContinuityPreflight = async function* (preflight, options) {
-      const call = { sessionId: options.sessionId };
-      calls.push(call);
-      if (calls.length === 1) {
-        yield {
-          type: 'error',
-          catId: 'gemini38',
-          errorCode: 'AGY_NATIVE_RESUME_MISMATCH',
-          error: 'Native L0 binding changed',
-          timestamp: Date.now(),
-        };
-        yield { type: 'done', catId: 'gemini38', errorCode: 'AGY_NATIVE_RESUME_MISMATCH', timestamp: Date.now() };
+        profileHome: join(base, 'profiles', 'gemini38'),
+        workspaceRoot: workspace,
+        l0Hash: '0'.repeat(64),
+        permissionMode: 'request-review',
+        agentName: 'prior-native-agent',
+        cliSessionId: 'old-native-session',
+      };
+      await chain.update(old.id, { cliSessionId: 'old-native-session', nativeSessionBinding: priorBinding });
+      const oldInfo = { sessionId: old.id, threadId: old.threadId, catId: old.catId, seq: old.seq };
+      await writer.appendDurableEvent(
+        oldInfo,
+        { type: 'text', content: 'PRESERVED-THREAD-HISTORY' },
+        'prior-invocation',
+      );
+      const oldDirectory = join(dataDir, 'threads', old.threadId, old.catId, 'sessions', old.id);
+      const messageStore = new MessageStore();
+      const input = await messageStore.append({
+        userId: 'owner',
+        threadId: old.threadId,
+        from: { kind: 'user', userId: 'owner' },
+        content: 'LATEST-MESSAGE-ONLY',
+        mentions: ['gemini38'],
+        timestamp: Date.now(),
+      });
+      const getOrCreateActive = chain.getOrCreateActive.bind(chain);
+      chain.getOrCreateActive = (request) => {
+        if (failure === 'create' && chain.get(old.id).status === 'sealed') {
+          throw new Error('native_replacement_store_offline');
+        }
+        return getOrCreateActive(request);
+      };
+      const appendDurableEvent = writer.appendDurableEvent.bind(writer);
+      writer.appendDurableEvent = async (session, event, invocationId) => {
+        if (failure === 'record' && event.type === 'request_generation_assembled') {
+          throw new Error('native_replacement_transcript_unavailable');
+        }
+        return appendDurableEvent(session, event, invocationId);
+      };
+      let sessionId = 'old-native-session';
+      const service = new AgyNativeAgentService({
+        catId: 'gemini38',
+        profile: {
+          enabled: true,
+          profileId: 'gemini38',
+          homeRoot: join(base, 'profiles'),
+          model: 'gemini-3.8-flash-high',
+          trustedWorkspaces: [workspace],
+        },
+        command: '/usr/bin/true',
+        l0CompilerFn: async () => '# Identity\nCURRENT-NATIVE-L0\n',
+      });
+      const calls = [];
+      const launches = [];
+      const writes = [];
+      const actualInvoke = service.invokeWithContinuityPreflight.bind(service);
+      service.invokeWithContinuityPreflight = (preflight, options) => {
+        calls.push({ sessionId: options.sessionId });
+        // Keep the real binding check, verified init, settle and beforeProviderLaunch.
+        // Only the external process is scripted; no recorder/preflight substitute.
+        return actualInvoke(preflight, {
+          ...options,
+          spawnCliOverride: async function* (launch) {
+            launches.push(launch);
+            assert.equal(chain.get(old.id).status, 'sealed', 'history seals before the replacement provider starts');
+            launch.onStdinReady((value) => {
+              const active = chain.getActive(old.catId, old.threadId, 'owner');
+              assert.ok(active.appliedPolicy?.revision, 'replacement policy exists before body submission');
+              const persisted = readFileSync(
+                join(dataDir, 'threads', old.threadId, old.catId, 'sessions', active.id, 'events.live.jsonl'),
+                'utf8',
+              )
+                .trim()
+                .split('\n')
+                .map(JSON.parse);
+              assert.equal(
+                persisted.filter((entry) => entry.event.type === 'request_generation_assembled').length,
+                1,
+                'the replacement request is durable before its body reaches stdin',
+              );
+              writes.push(value);
+            });
+            yield {
+              event: 'init',
+              conversation_id: 'new-native-session',
+              init: {
+                agent: launch.args[launch.args.indexOf('--agent') + 1],
+                cwd: launch.cwd,
+                model: 'gemini-3.8-flash-high',
+                permission_mode: 'request-review',
+                tools: [],
+              },
+            };
+            yield {
+              event: 'result',
+              result: {
+                conversation_id: 'new-native-session',
+                status: 'SUCCESS',
+                response: 'Continued with preserved history.',
+                num_turns: 1,
+              },
+            };
+          },
+        });
+      };
+      const messages = await collect(
+        invokeSingleCat(
+          {
+            ...makeDeps(),
+            messageStore,
+            transcriptWriter: writer,
+            sessionChainStore: chain,
+            sessionSealer: new SessionSealer(chain, writer),
+            sessionManager: {
+              get: async () => sessionId,
+              delete: async () => {
+                sessionId = undefined;
+              },
+              store: async (_u, _c, _t, id) => {
+                sessionId = id;
+              },
+              resolveWorkingDirectory: () => workspace,
+            },
+            threadStore: {
+              get: async () => ({ projectPath: workspace, createdBy: 'owner' }),
+              updateParticipantActivity: async () => {},
+            },
+          },
+          {
+            catId: 'gemini38',
+            service,
+            prompt: input.content,
+            promptMessageIds: [input.id],
+            userId: 'owner',
+            threadId: 'native-binding-change',
+            isLastCat: true,
+            rebuildPromptAfterSessionSeal: async () => {
+              const history = (await readFile(join(oldDirectory, 'events.jsonl'), 'utf8'))
+                .trim()
+                .split('\n')
+                .map(JSON.parse);
+              return `${history[0].event.content}\n${(await messageStore.getById(input.id)).content}`;
+            },
+          },
+        ),
+      );
+      assert.equal(calls[0].sessionId, 'old-native-session');
+      assert.equal((await chain.get(old.id)).sealReason, 'native_binding_changed');
+      assert.equal((await chain.get(old.id)).status, 'sealed');
+      assert.equal((await chain.getChain(old.catId, old.threadId, 'owner')).length, failure === 'create' ? 1 : 2);
+      assert.equal(
+        (await chain.get(old.id)).cliSessionId,
+        'old-native-session',
+        'sealed native identity is not rebound',
+      );
+      assert.deepEqual((await chain.get(old.id)).nativeSessionBinding, priorBinding);
+      assert.deepEqual(
+        await messageStore.getById(input.id),
+        input,
+        'failure or success cannot consume the user message',
+      );
+      const archived = (await readFile(join(oldDirectory, 'events.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+      assert.equal(archived[0].event.content, 'PRESERVED-THREAD-HISTORY');
+      assert.equal(
+        archived.some((entry) => entry.event.type === 'request_generation_assembled'),
+        false,
+      );
+      if (failure) {
+        assert.equal(writes.length, 0, 'failed replacement never submits the user body');
+        assert.equal(launches.length, failure === 'create' ? 0 : 1);
+        const expected =
+          failure === 'create' ? 'native_replacement_store_offline' : 'native_replacement_transcript_unavailable';
+        assert.ok(
+          messages.some((m) => m.type === 'error' && m.error.includes(expected)),
+          JSON.stringify(messages),
+        );
+        assert.equal(
+          messages.some((m) => m.type === 'text'),
+          false,
+        );
         return;
       }
-      assert.equal((await chain.get(old.id)).status, 'sealed', 'old history is committed before a new provider starts');
-      const generation = await preflight.settle({
-        evidence: { kind: 'started', runtimeSessionId: 'new-native-session' },
-      });
-      call.prompt = generation.prompt;
-      yield { type: 'session_init', catId: 'gemini38', sessionId: 'new-native-session', timestamp: Date.now() };
-      yield { type: 'text', catId: 'gemini38', content: 'Continued with preserved history.', timestamp: Date.now() };
-      yield { type: 'done', catId: 'gemini38', timestamp: Date.now() };
-    };
-    const messages = await collect(
-      invokeSingleCat(
-        {
-          ...makeDeps(),
-          sessionChainStore: chain,
-          sessionSealer: new SessionSealer(chain),
-          sessionManager: {
-            get: async () => sessionId,
-            delete: async () => {
-              sessionId = undefined;
-            },
-            store: async (_u, _c, _t, id) => {
-              sessionId = id;
-            },
-            resolveWorkingDirectory: () => process.cwd(),
-          },
-          threadStore: {
-            get: async () => ({ projectPath: process.cwd(), createdBy: 'owner' }),
-            updateParticipantActivity: async () => {},
-          },
-        },
-        {
-          catId: 'gemini38',
-          service,
-          prompt: 'LATEST-MESSAGE-ONLY',
-          userId: 'owner',
-          threadId: 'native-binding-change',
-          isLastCat: true,
-          rebuildPromptAfterSessionSeal: async () => 'PRESERVED-THREAD-HISTORY\nLATEST-MESSAGE-ONLY',
-        },
-      ),
-    );
-    assert.equal(calls.length, 2, JSON.stringify(messages.filter((m) => m.type === 'error')));
-    assert.equal(calls[0].sessionId, 'old-native-session');
-    assert.equal(calls[1].sessionId, undefined);
-    assert.match(calls[1].prompt, /PRESERVED-THREAD-HISTORY/);
-    assert.equal((await chain.get(old.id)).sealReason, 'native_binding_changed');
-    const notice = messages.find((m) => m.type === 'system_info' && m.content?.includes('native_binding_changed'));
-    assert.equal(JSON.parse(notice.content).type, 'session_seal_requested');
-    assert.equal(messages.filter((m) => m.type === 'error').length, 0);
-    assert.equal(
-      (await chain.getActive('gemini38', 'native-binding-change', 'owner')).cliSessionId,
-      'new-native-session',
-    );
-  });
+      assert.equal(messages.find((m) => m.type === 'error')?.error, undefined);
+      assert.equal(calls.length, 2, JSON.stringify(messages.filter((m) => m.type === 'error')));
+      assert.equal(calls[1].sessionId, undefined);
+      assert.equal(launches.length, 1, 'mismatched resume is refused before spawn; only its replacement launches');
+      assert.equal(writes.length, 1);
+      assert.match(writes[0], /PRESERVED-THREAD-HISTORY/);
+      assert.match(writes[0], /LATEST-MESSAGE-ONLY/);
+      const notice = messages.find((m) => m.type === 'system_info' && m.content?.includes('native_binding_changed'));
+      assert.equal(JSON.parse(notice.content).type, 'session_seal_requested');
+      assert.equal(messages.filter((m) => m.type === 'error').length, 0);
+      const active = await chain.getActive('gemini38', 'native-binding-change', 'owner');
+      assert.notEqual(active.id, old.id);
+      assert.equal(active.seq, old.seq + 1);
+      assert.equal(active.cliSessionId, 'new-native-session');
+      assert.ok(active.appliedPolicy?.revision, 'the replacement owns the invocation policy before recording');
+      assert.equal(active.compressionCount, 0);
+      const newInfo = { sessionId: active.id, threadId: active.threadId, catId: active.catId, seq: active.seq };
+      const events = await writer.readActiveEvents(newInfo);
+      const assembled = events.filter((entry) => entry.event.type === 'request_generation_assembled');
+      assert.equal(assembled.length, 1);
+      assert.equal(assembled[0].event.envelope.sessionId, active.id);
+      assert.ok(
+        assembled[0].event.envelope.channels.some((channel) =>
+          channel.sourceRefs?.some((ref) => ref.ref.includes(input.id)),
+        ),
+      );
+      assert.equal(
+        messages.filter((m) => m.type === 'text' && m.content === 'Continued with preserved history.').length,
+        1,
+      );
+      await writer.flush(newInfo);
+    });
 
   it('F325 refuses Native replacement without history or after visible provider output', async () => {
     const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
@@ -6945,7 +7159,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.ok(promptsSeen[0].includes('user message'), 'original user prompt still present');
   });
 
-  it('normal delivery does not resolve or inject routing availability advice on resume', async () => {
+  it('F293: fresh sparse routing context reaches a resumed provider session with deterministic intent', async () => {
     const promptsSeen = [];
     const resolutions = [];
     const service = {
@@ -6981,12 +7195,12 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       }),
     );
 
-    assert.deepEqual(resolutions, [], 'normal delivery does not consult the availability projection');
-    assert.ok(!promptsSeen[0].includes('F293-SPARSE'));
+    assert.deepEqual(resolutions, [{ ownerId: 'owner-f293', intent: 'review' }]);
+    assert.ok(promptsSeen[0].includes('F293-SPARSE'));
     assert.ok(!promptsSeen[0].includes('static identity here'), 'dynamic projection is independent of static identity');
   });
 
-  it('normal delivery does not invoke or audit a failing legacy availability projection', async () => {
+  it('F293: projection failure omits dynamic bytes, preserves invocation, and writes a bounded audit event', async () => {
     const promptsSeen = [];
     const service = {
       l0CompilerFn: dummyL0CompilerFn,
@@ -7019,7 +7233,12 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     const { getEventAuditLog } = await import('../dist/domains/cats/services/orchestration/EventAuditLog.js');
     const events = await getEventAuditLog().readByThread('thread-routing-context-projection-failure');
     const failure = events.find((event) => event.type === 'routing_context_projection_failed');
-    assert.equal(failure, undefined, 'unused availability projection cannot create invocation audit noise');
+    assert.ok(failure, 'projection failure must be auditable');
+    assert.deepEqual(failure.data, {
+      catId: 'opus',
+      invocationId: 'inv-1',
+      errorName: 'RangeError',
+    });
   });
 
   it('F053: Gemini (sessionChain=true) skips systemPrompt on resume like other cats', async () => {

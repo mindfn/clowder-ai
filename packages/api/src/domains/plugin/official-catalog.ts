@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { PluginDescription, PluginIconSpec } from '@cat-cafe/shared';
 import type { Capability, PluginManifest } from '@clowder-ai/plugin-contract';
+import { BUNDLED_PACKAGE_ARCHIVES } from './bundled-package-index.js';
 import { CHATGPT_DOT_PLUGIN_MANIFEST } from './chatgpt-dot-manifest.js';
+
 import { PUBLISHED_COMPANION_V2 } from './desktop-window-runtime/published-companion-v2.js';
 
 export interface OfficialPluginCatalogEntry {
@@ -11,6 +13,8 @@ export interface OfficialPluginCatalogEntry {
   readonly version: string;
   readonly pluginId: string;
   readonly distribution: 'registry' | 'bundled';
+  /** Missing/manifest denotes the frozen pre-archive Host format; never a fallback after archive failure. */
+  readonly bundledFormat?: 'manifest' | 'archive';
   readonly archiveUrl: string;
   readonly packageDigest: string;
   readonly effectiveGrants: readonly Capability[];
@@ -46,6 +50,7 @@ export interface OfficialPluginCatalogPolicy {
   readonly packageName: string;
   readonly pluginId: string;
   readonly distribution: 'registry' | 'bundled';
+  readonly bundledFormat?: 'manifest' | 'archive';
   readonly releaseTag: 'next';
   readonly bootstrapRelease: OfficialPluginRelease;
   readonly effectiveGrants: readonly Capability[];
@@ -60,6 +65,7 @@ export function officialPluginCatalogEntry(
     packageName: policy.packageName,
     pluginId: policy.pluginId,
     distribution: policy.distribution,
+    ...(policy.bundledFormat === undefined ? {} : { bundledFormat: policy.bundledFormat }),
     version: release.version,
     archiveUrl: release.archiveUrl,
     packageDigest: release.packageDigest,
@@ -78,11 +84,12 @@ export const OFFICIAL_PLUGIN_POLICIES = [
     packageName: '@cat-cafe/chatgpt-dot',
     pluginId: CHATGPT_DOT_PLUGIN_MANIFEST.pluginId,
     distribution: 'bundled',
+    bundledFormat: 'archive',
     releaseTag: 'next',
     bootstrapRelease: {
       version: CHATGPT_DOT_PLUGIN_MANIFEST.version,
-      archiveUrl: 'builtin://chatgpt-dot/0.1.0',
-      packageDigest: bundledManifestDigest(CHATGPT_DOT_PLUGIN_MANIFEST),
+      archiveUrl: BUNDLED_PACKAGE_ARCHIVES['chatgpt-dot'].archiveUrl,
+      packageDigest: BUNDLED_PACKAGE_ARCHIVES['chatgpt-dot'].packageDigest,
     },
     effectiveGrants: [],
   },
@@ -129,3 +136,8 @@ export const OFFICIAL_PLUGIN_POLICIES = [
 ] as const satisfies readonly OfficialPluginCatalogPolicy[];
 
 export const OFFICIAL_PLUGIN_CATALOG = OFFICIAL_PLUGIN_POLICIES.map((policy) => officialPluginCatalogEntry(policy));
+
+/** Host-shipped discovery is shared by production Manager and offline consumers. */
+export const OFFICIAL_BUNDLED_CATALOG_ENTRIES = OFFICIAL_PLUGIN_CATALOG.filter(
+  (entry) => entry.distribution === 'bundled',
+);

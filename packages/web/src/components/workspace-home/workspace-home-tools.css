@@ -264,12 +264,4 @@
     min-width: 0;
     margin-left: 32px;
   }
-
-  [data-shell="v2"] .home-wait-main {
-    flex-wrap: wrap;
-  }
-
-  [data-shell="v2"] .home-wait-title {
-    flex-basis: 100%;
-  }
 }

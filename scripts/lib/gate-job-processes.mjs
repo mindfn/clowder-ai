@@ -290,6 +290,7 @@ export async function runGateCommandWithCleanup({
   now = monotonicNowMs,
   onStderr = null,
   onStdout = null,
+  onSpawn = null,
   pollMs = 50,
 }) {
   const child = spawn(command[0], command.slice(1), {
@@ -331,6 +332,7 @@ export async function runGateCommandWithCleanup({
   let cancelled = false;
   let supervisionError = null;
   try {
+    onSpawn?.(child.pid);
     while (!settled) {
       if (now() - executionStartedAt >= executionBudgetMs) {
         timedOut = true;

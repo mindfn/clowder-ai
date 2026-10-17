@@ -24,6 +24,7 @@ interface ChatInputAddMenuProps {
   maxImages?: boolean;
   whisperMode?: boolean;
   messageDisposition?: MessageDispositionPreferenceController;
+  hasActiveInvocation?: boolean;
   preferredCat?: ComposerPreferredCatControl;
 }
 
@@ -40,6 +41,7 @@ export function ChatInputAddMenu({
   maxImages,
   whisperMode,
   messageDisposition,
+  hasActiveInvocation = false,
   preferredCat,
 }: ChatInputAddMenuProps) {
   const [view, setView] = useState<'root' | 'disposition'>('root');
@@ -61,12 +63,12 @@ export function ChatInputAddMenu({
           <MessageDispositionSelector controller={messageDisposition} onBack={() => setView('root')} />
         ) : (
           <div role="menu" aria-label={t.addContent} className="w-full overflow-hidden rounded-lg">
-            {presentation === 'v2' && messageDisposition ? (
+            {presentation === 'v2' && hasActiveInvocation && messageDisposition ? (
               <AddMenuItem
                 testId="message-disposition-trigger"
                 dispositionSource={messageDisposition.source}
-                label={`发送策略：${messageDispositionLabel(messageDisposition.effective)}`}
-                description="选择本 Thread 或全局默认策略"
+                label={`这条发出去后：${messageDispositionLabel(messageDisposition.effective)}`}
+                description="只影响这条消息"
                 icon={<span aria-hidden>↪</span>}
                 disabled={messageDisposition.loading}
                 onClick={() => setView('disposition')}
@@ -101,11 +103,11 @@ export function ChatInputAddMenu({
                   onAttach();
                 }}
               />
-              {presentation === 'classic' && messageDisposition ? (
+              {presentation === 'classic' && hasActiveInvocation && messageDisposition ? (
                 <AddMenuItem
                   testId="message-disposition-trigger"
                   dispositionSource={messageDisposition.source}
-                  label="发送策略"
+                  label="这条发出去后"
                   description={messageDispositionLabel(messageDisposition.effective)}
                   icon={<StrategyIcon />}
                   disabled={messageDisposition.loading}

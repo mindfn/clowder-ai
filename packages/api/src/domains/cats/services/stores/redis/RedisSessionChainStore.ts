@@ -867,14 +867,14 @@ export class RedisSessionChainStore implements ISessionChainStore {
     if (indexed.length === 0) return bindings;
     const pipe = this.redis.pipeline();
     for (const { id } of indexed)
-      pipe.hmget(SessionChainKeys.detail(id), 'id', 'cliSessionId', 'threadId', 'catId', 'userId');
+      pipe.hmget(SessionChainKeys.detail(id), 'id', 'cliSessionId', 'threadId', 'catId', 'userId', 'externalImport');
     const results = await pipe.exec();
     if (!results) throw new Error('Session claim index read failed');
     for (const [index, [error, fields]] of results.entries()) {
       if (error) throw error;
       const expected = indexed[index];
       if (!expected || !Array.isArray(fields)) continue;
-      const [id, cliSessionId, threadId, catId, userId] = fields;
+      const [id, cliSessionId, threadId, catId, userId, externalImport] = fields;
       if (
         id !== expected.id ||
         cliSessionId !== expected.cliSessionId ||
@@ -883,7 +883,14 @@ export class RedisSessionChainStore implements ISessionChainStore {
         typeof userId !== 'string'
       )
         continue;
-      bindings.set(cliSessionId, { id, cliSessionId, threadId, catId: catId as CatId, userId });
+      bindings.set(cliSessionId, {
+        id,
+        cliSessionId,
+        threadId,
+        catId: catId as CatId,
+        userId,
+        isExternalImport: Boolean(externalImport),
+      });
     }
     return bindings;
   }

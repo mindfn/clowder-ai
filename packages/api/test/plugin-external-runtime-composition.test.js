@@ -226,6 +226,10 @@ test('production handshake policy covers verified external source readiness with
 
 test('production composition constructs and recovers K-2D but exposes no startup activation', async () => {
   const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+  const catalogSource = readFileSync(
+    new URL('../src/domains/plugin/manager/host-official-catalog.ts', import.meta.url),
+    'utf8',
+  );
 
   const cloudBinding = source.match(/const\s+([A-Za-z_$][\w$]*)\s*=\s*createCloudConversationComposition\(\{/);
   assert.ok(cloudBinding, 'production must own one cloud conversation composition');
@@ -280,10 +284,11 @@ test('production composition constructs and recovers K-2D but exposes no startup
     new RegExp(`app\\.addHook\\('onClose', async \\(\\) => ${runtimeName}\\.shutdown\\('api_shutdown'\\)\\)`),
   );
   assert.match(source, /createPluginManagerRuntimeComposition\(\{/);
-  assert.match(source, /new MachineOfficialPluginCatalog\(\{/);
-  assert.match(source, /validateCatalog: validatePluginCatalog/);
-  assert.match(source, /loadMachinePluginCatalog\(OFFICIAL_PLUGIN_CATALOG_URL\)/);
-  assert.match(source, /const pluginManagerHostPolicies = OFFICIAL_PLUGIN_HOST_POLICIES;/);
+  assert.match(source, /const pluginManagerCatalog = createHostOfficialPluginCatalog\(\)/);
+  assert.match(catalogSource, /new MachineOfficialPluginCatalog\(\{/);
+  assert.match(catalogSource, /validateCatalog: validatePluginCatalog/);
+  assert.match(catalogSource, /loadMachinePluginCatalog\(OFFICIAL_PLUGIN_CATALOG_URL\)/);
+  assert.match(catalogSource, /\.\.\.OFFICIAL_PLUGIN_HOST_POLICIES/);
   assert.doesNotMatch(source, /weixinMpHandlers/);
   assert.doesNotMatch(source, /limbAdapterRegistry/);
   const callbackRoutes = readFileSync(new URL('../src/routes/callbacks.ts', import.meta.url), 'utf8');

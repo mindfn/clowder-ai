@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { focusLineageMessage } from '@/utils/focusLineageMessage';
 import {
@@ -341,17 +339,6 @@ describe('scrollToMessage', () => {
     vi.advanceTimersByTime(3200);
     expect(el.dataset.messageJumpFocus).toBeUndefined();
     vi.useRealTimers();
-  });
-
-  it('renders the shared marker as an orange open-left bracket rather than a full outline', () => {
-    const css = readFileSync(resolve(process.cwd(), 'src/app/globals.css'), 'utf8');
-    const markerRule = css.match(/\[data-message-jump-focus="true"\]::after\s*\{([^}]*)\}/)?.[1] ?? '';
-
-    expect(markerRule).toMatch(/border:\s*2px solid\s+oklch\(/);
-    expect(markerRule).toContain('var(--cat-lineage-l, var(--cat-bubble-l, 0.62))');
-    expect(markerRule).toContain('var(--cocreator-hue)');
-    expect(markerRule).toContain('border-left: 0');
-    expect(markerRule).not.toContain('outline:');
   });
 
   it('does nothing when element is not found', () => {

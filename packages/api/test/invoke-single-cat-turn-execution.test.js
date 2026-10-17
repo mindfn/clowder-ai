@@ -319,7 +319,7 @@ describe('invokeSingleCat durable child execution lifecycle', () => {
     assert.doesNotMatch(JSON.stringify(terminal), /secret-token-should-not-persist/);
   });
 
-  test('persists success without global availability observation', async () => {
+  test('observes success only after the canonical durable terminal and carries the exact preflight decision', async () => {
     const store = new InMemoryTurnExecutionStore();
     const observed = [];
     const exactDecision = routingDecision();
@@ -351,11 +351,15 @@ describe('invokeSingleCat durable child execution lifecycle', () => {
       }),
     );
 
-    assert.equal((await store.get('child-routing-success')).status, 'succeeded');
-    assert.deepEqual(observed, []);
+    assert.equal(observed.length, 1);
+    assert.equal(observed[0].status, 'succeeded');
+    assert.equal(observed[0].observationId, 'child-routing-success');
+    assert.equal(observed[0].evidenceRef, 'turn-execution:child-routing-success');
+    assert.equal(observed[0].preflightDecision, exactDecision);
+    assert.equal(observed[0].observedAt, (await store.get('child-routing-success')).endedAt);
   });
 
-  test('persists provider failure without disabling a member globally', async () => {
+  test('maps structured provider failures after persistence and keeps observer failure advisory', async () => {
     const store = new InMemoryTurnExecutionStore();
     const observed = [];
     const service = {
@@ -399,7 +403,9 @@ describe('invokeSingleCat durable child execution lifecycle', () => {
     );
 
     assert.equal((await store.get('child-routing-failure')).status, 'failed');
-    assert.deepEqual(observed, []);
+    assert.equal(observed.length, 1);
+    assert.equal(observed[0].status, 'failed');
+    assert.equal(observed[0].failureClass, 'quota_exhausted');
   });
 
   test('provider iterator ending without terminal done is interrupted, never succeeded', async () => {

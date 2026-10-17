@@ -274,6 +274,7 @@ describe('#3444 unresolved visibility read-anchor policy', { skip: redisIsolatio
       assert.deepEqual(response.json(), {
         advanced: true,
         caughtUp: true,
+        handledMention: false,
         messageId: readNow.id,
         cursor: cursorFor(readNow),
       });

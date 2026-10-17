@@ -31,10 +31,10 @@ code_anchors:
   - packages/api/src/domains/plugin/desktop-window-runtime/desktop-component.ts
   - packages/api/src/routes/concierge-desktop.ts
   - packages/api/src/domains/plugin/builtin-runtime/hybrid-supervisor.ts
-  - packages/api/src/domains/plugin/plugin-manager-service.ts
-  - packages/api/src/domains/plugin/plugin-manager-projection.ts
+  - packages/api/src/domains/plugin/manager/plugin-manager-service.ts
+  - packages/api/src/domains/plugin/manager/plugin-manager-projection.ts
   - packages/api/src/domains/plugin/official-catalog.ts
-  - packages/api/src/domains/plugin/official-catalog-provider.ts
+  - packages/api/src/domains/plugin/manager/official-catalog-provider.ts
   - packages/api/src/domains/plugin/official-package-installer.ts
   - packages/api/src/routes/plugin-official-routes.ts
   - packages/api/src/routes/plugin-routes.ts

@@ -46,7 +46,15 @@ export function useExecutionRow(threadId: string) {
   // The ONE shared answer to "is what this thread shows still verified?": the project-wide snapshot covers this thread
   // when it is anchored here OR belongs to the same project, so a failed re-read is stale for a same-project thread
   // that is not the anchor too. (An anchor-only test here missed that case; the classic composer already gets it right.)
-  const { canonicalProjectionStale, hasUnverifiedLegacyExecution } = useExecutionRecoveryVerification(threadId);
+  const { canonicalProjectionStale, canonicalProjectionLoading, hasUnverifiedLegacyExecution } =
+    useExecutionRecoveryVerification(threadId);
+  const [confirmationExpired, setConfirmationExpired] = useState(false);
+  useEffect(() => {
+    setConfirmationExpired(false);
+    if (!canonicalProjectionLoading || !hasUnverifiedLegacyExecution) return;
+    const timer = setTimeout(() => setConfirmationExpired(true), 10_000);
+    return () => clearTimeout(timer);
+  }, [threadId, canonicalProjectionLoading, hasUnverifiedLegacyExecution]);
 
   const view = useQueueView(threadId);
   // The new shell's row reports a reset that went through as done even when the re-read after it fails.
@@ -81,6 +89,7 @@ export function useExecutionRow(threadId: string) {
         cancelPendingKeys,
         silent,
         hydrationStale: canonicalProjectionStale,
+        hydrationLoading: canonicalProjectionLoading && !confirmationExpired,
         hasUnverifiedLegacyExecution,
         queue: {
           entries: view.visibleEntries,
@@ -88,7 +97,17 @@ export function useExecutionRow(threadId: string) {
           waitInfo: view.waitInfo,
         },
       }),
-    [canonicalProjectionStale, cancelPendingKeys, executions, hasUnverifiedLegacyExecution, now, silent, view],
+    [
+      canonicalProjectionStale,
+      canonicalProjectionLoading,
+      confirmationExpired,
+      cancelPendingKeys,
+      executions,
+      hasUnverifiedLegacyExecution,
+      now,
+      silent,
+      view,
+    ],
   );
 
   const forceReset = useRowForceReset({ threadId, convergence });

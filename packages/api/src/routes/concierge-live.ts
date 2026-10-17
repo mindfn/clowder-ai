@@ -31,7 +31,10 @@ interface Options {
   sessions: LiveCompanionSessions;
   threadService: Pick<ConciergeThreadService, 'getOrCreate' | 'isCurrent'>;
   sessionChainStore: Pick<ISessionChainStore, 'getActive'>;
-  messageStore: Pick<IMessageStore, 'appendIdempotent' | 'getByThread' | 'getByThreadAfter' | 'getById'>;
+  messageStore: Pick<
+    IMessageStore,
+    'appendIdempotent' | 'getByThread' | 'getByThreadAfter' | 'getById' | 'recordCompanionDeliveryAcceptance'
+  >;
   invocationQueue: Pick<
     InvocationQueue,
     'getQueuedBodyMessagesForCat' | 'getEntrySnapshot' | 'getDurableEntriesForMessages'

@@ -34,8 +34,8 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   mocks.apiFetch.mockReset();
   localStorage.clear();
-  mocks.apiFetch.mockResolvedValue(
-    new Response(JSON.stringify({ status: 'resolved', ownerUserId: 'operator', asset })),
+  mocks.apiFetch.mockImplementation(
+    async () => new Response(JSON.stringify({ status: 'resolved', ownerUserId: 'operator', asset })),
   );
   useChatStore.setState({ currentThreadId: 'host-thread', workspaceOpenRequest: null });
   useF307ExperienceWorkbenchStore.getState().exitMainAreaAttention();
@@ -48,11 +48,18 @@ afterEach(() => {
   container.remove();
 });
 
+async function openExplicitWorkspace() {
+  expect(useChatStore.getState().workspaceOpenRequest).toBeNull();
+  const action = document.querySelector<HTMLButtonElement>('[data-testid="lightbox-open-workspace"]');
+  expect(action).toBeTruthy();
+  await act(async () => action?.click());
+}
+
 it.each([
   'gallery',
   'content-block',
   'rich-file',
-] as const)('%s opens exact publication in right Workspace, without a lightbox or download', async (kind) => {
+] as const)('%s first floats the exact publication, then explicitly opens its original Workspace authority', async (kind) => {
   await act(async () => {
     root.render(
       kind === 'gallery' ? (
@@ -90,6 +97,7 @@ it.each([
     item: selector,
     expectedUrl: kind === 'gallery' ? '/uploads/a.png' : '/uploads/a.mp4',
   });
+  await openExplicitWorkspace();
   expect(useChatStore.getState().workspaceOpenRequest?.target).toMatchObject({
     kind: 'publication',
     contentRef: asset.contentRef,
@@ -150,6 +158,7 @@ it('clicking a later same-invocation message attachment submits that exact store
     item: { kind: 'content-block', index: 0 },
     expectedUrl: '/uploads/b.mp4',
   });
+  await openExplicitWorkspace();
   expect(useChatStore.getState().workspaceOpenRequest?.target).toMatchObject({
     navigationOrigin: { kind: 'chat-file-link', threadId: 'source-thread', messageId: 'second' },
   });
@@ -176,28 +185,41 @@ it('a delayed publication response cannot open into a newly selected conversatio
   expect(container.querySelector('[role="alert"]')?.textContent).toContain('对话已切换');
 });
 
-it('an ambiguous source opens a resolving Workspace surface instead of silently selecting or failing the chat entry', async () => {
-  mocks.apiFetch.mockResolvedValue(
-    new Response(
-      JSON.stringify({
-        status: 'choice-required',
-        ownerUserId: 'operator',
-        choices: [
-          {
-            asset,
-            title: '封面',
-            taskTitle: '原委托',
-            threadTitle: '画画',
-            match: 'legacy-ambiguous',
-          },
-        ],
-      }),
-    ),
+it('does not turn a denied publication read into a cached floating preview', async () => {
+  mocks.apiFetch.mockResolvedValue(new Response(JSON.stringify({ error: 'access_denied' }), { status: 403 }));
+  await act(async () =>
+    root.render(<ContentBlocks publication={publication} blocks={[{ type: 'image', url: '/uploads/a.png' }]} />),
+  );
+  await act(async () => container.querySelector<HTMLButtonElement>('button')?.click());
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(useChatStore.getState().workspaceOpenRequest).toBeNull();
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain('访问');
+});
+
+it('an ambiguous source floats first, then preserves the resolving Workspace choice without selecting a candidate', async () => {
+  mocks.apiFetch.mockImplementation(
+    async () =>
+      new Response(
+        JSON.stringify({
+          status: 'choice-required',
+          ownerUserId: 'operator',
+          choices: [
+            {
+              asset,
+              title: '封面',
+              taskTitle: '原委托',
+              threadTitle: '画画',
+              match: 'legacy-ambiguous',
+            },
+          ],
+        }),
+      ),
   );
   await act(async () =>
     root.render(<ContentBlocks publication={publication} blocks={[{ type: 'image', url: '/uploads/a.png' }]} />),
   );
   await act(async () => container.querySelector('img')!.click());
+  await openExplicitWorkspace();
   expect(useChatStore.getState().workspaceOpenRequest?.target.kind).toBe('message-publication');
   expect(useF307ExperienceWorkbenchStore.getState().mainAreaAttentionSurfaceId).toBeNull();
 });

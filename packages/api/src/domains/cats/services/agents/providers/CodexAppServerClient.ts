@@ -533,15 +533,16 @@ export class CodexAppServerClient {
           handle,
           dispatch: async (dispatchInput, options) => {
             if (options.expectedInvocationId !== invocationId) {
-              return { accepted: false, reason: 'active_run_mismatch' };
+              return { accepted: false, reason: 'active_run_mismatch', acceptance: 'not_accepted' };
             }
             if (!activeRunDispatchOpen || activeThreadId !== threadId || activeTurnId !== handle.turnId) {
-              return { accepted: false, reason: 'active_run_closed' };
+              return { accepted: false, reason: 'active_run_closed', acceptance: 'not_accepted' };
             }
             const text = dispatchInput.text.trim();
             const imagePaths = dispatchInput.imagePaths?.filter((path) => path.length > 0) ?? [];
-            if (!text && imagePaths.length === 0) return { accepted: false, reason: 'invalid_input' };
-            const clientUserMessageId = randomUUID();
+            if (!text && imagePaths.length === 0)
+              return { accepted: false, reason: 'invalid_input', acceptance: 'not_accepted' };
+            const clientUserMessageId = dispatchInput.deliveryId ?? randomUUID();
             if (dispatchInput.onInputRead) {
               inputReadCallbacks.set(clientUserMessageId, {
                 turnId: handle.turnId,
@@ -562,12 +563,29 @@ export class CodexAppServerClient {
                 }),
               );
               if (result?.turnId === handle.turnId) return { accepted: true, handle };
-              inputReadCallbacks.delete(clientUserMessageId);
-              return { accepted: false, reason: 'active_run_mismatch' };
-            } catch {
-              inputReadCallbacks.delete(clientUserMessageId);
-              return { accepted: false, reason: 'provider_rejected' };
+              // The request crossed the provider boundary. Preserve exact consumption
+              // observation even when its response cannot confirm this turn.
+              return { accepted: false, reason: 'active_run_mismatch', acceptance: 'unknown' };
+            } catch (error) {
+              return {
+                accepted: false,
+                reason: error instanceof CodexAppServerRpcError ? 'provider_rejected' : 'exception',
+                acceptance: 'unknown',
+              };
             }
+          },
+          inspectInput: async (deliveryId) => {
+            const result = asCodexAppServerRecord(await this.request('thread/read', { threadId, includeTurns: true }));
+            const thread = asCodexAppServerRecord(result?.thread);
+            if (thread?.id !== threadId || !Array.isArray(thread.turns)) return 'unknown';
+            const turn = thread.turns.map(asCodexAppServerRecord).find((candidate) => candidate?.id === handle.turnId);
+            if (!Array.isArray(turn?.items)) return 'unknown';
+            return turn.items.some((value) => {
+              const item = asCodexAppServerRecord(value);
+              return item?.type === 'userMessage' && item.clientId === deliveryId;
+            })
+              ? 'accepted'
+              : 'unknown';
           },
         });
         if (typeof release === 'function') releaseActiveRunDispatch = release;

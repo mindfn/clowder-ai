@@ -57,10 +57,16 @@ for (const row of [
     readable: true,
   },
   {
-    name: 'connector ignores user-shaped intent',
+    name: 'connector exact parent',
+    source: 'connector',
+    intent: { requested: 'continue_current', boundParentInvocationId: 'live-parent' },
+    readable: true,
+  },
+  {
+    name: 'connector preserves its own next-work policy',
     source: 'connector',
     intent: { requested: 'next_work' },
-    readable: true,
+    readable: false,
   },
 ])
   test('C0 and the real full-read route share source permission: ' + row.name, async (t) => {

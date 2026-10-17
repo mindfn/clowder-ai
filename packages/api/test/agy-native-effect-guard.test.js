@@ -11,6 +11,39 @@ const cwd = '/tmp/ordinary-workspace';
 const options = { selfHost: () => ({ confidence: 'none' }) };
 const payload = (name, args) => ({ toolCall: { name, args }, workspacePaths: [cwd] });
 
+test('per-run data aliases keep native artifacts writable while control roots remain protected', () => {
+  const root = mkdtempSync(join(tmpdir(), 'native-artifact-alias-'));
+  const profileHome = join(root, 'profile');
+  const data = join(profileHome, '.gemini/antigravity-cli');
+  const runGemini = join(profileHome, '.cat-cafe-native-runs/run-fixture/.gemini');
+  mkdirSync(data, { recursive: true });
+  mkdirSync(runGemini, { recursive: true });
+  symlinkSync(data, join(runGemini, 'antigravity-cli'), 'dir');
+  try {
+    const artifact = join(runGemini, 'antigravity-cli/brain/conversation/task.md');
+    assert.equal(
+      decideAgyNativeHookPayload(payload('write_to_file', { TargetFile: artifact }), { ...options, profileHome })
+        .decision,
+      'allow',
+    );
+    for (const target of [
+      runGemini,
+      join(runGemini, 'config/hooks.json'),
+      join(runGemini, 'antigravity-cli/settings.json'),
+      join(runGemini, 'antigravity-cli/antigravity-oauth-token'),
+    ]) {
+      assert.equal(
+        decideAgyNativeHookPayload(payload('write_to_file', { TargetFile: target }), { ...options, profileHome })
+          .decision,
+        'deny',
+        target,
+      );
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('AGY effect decisions are the shared decisions for ordinary work and protected targets', () => {
   for (const command of [
     'node --test task.test.mjs',
@@ -146,6 +179,8 @@ test('AGY control targets follow shell directories, normalized paths and quoted 
       'rm -rf .agents',
       `rm -rf ${profileHome}/.gemini`,
       `printf x > ${profileHome}/.cat-cafe-native-turn.sqlite`,
+      `rm -rf ${profileHome}/.cat-cafe-native-runs`,
+      `printf x > ${profileHome}/.cat-cafe-native-runs/run-other/.gemini/config/hooks.json`,
     ]) {
       assert.equal(
         decideAgyNativeHookPayload(payload('run_command', { CommandLine: command, Cwd: root }), {

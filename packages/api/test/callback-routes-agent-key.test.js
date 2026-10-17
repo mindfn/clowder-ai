@@ -125,7 +125,7 @@ describe('Callback routes: agent-key auth path', () => {
       clientMessageId: 'agent-gallery-review',
       localReviewVerdict: 'approved',
       reviewedHeadSha: 'b'.repeat(40),
-      reviewSubjectRef: 'pr:zts212653/cat-cafe#5402',
+      reviewSubjectRef: 'pr:zts212653/clowder-ai#5402',
       acceptedSourceRef: 'thread_gallery#0001791732286388-000638-08ea8f11',
       acceptedRevision: '0001791732286388-000638-08ea8f11',
     };
@@ -185,7 +185,7 @@ describe('Callback routes: agent-key auth path', () => {
         clientMessageId: 'agent-audio-review',
         localReviewVerdict: 'approved',
         reviewedHeadSha: 'b'.repeat(40),
-        reviewSubjectRef: 'pr:zts212653/cat-cafe#5402',
+        reviewSubjectRef: 'pr:zts212653/clowder-ai#5402',
         acceptedSourceRef: 'thread_gallery#0001791732286388-000638-08ea8f11',
         acceptedRevision: '0001791732286388-000638-08ea8f11',
       };

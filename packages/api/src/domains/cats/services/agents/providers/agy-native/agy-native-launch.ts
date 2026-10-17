@@ -13,11 +13,14 @@ import { prepareAgyNativeCredentialFile } from './agy-native-credential-file.js'
 import { materializeAgyNativeEffectGuard } from './agy-native-effect-guard.js';
 import { AgyNativeResumeMismatchError } from './agy-native-errors.js';
 import { prepareAgyNativeInput } from './agy-native-input.js';
-import { materializeAgyNativeMcpConfig } from './agy-native-mcp-config.js';
+import { prepareAgyNativeKeychain } from './agy-native-keychain.js';
+import { executionOwnerEnv, isolatedOAuthEnv } from './agy-native-launch-env.js';
+import { materializeAgyNativeMcpConfig, validateAgyNativeAccountMcp } from './agy-native-mcp-config.js';
 import { type AgyNativePermissionMode, buildAgyNativePolicy } from './agy-native-policy.js';
 import { acquireAgyNativeProfileTurn, waitForAgyNativeProfileTurn } from './agy-native-profile-turn.js';
+import { createAgyNativeRunProfile } from './agy-native-run-profile.js';
 import { materializeAgyNativeSettings } from './agy-native-settings.js';
-import { materializeAgyNativeSkills } from './agy-native-skills.js';
+import { materializeAgyNativeSkills, retireAgyNativeLegacySkillAlias } from './agy-native-skills.js';
 import { AGY_NATIVE_MCP_TOOLS } from './agy-native-tools.js';
 
 export interface AgyNativeLaunchInput {
@@ -40,6 +43,7 @@ export interface AgyNativeLaunchPlan {
   readonly agentTools: readonly string[];
   readonly binding: Omit<NativeSessionBinding, 'cliSessionId'>;
   readonly resumeSessionId?: string;
+  readonly bindSession: (sessionId: string) => void;
   readonly disposeCredentials?: () => void;
 }
 
@@ -54,53 +58,6 @@ function assertNoUntrustedProfilePrograms(home: string): void {
 function containsPath(parent: string, child: string): boolean {
   const rel = relative(parent, child);
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-}
-
-function isolatedOAuthEnv(home: string): Record<string, string | null> {
-  return {
-    PATH: process.env.PATH ?? '/usr/bin:/bin',
-    LANG: process.env.LANG ?? 'en_US.UTF-8',
-    TMPDIR: process.env.TMPDIR ?? '/tmp',
-    TERM: 'dumb',
-    // Managed invocations must not mutate the installed carrier in the background.
-    AGY_CLI_DISABLE_AUTO_UPDATE: 'true',
-    HOME: home,
-    GEMINI_HOME: join(home, '.gemini'),
-    XDG_CONFIG_HOME: join(home, '.config'),
-    GEMINI_API_KEY: null,
-    GOOGLE_API_KEY: null,
-    GOOGLE_GENAI_USE_VERTEXAI: null,
-    GOOGLE_APPLICATION_CREDENTIALS: null,
-    GOOGLE_CLOUD_PROJECT: null,
-    GOOGLE_CLOUD_LOCATION: null,
-    CAT_CAFE_AGENT_KEY_SECRET: null,
-    CAT_CAFE_AGENT_KEY_FILE: null,
-    CAT_CAFE_AGENT_KEY_FILES: null,
-    CAT_CAFE_READONLY_AGENT_KEY_UNION: null,
-    CAT_CAFE_API_URL: null,
-    CAT_CAFE_INVOCATION_ID: null,
-    CAT_CAFE_CALLBACK_TOKEN: null,
-    CAT_CAFE_CREDENTIAL_FILE: null,
-    CAT_CAFE_NATIVE_TURN_CREDENTIAL_FILE: null,
-    CAT_CAFE_DESKTOP_MODE: null,
-    CAT_CAFE_MCP_PROFILE: null,
-    CAT_CAFE_READONLY: null,
-    CAT_CAFE_DEPLOYMENT_ID: process.env.CAT_CAFE_DEPLOYMENT_ID ?? null,
-    CAT_CAFE_RUNTIME_ROOT: process.env.CAT_CAFE_RUNTIME_ROOT ?? null,
-    CAT_CAFE_HOST_NODE_ID: process.env.CAT_CAFE_HOST_NODE_ID ?? null,
-  };
-}
-
-function executionOwnerEnv(options?: AgentServiceOptions): Record<string, string> {
-  const context = options?.auditContext;
-  if (!context) return {};
-  return {
-    CAT_CAFE_EXECUTION_ID: context.executionId ?? context.invocationId,
-    CAT_CAFE_INVOCATION_ID: context.invocationId,
-    CAT_CAFE_THREAD_ID: context.threadId,
-    CAT_CAFE_CAT_ID: context.catId,
-    CAT_CAFE_USER_ID: context.userId,
-  };
 }
 
 function assertOperatorTrustedWorkspace(config: AgyProfileConfig, workspaceRoot: string): void {
@@ -156,7 +113,8 @@ export async function prepareAgyNativeLaunch(input: AgyNativeLaunchInput): Promi
     autoApprove: input.profileConfig.autoApprove,
     readOnly: options?.toolExecutionPolicy?.mode === 'read_only',
   });
-  if (policy.permissionMode !== 'always-proceed')
+  // A per-turn restriction narrows tools; it does not revoke the operator's workspace admission.
+  if (input.profileConfig.autoApprove !== true)
     assertOperatorTrustedWorkspace(input.profileConfig, policy.workspaceRoot);
   const profile = resolveAgyProfile({
     materializeSettings: false,
@@ -172,21 +130,54 @@ export async function prepareAgyNativeLaunch(input: AgyNativeLaunchInput): Promi
   }
   assertNoUntrustedProfilePrograms(home);
   const ownerInvocationId = options?.auditContext?.invocationId ?? options?.invocationId;
-  const releaseProfile = input.controlOperation
-    ? acquireAgyNativeProfileTurn(home, ownerInvocationId)
-    : await waitForAgyNativeProfileTurn(home, ownerInvocationId, options?.signal);
+  const releaseProfile = await waitForAgyNativeProfileTurn(home, ownerInvocationId, options?.signal, {
+    preparation: true,
+  });
   let disposeCredentials: (() => void) | undefined;
+  let releaseSession: (() => void) | undefined;
+  let releaseStartup: (() => void) | undefined;
+  let runProfile: ReturnType<typeof createAgyNativeRunProfile> | undefined;
+  const dispose = () => {
+    try {
+      disposeCredentials?.();
+    } finally {
+      try {
+        runProfile?.dispose();
+      } finally {
+        try {
+          releaseSession?.();
+        } finally {
+          releaseStartup?.();
+          releaseProfile();
+        }
+      }
+    }
+  };
   try {
-    const agent = materializeAgyNativeAgentFile({
+    validateAgyNativeAccountMcp(home, findMonorepoRoot(process.cwd()));
+    // Transport overrides own their synthetic process/authentication boundary.
+    if (!options?.spawnCliOverride) await prepareAgyNativeKeychain({ profileHome: home });
+    // Shared settings are an account baseline, never the current turn's policy.
+    // CLI flags, the selected agent and this run's hook/MCP config own each turn.
+    materializeAgyNativeSettings({
       profileHome: home,
+      model: input.model,
+      policy: buildAgyNativePolicy({ workspaceRoot: input.workspace }),
+      retainTrustedWorkspaces: true,
+    });
+    retireAgyNativeLegacySkillAlias(home);
+    releaseProfile();
+    runProfile = createAgyNativeRunProfile(home);
+    const configHome = runProfile.home;
+    const agent = materializeAgyNativeAgentFile({
+      profileHome: configHome,
       catId: input.catId,
       systemPrompt: input.body,
       autoApprove: policy.permissionMode === 'always-proceed',
       tools: policy.agentTools,
     });
-    materializeAgyNativeSettings({ profileHome: home, model: input.model, policy });
     materializeAgyNativeEffectGuard({
-      profileHome: home,
+      profileHome: configHome,
       runtimeRoot: findMonorepoRoot(process.cwd()),
       readOnly: options?.toolExecutionPolicy?.mode === 'read_only',
     });
@@ -217,6 +208,12 @@ export async function prepareAgyNativeLaunch(input: AgyNativeLaunchInput): Promi
     if (options?.requireExactResume && !options.sessionId) {
       throw new AgyNativeResumeMismatchError('Native exact resume requires a session ID');
     }
+    const sessionScope = (conversationId: string) => ({ conversationId, runHome: configHome });
+    if (resume && options?.sessionId) {
+      releaseSession = input.controlOperation
+        ? acquireAgyNativeProfileTurn(home, ownerInvocationId, sessionScope(options.sessionId))
+        : await waitForAgyNativeProfileTurn(home, ownerInvocationId, options.signal, sessionScope(options.sessionId));
+    }
     const nativeInput = prepareAgyNativeInput(
       input.prompt,
       options?.contentBlocks,
@@ -224,11 +221,14 @@ export async function prepareAgyNativeLaunch(input: AgyNativeLaunchInput): Promi
       options?.uploadDir,
     );
     const skillDirectories = await materializeAgyNativeSkills({
-      profileHome: home,
+      profileHome: configHome,
       workspace: policy.workspaceRoot,
       runtimeRoot: findMonorepoRoot(process.cwd()),
+      canonicalOnly: true,
     });
     const args = [
+      `--gemini_dir=${runProfile.geminiDir}`,
+      `--app_data_dir=${runProfile.appDataDir}`,
       '--add-dir',
       policy.workspaceRoot,
       ...nativeInput.accessDirectories.flatMap((directory) => ['--add-dir', directory]),
@@ -275,7 +275,14 @@ export async function prepareAgyNativeLaunch(input: AgyNativeLaunchInput): Promi
       ...(options?.cliSessionId ? { cliSessionId: options.cliSessionId } : {}),
       ...(options?.parentSpan ? { parentSpan: options.parentSpan } : {}),
     };
-    disposeCredentials = await materializeTaskMcp(home, input, options?.callbackEnv);
+    disposeCredentials = await materializeTaskMcp(configHome, input, options?.callbackEnv);
+    // CLI 1.3.5 treats a concurrent index-open lock error as corruption and
+    // recreates the shared database. Fence startup until verified init, never
+    // model work. Acquire after the conversation lease so a same-session
+    // waiter cannot block unrelated conversations behind this account fence.
+    releaseStartup = await waitForAgyNativeProfileTurn(home, ownerInvocationId, options?.signal, {
+      runHome: configHome,
+    });
     return {
       cliOptions,
       preparedRequest,
@@ -296,20 +303,14 @@ export async function prepareAgyNativeLaunch(input: AgyNativeLaunchInput): Promi
         agentName: agent.agentName,
       },
       ...(resume && options?.sessionId ? { resumeSessionId: options.sessionId } : {}),
-      disposeCredentials: () => {
-        try {
-          disposeCredentials?.();
-        } finally {
-          releaseProfile();
-        }
+      bindSession: (sessionId) => {
+        releaseSession ??= acquireAgyNativeProfileTurn(home, ownerInvocationId, sessionScope(sessionId));
+        releaseStartup?.();
       },
+      disposeCredentials: dispose,
     };
   } catch (error) {
-    try {
-      disposeCredentials?.();
-    } finally {
-      releaseProfile();
-    }
+    dispose();
     throw error;
   }
 }

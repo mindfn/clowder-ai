@@ -101,7 +101,7 @@ describe('F322 new-shell Workspace home · 正在发生', () => {
       expect(rows[0]?.textContent).toContain('小太阳');
       expect(rows[0]?.textContent).toContain('当前对话');
       expect(rows[0]?.querySelector('.home-live-sub')?.textContent).toBe('当前对话 · 改窄屏设计稿');
-      expect(rows[0]?.querySelector('.home-live-status')?.textContent).toBe('正在回话');
+      expect(rows[0]?.querySelector('.home-live-status')?.textContent).toBe('处理中');
       expect(rows[0]?.querySelector('button')?.disabled).toBe(false);
 
       expect(rows[1]?.textContent).toContain('opus');

@@ -4,12 +4,12 @@ related_features: [F229, F258, F195, F202, F246, F295, F306, F309, F310]
 topics: [coactive, realtime, desktop-companion, gpt-live]
 doc_kind: spec
 created: 2026-09-15
-updated: 2026-10-14
+updated: 2026-10-16
 description: "让具名家猫通过实时感知与交谈、持续深思和行动，陪人跨应用共看、共听、互相指点，并接续共同经历。"
 description_source: model
 description_author: codex-astra
 description_updated_at: 2026-09-15T08:29:30Z
-tips_exempt: "Renewed 2026-10-14: front-desk response quality, timing, bounded native subagents and late-result returns refine the existing companion entry. Development/package receipts do not prove natural voice, household or shared-perception acceptance; no new general desktop entry is advertised. The 13:36 UTC update records host boot25 loading, the existing alpha.21 recovery and the existing plugin-details upgrade to alpha.24 still awaiting the owner; it does not establish a new entry or completed human trial. The public-test dependency audit adds no user operation and makes no new runtime or acceptance claim."
+tips_exempt: "Renewed 2026-10-16: parent verified the production Manager list/detail and real registry alpha.25 install on isolated named Alpha after PR5654. Actual Electron covers compose, lost-receipt recovery without duplicate execution, processing/completed separation, full long-body read and retain; B published alpha.26 for the confirmed lost-older-intent race, Host admission merged as PR5657 and parent verified the real named Alpha25-to-26 upgrade retaining the instance and disabled state. The actual native rerun failed at history entry: the visible list starts at scrollTop=0 and upward wheel produces no transcript scroll/older request. Original B is investigating; the parent separately corrected its one-page-versus-all-history test oracle. Whole native acceptance remains open. Daily boot35 still has alpha.24 crashed/revision104, observed before the new release and not attributed to it. No daily restart, upgrade, model/media activation or human trial is inferred; original human acceptance and 24–25/31 remain open."
 mcp_admission_status: accepted
 mcp_admission_ref: "file:docs/features/F317-coactive-companion.md"
 mcp_admission_claims:
@@ -31,7 +31,21 @@ mcp_admission_claims:
 
 Owner thread：`[thread-id]`；总任务沿用 `private-source-id`（按 `relatedFeatureId=F317` 查询）。正式安装入口与 Host 媒体边界已随 #4611 合入；第一批真实资料、非 GPT 深思及完整组合体验仍未验收，Phase/AC 不因工程合入提前关闭。workflow 沿用原记录；原任务属于源线程，未重复建任务。
 
-**最新交付（2026-10-13 13:36 UTC）**：source1351 的前台岗位、分段计时、受限原生 subagent 及使用记录、本人 Task 操作与迟到回告已随核心 #5439 / #5454 合入；公开 #76 / #78 / #79 已合入并实际发布 contract beta.27、SDK beta.23、companion alpha.24（含状态点呼吸）。部署回调已到：日常 boot25 / `e026e368c4` 包含最终 #5454，API/Web 就绪；插件恢复 running，但实际安装仍为 alpha.21。原 Task33 进入正常插件升级与真人验收：operator 从设置的猫猫球详情更新到 alpha.24 后亲自试聊，父不自动更新或开启模型/媒体。开发交付和宿主加载均不关闭真人验收或完整 Phase。详见下方「前台 harness 优化」的交付记录。
+**2026-10-16 已定方向：1.16 整组24–31**。You 在设计线程
+`[thread-id]#private-source-id` 对29「回复气泡」说「挺好的！！！」、
+对26「递信」说「也很好」，随后 `private-source-id` 要求找F317推进。
+随后 `private-source-id` 纠正设计方的窄记法：“我点评了啊？说猫猫球的都很好”。
+本线程设计交接1016由 `private-source-id` 更正为整组，父已直接核人类原话。
+先承接26输入、27已发送、28发送未确认、29完整回复、30留住与上翻的完整往返，见S6；
+24–25轻量通话与31主动凑近也已认可方向，分别见S7/S8，不再列为“人未点评”。
+原Task33负责能力核对、A/Host与B/公共包安排及组合验收；26–30代码已合入，隔离Alpha的alpha.25正式入口已走通，原生输入/递信/长回信/留住已有实物证据；历史修复包alpha.26与Host准入已合入，父在原Alpha正常25→26升级通过，完整原生复验仍未通过历史入口/上翻，已回原B核修；日常真人体验保持开放。
+31排在26–30之后，先核前台程序名采集、默认关闭的逐类许可和每日频率；方向认可不自动启用采集或媒体。
+设计 `37f8181e09` 已定气泡复用交互chat局部视图、保留12–14字幕入口、两种信分开及有界历史读取。
+把原发送绑定恢复、来源确认完成才收信、绑定正文版本的有界续读纳入原A/B首个合同单元；
+17项核心与33项公开包检查只是既有基线；本轮新行为的实装验证与限制见下方交付记录，实物验收仍待完成。
+实际合入并加载后回原设计线逐组对真桌面，再交You；既有Phase/AC与原真人体验不因此关闭。
+
+**上一轮宿主加载记录（2026-10-13 13:36 UTC）**：source1351 的前台岗位、分段计时、受限原生 subagent 及使用记录、本人 Task 操作与迟到回告已随核心 #5439 / #5454 合入；公开 #76 / #78 / #79 已合入并实际发布 contract beta.27、SDK beta.23、companion alpha.24（含状态点呼吸）。部署回调已到：日常 boot25 / `e026e368c4` 包含最终 #5454，API/Web 就绪；插件恢复 running，但实际安装仍为 alpha.21。这是当次观察，不作为本轮 alpha.25 已加载或升级的证明。开发交付和宿主加载均不关闭真人验收或完整 Phase。详见下方「前台 harness 优化」的交付记录。
 
 **2026-09-28 六线开工授权**：operator source `[thread-id]#private-source-id`
 A 桌面/通话由原 Sol6 现场续办，B 身体由原 Sol5.6 现场续办；新建 C 收件/长对话（Astra）、
@@ -179,6 +193,9 @@ F322 的“窄屏小把手”不再作为终态工作实施。当前遮挡证据
 | S3 | 中断与恢复 | operator与猫 | 断网/关闭伴随端 → 可辨状态 → 恢复连接 → 接回猫、上下文及未完工作 | 原身份和任务记录持续可查；没有重复执行或另建影子历史 |
 | S4 | 统一或替代猫猫球入口时的既有旅程 | operator与猫 | 从同一入口问功能/找旧讨论 → 原地看或准确跳转 → 经既有确认传话或调查 → 回到同一交流读取结果；按需打开文字与历史 | 对照上方能力基线与实际旧入口逐项验收，包含原记录、配置及刷新恢复 |
 | S5 | 桌面、记忆与协作的一段完整经历 | operator与当前具名猫 | 点猫直接语音 → 说“看这里”并共享明确桌面/窗口 → 问“这和上次的方案哪里不一样” → 猫用真实记忆搜索并回读原文，关联当前画面解释 → 人继续说/指并纠正 → 需要时把原话和来源送到已有 owner thread，接回追问/结果 → 暂停或断线后回到同一交流和未完工作 | 用户不用手工截屏搬运、找 thread 或转述；实际屏幕来源/时间、检索参数与源锚点、工具回执、跨线程原文及真实可听回复可对账；只讨论而不派工也可结束 |
+| S6 | 1.16猫旁文字与回复的一次完整往返（26–30） | operator与猫 | 未通话时点聊天 → 猫旁一行输入 → 后台接受后递信、显示已发送；未确认则退信并保留草稿、同ID重试 → 与这次发送可信关联的回复回来才收信 → 在气泡里读完整回复、留住、往上翻、回到最新 | 用户文字与语音转写不折叠；无关助手消息不能收掉信；已发送不冒充执行完成；圈/关闭/滚动实际可操作、长文和更早历史可读、新消息不拉走阅读位置；以真实Host/公开包配对和真桌面26–30对稿举证。能力核对和视觉收敛中的差异须先解决，不借本单元隐藏原麦克风/共享控制或新增主动采集。 |
+| S7 | 1.16轻量通话（24–25） | operator与猫 | 通话时常见猫、名牌和气泡 → 指向或点猫显示控件/输入 → 移开或Esc收起；输入/焦点/控件交互中不自动收起 | 麦克风状态一直可辨；共享中通话条、共享目标与停止共享常驻；hover只显示，不授权开通话/选屏；完整占位、键盘与直接挂断可用。方向已认可，须在26–30共用视图稳定后验证。 |
+| S8 | 1.16按明确偏好主动凑近（31） | operator与猫 | 主人主动打开默认关闭的开关 → 猫只依据前台程序名问一句 → 不理则收回；同程序每天最多一次 → 人点击后进入原通话和选屏流程 | 先核最窄名称采集及Host许可，不能顺带取窗口标题、URL、文档或屏幕内容；关闭后停采集/提示，未点击不启媒体，点击也不绕过原选屏/系统权限。沿F229安静默认与逐类opt-in，频率跨重启不重置，不借名牌开关扩大授权；排在26–30之后，未实现/未启用。 |
 
 ### 2026-09-24 现场反馈：三部分整合交付
 

@@ -25,7 +25,6 @@ async function fixture() {
     from: { kind: 'user', userId: 'owner' },
     userId: 'owner',
     threadId: thread.id,
-
     content: '开始听 Chrome',
     mentions: [],
     timestamp: Date.now(),
@@ -86,7 +85,6 @@ test('later direct owner input supersedes old consent; user speaking cannot admi
     from: { kind: 'user', userId: 'owner' },
     userId: 'owner',
     threadId: f.principal.threadId,
-
     content: '别录音',
     mentions: [],
     timestamp: Date.now(),

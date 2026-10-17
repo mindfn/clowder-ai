@@ -14,11 +14,11 @@ import { ArtifactFileNavigator } from './ArtifactFileNavigator';
 import { createArtifactReviewSurface, resolveArtifactReviewTarget } from './artifact-review-surface';
 import { CanonicalWorkspaceFileSurface } from './CanonicalWorkspaceFileSurface';
 import { ContentPublicationNavigator } from './ContentPublicationNavigator';
+import { useResolveContentSurface } from './ContentSurfaceResolution';
 import { ContentEditorOwnerSurface } from './content-editor/ContentEditorOwnerSurface';
 import { EvolutionContentReviewSurface } from './content-review/EvolutionContentReviewSurface';
 import { PublicationContentReviewSurface } from './content-review/PublicationContentReviewSurface';
 import { resolveEvolutionMediaTarget } from './evolution-media-surface';
-import { useF307ExperienceWorkbenchStore } from './experience-workbench-store';
 import { F307ArtifactOwnerSurface } from './F307ArtifactOwnerSurface';
 import { F307FileOwnerSurface } from './F307FileOwnerSurface';
 import { F307OwnerUnavailable as OwnerUnavailable } from './F307OwnerUnavailable';
@@ -90,6 +90,7 @@ function F307OwnerSurfaceContent({
   leadingAction,
   fullWindowAction,
 }: Omit<F307OwnerSurfaceRendererProps, 'surfaceVisible'> & { leadingAction?: ReactNode }) {
+  const resolveSurface = useResolveContentSurface(surface.id);
   const browserTarget = resolveBrowserTarget(surface);
   const returnToOrigin = () =>
     surface.navigationOrigin && onReturnToFileOrigin
@@ -191,11 +192,7 @@ function F307OwnerSurfaceContent({
         navigationOrigin={surface.navigationOrigin}
         fullWindowAction={fullWindowAction}
         onContextChange={(context) =>
-          useF307ExperienceWorkbenchStore.getState().dispatch({
-            type: 'resolve-content-surface',
-            sourceSurfaceId: surface.id,
-            surface: createArtifactReviewSurface(context.reviewId, context.threadId, context.title, context.round),
-          })
+          resolveSurface(createArtifactReviewSurface(context.reviewId, context.threadId, context.title, context.round))
         }
         onVersionChange={(round) =>
           onRefreshSurface({
@@ -241,11 +238,7 @@ function F307OwnerSurfaceContent({
           source={source}
           surface={surface}
           onBack={returnToOrigin}
-          onResolved={(resolved) =>
-            useF307ExperienceWorkbenchStore
-              .getState()
-              .dispatch({ type: 'resolve-content-surface', sourceSurfaceId: surface.id, surface: resolved })
-          }
+          onResolved={(resolved) => resolveSurface(resolved)}
         />
       ) : (
         <OwnerUnavailable message="原发布消息坐标已不可用。" />
@@ -259,11 +252,7 @@ function F307OwnerSurfaceContent({
           target={target}
           leadingAction={leadingAction}
           onBack={returnToOrigin}
-          onResolved={(resolved) =>
-            useF307ExperienceWorkbenchStore
-              .getState()
-              .dispatch({ type: 'resolve-content-surface', sourceSurfaceId: surface.id, surface: resolved })
-          }
+          onResolved={(resolved) => resolveSurface(resolved)}
         >
           <PublicationContentReviewSurface
             {...target}

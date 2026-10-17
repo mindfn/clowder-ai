@@ -3,7 +3,12 @@
 import type { ContextAttachment } from '@cat-cafe/shared';
 import { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { type UploadStatus, useSendMessage, type WhisperOptions } from '@/hooks/useSendMessage';
+import {
+  type SendMessageAdmissionOptions,
+  type UploadStatus,
+  useSendMessage,
+  type WhisperOptions,
+} from '@/hooks/useSendMessage';
 import { type Thread, useChatStore } from '@/stores/chatStore';
 import { ChatInput } from './ChatInput';
 import { PawIcon } from './icons/PawIcon';
@@ -20,6 +25,7 @@ interface SplitPaneViewProps {
     replyToId?: string,
     contextAttachments?: ContextAttachment[],
     explicitTargetCats?: string[],
+    options?: SendMessageAdmissionOptions,
   ) => void | boolean | Promise<void | boolean>;
   uploadStatus?: UploadStatus;
   uploadError?: string | null;
@@ -160,8 +166,16 @@ export function SplitPaneView({
             <ChatInput
               key={splitPaneTargetId ?? 'no-target'}
               threadId={splitPaneTargetId ?? undefined}
-              onSend={(content, images, whisper, replyToId, contextAttachments, explicitTargetCats) =>
-                contextAttachments?.length
+              onSend={(
+                content,
+                images,
+                whisper,
+                replyToId,
+                contextAttachments,
+                explicitTargetCats,
+                messageDisposition,
+              ) =>
+                messageDisposition
                   ? onSend(
                       content,
                       images,
@@ -170,16 +184,27 @@ export function SplitPaneView({
                       replyToId,
                       contextAttachments,
                       explicitTargetCats,
+                      { messageDisposition },
                     )
-                  : onSend(
-                      content,
-                      images,
-                      splitPaneTargetId ?? undefined,
-                      whisper,
-                      replyToId,
-                      undefined,
-                      explicitTargetCats,
-                    )
+                  : contextAttachments?.length
+                    ? onSend(
+                        content,
+                        images,
+                        splitPaneTargetId ?? undefined,
+                        whisper,
+                        replyToId,
+                        contextAttachments,
+                        explicitTargetCats,
+                      )
+                    : onSend(
+                        content,
+                        images,
+                        splitPaneTargetId ?? undefined,
+                        whisper,
+                        replyToId,
+                        undefined,
+                        explicitTargetCats,
+                      )
               }
               disabled={!splitPaneTargetId || isReadonly}
               uploadStatus={uploadStatus}

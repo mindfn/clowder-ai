@@ -106,7 +106,7 @@ export function withVerdictGhGuardEnv<T extends Record<string, string | null | u
   }
   if (!mutable.CAT_CAFE_VERDICT_REPO_FULL_NAME) {
     mutable.CAT_CAFE_VERDICT_REPO_FULL_NAME =
-      process.env.CAT_CAFE_VERDICT_REPO_FULL_NAME ?? process.env.CAT_CAFE_REPO_FULL_NAME ?? 'zts212653/cat-cafe';
+      process.env.CAT_CAFE_VERDICT_REPO_FULL_NAME ?? process.env.CAT_CAFE_REPO_FULL_NAME ?? 'zts212653/clowder-ai';
   }
   return env;
 }
@@ -494,6 +494,10 @@ export async function* spawnCli(
   const stdoutDrain = child.stdout ? new CliExitOutputDrain(child.stdout) : undefined;
   let exitDrainTimer: ReturnType<typeof setTimeout> | undefined;
   let exitObserved = false;
+  let resolveProcessExit!: () => void;
+  const processExit = new Promise<void>((resolve) => {
+    resolveProcessExit = resolve;
+  });
   let resolveExitDrain!: () => void;
   const exitDrainComplete = new Promise<void>((resolve) => {
     resolveExitDrain = resolve;
@@ -501,6 +505,7 @@ export async function* spawnCli(
   const observeProcessExit = (): void => {
     if (exitObserved) return;
     exitObserved = true;
+    resolveProcessExit();
     stdoutDrain?.start();
     exitDrainTimer = setTimeout(() => {
       stdoutDrain?.finish();
@@ -718,6 +723,7 @@ export async function* spawnCli(
     finalStage: terminationController.getFinalStage(),
   });
 
+  let streamCompleted = false;
   try {
     if (!stdoutDrain) {
       throw new Error(`CLI process ${options.command} has no stdout`);
@@ -1169,7 +1175,16 @@ export async function* spawnCli(
         cliDiagnostics,
       };
     }
+    streamCompleted = true;
   } finally {
+    if (!streamCompleted) {
+      // Protocol rejection/consumer return bypasses the normal drain below the
+      // yield loop. Keep caller-owned credentials and leases alive until the
+      // supervised process exits; sending SIGTERM/SIGKILL is not exit evidence.
+      // Wait for OS exit, not inherited stdio, which may remain open afterward.
+      killChild();
+      if (!childExited) await processExit;
+    }
     if (exitDrainTimer) clearTimeout(exitDrainTimer);
     stdoutDrain?.dispose();
     drainBufferedStderr();

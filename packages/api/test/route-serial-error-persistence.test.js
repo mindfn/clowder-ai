@@ -596,18 +596,78 @@ describe('route-serial error persistence (F5 reload)', () => {
     assert.ok(errorAppend, 'terminal failure still surfaces as system error');
   });
 
-  // Structural regression: only a completed lifecycle response may commit its
-  // durable A2A wake admission.
-  it('F212 cloud R3 P1 structural: lifecycle A2A admission remains gated on provider success', async () => {
-    const { readFileSync } = await import('node:fs');
-    const { fileURLToPath } = await import('node:url');
-    const { dirname, resolve } = await import('node:path');
-    const here = dirname(fileURLToPath(import.meta.url));
-    const source = readFileSync(resolve(here, '../src/domains/cats/services/agents/routing/route-serial.ts'), 'utf8');
-
-    const cloudR3P1Match = source.match(
-      /lifecycleResponse\?\.status\s*===\s*'completed'\s*&&\s*a2aMentions\.length\s*>\s*0/,
-    );
-    assert.ok(cloudR3P1Match, 'Cloud R3 P1: durable A2A admission MUST require a completed response');
-  });
+  for (const fails of [false, true]) {
+    it(`F212 lifecycle A2A admission follows the persisted provider outcome: failure=${fails}`, async () => {
+      const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+      const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+      const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+      const { commitCompletedResponseAndEnqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.js');
+      const { appendTestLifecycleResponseSource } = await import('./helpers/message-from-fixtures.js');
+      const messages = new MessageStore();
+      const queue = new InvocationQueue();
+      const body = 'Handoff content\n@opus please continue';
+      const service = {
+        async *invoke() {
+          yield { type: 'text', catId: 'codex', content: body, timestamp: Date.now() };
+          if (fails) yield { type: 'error', catId: 'codex', error: 'provider failed', timestamp: Date.now() };
+          yield { type: 'done', catId: 'codex', timestamp: Date.now() };
+        },
+      };
+      const deps = createMockDeps({ codex: service }, []);
+      deps.messageStore = messages;
+      const persistenceContext = { errors: [], failed: false };
+      let responseId;
+      for await (const _ of routeSerial(deps, ['codex'], 'work', 'user1', 'thread1', {
+        parentInvocationId: 'completed-response-parent',
+        persistenceContext,
+        onLifecycleInvocationStarted: async (input) => {
+          const response = await appendTestLifecycleResponseSource(messages, {
+            invocationId: input.invocationId,
+            catId: input.catId,
+            threadId: input.threadId,
+            userId: input.userId,
+            timestamp: input.startedAt,
+          });
+          responseId = response.id;
+          return {
+            responseMessageId: response.id,
+            priorFrontierMessageId: null,
+            activeRun: {
+              threadId: input.threadId,
+              targetId: input.catId,
+              invocationId: input.invocationId,
+              responseMessageId: response.id,
+              inputEntryIds: [],
+              inputMessageIds: [],
+              privateInputEntryIds: [],
+              startedAt: input.startedAt,
+            },
+          };
+        },
+        commitCompletedA2AWake: (input) =>
+          commitCompletedResponseAndEnqueueA2ATargets(
+            {
+              messageStore: messages,
+              invocationQueue: queue,
+              queueProcessor: { async requestDrain() {} },
+              socketManager: { emitToUser() {}, broadcastAgentMessage() {} },
+              log: { info() {}, warn() {}, error() {} },
+            },
+            input,
+          ),
+      })) {
+        void _;
+      }
+      assert.deepEqual(persistenceContext.errors, []);
+      const response = await messages.getById(responseId);
+      assert.equal(response.lifecycle.status, fails ? 'failed' : 'completed');
+      assert.ok(response.content.includes(body), 'the same persisted response retains its actual content');
+      const pending = await queue.listAllDurable('thread1');
+      assert.equal(pending.length, fails ? 0 : 1, 'only successful content may admit a downstream wake');
+      if (!fails) {
+        assert.equal(pending[0].payload.sourceRecordId, responseId);
+        assert.deepEqual(pending[0].targets, ['opus']);
+      }
+    });
+  }
 });

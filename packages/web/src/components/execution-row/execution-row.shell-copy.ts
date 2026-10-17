@@ -4,7 +4,7 @@ export const executionRowCopy = defineShellCopy(
   {
     zh: {
       status: {
-        working: (who: string, clock: string, tail: string): string => `${who} 正在回话${clock}${tail}`,
+        working: (who: string, clock: string, tail: string): string => `${who} 处理中${clock}${tail}`,
         running: (count: number, tail: string): string => `${count} 项运行中${tail}`,
         managed: (who: string, activity: string, clock: string, tail: string): string =>
           `${who} 在跑${activity}${clock}${tail}`,
@@ -23,7 +23,7 @@ export const executionRowCopy = defineShellCopy(
         quietUnknown: '没有动静',
       },
       compact: {
-        working: '正在回话',
+        working: '处理中',
         managed: (activity: string): string => `在跑${activity}`,
         stopping: '正在停止',
         silent: '没动静',
@@ -79,7 +79,7 @@ export const executionRowCopy = defineShellCopy(
     },
     en: {
       status: {
-        working: (who: string, clock: string, tail: string): string => `${who} replying${clock}${tail}`,
+        working: (who: string, clock: string, tail: string): string => `${who} working${clock}${tail}`,
         running: (count: number, tail: string): string => `${count} running${tail}`,
         managed: (who: string, activity: string, clock: string, tail: string): string =>
           `${who} running ${activity.toLowerCase()}${clock}${tail}`,
@@ -98,7 +98,7 @@ export const executionRowCopy = defineShellCopy(
         quietUnknown: 'No activity',
       },
       compact: {
-        working: 'Replying',
+        working: 'Working',
         managed: (activity: string): string => `Running ${activity.toLowerCase()}`,
         stopping: 'Stopping',
         silent: 'Quiet',

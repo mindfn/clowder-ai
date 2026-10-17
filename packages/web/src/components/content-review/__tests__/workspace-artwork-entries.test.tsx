@@ -20,7 +20,7 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear();
   writeShellPresentation('v2');
-  mocks.apiFetch.mockReset().mockResolvedValue(new Response(JSON.stringify({ path, mime: 'image/png' })));
+  mocks.apiFetch.mockReset().mockImplementation(async () => new Response(JSON.stringify({ path, mime: 'image/png' })));
   useChatStore.setState({ currentThreadId: 'host-thread', workspaceOpenRequest: null });
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -59,16 +59,26 @@ async function render(kind: 'gallery' | 'content-image' | 'content-video' | 'ric
   });
 }
 
+async function openExplicitWorkspace() {
+  expect(useChatStore.getState().workspaceOpenRequest).toBeNull();
+  const dialog = document.querySelector('[role="dialog"]');
+  expect(dialog).not.toBeNull();
+  const action = dialog?.querySelector<HTMLButtonElement>('[data-testid="lightbox-open-workspace"]');
+  expect(action).toBeTruthy();
+  await act(async () => action?.click());
+}
+
 it.each([
   'gallery',
   'content-image',
   'content-video',
   'rich-video',
-] as const)('v2 %s verifies the raw file and opens its exact owner with the chat return', async (kind) => {
+] as const)('v2 %s verifies the raw file, floats it, and keeps its exact owner and Chat return for explicit Workspace', async (kind) => {
   await render(kind);
   await act(async () => container.querySelector<HTMLButtonElement>('button')!.click());
   const request = mocks.apiFetch.mock.calls[0]?.[0];
   expect(request).toBe(`/api/workspace/file?${new URLSearchParams({ worktreeId: 'wt-a', path })}`);
+  await openExplicitWorkspace();
   expect(useChatStore.getState().workspaceOpenRequest?.target).toEqual({
     kind: 'file',
     worktreeId: 'wt-a',
@@ -81,6 +91,7 @@ it.each([
 it('accepts the configured API origin without treating another host as a local file', async () => {
   await render('gallery', `http://api.test${rawUrl}`);
   await act(async () => container.querySelector<HTMLButtonElement>('button')!.click());
+  await openExplicitWorkspace();
   expect(useChatStore.getState().workspaceOpenRequest?.target.kind).toBe('file');
 });
 
@@ -157,10 +168,13 @@ it.each([
 });
 
 it('a supported raw MP4 uses its workspace owner', async () => {
-  mocks.apiFetch.mockResolvedValue(new Response(JSON.stringify({ path: 'art/clip.mp4', mime: 'video/mp4' })));
+  mocks.apiFetch.mockImplementation(
+    async () => new Response(JSON.stringify({ path: 'art/clip.mp4', mime: 'video/mp4' })),
+  );
   const url = `/api/workspace/file/raw?${new URLSearchParams({ worktreeId: 'wt-a', path: 'art/clip.mp4' })}`;
   await render('rich-video', url);
   await act(async () => container.querySelector<HTMLButtonElement>('button')!.click());
+  await openExplicitWorkspace();
   expect(useChatStore.getState().workspaceOpenRequest?.target).toMatchObject({ kind: 'file', path: 'art/clip.mp4' });
 });
 
@@ -203,8 +217,8 @@ it.each([
   }
 });
 
-it('an unsupported raw image previews without promising annotations', async () => {
-  mocks.apiFetch.mockResolvedValue(new Response(JSON.stringify({ path, mime: 'image/jpeg' })));
+it('an unsupported GIF previews without promising annotations', async () => {
+  mocks.apiFetch.mockResolvedValue(new Response(JSON.stringify({ path, mime: 'image/gif' })));
   await render('gallery');
   await act(async () => container.querySelector<HTMLButtonElement>('button')!.click());
   expect(useChatStore.getState().workspaceOpenRequest).toBeNull();
@@ -231,6 +245,7 @@ it('a raw item folded from another message returns to that original message', as
     ),
   );
   await act(async () => container.querySelector<HTMLButtonElement>('button')!.click());
+  await openExplicitWorkspace();
   const target = useChatStore.getState().workspaceOpenRequest?.target;
   expect(target?.kind).toBe('file');
   if (target?.kind !== 'file') throw new Error('missing workspace owner');

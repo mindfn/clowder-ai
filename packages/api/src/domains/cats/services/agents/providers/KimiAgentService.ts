@@ -228,6 +228,10 @@ export class KimiAgentService implements AgentService {
           if (stored === l0Fingerprint) {
             effectiveResumeSessionId = options.sessionId;
           } else {
+            if (options.requireExactResume)
+              throw new Error(
+                'Exact Kimi resume requires the original verified current identity; refusing a fresh session',
+              );
             freshStartReason = stored === undefined ? 'unverifiable' : 'stale';
             rejectedResumeSessionId = options.sessionId;
           }

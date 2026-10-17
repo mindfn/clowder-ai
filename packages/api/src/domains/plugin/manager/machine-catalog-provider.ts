@@ -6,7 +6,7 @@ import {
   compareOfficialPluginVersions,
   type OfficialPluginCatalogProvider,
   type OfficialPluginCatalogSnapshot,
-} from '../official-catalog-provider.js';
+} from './official-catalog-provider.js';
 
 export const OFFICIAL_PLUGIN_CATALOG_URL =
   'https://raw.githubusercontent.com/zts212653/clowder-ai-plugins/main/catalog/catalog.json';
@@ -143,7 +143,7 @@ export function resolveLocalPluginEffectiveGrants(
 
 function projectEntry(
   plugin: ValidatedMachineCatalog['plugins'][number],
-  policy: MachineCatalogHostPolicy,
+  policy: MachineCatalogHostPolicy | undefined,
 ): OfficialPluginCatalogEntry | undefined {
   const release = plugin.versions.reduce<(typeof plugin.versions)[number] | undefined>((latest, candidate) => {
     if (!latest) return candidate;
@@ -159,7 +159,7 @@ function projectEntry(
     distribution: 'registry',
     archiveUrl: release.artifact.tarballUrl,
     packageDigest: release.artifact.integrity,
-    effectiveGrants: policy.effectiveGrants,
+    effectiveGrants: policy?.effectiveGrants ?? [],
     presentation: {
       displayName: plugin.name,
       description: plugin.description,
@@ -229,7 +229,7 @@ export class MachineOfficialPluginCatalog implements OfficialPluginCatalogProvid
     const entries: OfficialPluginCatalogEntry[] = [];
     for (const plugin of validation.catalog.plugins) {
       const policy = this.policies.get(plugin.pluginId);
-      if (!policy) continue;
+      // Discovery is catalog-owned. An unknown identity receives no Host authority.
       const entry = projectEntry(plugin, policy);
       if (entry) entries.push(entry);
     }

@@ -381,7 +381,6 @@ export class AcpAgentService implements AgentService {
     const MAX_SCRATCHPAD_SUPPRESSED_EVENTS = 50;
 
     try {
-      // #712 P1-1: resolve MCP servers at invoke time from capabilities.json
       // Read once before any session/prompt. All retries reuse the same complete image bytes.
       const imageBlocks = await readAcpImageBlocks(
         options?.contentBlocks,
@@ -390,6 +389,7 @@ export class AcpAgentService implements AgentService {
         options?.uploadDir,
         options?.resolveTrustedImagePath,
       );
+      // #712 P1-1: resolve MCP servers at invoke time from capabilities.json
       // so capability toggles take effect immediately without registry rebuild.
       // P1-2: check project-local capabilities.json first, fall back to runtime root.
       const userProjectRoot = options?.workingDirectory;

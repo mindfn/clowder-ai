@@ -36,7 +36,7 @@ async function harness({
   effectiveGrants,
 } = {}) {
   const projectRoot = await root('cat-cafe-f202-manager-composition-');
-  const archive = await packageArchive({ packageManifest, extraFiles });
+  let archive = await packageArchive({ packageManifest, extraFiles });
   const entry = catalogEntry(archive.integrity, {
     pluginId: packageManifest.pluginId,
     version: packageManifest.version,
@@ -79,7 +79,19 @@ async function harness({
     fetchOfficialArchive: async () => archive.bytes,
     now: () => 9_000,
   });
-  return { archive, composition, entry, projectRoot, provider, runtime };
+  return {
+    archive,
+    composition,
+    entry,
+    projectRoot,
+    provider,
+    runtime,
+    async setRelease(nextManifest, nextFiles) {
+      archive = await packageArchive({ packageManifest: nextManifest, extraFiles: nextFiles });
+      Object.assign(entry, { version: nextManifest.version, packageDigest: archive.integrity });
+      Object.assign(packageManifest, nextManifest);
+    },
+  };
 }
 
 function contributionContractRuntime() {
@@ -584,8 +596,10 @@ export default {
     await composition.manager.uninstall(entry.pluginId, { expectedRevision: disabled.lifecycleRevision });
   });
 
-  for (const failOld of [false, true]) {
-    it(`HTTP replacement with a throwing real module restores old package (old restart fails: ${failOld})`, async () => {
+  for (const { failOld, sourceKind } of [false, true].flatMap((failOld) =>
+    ['local-directory', 'catalog'].map((sourceKind) => ({ failOld, sourceKind })),
+  )) {
+    it(`HTTP ${sourceKind} replacement with a throwing real module restores old package (old restart fails: ${failOld})`, async () => {
       const packageManifest = manifest({
         runtime: { transport: 'builtin', entrypoint: 'dist/entrypoint.js' },
         configuration: [{ key: 'ownerValue', label: 'Owner value', kind: 'string', required: false }],
@@ -597,7 +611,7 @@ export default { create() { return { async start() {
   if (existsSync(${JSON.stringify(failureMarker)})) throw new Error('old runtime recovery fixture failure');
   return { actions: { 'self.test': async () => ({ ok: true }) }, stop() {} };
 } }; } };`;
-      const { composition, entry, runtime, projectRoot } = await harness({
+      const { composition, entry, runtime, projectRoot, setRelease } = await harness({
         packageManifest,
         contract: contributionContractRuntime(),
         extraFiles: { 'dist/entrypoint.js': entrypoint },
@@ -639,11 +653,24 @@ export default { create() { return { async start() {
           join(directory, 'dist/entrypoint.js'),
           `export default { create() { return { async start() { throw new Error('new runtime fixture failure'); } }; } };`,
         );
+        let payload = { source: { kind: 'local-directory', path: directory } };
+        if (sourceKind === 'catalog') {
+          await setRelease(
+            { ...packageManifest, version: '0.1.0-alpha.2' },
+            {
+              'dist/entrypoint.js': await readFile(join(directory, 'dist/entrypoint.js'), 'utf8'),
+            },
+          );
+          const detail = (await composition.manager.get(entry.pluginId)).plugin;
+          const selected = detail.installSources.find((item) => item.request.source.kind === 'catalog');
+          assert.ok(selected);
+          payload = selected.request;
+        }
         const response = await app.inject({
           method: 'POST',
           url: '/api/plugin-manager/plugins/install',
           headers: { host: 'localhost:3004', origin: 'http://localhost:5173' },
-          payload: { source: { kind: 'local-directory', path: directory } },
+          payload,
         });
         assert.equal(response.statusCode, 503, response.body);
         assert.equal(response.json().code, failOld ? 'UPDATE_ROLLBACK_RESUME_FAILED' : 'UPDATE_RESUME_FAILED');

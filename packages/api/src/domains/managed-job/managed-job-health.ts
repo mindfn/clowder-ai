@@ -36,6 +36,14 @@ export function summarizeManagedJobHealth(
   const tokens = new Set(
     history.flatMap((entry) => (typeof entry.attemptToken === 'string' ? [entry.attemptToken] : [])),
   );
+  const epochs = new Map<number, Set<string>>();
+  for (const entry of history) {
+    if (typeof entry.attemptToken !== 'string') continue;
+    const epoch = number(entry.attemptResumeEpoch);
+    const attempts = epochs.get(epoch) ?? new Set<string>();
+    attempts.add(entry.attemptToken);
+    epochs.set(epoch, attempts);
+  }
   const terminal = latest.state === 'terminal';
   const status =
     latest.terminalStatus === 'green'
@@ -57,7 +65,7 @@ export function summarizeManagedJobHealth(
         ? Math.max(0, now - number(started.updatedAt))
         : 0,
     logBytes: number(record(result.log).bytes),
-    duplicateAttempts: Math.max(0, tokens.size - 1),
+    duplicateAttempts: [...epochs.values()].reduce((total, attempts) => total + Math.max(0, attempts.size - 1), 0),
     unresolvedExecution: !terminal && inspection === 'pending' && tokens.size > 0 && latest.cleanupProven !== true,
     userMessageCancellation: record(latest.cancel).reason === 'user_message',
   };

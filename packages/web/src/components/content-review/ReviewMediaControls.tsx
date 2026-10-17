@@ -9,6 +9,7 @@ export function ReviewMediaControls({
   selected,
   canAnnotate,
   src,
+  download,
   error,
   selectionActive,
   selecting,
@@ -24,6 +25,7 @@ export function ReviewMediaControls({
   selected: ArtifactReviewAnchor | null;
   canAnnotate: boolean;
   src: string | null;
+  download?: { src: string | null; filename: string };
   error: string | null;
   selectionActive: boolean;
   selecting: boolean;
@@ -55,8 +57,8 @@ export function ReviewMediaControls({
         {src ? (
           <a
             className="text-xs text-cafe-muted underline"
-            href={src}
-            download={`review-version-${round}.${media.kind === 'image' ? 'png' : 'mp4'}`}
+            href={download?.src ?? src}
+            download={download?.filename ?? `review-version-${round}.${media.kind === 'image' ? 'png' : 'mp4'}`}
           >
             下载原文件
           </a>

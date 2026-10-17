@@ -297,7 +297,7 @@ describe('F307 File owner collaboration entry', () => {
       ),
     );
     expect(container.querySelector('h2')?.textContent).toBe('notes.md');
-    const back = [...container.querySelectorAll('button')].find((button) => button.textContent === '返回来源');
+    const back = [...container.querySelectorAll('button')].find((button) => button.textContent === '‹ 工具搜索');
     expect(back).toBeTruthy();
     await act(async () => back!.click());
     expect(onReturn).toHaveBeenCalledWith(origin);
@@ -338,7 +338,7 @@ describe('F307 File owner collaboration entry', () => {
       ),
     );
     expect(container.querySelector('h2')?.textContent).toBe('说明书.docx');
-    const back = [...container.querySelectorAll('button')].find((button) => button.textContent === '返回来源');
+    const back = [...container.querySelectorAll('button')].find((button) => button.textContent === '‹ 工具搜索');
     expect(back).toBeTruthy();
     await act(async () => back!.click());
     expect(onReturn).toHaveBeenCalledWith(origin);

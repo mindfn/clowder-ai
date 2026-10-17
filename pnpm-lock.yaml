@@ -45,8 +45,8 @@ importers:
         specifier: workspace:*
         version: link:../shared
       '@clowder-ai/plugin-contract':
-        specifier: file:vendor/clowder-ai-plugin-contract-0.1.0-beta.36-c1-9877be53c6db.tgz
-        version: file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.36-c1-9877be53c6db.tgz
+        specifier: file:vendor/clowder-ai-plugin-contract-0.1.0-beta.36-c1-2bf1c82b63b0.tgz
+        version: file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.36-c1-2bf1c82b63b0.tgz
       '@clowder-ai/plugin-contract-beta21':
         specifier: npm:@clowder-ai/plugin-contract@0.1.0-beta.21
         version: '@clowder-ai/plugin-contract@0.1.0-beta.21'
@@ -62,6 +62,9 @@ importers:
       '@clowder-ai/plugin-contract-beta27':
         specifier: npm:@clowder-ai/plugin-contract@0.1.0-beta.27
         version: '@clowder-ai/plugin-contract@0.1.0-beta.27'
+      '@clowder-ai/plugin-contract-beta28':
+        specifier: npm:@clowder-ai/plugin-contract@0.1.0-beta.28
+        version: '@clowder-ai/plugin-contract@0.1.0-beta.28'
       '@clowder-ai/plugin-sdk':
         specifier: 0.1.0-beta.17
         version: 0.1.0-beta.17
@@ -204,6 +207,9 @@ importers:
       '@clowder-ai/plugin-sdk-beta23':
         specifier: npm:@clowder-ai/plugin-sdk@0.1.0-beta.23
         version: '@clowder-ai/plugin-sdk@0.1.0-beta.23'
+      '@clowder-ai/plugin-sdk-beta24':
+        specifier: npm:@clowder-ai/plugin-sdk@0.1.0-beta.24
+        version: '@clowder-ai/plugin-sdk@0.1.0-beta.24'
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
@@ -1176,8 +1182,12 @@ packages:
     resolution: {integrity: sha512-9OUPBpJXcIcHXVaUCi90l8shJEVFhA1+bpLVwvwqmGPlJovLjVeAqql2D+vxG7Qpc2/CYlsOa0jdpvgu2gIiSQ==}
     engines: {node: '>=20.0.0'}
 
-  '@clowder-ai/plugin-contract@file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.36-c1-9877be53c6db.tgz':
-    resolution: {integrity: sha512-rpEeUwTRfeANUNe1N6f2dKnXwXH58ZR14LOgjjshhIGMLZpg+mF01KwRJTyrA4j4bzQNkdXICpVkSBsnYcQpfw==, tarball: file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.36-c1-9877be53c6db.tgz}
+  '@clowder-ai/plugin-contract@0.1.0-beta.28':
+    resolution: {integrity: sha512-wIJBueBq+776PyTY3D0zGliUV0iJQV3WxY10CIO2Xx+Td/OUvPz2KHNkdwdIGjtgQIfwMJgzibn8b8+jWA0p7g==}
+    engines: {node: '>=20.0.0'}
+
+  '@clowder-ai/plugin-contract@file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.36-c1-2bf1c82b63b0.tgz':
+    resolution: {integrity: sha512-xZl3vj5b3jPOP+7wrP6sk3w8CK4nWMg0NJLvQeDJNHzY0GAgeMFkVuf+OSaunJ2IxYLLFYekGQLSc2lpoQAYNQ==, tarball: file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.36-c1-2bf1c82b63b0.tgz}
     version: 0.1.0-beta.36
     engines: {node: '>=20.0.0'}
 
@@ -1187,6 +1197,10 @@ packages:
 
   '@clowder-ai/plugin-sdk@0.1.0-beta.23':
     resolution: {integrity: sha512-LhdJecUUvrBnzqEP82blpw24Fx9ahU277J6zntkoDj/ACDByo5WtRzlSDm7IX8LL1Hnbwr/kMzSNLrr6AxweLg==}
+    engines: {node: '>=20.0.0'}
+
+  '@clowder-ai/plugin-sdk@0.1.0-beta.24':
+    resolution: {integrity: sha512-U8mi9/ng4uqSBSC42dj/cGuZ4gqv9EkQ+6CZlKrnRyJkpsnA/W9rgsTcbUXZbikTJwEHGrzdvw+6X7/yLPkoWw==}
     engines: {node: '>=20.0.0'}
 
   '@codemirror/autocomplete@6.20.1':
@@ -7629,7 +7643,12 @@ snapshots:
       ajv: 8.17.1
       ajv-formats: 3.0.1(ajv@8.17.1)
 
-  '@clowder-ai/plugin-contract@file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.36-c1-9877be53c6db.tgz':
+  '@clowder-ai/plugin-contract@0.1.0-beta.28':
+    dependencies:
+      ajv: 8.17.1
+      ajv-formats: 3.0.1(ajv@8.17.1)
+
+  '@clowder-ai/plugin-contract@file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.36-c1-2bf1c82b63b0.tgz':
     dependencies:
       ajv: 8.17.1
       ajv-formats: 3.0.1(ajv@8.17.1)
@@ -7641,6 +7660,10 @@ snapshots:
   '@clowder-ai/plugin-sdk@0.1.0-beta.23':
     dependencies:
       '@clowder-ai/plugin-contract': 0.1.0-beta.27
+
+  '@clowder-ai/plugin-sdk@0.1.0-beta.24':
+    dependencies:
+      '@clowder-ai/plugin-contract': 0.1.0-beta.28
 
   '@codemirror/autocomplete@6.20.1':
     dependencies:

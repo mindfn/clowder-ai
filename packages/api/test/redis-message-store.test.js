@@ -747,7 +747,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
       v: 1,
       producer: 'github_ci',
       producerProvenance: 'server_github_ci',
-      repoFullName: 'zts212653/cat-cafe',
+      repoFullName: 'zts212653/clowder-ai',
       prNumber: 3276,
       headSha: 'b'.repeat(40),
       phase: 'merge_gate',
@@ -872,13 +872,14 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
   });
 
   // F202 W2-5b: the extra parser is a whitelist, so a marker it does not know is dropped on read.
-  // Cat replies reach Redis through the frontier writes, so all three entrypoints must keep it.
+  // Current append paths must preserve this marker; the removed frontier-CAS API is not a consumer.
   it('all Redis append entrypoints round-trip the deferred media publication marker', async () => {
     const appenders = [
       ['append', async (target, message) => target.append(message)],
       [
-        'appendIfThreadFrontier',
-        async (target, message) => (await target.appendIfThreadFrontier(message, null)).message,
+        'appendIdempotent',
+        async (target, message) =>
+          (await target.appendIdempotent({ ...message, idempotencyKey: 'media-marker' })).message,
       ],
       [
         'appendAndObservePriorFrontier',
@@ -889,7 +890,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     for (const [name, append] of appenders) {
       const stored = await append(markerStore, {
         userId: 'user1',
-        catId: 'opus',
+        from: { kind: 'agent', catId: 'opus' },
         content: `${name} voice reply`,
         mentions: [],
         timestamp: Date.now(),
@@ -1486,7 +1487,7 @@ describe('RedisMessageStore', { skip: redisIsolationSkipReason(REDIS_URL) }, () 
     const reservedId = generateSortableId(timestamp);
     const input = {
       userId: 'staged-owner',
-      catId: null,
+      from: { kind: 'user', userId: 'staged-owner' },
       threadId: 'staged-thread',
       content: 'final media message',
       mentions: [],

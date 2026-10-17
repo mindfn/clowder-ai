@@ -92,10 +92,16 @@ export function ContentReviewSurface({
         />
       )}
       {workflow?.status}
-      {review.view?.sourceState === 'current' &&
-      textSource?.kind === 'text' &&
-      textSource.revision === sourceTextRevision ? (
-        <TextWorkProgress locator={textSource.locator} revision={textSource.revision} />
+      {fileReader || textSource?.kind === 'text' ? (
+        // The reader is already interactive before its progress read finishes.
+        // Keep one document-sized slot; extra requests scroll without moving the text under a native selection.
+        <div className="h-8 shrink-0 overflow-y-auto overscroll-contain" data-testid="text-work-progress-slot">
+          {review.view?.sourceState === 'current' &&
+          textSource?.kind === 'text' &&
+          textSource.revision === sourceTextRevision ? (
+            <TextWorkProgress locator={textSource.locator} revision={textSource.revision} />
+          ) : null}
+        </div>
       ) : null}
       {review.error ? (
         <p role="alert" className="rounded bg-[var(--semantic-critical-surface)] p-2 text-xs text-cafe-error">

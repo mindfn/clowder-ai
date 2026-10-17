@@ -15,9 +15,9 @@ import {
 import {
   GitMarketplaceCatalog,
   validMarketplacePackages,
-} from '../dist/domains/plugin/manager/git-marketplace-catalog.js';
-import { GitMarketplaceRepository } from '../dist/domains/plugin/manager/git-marketplace-repository.js';
-import { GitMarketplaceSources } from '../dist/domains/plugin/manager/git-marketplace-sources.js';
+} from '../dist/domains/plugin/manager/marketplace/git-marketplace-catalog.js';
+import { GitMarketplaceRepository } from '../dist/domains/plugin/manager/marketplace/git-marketplace-repository.js';
+import { GitMarketplaceSources } from '../dist/domains/plugin/manager/marketplace/git-marketplace-sources.js';
 import { registerPluginMarketplaceRoutes } from '../dist/routes/plugin-marketplace-routes.js';
 import { manifest } from './plugin-official-package-installer.fixture.js';
 

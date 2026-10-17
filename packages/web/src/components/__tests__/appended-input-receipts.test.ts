@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { dispatchReadText } from '@/lib/dispatch-receipt-display';
 import type { ChatMessage } from '@/stores/chat-types';
-import { projectAppendedInputReceipts } from '../AppendedInputReceipts';
+import { appendedInputReadDisplay, projectAppendedInputReceipts } from '../AppendedInputReceipts';
 
 const initial: ChatMessage = {
   id: 'source-initial',
@@ -39,6 +40,35 @@ const response: ChatMessage = {
 };
 
 describe('projectAppendedInputReceipts', () => {
+  it('does not call an uncertain provider handoff received in the response receipt', () => {
+    const source: ChatMessage = {
+      ...appended,
+      lifecycle: {
+        kind: 'input',
+        orderKey: '2:source',
+        dispatchRefs: [
+          {
+            targetId: 'cat-1',
+            statusMessageId: response.id,
+            phase: 'dispatched',
+            dispatchedAt: appended.timestamp,
+            inputRead: { status: 'pending' },
+          },
+        ],
+        appendFailures: [
+          {
+            targetId: 'cat-1',
+            responseMessageId: response.id,
+            invocationId: 'invocation-1',
+            reason: 'exception',
+            acceptance: 'unknown',
+            at: appended.timestamp + 1,
+          },
+        ],
+      },
+    };
+    expect(dispatchReadText(appendedInputReadDisplay(source, response), true)).toBe('已送出，没确认收到');
+  });
   it('projects only inputs added after the initial dispatch input', () => {
     expect(projectAppendedInputReceipts(response, [appended, initial])).toEqual([appended]);
   });

@@ -104,6 +104,7 @@ export function createPersistedQueueFixture(
           catId,
           startedAt,
           executionKind: 'ordinary',
+          ...(options?.liveCompanion ? { queueCompletionPolicy: 'explicit_source' as const } : {}),
           causal: { triggerMessageId: messageId, ...(messageIds.length ? { coveredMessageIds: [...messageIds] } : {}) },
         });
         const lifecycle = await options?.onLifecycleInvocationStarted?.({

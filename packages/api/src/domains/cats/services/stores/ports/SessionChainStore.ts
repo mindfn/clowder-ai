@@ -130,7 +130,9 @@ export type RestoreActiveSessionResult =
   | { status: 'target_not_restorable'; targetStatus: SessionRecord['status'] }
   | { status: 'active_changed'; activeSessionId?: string };
 
-export type CliSessionBinding = Pick<SessionRecord, 'id' | 'cliSessionId' | 'threadId' | 'catId' | 'userId'>;
+export type CliSessionBinding = Pick<SessionRecord, 'id' | 'cliSessionId' | 'threadId' | 'catId' | 'userId'> & {
+  isExternalImport: boolean;
+};
 
 export interface ISessionChainStore {
   /** Create SessionRecord (seq auto-increments, status=active) */
@@ -604,6 +606,7 @@ export class SessionChainStore implements ISessionChainStore {
           threadId: record.threadId,
           catId: record.catId,
           userId: record.userId,
+          isExternalImport: Boolean(record.externalImport),
         });
       }
     }

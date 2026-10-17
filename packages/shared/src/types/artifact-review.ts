@@ -1,9 +1,23 @@
 import { z } from 'zod';
 import { artifactReviewDrawingSchema, artifactReviewImageEditSchema } from './artifact-review-drawing.js';
-import { artifactReviewAnchorSchema, reviewedMediaAssetSchema } from './artifact-review-media.js';
+import {
+  artifactReviewAnchorSchema,
+  reviewedMediaAssetSchema,
+  reviewedMediaTypeSchema,
+} from './artifact-review-media.js';
 
-export type { ArtifactReviewAnchor, ImmutableMedia, ReviewedMediaAsset } from './artifact-review-media.js';
-export { artifactReviewAnchorSchema, immutableMediaSchema, reviewedMediaAssetSchema } from './artifact-review-media.js';
+export type {
+  ArtifactReviewAnchor,
+  ImmutableMedia,
+  ReviewedMediaAsset,
+  ReviewedMediaType,
+} from './artifact-review-media.js';
+export {
+  artifactReviewAnchorSchema,
+  immutableMediaSchema,
+  reviewedMediaAssetSchema,
+  reviewedMediaTypeSchema,
+} from './artifact-review-media.js';
 
 const ref = z.string().trim().min(1).max(2048);
 const id = z.string().trim().min(1).max(128);
@@ -139,7 +153,7 @@ export const artifactReviewActionSchema = z
     z
       .object({
         kind: z.literal('request_media_edit'),
-        mediaType: z.enum(['image/png', 'video/mp4']),
+        mediaType: reviewedMediaTypeSchema,
         annotationId: id,
         body: text,
         anchor: artifactReviewAnchorSchema.optional(),

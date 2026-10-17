@@ -3,5 +3,7 @@ export * from './git-package-admission.js';
 export * from './local-package-admission.js';
 export * from './machine-catalog-provider.js';
 export * from './plugin-manager-configuration.js';
+export * from './plugin-manager-projection.js';
+export * from './plugin-manager-service.js';
 export * from './plugin-package-assets.js';
 export * from './plugin-package-quarantine.js';

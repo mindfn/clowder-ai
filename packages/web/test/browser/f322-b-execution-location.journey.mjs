@@ -103,8 +103,8 @@ export async function runF322BExecutionLocationJourney({
     await location.waitFor();
     assert.equal(await page.locator('html').getAttribute('data-theme'), language === 'en' ? 'dark' : 'light');
     assert.match(await location.innerText(), /小太阳·砚砚.*GPT-6.1 Sol/);
-    assert.match(await location.innerText(), language === 'zh' ? /正在回话/ : /replying/i);
-    if (viewport.width === 390) await assertCompactVerbVisible(page, language === 'zh' ? '回话中' : 'Replying');
+    assert.match(await location.innerText(), language === 'zh' ? /处理中/ : /working/i);
+    if (viewport.width === 390) await assertCompactVerbVisible(page, language === 'zh' ? '处理中' : 'Working');
     const bubble = page.locator(`[data-message-id="${fixture.message.id}"]`);
     await bubble.waitFor();
     const record = bubble.getByTestId('reply-record-toggle');
@@ -116,7 +116,7 @@ export async function runF322BExecutionLocationJourney({
     await page.keyboard.press('Enter');
     await bubble.getByTestId('reply-record').waitFor();
     assert.equal(await record.getAttribute('aria-expanded'), 'true');
-    assert.ok((await bubble.getAttribute('class')).includes('ring-blue-400'));
+    assert.equal(await bubble.getAttribute('data-message-jump-focus'), 'true');
     assert.equal(await composer.inputValue(), '这份草稿和选择不能被定位动作改掉');
     assert.deepEqual(await composer.evaluate((input) => [input.selectionStart, input.selectionEnd]), [3, 8]);
     await page.screenshot({ path: `/tmp/f322-b-native-live-${viewport.width}-${language}.png` });

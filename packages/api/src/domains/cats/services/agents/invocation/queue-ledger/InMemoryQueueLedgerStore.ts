@@ -143,7 +143,19 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
     const index = current?.findIndex((entry) => entry.id === entryId) ?? -1;
     if (!current || index < 0) return { outcome: 'not_found' };
     const row = current[index]!;
-    if (row.status !== 'queued') return { outcome: 'state_changed' };
+    // Native consumption may retire a held recipient while a sibling owns the
+    // claim. It cannot add work, change that claim, or retire its recipients.
+    if (
+      row.status !== 'queued' &&
+      !(
+        row.status === 'claimed' &&
+        additions.length === 0 &&
+        Object.keys(authorIntentByTarget).length === 0 &&
+        row.claimedTargetIds?.length &&
+        row.claimedTargetIds.every((target) => !removals.has(target))
+      )
+    )
+      return { outcome: 'state_changed' };
 
     const nextTargets = row.targets.filter((targetId) => !removals.has(targetId));
     const present = new Set(nextTargets);
@@ -172,6 +184,15 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
       return { outcome: 'updated', entry: null };
     }
     row.targets = nextTargets;
+    for (const key of ['appendPendingByTarget', 'appendRecoveryByTarget'] as const) {
+      const map = row.delivery[key];
+      if (map) for (const target of Object.keys(map)) if (!nextTargets.includes(target)) delete map[target];
+    }
+    if (row.delivery.routingHeldTargetIds) {
+      row.delivery.routingHeldTargetIds = row.delivery.routingHeldTargetIds.filter((target) =>
+        nextTargets.includes(target),
+      );
+    }
     row.delivery.authorIntentByTarget = nextIntent;
     assertQueueLedgerEntry(row);
     return { outcome: 'updated', entry: cloneQueueLedgerEntry(row) };
@@ -234,6 +255,19 @@ export class InMemoryQueueLedgerStore implements QueueLedgerStore {
   getNow(threadId: string, entryId: string): QueueLedgerEntry | null {
     const entry = this.rows.get(threadId)?.find((candidate) => candidate.id === entryId);
     return entry ? cloneQueueLedgerEntry(entry) : null;
+  }
+
+  /** Used only inside the synchronous Message/Queue Append recovery transaction. */
+  replaceAppendRecoveryNow(expected: QueueLedgerEntry | null, entry: QueueLedgerEntry): void {
+    assertQueueLedgerEntry(entry);
+    const current = this.getNow(entry.threadId, entry.id);
+    if (JSON.stringify(current) !== JSON.stringify(expected)) throw new Error('Append recovery Queue changed');
+    const rows = this.rows.get(entry.threadId) ?? [];
+    const index = rows.findIndex((row) => row.id === entry.id);
+    if (index < 0) rows.push(cloneQueueLedgerEntry(entry));
+    else rows[index] = cloneQueueLedgerEntry(entry);
+    this.rows.set(entry.threadId, rows);
+    this.messageIndex.index(entry.threadId, [entry]);
   }
 
   async claim(

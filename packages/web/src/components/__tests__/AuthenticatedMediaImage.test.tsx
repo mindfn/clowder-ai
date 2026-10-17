@@ -82,3 +82,15 @@ it('never reuses a prior HMR blob URL while a different identifier is loading', 
   expect(container.querySelector('img')).toBeNull();
   expect(container.textContent).toContain('图片加载中');
 });
+
+it('opens an authenticated image using its resolved blob through a native button', async () => {
+  apiFetch.mockResolvedValue({ ok: true, blob: async () => new Blob(['private']) });
+  const open = vi.fn();
+  await act(async () =>
+    root.render(<AuthenticatedMediaImage url={`hmr:${hmrId}`} alt="attachment" className="image" onOpen={open} />),
+  );
+  const button = container.querySelector('button');
+  expect(button?.getAttribute('type')).toBe('button');
+  await act(async () => button?.click());
+  expect(open).toHaveBeenCalledWith('blob:private-image');
+});

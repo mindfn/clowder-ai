@@ -14,6 +14,7 @@ const scope: LiveInboxScope = {
   threadId: 'home',
   catId: target,
   invocationId: 'live-child',
+  parentInvocationId: 'live-parent',
   callId: 'live',
   generation: 1,
 };
@@ -41,6 +42,7 @@ async function append(store: MessageStore, queue: InvocationQueue, index = 1) {
       content,
       targetCats: [target],
       intent: 'coordinate',
+      authorIntentByCatId: { [target]: { requested: 'continue_current', boundParentInvocationId: 'live-parent' } },
     },
   );
   assert.ok(result.message && result.entry);
@@ -90,15 +92,15 @@ test('Message source pages >100 canonical Queue sources without exposing bodies 
   assert.equal(queue.list(scope.threadId, scope.userId).length, 237);
 });
 
-test('exact History delivery is observed without claiming a notification or current model context', async (t) => {
+test('exact History delivery does not fabricate native read, notification or retained context evidence', async (t) => {
   const f = deliveredFixture();
   t.after(() => f.close());
-  const { message, invocationId } = await f.deliver();
+  const { message } = await f.deliver();
   const ref = await f.source.read(scope, message.id);
   assert.deepEqual(ref?.facts, {
     persisted: true,
     notified: false,
-    readByInvocationIds: [invocationId],
+    readByInvocationIds: [],
     readInCurrentContext: false,
     handled: false,
     playback: 'unknown',
@@ -198,7 +200,15 @@ test('same-child reconnect cannot treat historical delivery as retained working 
   );
   assert.deepEqual(deliveries, []);
   retained = true;
-  assert.equal((await inbox.atBoundary({ kind: 'idle', generation: 1, userSpeaking: false })).pending, 0);
+  assert.equal(
+    (await source.read(currentScope, message.id))?.facts.readInCurrentContext,
+    false,
+    'retained context alone does not manufacture a missing native read receipt',
+  );
+  assert.equal(
+    (await inbox.atBoundary({ kind: 'idle', generation: 1, userSpeaking: false })).kind,
+    'successor_required',
+  );
   assert.equal(f.starts.length, 1, 'inspection does not start or reconstruct another execution');
   inbox.close();
 });

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { mediaChatMime } from '@/components/content-review/media-chat-selection';
 import { modificationFocusStanding, usePendingModificationFocus } from '@/components/content-review/modification-focus';
 import { useShellPresentation } from '@/components/shell/shell-presentation';
 import type { WorkspaceSurfaceDescriptor } from '@/components/workbench/workbench-contract';
@@ -174,10 +175,12 @@ function ResolvedFileOwnerSurface({
   const isHtml = /\.html?$/i.test(target.path);
   const isJsx = /\.[jt]sx$/i.test(target.path);
   const isCollaborativeText = isMarkdown || /\.txt$/i.test(target.path) || canEdit;
-  const collaborationAvailable =
-    (isCollaborativeText && !file.truncated) || file.mime === 'image/png' || file.mime === 'video/mp4';
+  const collaborationAvailable = (isCollaborativeText && !file.truncated) || !!mediaChatMime(file.mime ?? '');
   const fileReader = (controls?: ContentFileReaderControls) => (
-    <div className="flex min-h-0 flex-1" data-owner-worktree={target.worktreeId} data-owner-path={target.path}>
+    <div className="flex min-h-0 flex-1 flex-col" data-owner-worktree={target.worktreeId} data-owner-path={target.path}>
+      {isV2 && /^(image|video)\//.test(file.mime ?? '') && !collaborationAvailable ? (
+        <output className="shrink-0 px-3 py-2 text-xs text-cafe-muted">这份媒体可以查看；当前格式尚不支持批注。</output>
+      ) : null}
       <WorkspaceFileViewer
         {...viewport}
         nestedWork={isV2}

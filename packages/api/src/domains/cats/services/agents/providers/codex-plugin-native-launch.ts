@@ -172,7 +172,7 @@ export async function prepareCodexNativeLaunch(
       '--config',
       'default_permissions="plugin_native_public"',
       '--config',
-      'permissions.plugin_native_public.filesystem={"/"="deny",":minimal"="read"}',
+      'permissions.plugin_native_public.filesystem={"/"="deny",":minimal"="read",":tmpdir"="deny",":slash_tmp"="deny"}',
       '--config',
       'permissions.plugin_native_public.network={enabled=false}',
       '--config',

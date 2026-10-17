@@ -11,8 +11,17 @@ export interface DurableManagedGateRecoveryConfig {
   readonly powerEvidenceSource: DurableGatePowerEvidenceSource;
 }
 
+export interface AlphaRevisionConsumer {
+  readonly kind: 'alpha_revision_v1';
+  readonly subscriptionId: string;
+  readonly s3JobId: string;
+  readonly headSha: string;
+  readonly baseSha: string;
+}
+
 export interface DurableManagedGateJob {
-  readonly kind: 'command' | 'full_gate' | 'resumable_full_gate_v2';
+  readonly kind: 'command' | 'full_gate' | 'resumable_full_gate_v2' | 'alpha_revision_v1';
+  readonly consumer?: AlphaRevisionConsumer;
   /** Legacy gate files remain readable. New Action Plane jobs use the existing lease database. */
   readonly recordStorage?: 'sqlite_v1';
   readonly definition?: ManagedJobDefinition;
@@ -37,7 +46,8 @@ export interface ManagedJobPrincipal {
 
 export interface ManagedJobDefinition {
   readonly principal: ManagedJobPrincipal;
-  readonly originInvocationId: string;
+  readonly originInvocationId?: string;
+  readonly originScheduleId?: string;
   readonly command: string;
   readonly cwd: string;
   readonly idempotencyKey: string;

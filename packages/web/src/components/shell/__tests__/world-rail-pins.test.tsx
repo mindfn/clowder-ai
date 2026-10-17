@@ -8,10 +8,12 @@ import { SettingsSourceReturnProvider, useSettingsReadingPort } from '../useSett
 
 const data = vi.hoisted(() => ({ push: vi.fn(), pinned: [] as string[], pathname: '/thread/current' }));
 const openTeamSubject = vi.hoisted(() => vi.fn());
+const setCurrentThread = vi.hoisted(() => vi.fn());
+const chat = vi.hoisted(() => ({ setWorkspaceMode: vi.fn(), openTeamSubject, setCurrentThread }));
 vi.mock('@/stores/chatStore', () => ({
-  useChatStore: (
-    select: (state: { setWorkspaceMode: () => void; openTeamSubject: typeof openTeamSubject }) => unknown,
-  ) => select({ setWorkspaceMode: vi.fn(), openTeamSubject }),
+  useChatStore: Object.assign((select: (state: typeof chat) => unknown) => select(chat), {
+    getState: () => chat,
+  }),
 }));
 vi.mock('next/navigation', () => ({ usePathname: () => data.pathname, useRouter: () => ({ push: data.push }) }));
 vi.mock('@/hooks/useApprovalHub', () => ({ useApprovalHubSync: vi.fn() }));

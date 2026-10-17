@@ -16,7 +16,7 @@ test('committed #3901 source map resolves its real anchored admission and trigge
     repoRoot: REPO_ROOT,
     pullRequestReader: {
       resolve: async () => ({
-        repoFullName: 'zts212653/cat-cafe',
+        repoFullName: 'zts212653/clowder-ai',
         number: 3901,
         state: 'MERGED',
         headSha: HEAD,

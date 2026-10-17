@@ -11,6 +11,7 @@ import {
   readEngagementPolicy,
 } from '../../../domains/routing-context/ScarceSeatNotificationPolicy.js';
 import type { ExecuteContext } from '../types.js';
+import { createAlphaManagedControl } from './alpha-managed-control.js';
 import type { TaskTemplate } from './types.js';
 
 const exec = promisify(execFile);
@@ -37,9 +38,13 @@ interface FailureDraft {
   jobId: string;
   generation: number;
   unitIds: string[];
+  reason?: string;
+  managedJobId?: string;
 }
 interface AlphaRuntime {
-  runAlphaBrowserRevision(input: Record<string, unknown>): Promise<{ status: string; headSha?: string }>;
+  runAlphaBrowserRevision(
+    input: Record<string, unknown>,
+  ): Promise<{ status: string; headSha?: string; reason?: string }>;
   alphaBrowserFailureTasks(input: Record<string, unknown>): Promise<FailureDraft[]>;
 }
 interface MainProjection {
@@ -163,7 +168,7 @@ async function reportFailures(
         createdBy: 'system',
         ownerCatId: draft.ownerCatId ? createCatId(draft.ownerCatId) : null,
         title: `[P1] Alpha ${draft.kind}: ${draft.testedHeadSha.slice(0, 10)}`,
-        why: `Alpha full verification requires triage.\nRevision: ${draft.testedHeadSha}\nExecution: ${draft.jobId}:${draft.generation}\nUnits: ${draft.unitIds.join(', ')}\nOwner source: ${draft.ownerSourceRef ?? 'unresolved'}\nOwnership: ${draft.ownership}. A failing journey is evidence to investigate, not proof that its feature code is the root cause.`,
+        why: `Alpha full verification requires triage.\nRevision: ${draft.testedHeadSha}\nExecution: ${draft.jobId}:${draft.generation}\nUnits: ${draft.unitIds.join(', ')}\nOwner source: ${draft.ownerSourceRef ?? 'unresolved'}\nOwnership: ${draft.ownership}. A failing journey is evidence to investigate, not proof that its feature code is the root cause.${draft.reason ? `\nManaged execution: ${draft.managedJobId}\nReason: ${draft.reason}` : ''}`,
       }));
     // Retry the same atomic admission: one source and target, never a second trigger.
     const content = `Alpha 浏览器验证未通过：${draft.testedHeadSha}\n内部 P1：${task.id}\n${task.why}`;
@@ -198,12 +203,18 @@ export function createAlphaBrowserTemplate(options: AlphaBrowserOptions): TaskTe
         description: '订阅起点的精确 commit；其后每个 main revision 均须处置',
       },
       guardianCatId: { type: 'string', required: true, description: '归属不明或执行环境异常时负责核验的现有猫' },
+      executionCarrier: {
+        type: 'string',
+        required: false,
+        description: '执行载体：fork（默认）或 managed；在飞 revision 保持原载体',
+      },
     },
     createSpec(id, params) {
       const baselineSha = typeof params.params.baselineSha === 'string' ? params.params.baselineSha : '';
       const guardian =
         typeof params.params.guardianCatId === 'string' ? options.resolveCat(params.params.guardianCatId) : null;
       const threadId = params.deliveryThreadId;
+      const executionCarrier = params.params.executionCarrier ?? 'fork';
       return {
         id,
         profile: 'poller',
@@ -212,6 +223,8 @@ export function createAlphaBrowserTemplate(options: AlphaBrowserOptions): TaskTe
           async gate() {
             if (!EXACT_OID.test(baselineSha) || !threadId || !guardian)
               return { run: false, reason: 'exact baseline, delivery thread and verified guardian required' };
+            if (!['fork', 'managed'].includes(String(executionCarrier)))
+              return { run: false, reason: 'Alpha executionCarrier must be fork or managed' };
             return { run: true, workItems: [{ signal: id, subjectKey: `repo:alpha-browser:${id}` }] };
           },
         },
@@ -230,12 +243,18 @@ export function createAlphaBrowserTemplate(options: AlphaBrowserOptions): TaskTe
               ownerPrincipal: `schedule:${options.ownerUserId}:${id}`,
               originTaskId: id,
               signal: ctx.signal,
+              executionCarrier,
+              managedControl: createAlphaManagedControl({
+                repoRoot: options.repoRoot,
+                subscriptionId: id,
+                principal: { userId: options.ownerUserId, threadId, catId: guardian },
+              }),
               reportFailure: (failure: Record<string, unknown>) =>
                 reportFailures(options, runtime, id, threadId, guardian, ctx, failure),
             });
             if (!['idle', 'green', 'red'].includes(result.status)) {
               throw new Error(
-                `Alpha verification remains ${result.status} for ${result.headSha ?? 'unknown revision'}; recover the existing execution before settlement`,
+                `Alpha verification remains ${result.status} for ${result.headSha ?? 'unknown revision'}; ${result.reason ?? 'recover the existing execution before settlement'}`,
               );
             }
           },

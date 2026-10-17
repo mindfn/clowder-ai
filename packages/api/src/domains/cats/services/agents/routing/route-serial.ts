@@ -1,3 +1,6 @@
+import type { RoutingPreflightDecisionV1 } from '@cat-cafe/shared';
+import { isRoutingOwnerAttempt } from './routing-owner-attempt.js';
+import { routingPreflightNotice } from './routing-preflight-notice.js';
 /**
  * Serial Route Strategy
  * Cats respond one by one, each seeing previous responses.
@@ -128,6 +131,10 @@ import { sharedEventStore, sharedNudgeCooldown } from '../../../../memory/entity
 import type { PushRecallPresentation } from '../../../../memory/f200-types.js';
 import type { PreparedProactiveMemoryNudge } from '../../../../memory/ProactiveMemoryNudgeService.js';
 import { mergePushRecallPresentations, triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
+import {
+  preflightRoutingDispatch,
+  routingDispatchPreflightReceipt,
+} from '../../../../routing-context/RoutingDispatchPreflightPort.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
 import {
   buildInvocationContext,
@@ -147,6 +154,7 @@ import {
   commitLifecycleResponseFromAppendInput,
   hydrateCrossThreadReplyHint,
   hydrateReplyPreview,
+  type StoredMessage,
   type StoredToolEvent,
 } from '../../stores/ports/MessageStore.js';
 import type { Thread, ThreadRoutingPolicyV1 } from '../../stores/ports/ThreadStore.js';
@@ -192,6 +200,7 @@ import { detectInlineActionMentionsWithShadow, getMaxA2ADepth, parseA2AMentions 
 import { registerWorklist, unregisterWorklist } from '../routing/WorklistRegistry.js';
 import { accumulateTextAggregate } from '../text-aggregation.js';
 import { CallbackPostTracker, parseCallbackPostResult } from './callback-post-result.js';
+import { commitCompletedRouteResponse, isCollectiveBoundResponse } from './commit-completed-response.js';
 import { extractContextEvalSignals } from './context-eval.js';
 import { readDurableA2ALineage } from './durable-a2a-lineage.js';
 import { validateRoutingSyntax } from './final-routing-slot.js';
@@ -795,6 +804,7 @@ export async function* routeSerial(
         preparationTimings.length = 0;
       }
       let stopGateRemedialAttempted = false;
+      let routingDispatchPreflightDecision: RoutingPreflightDecisionV1 | undefined;
 
       // F-parallel-cancel: per-cat signal — canceling one cat skips ONLY that cat, not the
       // whole worklist. force-reset/cancelAll aborts every cat's controller, so all entries
@@ -806,6 +816,50 @@ export async function* routeSerial(
         continue;
       }
 
+      if (deps.routingDispatchPreflight) {
+        routingDispatchPreflightDecision = await preflightRoutingDispatch(deps.routingDispatchPreflight, {
+          ownerId: userId,
+          targetCatIds: [catId],
+          ...(index < targetCats.length && isRoutingOwnerAttempt(options, catId)
+            ? { ownerRequestedAttempt: true }
+            : {}),
+          ...(options.routingContextIntent ? { intent: options.routingContextIntent } : {}),
+        });
+        const receipt = routingDispatchPreflightReceipt(routingDispatchPreflightDecision, catId);
+        const notice = await routingPreflightNotice(
+          deps,
+          options,
+          routingDispatchPreflightDecision,
+          catId,
+          threadId,
+          index < targetCats.length,
+        );
+        if (notice) yield notice;
+        if (receipt.target.disposition === 'rejected') {
+          yield {
+            type: 'error',
+            catId,
+            errorCode: 'routing_preflight_rejected',
+            error: '本次未执行：成员当前不可用。恢复后可重试原消息。',
+            timestamp: Date.now(),
+          };
+          index++;
+          continue;
+        }
+      }
+      // Retained Queue records may name the retired Host-only Collective executor.
+      // Its scope must never silently become an ordinary, unrestricted invocation.
+      if (options.executionScope) {
+        yield {
+          type: 'error',
+          catId,
+          errorCode: 'legacy_execution_scope_retired',
+          error: '旧 Collective 执行入口已迁出，请从已安装插件重新发起。',
+          timestamp: Date.now(),
+        };
+        index++;
+        continue;
+      }
       // F148 OQ-2: briefing→invocation link + context eval
       let briefingMessageId: string | undefined;
       let briefingCoverageMap: import('./context-transport.js').CoverageMap | undefined;
@@ -847,6 +901,7 @@ export async function* routeSerial(
       const turnTriggerMessageId = streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId;
       const turnTriggerMessage = turnTriggerMessageId ? await deps.messageStore.getById(turnTriggerMessageId) : null;
       const turnTriggerThreadId = turnTriggerMessage?.threadId === threadId ? threadId : undefined;
+      const collectiveBoundTurn = isCollectiveBoundResponse(options.executionScope, turnTriggerMessage);
       const streamReplyPreview = streamReplyTo
         ? await hydrateReplyPreview(deps.messageStore, streamReplyTo)
         : undefined;
@@ -1637,6 +1692,29 @@ export async function* routeSerial(
           ...(auxiliaryTurnExecutions.length > 0 ? { auxiliaryTurnExecutions } : {}),
         };
       };
+      const commitCompletedResponse = async (
+        message: AppendMessageInput,
+        terminal: { status: 'completed'; completedAt: number },
+        targets: readonly CatId[],
+        allowDotReturn: boolean,
+      ): Promise<StoredMessage> => {
+        if (!ownInvocationId || !lifecycleResponseMessageId) throw new Error('canonical response identity missing');
+        return commitCompletedRouteResponse(deps, {
+          responseMessageId: lifecycleResponseMessageId,
+          invocationId: ownInvocationId,
+          message,
+          terminal,
+          targetCats: [...targets],
+          allowDotReturn,
+          triggerMessageId: turnTriggerMessageId,
+          admitWake: commitCompletedA2AWake,
+          userId,
+          ownerAuthProvenance,
+          threadId,
+          callerCatId: catId,
+          ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
+        });
+      };
       let eventBackedRoutingExitPromise: ReturnType<typeof resolveEventBackedRoutingExit> | undefined;
       let verifiedEventBackedRoutingExit = false;
       const hasVerifiedEventBackedRoutingExit = async (): Promise<boolean> => {
@@ -1857,6 +1935,8 @@ export async function* routeSerial(
         onRemoteExecutionDispatched: remoteCancellation.onDispatched,
         ...(options.liveCompanion && index === 0 ? { liveCompanion: options.liveCompanion } : {}),
         ...(options.routeIntent ? { routeIntent: options.routeIntent } : {}),
+        ...(options.routingContextIntent ? { routingContextIntent: options.routingContextIntent } : {}),
+        ...(routingDispatchPreflightDecision ? { routingDispatchPreflightDecision } : {}),
         catId,
         service,
         capacitySnapshot,
@@ -2503,6 +2583,36 @@ export async function* routeSerial(
         hasLocalCoCreatorLineStartMention: boolean;
         streamEvents: AgentMessage[];
       }> => {
+        let remedialRoutingPreflightNotice: AgentMessage | undefined;
+        let remedialRoutingDispatchPreflightDecision: RoutingPreflightDecisionV1 | undefined;
+        if (deps.routingDispatchPreflight) {
+          remedialRoutingDispatchPreflightDecision = await preflightRoutingDispatch(deps.routingDispatchPreflight, {
+            ownerId: userId,
+            targetCatIds: [catId],
+            ...(options.routingContextIntent ? { intent: options.routingContextIntent } : {}),
+          });
+          const receipt = routingDispatchPreflightReceipt(remedialRoutingDispatchPreflightDecision, catId);
+          if (receipt.target.disposition !== 'allowed') {
+            remedialRoutingPreflightNotice = {
+              type: 'system_info',
+              catId,
+              content: JSON.stringify(receipt),
+              timestamp: Date.now(),
+            };
+          }
+          if (receipt.target.disposition === 'rejected') {
+            stopGateRemedialAttempted = true;
+            return {
+              storedContent: originalStoredContentBeforeRemedial,
+              routingContent: '',
+              allRichBlocks: originalRichBlocksBeforeRemedial,
+              a2aMentions: [],
+              hasCoCreatorLineStartMention: false,
+              hasLocalCoCreatorLineStartMention: false,
+              streamEvents: remedialRoutingPreflightNotice ? [remedialRoutingPreflightNotice] : [],
+            };
+          }
+        }
         stopGateRemedialAttempted = true;
         const originalVisibleInvocationIdBeforeRemedial = ownInvocationId;
         const originalOutputProjectionBeforeRemedial = outputProjection;
@@ -2534,7 +2644,9 @@ export async function* routeSerial(
         callbackPosts.reset();
         ownInvocationId = undefined;
 
-        const remedialStreamEvents: AgentMessage[] = [];
+        const remedialStreamEvents: AgentMessage[] = remedialRoutingPreflightNotice
+          ? [remedialRoutingPreflightNotice]
+          : [];
         const remedialStripper = createLeakedToolCallStreamStripper();
         const remedialService = getService(deps.services, catId, deps.unavailableServices);
         const resolvedRemedialCapacitySnapshot = await resolveInvocationCapacitySnapshot({
@@ -2597,6 +2709,10 @@ export async function* routeSerial(
         for await (const remedialMsg of invokeSingleCat(deps.invocationDeps, {
           onRemoteExecutionDispatched: remoteCancellation.onDispatched,
           ...(options.routeIntent ? { routeIntent: options.routeIntent } : {}),
+          ...(options.routingContextIntent ? { routingContextIntent: options.routingContextIntent } : {}),
+          ...(remedialRoutingDispatchPreflightDecision
+            ? { routingDispatchPreflightDecision: remedialRoutingDispatchPreflightDecision }
+            : {}),
           catId,
           service: remedialService,
           capacitySnapshot: remedialCapacitySnapshot,
@@ -3057,29 +3173,6 @@ export async function* routeSerial(
             '[F215] Publishing opus-4.6 relay through completed-response durable wake',
           );
         }
-        // A bounded dot consultation returns via the actual execution source;
-        // plain replyTo/text cannot grant this target. Existing routing dedup merges @dot.
-        if (
-          !hadError &&
-          !catSignal?.aborted &&
-          turnTriggerMessageId &&
-          deps.dotReplyTarget &&
-          (await deps.dotReplyTarget({
-            userId,
-            threadId,
-            catId,
-            replyTo: streamReplyTo,
-            extra: {
-              causal: {
-                kind: 'invocation_reply',
-                triggerMessageId: turnTriggerMessageId,
-                ...(turnTriggerThreadId ? { triggerThreadId: turnTriggerThreadId } : {}),
-              },
-            },
-          }))
-        )
-          a2aMentions = [...new Set([...a2aMentions, createCatId('gpt-dot')])];
-
         // Preserve independent first-pass reasoning inside one serial route.
         // Only debug mode injects an earlier cat's in-flight response directly;
         // later invocations still receive that response after it is persisted.
@@ -3480,27 +3573,15 @@ export async function* routeSerial(
                 }
               : undefined;
           const completedA2AWakeCommit =
-            lifecycleResponse?.status === 'completed' && a2aMentions.length > 0
-              ? async (message: AppendMessageInput) => {
-                  if (!commitCompletedA2AWake) {
-                    throw new Error('completed response A2A wake admission unavailable');
-                  }
-                  return commitCompletedA2AWake({
-                    responseMessageId: lifecycleResponse.messageId,
-                    invocationId: ownInvocationId!,
-                    terminal: {
-                      status: 'completed',
-                      completedAt: lifecycleResponse.completedAt,
-                    },
+            lifecycleResponse?.status === 'completed' &&
+            (a2aMentions.length > 0 || (!collectiveBoundTurn && deps.dotReplyTarget))
+              ? (message: AppendMessageInput) =>
+                  commitCompletedResponse(
                     message,
-                    targetCats: a2aMentions,
-                    userId,
-                    ownerAuthProvenance,
-                    threadId,
-                    callerCatId: catId,
-                    ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
-                  });
-                }
+                    { status: 'completed', completedAt: lifecycleResponse.completedAt },
+                    a2aMentions,
+                    !collectiveBoundTurn,
+                  )
               : undefined;
           const failedA2AReportCommit =
             lifecycleResponse?.status === 'failed' &&
@@ -3781,6 +3862,19 @@ export async function* routeSerial(
                 : undefined;
             const answerBearingNoText =
               hasRichBlocks || Boolean(renderThinkingChunks(thinkingChunks).trim().length > 0);
+            const completedNoTextCommit =
+              answerBearingNoText &&
+              lifecycleResponse?.status === 'completed' &&
+              !collectiveBoundTurn &&
+              deps.dotReplyTarget
+                ? (message: AppendMessageInput) =>
+                    commitCompletedResponse(
+                      message,
+                      { status: 'completed', completedAt: lifecycleResponse.completedAt },
+                      [],
+                      true,
+                    )
+                : undefined;
             if (answerBearingNoText && deps.freshnessOutputCommitCoordinator && ownInvocationId) {
               const decision = await deps.freshnessOutputCommitCoordinator.commit({
                 userId,
@@ -3791,6 +3885,7 @@ export async function* routeSerial(
                 originTriggerMessageId: streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId ?? null,
                 message: noTextMessageInput,
                 ...(lifecycleResponse ? { lifecycleResponse } : {}),
+                ...(completedNoTextCommit ? { commitLifecycleResponse: completedNoTextCommit } : {}),
               });
               outputCommitDecision = decision;
               if (options.persistenceContext) {
@@ -3801,13 +3896,15 @@ export async function* routeSerial(
               }
               storedNoText = await deps.messageStore.getById(decision.messageId);
             } else if (lifecycleResponse && ownInvocationId) {
-              storedNoText = await commitLifecycleResponseFromAppendInput(
-                deps.messageStore,
-                lifecycleResponse.messageId,
-                ownInvocationId,
-                lifecycleResponse,
-                noTextMessageInput,
-              );
+              storedNoText = completedNoTextCommit
+                ? await completedNoTextCommit(noTextMessageInput)
+                : await commitLifecycleResponseFromAppendInput(
+                    deps.messageStore,
+                    lifecycleResponse.messageId,
+                    ownInvocationId,
+                    lifecycleResponse,
+                    noTextMessageInput,
+                  );
             } else {
               // A tool-only record is audit output, not answer content: no frontier-annotated
               // commit, because there is no bubble whose position anyone reads. The replay-unsafe

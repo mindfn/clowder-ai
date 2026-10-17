@@ -19,7 +19,7 @@ function createWarningSystemInfoService(catId) {
         content: JSON.stringify({
           type: 'warning',
           presentation: 'user_action_required',
-          message: '当前 opencode/CodeAgent 适配器未返回 token 用量，自动 handoff 无法按上下文比例触发。',
+          message: '当前 opencode适配器未返回 token 用量，自动 handoff 无法按上下文比例触发。',
         }),
         timestamp: Date.now(),
       };
@@ -38,7 +38,7 @@ function createTextWithWarningService(catId) {
         content: JSON.stringify({
           type: 'warning',
           presentation: 'user_action_required',
-          message: '当前 opencode/CodeAgent 适配器未返回 token 用量，自动 handoff 无法按上下文比例触发。',
+          message: '当前 opencode适配器未返回 token 用量，自动 handoff 无法按上下文比例触发。',
         }),
         timestamp: Date.now(),
       };

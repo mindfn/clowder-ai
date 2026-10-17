@@ -1,6 +1,5 @@
 'use client';
 
-import { createPortal } from 'react-dom';
 import { MessageReadingControls } from './MessageReadingControls';
 import { MessageSearchPanel } from './MessageSearchPanel';
 import type { MessageSearchHost } from './useMessageSearchHost';
@@ -19,9 +18,9 @@ export function MessageSearchOverlay({
   const trip = host.session?.trip;
   if (!available || typeof document === 'undefined') return null;
   if (!host.open && (!trip || trip.status === 'completed') && !host.notice) return null;
-  return createPortal(
+  return (
     <aside
-      className="fixed right-3 top-[calc(env(safe-area-inset-top,0px)+60px)] z-[70] w-[min(520px,calc(100vw-24px))]"
+      className="absolute right-3 top-[calc(env(safe-area-inset-top,0px)+60px)] z-[70] w-[min(520px,calc(100%-24px))]"
       aria-label="消息找回"
     >
       {host.open ? (
@@ -42,7 +41,6 @@ export function MessageSearchOverlay({
           {host.notice}
         </output>
       )}
-    </aside>,
-    document.body,
+    </aside>
   );
 }

@@ -30,12 +30,14 @@ function listenerPids(port, timeout = 2_000) {
   return [...new Set(values.map(Number))];
 }
 
-// A timed-out listener read supplies no identity evidence. Reobserve the whole
-// scope once, with one fixed extra second; never replay a Redis command or reuse
-// partial identity fields. A conclusive mismatch or any other failure stops.
-function withListenerReobservation(
+// An unavailable observation supplies no identity evidence. Listener timeouts
+// and verification against a readable stored argv share one full-scope reread,
+// with one fixed extra second. Never replay a command or reuse partial fields.
+// A conclusive mismatch or any other capture failure stops immediately.
+function withIdentityReobservation(
   observe,
   { readListeners = listenerPids, observationNow = () => performance.now() } = {},
+  reobserveArgv = false,
 ) {
   let deadline = Number.POSITIVE_INFINITY;
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -43,7 +45,7 @@ function withListenerReobservation(
     try {
       const value = observe((port) => {
         const remaining = Math.min(2_000, deadline - observationNow());
-        if (remaining <= 0) throw new Error('Alpha Redis listener observation budget exhausted');
+        if (remaining <= 0) throw new Error('Alpha Redis identity observation budget exhausted');
         try {
           return readListeners(port, Math.max(1, Math.floor(remaining)));
         } catch (error) {
@@ -51,10 +53,12 @@ function withListenerReobservation(
           throw error;
         }
       });
-      if (observationNow() >= deadline) throw new Error('Alpha Redis listener observation budget exhausted');
+      if (observationNow() >= deadline) throw new Error('Alpha Redis identity observation budget exhausted');
       return value;
     } catch (error) {
-      if (attempt !== 0 || error !== listenerFailure || error?.code !== 'ETIMEDOUT') throw error;
+      const listenerTimeout = error === listenerFailure && error?.code === 'ETIMEDOUT';
+      const unavailableArgv = reobserveArgv && error?.code === 'ALPHA_IDENTITY_ARGV_UNAVAILABLE';
+      if (attempt !== 0 || (!listenerTimeout && !unavailableArgv)) throw error;
       deadline = observationNow() + 1_000;
     }
   }
@@ -112,7 +116,7 @@ function captureRedisIdentityOnce(raw, { readListeners = listenerPids, capture =
 }
 
 export function captureNamedAlphaRedisIdentity(raw, deps = {}) {
-  return withListenerReobservation((readListeners) => captureRedisIdentityOnce(raw, { ...deps, readListeners }), deps);
+  return withIdentityReobservation((readListeners) => captureRedisIdentityOnce(raw, { ...deps, readListeners }), deps);
 }
 
 /** OS metadata must prove the same incarnation before PING, CONFIG, BGSAVE or shutdown is considered. */
@@ -145,9 +149,10 @@ function verifyRedisIdentityOnce(raw, proof, { readListeners = listenerPids, cap
 }
 
 export function verifyNamedAlphaRedisIdentity(raw, proof, deps = {}) {
-  return withListenerReobservation(
+  return withIdentityReobservation(
     (readListeners) => verifyRedisIdentityOnce(raw, proof, { ...deps, readListeners }),
     deps,
+    proof?.process?.argvAvailable === true,
   );
 }
 
@@ -187,7 +192,12 @@ export function pingNamedAlphaRedis(
   let refusal;
   for (let attempt = 0; attempt < 10 && now() < deadline; attempt += 1) {
     try {
-      verifyNamedAlphaRedisIdentity(raw, proof, { readListeners, capture });
+      // Startup already owns the argv settling allowance below; do not nest a
+      // second argv retry inside it. Listener timeouts retain their own bound.
+      withIdentityReobservation(
+        (observeListeners) => verifyRedisIdentityOnce(raw, proof, { readListeners: observeListeners, capture }),
+        { readListeners, observationNow: now },
+      );
       refusal = undefined;
     } catch (error) {
       if (error.code !== 'ALPHA_IDENTITY_ARGV_UNAVAILABLE' || proof?.process?.argvAvailable !== true) throw error;

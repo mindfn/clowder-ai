@@ -15,7 +15,10 @@ const { _resetCachedConfig, loadCatConfig, toAllCatConfigs } = await import(
 );
 const profile = { model: 'gemini-3.8-flash-high' };
 const headers = { 'x-cat-cafe-user': 'default-user' };
-export async function nativeMemberProducer(initialProfile, { cliCommand = 'agy' } = {}) {
+export async function nativeMemberProducer(
+  initialProfile,
+  { cliCommand = 'agy', clientId = 'google', accountRef = 'gemini', initialModel } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), 'f322-member-native-'));
   const keys = [
     'CAT_TEMPLATE_PATH',
@@ -45,9 +48,9 @@ export async function nativeMemberProducer(initialProfile, { cliCommand = 'agy' 
         variants: [
           {
             id: 'gemini38-default',
-            clientId: 'google',
-            accountRef: 'gemini',
-            defaultModel: initialProfile ? profile.model : 'Gemini 3.8 Flash (High)',
+            clientId,
+            accountRef,
+            defaultModel: initialModel ?? (initialProfile ? profile.model : 'Gemini 3.8 Flash (High)'),
             mcpSupport: true,
             cli: { command: cliCommand, outputFormat: 'plainText' },
             ...(initialProfile ? { agyProfile: initialProfile } : {}),

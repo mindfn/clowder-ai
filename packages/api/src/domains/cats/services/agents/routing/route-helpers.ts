@@ -4,7 +4,14 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { CatId, MessageContent, MessageFrom, RichBlock, RichBlockBase } from '@cat-cafe/shared';
+import type {
+  CatId,
+  MessageContent,
+  MessageFrom,
+  RichBlock,
+  RichBlockBase,
+  RoutingPreflightDecisionV1,
+} from '@cat-cafe/shared';
 import { catRegistry, isCrossThreadProvenance } from '@cat-cafe/shared';
 import { resolveUnboundHistoryContextTokenCeiling } from '../../../../../config/context-capacity.js';
 import { DEFAULT_HIERARCHICAL_CONTEXT } from '../../../../../config/hierarchical-context-config.js';
@@ -120,6 +127,7 @@ export interface RouteBroadcaster {
 
 /** Dependencies shared across route strategies */
 export interface RouteStrategyDeps {
+  routingDispatchPreflight?: import('../../../../routing-context/RoutingDispatchPreflightPort.js').RoutingDispatchPreflightPort;
   services: Record<string, AgentService>;
   unavailableServices?: ReadonlyMap<string, AgentRegistrationFailure>;
   invocationDeps: InvocationDeps;
@@ -257,10 +265,12 @@ export function mergePersistedPromptMessages(
   return [...persistedPromptMessages, exactTrigger];
 }
 
-/** Actual-send routing refused one of a route's requested targets. */
-
 /** Common options for both strategies */
 export interface RouteOptions {
+  /** Persist the exact policy refusal before publishing its receipt; Queue owns recovery. */
+  onRoutingPreflightRejected?: (target: RoutingPreflightDecisionV1['targets'][number]) => Promise<void>;
+  /** Server-owned one-shot owner click for this exact pending target. */
+  routingOwnerRetryTarget?: string;
   /** Execution-owned fan-out policy. Queue dequeue uses parallel fan-out for one source
    *  with multiple targets; ordinary routes retain their intent-derived default. */
   targetDispatchMode?: 'serial' | 'parallel' | undefined;
@@ -270,13 +280,14 @@ export interface RouteOptions {
   /** Route-owned intent plus whether the user explicitly selected it. */
   routeIntent?: AgentRouteIntent;
   /** F293: deterministic scope used to resolve sparse routing cognition. */
+  routingContextIntent?: 'review' | 'architecture';
   /** Authentication-grade owner provenance propagated unchanged to every child invocation. */
   ownerAuthProvenance?: OwnerAuthProvenance;
   /** F281 Phase C: explicit first-party ingress provenance; omitted legacy callers fail closed. */
   humanDispositionInvocationOrigin?: HumanDispositionInvocationOrigin;
   /** Canonical Queue source class for admission/retry policy. */
   routingQueueSource?: 'user' | 'connector' | 'agent' | 'system';
-  /** Immutable Host domain scope forwarded to children; it limits execution, never grants authority. */
+  /** Retained legacy record discriminator. The retired Host executor is rejected; current plugins use public invocation. */
   executionScope?: 'collective-participation' | 'collective-work';
   /** F167 Phase T: exact protocol wake carrier for this route, never inferred from response prose. */
   turnCustodyWake?: import('../../../../ball-custody/TurnCustodyProjectionService.js').TurnCustodyWakeProvenance;
@@ -341,7 +352,12 @@ export interface RouteOptions {
     | ((input: {
         responseMessageId: string;
         invocationId: string;
-        terminal: { status: 'completed'; completedAt: number; reason?: string };
+        terminal: {
+          status: 'completed';
+          completedAt: number;
+          reason?: string;
+          expectedInputMessageIds?: readonly string[];
+        };
         message: AppendMessageInput;
         targetCats: CatId[];
         userId: string;
@@ -378,11 +394,6 @@ export interface RouteOptions {
   persistenceContext?: PersistenceContext;
   /** F167 Phase S: durable outcome CAS run after model completion and before every route-side side effect. */
   beforeOutputCommit?: ((catId: CatId) => Promise<boolean>) | undefined;
-  /**
-   * F117 soak: called once for each requested target that actual-send routing refused (A2A follow-up
-   * targets are not requested targets). A Queue attempt keeps the exact refusal, so its entry waits
-   * for that target's retry time even when the entry named no target.
-   */
   /** F11: Mode-specific system prompt section (appended after identity prompt) */
   modeSystemPrompt?: string | undefined;
   /** F11: Per-cat mode prompt override (takes precedence over modeSystemPrompt) */

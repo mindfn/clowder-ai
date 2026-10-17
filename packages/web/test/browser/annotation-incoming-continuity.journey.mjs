@@ -66,6 +66,7 @@ export async function runAnnotationIncomingContinuity(browser, built, evidenceDi
       await page.evaluate(
         ({ threadId, index }) => {
           window.__f322Chat.incoming(threadId, {
+            from: { kind: 'agent', catId: 'codex61-sol' },
             id: `incoming-${index}`,
             type: 'assistant',
             catId: 'codex61-sol',
@@ -125,6 +126,7 @@ export async function runAnnotationIncomingContinuity(browser, built, evidenceDi
     await page.evaluate(
       (threadId) =>
         window.__f322Chat.incoming(threadId, {
+          from: { kind: 'agent', catId: 'codex61-sol' },
           id: 'incoming-reopened',
           type: 'assistant',
           catId: 'codex61-sol',

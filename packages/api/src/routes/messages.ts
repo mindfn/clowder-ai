@@ -61,6 +61,7 @@ import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { normalizeJsonUnicode } from '../utils/json-unicode.js';
 import { buildThreadDeepLink } from '../utils/thread-deep-link.js';
 import { getDefaultUploadDir } from '../utils/upload-paths.js';
+import { registerGenerationMessagesRoute } from './generation-messages.js';
 import { importStoredProjectMessage } from './messages-project-review.js';
 import { captureSentComposerDraftConsumption } from './sent-composer-draft-consumption.js';
 import { admitThreadParticipants } from './thread-participant-admission.js';
@@ -290,6 +291,7 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_FILES = 5;
 
 export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (app, opts) => {
+  registerGenerationMessagesRoute(app, opts.messageStore);
   const uploadDir = getDefaultUploadDir(opts.uploadDir ?? process.env.UPLOAD_DIR);
 
   // Register multipart parser for image uploads
@@ -663,11 +665,23 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       reply.status(400);
       return { error: 'One or more selected member identities are invalid', code: 'INVALID_EXPLICIT_TARGETS' };
     }
-    const structuredTargetCats = admittedMessageBundle ? bundleRoutingTargetCats : explicitRoutingTargetCats;
-    const routingResult: Awaited<ReturnType<AgentRouter['resolveTargetsAndIntent']>> = structuredTargetCats
+    // Legacy sources lack routing provenance; retain their serial replay snapshot.
+    // New sources freeze prose expansion at the store's actual winning commit,
+    // including races after this preflight. Exact recipient checks stay unchanged.
+    const replayedProseTargets =
+      replayedSource?.content === content &&
+      !replayedSource.extra?.routingTargetSource &&
+      !liveSessionId &&
+      !whisperVisibility
+        ? replayedSource.mentions
+        : undefined;
+    const fixedTargetCats = admittedMessageBundle
+      ? bundleRoutingTargetCats
+      : (explicitRoutingTargetCats ?? replayedProseTargets);
+    const routingResult: Awaited<ReturnType<AgentRouter['resolveTargetsAndIntent']>> = fixedTargetCats
       ? {
-          targetCats: structuredTargetCats,
-          intent: parseIntent(admittedMessageBundle ? '' : content, structuredTargetCats.length),
+          targetCats: [...fixedTargetCats],
+          intent: parseIntent(admittedMessageBundle ? '' : content, fixedTargetCats.length),
           hasMentions: true,
           routing_warnings: [],
         }
@@ -750,6 +764,9 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     // Server-generated idempotency key if client didn't provide one
     const resolvedIdempotencyKey = idempotencyKey ?? randomUUID();
     const sourcePayloadExtra: NonNullable<StoredMessage['extra']> = {
+      ...(!liveSessionId && !whisperVisibility && !admittedMessageBundle
+        ? { routingTargetSource: explicitMentionTargetCats ? ('explicit' as const) : ('prose' as const) }
+        : {}),
       ...(liveSessionId ? { liveAdmission: { sessionId: liveSessionId, targetId: targetCats[0]! } } : {}),
       ...(admittedMessageBundle ? { messageBundle: admittedMessageBundle.carrier } : {}),
     };
@@ -1173,6 +1190,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         m.extra?.stream ||
         m.extra?.targetCats ||
         m.extra?.messageBundle ||
+        m.extra?.evolutionUseSourceV1 ||
         m.extra?.scheduler ||
         m.extra?.systemKind ||
         m.extra?.a2aRouting ||
@@ -1206,6 +1224,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
                 ...(m.extra?.stream ? { stream: m.extra.stream } : {}),
                 ...(m.extra?.targetCats ? { targetCats: m.extra.targetCats } : {}),
                 ...(m.extra?.messageBundle ? { messageBundle: m.extra.messageBundle } : {}),
+                ...(m.extra?.evolutionUseSourceV1 ? { evolutionUseSourceV1: m.extra.evolutionUseSourceV1 } : {}),
                 ...(m.extra?.scheduler ? { scheduler: m.extra.scheduler } : {}),
                 ...(m.extra?.systemKind ? { systemKind: m.extra.systemKind } : {}),
                 ...(m.extra?.a2aRouting ? { a2aRouting: m.extra.a2aRouting } : {}),

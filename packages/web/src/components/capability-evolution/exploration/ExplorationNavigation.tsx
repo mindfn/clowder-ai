@@ -9,14 +9,21 @@ import type { useExplorationWorkspace } from './use-exploration-workspace';
 export function ExplorationNavigation({
   workspace,
   v2 = false,
+  historical = false,
 }: {
   workspace: ReturnType<typeof useExplorationWorkspace>;
   v2?: boolean;
+  historical?: boolean;
 }) {
   const [graph, setGraph] = useState(false);
-  const { catalog, node, selectedNodeKey, selectNode, currentKeys, reading, change } = workspace;
+  const { catalog, node, selectedNodeKey, selectNode, currentKeys, adoptedKeys, reading, change } = workspace;
   const notes = useMemo(() => {
     const result = new Map<string, string>();
+    const latest = catalog?.nodes.at(-1);
+    if (historical && latest) {
+      result.set(refIdentity(latest.nodeRef), '现在');
+      return result;
+    }
     for (const entry of catalog?.nodes ?? []) {
       const key = refIdentity(entry.nodeRef);
       const runs = (catalog?.experiments ?? []).filter((run) => refIdentity(run.nodeRef) === key);
@@ -26,7 +33,7 @@ export function ExplorationNavigation({
         result.set(key, [failed && `${failed} 次未完成`, active && `${active} 次运行中`].filter(Boolean).join(' · '));
     }
     return result;
-  }, [catalog]);
+  }, [catalog, historical]);
   if (!catalog || !node) return null;
   const nodes = v2 ? catalog.nodes : catalog.nodes.filter((entry) => entry.kind === node.kind);
   const open = v2 ? reading.lineageCollapsed !== true : reading.lineageCollapsed === false;
@@ -57,7 +64,7 @@ export function ExplorationNavigation({
       <label className="exploration-version-picker">
         <span className="sr-only">阅读版本</span>
         <select
-          aria-label="选择阅读版本"
+          aria-label={historical ? '选择阅读步骤' : '选择阅读版本'}
           value={selectedNodeKey}
           onChange={(event) => {
             const next = catalog.nodes.find((item) => refIdentity(item.nodeRef) === event.target.value);
@@ -65,7 +72,7 @@ export function ExplorationNavigation({
           }}
         >
           {(['owner_version', 'public_archive'] as const).map((kind) => (
-            <optgroup key={kind} label={kind === 'owner_version' ? '本项目版本' : '公开归档'}>
+            <optgroup key={kind} label={kind === 'owner_version' ? '本项目版本' : historical ? '错题谱系' : '公开归档'}>
               {catalog.nodes
                 .filter((entry) => entry.kind === kind)
                 .map((entry) => (
@@ -78,7 +85,7 @@ export function ExplorationNavigation({
         </select>
       </label>
       <div className="exploration-embedded-map" data-open={open}>
-        {v2 ? (
+        {v2 && !historical ? (
           <ExplorationVersionCards workspace={workspace} notes={notes} />
         ) : (
           !graph && (
@@ -86,6 +93,7 @@ export function ExplorationNavigation({
               nodes={nodes}
               selected={selectedNodeKey}
               currentKeys={currentKeys}
+              adoptedKeys={adoptedKeys}
               nodeNotes={notes}
               toolbarEnd={
                 <>
@@ -131,7 +139,14 @@ export function ExplorationNavigation({
           )
         )}
       </div>
-      {graph && <ExplorationLineageDialog workspace={workspace} allSources={v2} close={() => setGraph(false)} />}
+      {graph && (
+        <ExplorationLineageDialog
+          workspace={workspace}
+          allSources={v2}
+          historical={historical}
+          close={() => setGraph(false)}
+        />
+      )}
     </aside>
   );
 }

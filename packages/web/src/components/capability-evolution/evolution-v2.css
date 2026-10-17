@@ -60,6 +60,21 @@
   font-weight: 400;
   margin-left: 6px;
 }
+.evolution-v2-pending {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--cafe-border);
+  border-radius: 10px;
+  background: var(--console-card-bg);
+  color: var(--cafe-text-secondary);
+  font-size: var(--console-font-compact);
+}
+.evolution-v2-pending .evolution-v2-section-title {
+  margin: 0;
+}
 .evolution-v2-projects {
   overflow: hidden;
   border: 1px solid var(--cafe-border);

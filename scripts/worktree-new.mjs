@@ -17,6 +17,7 @@
  * declaration fails, the new worktree and branch are removed again so nothing half-created is left behind.
  */
 import { fileURLToPath } from 'node:url';
+import { deferredMedia, initializeLightCheckout } from './lib/worktree-light.mjs';
 import { DEFAULT_POLICY, LIFECYCLE_POLICIES } from './lib/worktree-reaper-core.mjs';
 import { checkoutKind, git } from './lib/worktree-reaper-probes.mjs';
 import { capacityHolders, checkCapacity, mainRepoFrom } from './worktree-reaper.mjs';
@@ -101,6 +102,7 @@ export function createWorktree({
   max = DEFAULT_POLICY.maxWorktrees,
   now,
   parentDir,
+  full = false,
   declare = declareLifecycle,
 }) {
   validateDeclaration({ owner, policy, ttlDays });
@@ -111,8 +113,14 @@ export function createWorktree({
     throw new Error(`invalid --base ${base}: not a commit in this repository (fetch it first?)`);
   }
   ensureCapacity({ repo, max, parentDir });
-  mustGit(repo, ['worktree', 'add', path, ...(branch ? ['-b', branch] : []), base], 'worktree add');
+  const deferred = full ? null : deferredMedia(repo, base);
+  mustGit(
+    repo,
+    ['worktree', 'add', ...(full ? [] : ['--no-checkout']), path, ...(branch ? ['-b', branch] : []), base],
+    'worktree add',
+  );
   try {
+    if (deferred) initializeLightCheckout(path, deferred);
     declare(path, { owner, policy, ttlDays, now });
   } catch (err) {
     // Fresh and clean by construction: remove without --force (anything unexpected makes git refuse).
@@ -138,7 +146,14 @@ function main(argv) {
     declareLifecycle(path, decl);
   } else {
     const repo = mainRepoFrom(process.cwd());
-    createWorktree({ repo, path, branch: flag(argv, '--branch'), base: flag(argv, '--base'), ...decl });
+    createWorktree({
+      repo,
+      path,
+      branch: flag(argv, '--branch'),
+      base: flag(argv, '--base'),
+      full: argv.includes('--full'),
+      ...decl,
+    });
   }
   console.log(`[worktree-new] ${path} declared owner=${decl.owner} policy=${decl.policy}`);
   return 0;

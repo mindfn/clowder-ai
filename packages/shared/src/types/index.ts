@@ -250,6 +250,7 @@ export * from './capability-evolution.js';
 export * from './capability-evolution-asset-review.js';
 export * from './capability-evolution-exploration.js';
 export * from './capability-evolution-exploration-record.js';
+export * from './capability-evolution-message-source.js';
 export * from './capability-evolution-name.js';
 export * from './capability-evolution-observation.js';
 export * from './capability-evolution-preparation.js';
@@ -594,6 +595,7 @@ export {
   entrustedWorkBriefV1Schema,
   entrustedWorkOwnerReadV1Schema,
 } from './entrusted-work-owner-read.js';
+export * from './eval-repair-decision-explanation.js';
 // F227: Event Memory types (cognitive-transition event index)
 export {
   COGNITIVE_TRANSITIONS,
@@ -777,6 +779,7 @@ export {
   custodyOpportunityEpisodeInputV1Schema,
   custodyOpportunityEpisodeV1Schema,
 } from './growing-opportunity.js';
+export * from './harness-history-publication.js';
 export type { HoldCancelEntry, HoldCardCancelability, HoldCardRef } from './hold-card-cancelability.js';
 export { decideHoldCancelEntry, readHoldCardCancelability } from './hold-card-cancelability.js';
 // F281 Phase A: server-bound human disposition feedback and exact-subject eligibility contract
@@ -1085,6 +1088,7 @@ export type {
   LifecycleAppendAction,
   LifecycleAppendCapability,
   LifecycleAppendExpectedRun,
+  LifecycleAppendFailure,
   LifecycleDeliveryFailureReason,
   LifecycleDeliveryFailureResult,
   LifecycleDispatchRef,
@@ -1106,6 +1110,7 @@ export type {
 } from './message-lifecycle.js';
 export {
   hasExactLifecycleProcessingDispatch,
+  isLifecycleAppendFailure,
   isLifecycleInputReadReceipt,
   isLifecycleStoredMessageMetadata,
   isMessageFrom,

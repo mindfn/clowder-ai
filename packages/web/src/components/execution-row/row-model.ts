@@ -19,7 +19,7 @@ import type { QueueWaitInfo } from './queue-view';
 /** Why the row offers thread recovery; normal reset lives in the title menu. */
 export type ForceResetReason = 'silent_turn' | 'unverified_legacy';
 
-export type RowStatus = 'working' | 'stopping' | 'blocked' | 'silent' | 'unverified' | 'waiting';
+export type RowStatus = 'working' | 'stopping' | 'blocked' | 'silent' | 'confirming' | 'unverified' | 'waiting';
 
 /** What the single ■ slot shows. `none` = nothing to stop here (several runs: each has its own ■ in the panel). */
 export type StopSlot =
@@ -42,6 +42,8 @@ export interface ExecutionRowInput {
   silent: Readonly<Record<string, { since: number | null }>>;
   /** The canonical projection failed its last refresh for this thread. */
   hydrationStale: boolean;
+  /** An initial read is still inside its bounded confirmation window. */
+  hydrationLoading?: boolean;
   /** The legacy socket still reports a live turn while the canonical projection has none and is not ready. */
   hasUnverifiedLegacyExecution: boolean;
   queue: {
@@ -100,6 +102,7 @@ interface Counts {
   running: number;
   silent: number;
   unverified: boolean;
+  confirming: boolean;
 }
 
 function statusFor(counts: Counts, stop: StopSlot): RowStatus {
@@ -109,6 +112,7 @@ function statusFor(counts: Counts, stop: StopSlot): RowStatus {
     return stop.kind === 'blocked' ? 'blocked' : 'working';
   }
   if (counts.unverified) return 'unverified';
+  if (counts.confirming) return 'confirming';
   return 'waiting';
 }
 
@@ -133,7 +137,8 @@ export function deriveExecutionRow(input: ExecutionRowInput): ExecutionRowModel 
   const counts: Counts = {
     running: executions.length,
     silent: executions.filter((execution) => input.silent[activeExecutionKey(execution)] !== undefined).length,
-    unverified: executions.length === 0 && input.hasUnverifiedLegacyExecution,
+    unverified: executions.length === 0 && input.hasUnverifiedLegacyExecution && !input.hydrationLoading,
+    confirming: executions.length === 0 && input.hasUnverifiedLegacyExecution && Boolean(input.hydrationLoading),
   };
   const stop = stopSlotFor(single, input.cancelPendingKeys);
   const status = statusFor(counts, stop);
@@ -141,7 +146,7 @@ export function deriveExecutionRow(input: ExecutionRowInput): ExecutionRowModel 
   const resume = queue.canRecoverOrphaned ? 'recover' : null;
 
   return {
-    visible: counts.running > 0 || counts.unverified || visibleQueueCount > 0,
+    visible: counts.running > 0 || counts.unverified || counts.confirming || visibleQueueCount > 0,
     status,
     runningCount: counts.running,
     queuedCount: queue.entries.filter((entry) => entry.status === 'queued').length,
@@ -222,6 +227,8 @@ export function rowStatusText(
       return silentText(model, clock, tail, copy);
     case 'unverified':
       return copy.status.unverified;
+    case 'confirming':
+      return copy.status.confirming;
     case 'waiting':
       return copy.status.waiting(model.queuedCount > 0 ? model.queuedCount : model.visibleQueueCount);
   }
@@ -241,6 +248,8 @@ export function rowCompactStatusText(model: ExecutionRowModel, copy: ExecutionRo
       return copy.compact.silent;
     case 'unverified':
       return copy.compact.unverified;
+    case 'confirming':
+      return copy.compact.confirming;
     case 'waiting':
       return copy.compact.waiting(model.queuedCount > 0 ? model.queuedCount : model.visibleQueueCount);
   }

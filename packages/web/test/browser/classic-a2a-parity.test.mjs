@@ -5,13 +5,12 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 
-// Reuse an explicitly supplied browser proof driver, without a product dependency
-// or a fallback to a retired package's node_modules.
-assert.ok(
-  process.env.CLASSIC_A2A_PLAYWRIGHT_MODULE,
-  'Set CLASSIC_A2A_PLAYWRIGHT_MODULE to an installed Playwright ESM module',
-);
-const { chromium } = await import(process.env.CLASSIC_A2A_PLAYWRIGHT_MODULE);
+// Home uses the same installed driver as the other Vite journeys. Public proofs
+// can supply their own installed module through the existing explicit override.
+const playwrightModule =
+  process.env.CLASSIC_A2A_PLAYWRIGHT_MODULE ??
+  new URL('../../../ppt-forge/node_modules/playwright/index.mjs', import.meta.url);
+const { chromium } = await import(playwrightModule);
 
 // Deterministic frontend rendering proof; no native provider or backend lifecycle claim.
 test(
@@ -190,12 +189,17 @@ test(
           );
         }
       }
-      await page.getByRole('button', { name: 'fail save', exact: true }).click();
       await page.getByRole('button', { name: '添加内容', exact: true }).click();
       await page.getByTestId('message-disposition-trigger').click();
       await page.locator('[data-disposition-option="continue_current"]').click();
-      assert.equal(await page.getByTestId('message-disposition-panel').count(), 1);
-      assert.ok((await page.getByTestId('message-disposition-panel').innerText()).includes('保存失败，请重试'));
+      assert.equal(await page.getByTestId('message-disposition-panel').count(), 0);
+      assert.match(await page.getByTestId('message-disposition-trigger').innerText(), /接着当前工作/);
+      await page.getByTestId('message-disposition-trigger').click();
+      assert.match(await page.getByTestId('message-disposition-panel').innerText(), /仅这一次/);
+      assert.equal(
+        await page.locator('[data-disposition-option="continue_current"]').getAttribute('aria-pressed'),
+        'true',
+      );
       await page.keyboard.press('Escape');
       await page.getByRole('button', { name: 'switch shell', exact: true }).click();
       await page.getByRole('button', { name: '添加内容', exact: true }).click();

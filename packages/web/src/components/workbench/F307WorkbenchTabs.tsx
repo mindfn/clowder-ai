@@ -85,6 +85,7 @@ export function F307WorkbenchTabs(props: F307WorkbenchTabsProps) {
           isDesktop={isDesktop}
           artifactWorkHostAvailable={artifactWorkHostAvailable}
           mainAreaAttentionSurfaceId={mainAreaAttentionSurfaceId}
+          mainAreaAttentionIsWide={props.mainAreaAttentionIsWide}
           onEnterMainAreaAttention={onEnterMainAreaAttention}
           onExitMainAreaAttention={onExitMainAreaAttention}
         />

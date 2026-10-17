@@ -78,10 +78,12 @@ function createHarness({
   actionSuccessorLeaseStore,
   deploymentWaitStartGuard,
   autoDrain = false,
+  ledgerStore,
+  liveCompanionSessions,
 } = {}) {
   let processor;
   const queue = new InvocationQueue(
-    undefined,
+    ledgerStore,
     autoDrain
       ? {
           onAdmitted: ({ threadId }) => {
@@ -135,6 +137,7 @@ function createHarness({
     ...(turnExecutionStore ? { turnExecutionStore } : {}),
     ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
     ...(deploymentWaitStartGuard ? { deploymentWaitStartGuard } : {}),
+    ...(liveCompanionSessions ? { liveCompanionSessions } : {}),
   };
   processor = new QueueProcessor(deps, processorOptions);
   return { ...deps, processor, routeCalls };
@@ -220,6 +223,7 @@ async function admitMessage(harness, overrides = {}) {
     catId: null,
     from: queueInput.from,
     ...(overrides.messageSource ? { source: overrides.messageSource } : {}),
+    ...(overrides.visibility ? { visibility: overrides.visibility, whisperTo: overrides.whisperTo } : {}),
     content: queueInput.content,
     mentions: queueInput.targetCats,
     timestamp: Date.now(),
@@ -1517,7 +1521,10 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     assert.deepEqual(result.rejectedTargetIds, ['codex']);
     assert.equal(opusDispatch.mock.calls.length, 1);
     assert.equal(codexDispatch.mock.calls.length, 1);
-    assert.equal(await harness.queue.getDurableEntry('thread-1', admitted.entry.id), null);
+    const recovered = await harness.queue.getDurableEntry('thread-1', admitted.entry.id);
+    assert.deepEqual(recovered.targets, ['codex']);
+    assert.deepEqual(recovered.delivery.routingHeldTargetIds, ['codex']);
+    assert.equal(result.recovery[0].acceptance, 'unknown');
     assert.deepEqual(
       (await harness.messageStore.getById(admitted.message.id)).lifecycle.dispatchRefs.map((ref) => [
         ref.targetId,
@@ -1525,7 +1532,7 @@ describe('QueueProcessor over the source-row pending Queue', () => {
       ]),
       [
         ['opus', 'dispatched'],
-        ['codex', 'settled'],
+        ['codex', 'dispatched'],
       ],
     );
   });
@@ -2561,4 +2568,315 @@ describe('deployment continuation at the canonical Queue boundary', () => {
       assert.equal(options.routingQueueSource, { user: 'user', external: 'connector', agent: 'agent' }[from.kind]);
     }
   });
+});
+
+describe('F293 routing through the canonical Queue', () => {
+  for (const entryType of ['continuation', 'private_input', 'executionScope', 'whisper', 'live']) {
+    it(`${entryType}: a source without an owner recovery action never receives a permanent routing hold`, async () => {
+      await import('./helpers/setup-cat-registry.js');
+      const { routingJourneyDeps } = await import('./helpers/routing-journey-deps.js');
+      const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+      let available = false;
+      let providerCalls = 0;
+      let liveStopped = false;
+      const attempts = [];
+      const { deps } = routingJourneyDeps(
+        {
+          async preflight(input) {
+            attempts.push(input);
+            return {
+              v: 1,
+              ownerId: input.ownerId,
+              observedAt: Date.now(),
+              resolverState: 'fresh',
+              snapshotRef: 'routing:automatic-recovery',
+              targets: input.targetCatIds.map((targetCatId) => ({
+                targetCatId,
+                disposition: available ? 'allowed' : 'rejected',
+                reasons: available ? [] : [{ code: 'quota_exhausted', summary: 'Wait for recovery', sourceRefs: [] }],
+                alternatives: [],
+              })),
+            };
+          },
+        },
+        { observeTerminal: async () => {} },
+        {
+          async *invoke() {
+            providerCalls++;
+            yield { type: 'text', catId: 'opus', content: 'Automatic recovery', timestamp: Date.now() };
+            yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+          },
+        },
+      );
+      const harness = createHarness({
+        turnExecutionStore: deps.invocationDeps.turnExecutionStore,
+        processorOptions: { retryDeferral: { baseDelayMs: 100 } },
+        ...(entryType === 'live'
+          ? {
+              liveCompanionSessions: {
+                async claim() {
+                  if (liveStopped) throw new Error('The original Live carrier was released');
+                  return {
+                    acceptsAdmission: () => true,
+                    stop: async () => {
+                      liveStopped = true;
+                    },
+                  };
+                },
+                rejectUnclaimed: async () => {},
+              },
+            }
+          : {}),
+        async *routeExecution(userId, message, threadId, _intent, targets, _context, options) {
+          deps.messageStore = harness.messageStore;
+          yield* routeSerial(deps, targets, message, userId, threadId, options);
+        },
+      });
+      const variants = {
+        continuation: {
+          from: { kind: 'agent', catId: 'codex' },
+          kind: 'message_wake',
+          sourceCategory: 'continuation',
+          ownerAuthProvenance: 'unknown',
+        },
+        executionScope: {
+          from: { kind: 'external', connectorId: 'collective' },
+          executionScope: 'collective-participation',
+          ownerAuthProvenance: 'unknown',
+          messageSource: {
+            connector: 'collective',
+            label: 'Collective',
+            meta: {
+              participation: {
+                serviceInstanceId: 'svc_fixture000',
+                collectiveId: 'col_fixture000',
+                connectionId: 'con_fixture000',
+                eventId: 'evt_fixture000',
+                catId: 'opus',
+                location: { channelId: 'general' },
+                participationRevision: 1,
+                actor: { kind: 'human', humanId: 'human_fixture000', displayName: 'Fixture Owner' },
+              },
+            },
+          },
+        },
+        whisper: {
+          from: { kind: 'agent', catId: 'codex' },
+          visibility: 'whisper',
+          whisperTo: ['opus'],
+          ownerAuthProvenance: 'unknown',
+        },
+        live: { liveSessionId: 'live-original' },
+      };
+      const admitted =
+        entryType === 'private_input'
+          ? await harness.queue.enqueueDurable({
+              threadId: 'thread-1',
+              userId: 'user-1',
+              sourceId: 'private-wake',
+              kind: 'private_input',
+              from: { kind: 'system', service: 'scheduler' },
+              ownerAuthProvenance: 'unknown',
+              content: 'Private wake',
+              targetCats: ['opus'],
+              intent: 'execute',
+            })
+          : await admitMessage(harness, variants[entryType]);
+      assert.equal((await harness.processor.processNext('thread-1', 'user-1')).started, true);
+      await waitFor(() => harness.invocationRecordStore.records.get('inv-1')?.status === 'failed');
+      await waitFor(() => harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id)?.status === 'queued');
+      assert.equal(attempts.length, 1, 'the real routing preflight rejected this source');
+      assert.equal(providerCalls, 0);
+      assert.deepEqual(
+        (await harness.queue.getDurableEntry('thread-1', admitted.entry.id)).delivery.routingHeldTargetIds ?? [],
+        [],
+      );
+      available = true;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      await harness.processor.requestDrain('thread-1');
+      if (entryType === 'executionScope') {
+        await waitFor(() => harness.invocationRecordStore.records.get('inv-2')?.status === 'failed');
+        await waitFor(
+          () => harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id)?.status === 'queued',
+        );
+        assert.ok(attempts.length >= 2, 'automatic recovery reaches fresh preflight again');
+        assert.equal(providerCalls, 0, 'an absent domain grant still blocks invocation after availability recovers');
+        assert.notEqual(attempts.at(-1).ownerRequestedAttempt, true);
+        assert.equal(
+          (await harness.queue.getDurableEntry('thread-1', admitted.entry.id)).execution.executionScope,
+          'collective-participation',
+        );
+        await harness.queue.terminalizeEntryDurable('thread-1', 'user-1', admitted.entry.id, 'cancelled');
+        return;
+      }
+      await waitFor(() => harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id) === null);
+      if (entryType === 'live') {
+        assert.equal(liveStopped, true);
+        assert.equal(providerCalls, 0, 'recovery never recreates a released Live carrier');
+        const source = await harness.messageStore.getById(admitted.message.id);
+        assert.ok(
+          source.lifecycle.dispatchRefs.some((ref) => ref.targetId === 'opus'),
+          'unavailable Live is durably settled',
+        );
+      } else {
+        assert.equal(providerCalls, 1, 'the existing backoff retries automatic work after recovery');
+        assert.notEqual(attempts.at(-1).ownerRequestedAttempt, true, 'automatic retry does not borrow owner authority');
+      }
+    });
+  }
+  for (const mode of ['serial', 'parallel'])
+    for (const mixed of [false, true]) {
+      it(`${mode}/${mixed}: policy hold survives restart and only owner click retries the exact pending target`, async () => {
+        await import('./helpers/setup-cat-registry.js');
+        const { routingJourneyDeps } = await import('./helpers/routing-journey-deps.js');
+        const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+        const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+        const { InMemoryQueueLedgerStore } = await import(
+          '../dist/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js'
+        );
+        const ledgerStore = new InMemoryQueueLedgerStore();
+        let available = true;
+        let manualPause = false;
+        let siblingCalls = 0;
+        const preflightInputs = [];
+        let automaticRetryAt;
+        let providerCalls = 0;
+        const decisions = [];
+        const observations = [];
+        const { deps } = routingJourneyDeps(
+          {
+            async preflight(input) {
+              preflightInputs.push(input);
+              const decision = {
+                v: 1,
+                ownerId: input.ownerId,
+                observedAt: Date.now(),
+                resolverState: 'fresh',
+                snapshotRef: 'routing:queue-journey',
+                targets: input.targetCatIds.map((targetCatId) => ({
+                  targetCatId,
+                  disposition:
+                    targetCatId === 'codex' || available
+                      ? 'allowed'
+                      : !manualPause && input.ownerRequestedAttempt
+                        ? 'warned'
+                        : 'rejected',
+                  reasons: available
+                    ? []
+                    : [
+                        {
+                          code: manualPause ? 'manual_unavailable' : 'quota_exhausted',
+                          summary: 'Unavailable member',
+                          sourceRefs: ['manual:pause'],
+                        },
+                      ],
+                  alternatives: [],
+                  ...(!available ? { automaticRetryAt } : {}),
+                })),
+              };
+              decisions.push(decision);
+              return decision;
+            },
+          },
+          { observeTerminal: async (observation) => observations.push(observation) },
+          {
+            async *invoke() {
+              providerCalls++;
+              yield { type: 'text', catId: 'opus', content: 'Finished after recovery', timestamp: Date.now() };
+              yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+            },
+          },
+        );
+        deps.services.codex = {
+          async *invoke() {
+            siblingCalls++;
+            yield { type: 'text', catId: 'codex', content: 'Sibling finished', timestamp: Date.now() };
+            yield { type: 'done', catId: 'codex', timestamp: Date.now() };
+          },
+        };
+        const route = mode === 'serial' ? routeSerial : routeParallel;
+        const harness = createHarness({
+          ledgerStore,
+          turnExecutionStore: deps.invocationDeps.turnExecutionStore,
+          processorOptions: { retryDeferral: { baseDelayMs: 10, maxDelayMs: 1_000 } },
+          async *routeExecution(userId, message, threadId, _intent, targets, _context, options) {
+            deps.messageStore = harness.messageStore;
+            yield* route(deps, targets, message, userId, threadId, options);
+          },
+        });
+        const admitted = await admitMessage(harness, {
+          from: { kind: 'agent', catId: 'codex' },
+          kind: 'message_wake',
+          sourceCategory: 'a2a',
+          ownerAuthProvenance: 'unknown',
+          targetCats: mixed ? ['opus', 'codex'] : ['opus'],
+        });
+        // State changes after admission must be checked before the actual provider child.
+        available = false;
+        automaticRetryAt = Date.now() + 250;
+        assert.equal((await harness.processor.processNext('thread-1', 'user-1')).started, true);
+        await waitFor(() =>
+          ['failed', 'succeeded'].includes(harness.invocationRecordStore.records.get('inv-1')?.status),
+        );
+        await waitFor(
+          () => harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id)?.status === 'queued',
+        );
+        assert.equal(providerCalls, 0);
+        assert.equal(siblingCalls, mixed ? 1 : 0);
+        assert.equal(observations.length, mixed ? 1 : 0);
+        assert.ok(await harness.messageStore.getById(admitted.message.id), 'the original input remains durable');
+        assert.ok(await harness.queue.getDurableEntry('thread-1', admitted.entry.id), 'Queue retains the refused work');
+        const notices = await harness.messageStore.getByThread('thread-1');
+        assert.ok(notices.some((message) => message.extra?.systemInfo?.payload?.target?.disposition === 'rejected'));
+        assert.deepEqual(
+          (await harness.queue.getDurableEntry('thread-1', admitted.entry.id)).delivery.routingHeldTargetIds,
+          ['opus'],
+        );
+        const restartedQueue = new InvocationQueue(ledgerStore);
+        await restartedQueue.hydrateFromLedger(harness.messageStore);
+        const restarted = new QueueProcessor(
+          { ...harness, queue: restartedQueue },
+          { retryDeferral: { baseDelayMs: 10 } },
+        );
+        harness.queue = restartedQueue;
+        harness.processor = restarted;
+        available = true;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        await harness.processor.requestDrain('thread-1');
+        assert.equal(providerCalls, 0, 'signal expiry and automatic drain never replay an owner-held source');
+        available = false;
+        manualPause = true;
+        assert.equal(
+          (await harness.processor.retryRoutingTarget('thread-1', 'user-1', admitted.entry.id, 'opus')).started,
+          false,
+        );
+        assert.equal(providerCalls, 0, 'manual pause still refuses an owner attempt');
+        await waitFor(() => !harness.invocationTracker.has('thread-1', 'opus'));
+        manualPause = false;
+        const outcomes = await Promise.all([
+          harness.processor.retryRoutingTarget('thread-1', 'user-1', admitted.entry.id, 'opus'),
+          harness.processor.retryRoutingTarget('thread-1', 'user-1', admitted.entry.id, 'opus'),
+        ]);
+        assert.equal(
+          outcomes.filter((result) => result.started).length,
+          1,
+          'double click converges on one Queue claim',
+        );
+        await waitFor(() => harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id) === null);
+        await waitFor(() => observations.length === (mixed ? 2 : 1));
+        assert.equal(providerCalls, 1);
+        assert.ok(decisions.length >= 2);
+        assert.equal(await harness.queue.getDurableEntry('thread-1', admitted.entry.id), null);
+        assert.equal(siblingCalls, mixed ? 1 : 0, 'the successful sibling never replays');
+        assert.equal(
+          preflightInputs.at(-1).ownerRequestedAttempt,
+          true,
+          'only the exact click carries owner authority',
+        );
+        assert.equal(observations.at(-1).preflightDecision, decisions.at(-1));
+        assert.equal(observations.at(-1).status, 'succeeded');
+        const failures = errorLog(harness);
+        assert.deepEqual(failures, [], 'a known availability refusal is not a backend error');
+      });
+    }
 });

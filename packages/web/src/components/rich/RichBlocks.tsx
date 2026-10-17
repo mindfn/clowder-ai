@@ -388,7 +388,7 @@ export function RichBlocks({
               {!readOnly && forwardingEnabled && messageId && sourceThreadId ? (
                 <RichBlockForwardActions
                   blocks={[item]}
-                  layout={item.kind === 'file' ? 'flow' : 'overlay'}
+                  layout={['file', 'card', 'interactive'].includes(item.kind) ? 'flow' : 'overlay'}
                   onForward={setForwardBlockId}
                 />
               ) : null}

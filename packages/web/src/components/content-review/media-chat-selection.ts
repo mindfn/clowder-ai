@@ -6,6 +6,7 @@ import {
   contentModificationOutcome,
   type MediaContextAttachment,
   MediaContextAttachmentSchema,
+  reviewedMediaTypeSchema,
 } from '@cat-cafe/shared';
 import { COMPOSER_RECALL_PENDING_COPY, COMPOSER_TOO_LARGE_COPY } from '../composer-refusal-copy';
 import { projectScreeningComposerConflict } from '../project-screening-composer-group';
@@ -37,7 +38,7 @@ export type MediaSelectionRefusal =
   | 'full'
   /** The composer already holds the most things a message can carry; a draft past that is discarded, so refuse. */
   | 'composer_full'
-  /** The image path carries PNG regions and points only. */
+  /** The selection kind must agree with its admitted image or video source. */
   | 'not_image'
   /**
    * The whole work is already waiting (an empty set of places means exactly that). Adding a place would silently
@@ -67,7 +68,7 @@ export const MEDIA_SELECTION_REFUSAL_COPY = {
   other_source: '输入框里已有另一幅作品的选区或另一版成片的位置。请先发送或移除它们，再添加这处。',
   full: `一条消息最多 ${MEDIA_SELECTION_LIMIT} 处选区。`,
   composer_full: '输入框里的引用已满，请先发送或移除几个。',
-  not_image: '目前只能把 PNG 图片上的圈选或点选放进对话。',
+  not_image: '这份媒体当前不能携带这种选区。图片请圈选或点选；视频请选择时间段或圈这一帧。',
   whole_work_pending: '输入框里已经引用了整件作品。请先移除它，再选区域。',
   selected_places_pending: '输入框里已有这幅作品的选区。请先发送或移除它们，再引用整图。',
   too_long: '这处说明太长了，请精简后再放进对话。',
@@ -127,29 +128,35 @@ export function sameMediaSource(
   return stableKey(a.source) === stableKey(b.source) && stableKey(a.taskContext) === stableKey(b.taskContext);
 }
 
-/**
- * What a review surface hands over to say "this work, this version". Null when the work is of a type a media message
- * cannot carry (PNG and MP4 only) or has no name to show: nothing is guessed in its place.
- */
+/** Presentation admits exactly the MIME values carried by the original shared message contract. */
+export function mediaChatMime(mime: string): MediaContextAttachment['mediaType'] | null {
+  const parsed = reviewedMediaTypeSchema.safeParse(mime);
+  return parsed.success ? parsed.data : null;
+}
+
+/** The exact original source and admitted MIME; an unsupported type or empty title is never guessed. */
 export function mediaChatTarget(input: {
   readonly title: string;
   readonly mime: string;
   readonly source: MediaContextAttachment['source'];
   readonly taskContext?: MediaContextAttachment['taskContext'];
 }): MediaChatTarget | null {
-  if (input.mime !== 'image/png' && input.mime !== 'video/mp4') return null;
+  const mediaType = mediaChatMime(input.mime);
+  if (!mediaType) return null;
   const title = input.title.trim().slice(0, 300);
   if (!title) return null;
   return {
     title,
-    mediaType: input.mime,
+    mediaType,
     source: input.source,
     ...(input.taskContext ? { taskContext: input.taskContext } : {}),
   };
 }
 
 /** The label a person reads for a place: what they did, never its coordinates. */
-export function mediaSelectionLabel(item: MediaSelectionItem): '圈选' | '点选' {
+export function mediaSelectionLabel(item: MediaSelectionItem): '圈选' | '点选' | '时间段' | '圈这一帧' {
+  if (item.selection.kind === 'video-range')
+    return item.selection.frameRegion || item.selection.framePoint ? '圈这一帧' : '时间段';
   return item.selection.kind === 'image-point' ? '点选' : '圈选';
 }
 
@@ -190,8 +197,7 @@ function refusalBefore(
   anchor: ArtifactReviewAnchor,
   words: string,
 ): MediaSelectionRefusal | null {
-  if (target.mediaType !== 'image/png' || (anchor.kind !== 'image-region' && anchor.kind !== 'image-point'))
-    return 'not_image';
+  if ((target.mediaType === 'video/mp4') !== (anchor.kind === 'video-range')) return 'not_image';
   if (words.length > INSTRUCTION_LIMIT) return 'too_long';
   if (!pending) return current.length >= CONTEXT_ATTACHMENT_MAX_COUNT ? 'composer_full' : null;
   if (!sameMediaSource(pending, target)) return 'other_source';

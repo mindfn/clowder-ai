@@ -170,13 +170,29 @@ it('says there is no conversation to add it to when none is open', async () => {
   expect(queued()).toBeNull();
 });
 
-it('does not take a JPEG: the image path carries PNG only, and says so', async () => {
-  const jpeg = mediaView();
-  (jpeg.review.source as { mime: string }).mime = 'image/jpeg';
-  await mount(jpeg);
+it.each([
+  'image/jpeg',
+  'image/webp',
+] as const)('keeps the actual %s MIME and original source in the circled Chat place', async (mime) => {
+  const image = mediaView();
+  (image.review.source as { mime: string }).mime = mime;
+  await mount(image);
   await selectWholeImage();
   await act(async () => addToChat()?.click());
-  expect(container.textContent).toContain('目前只能把 PNG 图片上的圈选或点选放进对话');
+  expect(queuedMedia()).toMatchObject({
+    mediaType: mime,
+    source: { kind: 'workspace', expectedSourceRevision: revision, reviewId },
+    selections: [{ selection: { kind: 'image-region', x: 0, y: 0, width: 160, height: 100 } }],
+  });
+  expect(mocks.apiFetch).toHaveBeenCalledTimes(1);
+});
+
+it('refuses an unadmitted GIF without putting a misleading image into Chat', async () => {
+  const image = mediaView();
+  (image.review.source as { mime: string }).mime = 'image/gif';
+  await mount(image);
+  await selectWholeImage();
+  await act(async () => addToChat()?.click());
   expect(queued()).toBeNull();
 });
 

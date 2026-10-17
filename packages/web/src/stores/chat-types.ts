@@ -4,6 +4,7 @@ import type {
   ContextAttachment,
   CrossThreadCoordination,
   CustodyOfferV1,
+  EvolutionUseSourceV1,
   LifecycleActiveRun,
   LifecycleAppendAction,
   LifecycleStoredMessageMetadata,
@@ -300,6 +301,8 @@ export type MessagePublicationOrigin = Pick<
 
 export interface ChatMessage {
   id: string;
+  /** View-only Queue projection; never persisted as a second History record. */
+  queuedEntryId?: string;
   /** RFC #1356 canonical sender identity for persisted messages. */
   from?: MessageFrom;
   /** Client-only exact persisted records folded into this canonical bubble. */
@@ -343,6 +346,8 @@ export interface ChatMessage {
     outputLayout?: import('@cat-cafe/shared').MessageOutputLayoutV1;
     /** F310 source-owner projection; the card rehydrates canonical state before acting. */
     custodyOfferV1?: CustodyOfferV1;
+    /** F311 receipt-derived navigation source for this later result. */
+    evolutionUseSourceV1?: EvolutionUseSourceV1;
     /** F306 durable projection input shared by live, hydration, callback and replay. */
     semanticEvent?: ProviderSemanticEvent;
     rich?: { v: 1; blocks: RichBlock[] };
@@ -836,6 +841,9 @@ export interface QueueEntry {
   /** #706: HTTP-enriched History preview for QueuePanel display + recall-edit.
    *  Mutation SSE publishes pending targets without waiting for this join. */
   messagePreview?: {
+    timestamp?: number;
+    visibility?: 'whisper';
+    whisperTo?: string[];
     contentBlocks?: ReadonlyArray<MessageContent>;
     replyTo?: string;
     /** Stored connector identity; lets the row reuse the timeline bubble's summary. */
@@ -959,6 +967,8 @@ export type WorkspaceFileNavigationOrigin =
  * only bridges a fresh user action into an already-hydrated Workbench host. */
 export interface WorkspaceOpenRequest {
   disposition?: 'preview' | 'permanent';
+  /** Explicit artwork action: skip the narrow rail on the way to the existing work host. */
+  presentation?: 'work-mode';
   revision: number;
   threadId: string;
   target:

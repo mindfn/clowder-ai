@@ -203,7 +203,7 @@ function ArtifactRow({
           )}
         </div>
       </div>
-      {url && a.url && /^\/uploads\/[^/]+\.(png|mp4)$/i.test(a.url) ? (
+      {url && a.url && /^\/uploads\/[^/]+\.(png|jpe?g|webp|mp4)$/i.test(a.url) ? (
         <button
           type="button"
           onClick={(event) => {
@@ -286,7 +286,7 @@ function ClassicArtifactsPanel({
       useChatStore.getState().openPublishedArtifact(threadId, artifact, origin);
       return;
     }
-    if (artifact.url && /^\/uploads\/[^/]+\.(png|mp4)$/i.test(artifact.url)) {
+    if (artifact.url && /^\/uploads\/[^/]+\.(png|jpe?g|webp|mp4)$/i.test(artifact.url)) {
       const source =
         artifact.sourceMessageId && artifact.publicationItem
           ? messagePublicationSource(

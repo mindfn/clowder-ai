@@ -234,10 +234,27 @@
 }
 
 [data-shell="v2"] .home-wait-title {
-  flex: 1;
-  min-width: 0;
   font-weight: 600;
   color: var(--shell-ink);
+}
+
+[data-shell="v2"] .home-wait-copy {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+[data-shell="v2"] .home-wait-summary {
+  color: var(--shell-muted);
+}
+
+[data-shell="v2"] .home-wait-details {
+  margin-top: 4px;
+  color: var(--shell-muted);
+}
+
+[data-shell="v2"] .home-wait-details > summary {
+  cursor: pointer;
 }
 
 [data-shell="v2"] .home-wait-line {

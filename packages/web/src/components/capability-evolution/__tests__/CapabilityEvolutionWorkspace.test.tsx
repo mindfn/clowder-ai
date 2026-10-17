@@ -2,9 +2,10 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CapabilityEvolutionWorkspace } from '../CapabilityEvolutionWorkspace';
+import type { EvolutionProgramProjection } from '../evolution-program-projection';
 import { useEvolutionReading } from '../evolution-reading-state';
 import { assetReviewFixture } from './evolution-asset-fixtures';
-import { assetRef } from './evolution-fixtures';
+import { assetRef, ownerRef, programFixture } from './evolution-fixtures';
 
 const { apiFetchMock, setPendingChatInsert, onOpenProgram, chatStoreState, assetReviewState } = vi.hoisted(() => ({
   apiFetchMock: vi.fn(),
@@ -149,6 +150,8 @@ describe('F311 Capability Evolution Workspace', () => {
     localStorage.setItem('cat-cafe:shell-presentation', 'v2');
     apiFetchMock.mockResolvedValue(new Response(JSON.stringify({ programs: [] })));
     await renderWorkspace();
+    expect(container.textContent).toContain('待判断 0');
+    expect(container.textContent).toContain('目前没有需要你拍板的提议。');
     const start = [...container.querySelectorAll('button')].find((button) => button.textContent?.includes('新建目标'));
     expect(start).toBeDefined();
     expect(container.textContent).not.toContain('在下方');
@@ -209,8 +212,19 @@ describe('F311 Capability Evolution Workspace', () => {
     apiFetchMock.mockRejectedValue(new Error('connection unavailable'));
     await renderWorkspace();
     expect(container.textContent).toContain('暂时无法读取');
+    expect(container.textContent).toContain('待判断 待核实');
+    expect(container.textContent).not.toContain('目前没有需要你拍板的提议。');
     expect(container.textContent).not.toContain('还没有完成或停止的项目');
     expect(container.textContent).not.toContain('还没有进化记录');
+  });
+
+  it('does not describe pending decisions as empty while the v2 list is loading', async () => {
+    localStorage.setItem('cat-cafe:shell-presentation', 'v2');
+    apiFetchMock.mockReturnValue(new Promise<Response>(() => undefined));
+    await renderWorkspace();
+    expect(container.textContent).toContain('正在读取能力进化记录');
+    expect(container.textContent).toContain('待判断 待核实');
+    expect(container.textContent).not.toContain('目前没有需要你拍板的提议。');
   });
 
   it('does not regress owner state when an older list response arrives after a newer state', async () => {
@@ -471,7 +485,9 @@ describe('F311 Capability Evolution Workspace', () => {
     catalog.versions = [{ versionRef: assetRef(sha), title: '官方 walking ONNX baseline', parentEdges: [] }];
     assetReviewState.body = JSON.stringify(catalog);
     assetReviewState.status = 200;
-    apiFetchMock.mockResolvedValue(new Response(JSON.stringify({ programs: [projection] }), { status: 200 }));
+    const adoptedProjection = structuredClone(projection) as EvolutionProgramProjection;
+    adoptedProjection.program.currentAssetVersionRefs = [assetRef(sha)];
+    apiFetchMock.mockResolvedValue(new Response(JSON.stringify({ programs: [adoptedProjection] }), { status: 200 }));
     await renderWorkspace();
 
     expect(container.textContent).toContain('当前采用：官方 walking ONNX baseline');
@@ -485,7 +501,9 @@ describe('F311 Capability Evolution Workspace', () => {
     catalog.versions = [{ versionRef: assetRef(sha), parentEdges: [] }];
     assetReviewState.body = JSON.stringify(catalog);
     assetReviewState.status = 200;
-    apiFetchMock.mockResolvedValue(new Response(JSON.stringify({ programs: [projection] }), { status: 200 }));
+    const adoptedProjection = structuredClone(projection) as EvolutionProgramProjection;
+    adoptedProjection.program.currentAssetVersionRefs = [assetRef(sha)];
+    apiFetchMock.mockResolvedValue(new Response(JSON.stringify({ programs: [adoptedProjection] }), { status: 200 }));
     await renderWorkspace();
 
     expect(container.textContent).toContain('当前采用 1 个已记录版本');
@@ -608,13 +626,28 @@ describe('F311 Capability Evolution Workspace', () => {
     expect(onOpenProgram.mock.calls[0]?.[0]).toBe('evolution-program:bcc336788a7df9d6075b1efb4c0a7e68');
   });
 
-  it('does not describe rejected canonical projections as an empty workspace', async () => {
+  it('keeps known pending decisions reachable when part of the v2 list is unreadable', async () => {
+    localStorage.setItem('cat-cafe:shell-presentation', 'v2');
+    const pending = {
+      caseRef: ownerRef('case-known'),
+      proposalRef: { ownerFeatureId: 'F266', ownerStateRef: 'eval-repair-proposal:known' },
+      ownerAuthorizationRef: ownerRef('authorization-known'),
+      targetVersionRef: assetRef('candidate-known'),
+      status: 'pending' as const,
+    };
+    const known = {
+      ...programFixture('awaiting_approval', 8),
+      lineage: { cycles: [{ cycle: 1, changes: [pending] }], current: pending },
+    };
     apiFetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ programs: [{ program: { schemaVersion: 2 } }] }), { status: 200 }),
+      new Response(JSON.stringify({ programs: [known, { program: { schemaVersion: 2 } }] }), { status: 200 }),
     );
     await renderWorkspace();
 
-    expect(container.textContent).toContain('1 项进化记录暂时无法读取');
+    expect(container.textContent).toContain('1 项记录暂时无法读取');
+    expect(container.textContent).toContain('待判断 已读 1');
+    expect([...container.querySelectorAll('button')].some((button) => button.textContent === '去待办审阅')).toBe(true);
+    expect(container.textContent).not.toContain('目前没有需要你拍板的提议。');
     expect(container.textContent).not.toContain('还没有进化记录');
     expect(container.textContent).not.toContain('在上方写下想改进什么');
   });

@@ -2741,8 +2741,8 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
 
   test('API-key isolation lives under user cache rather than the OS temporary directory', () => {
     assert.equal(
-      resolveCodexApiKeyIsolationRoot({ HOME: '/Users/example', XDG_CACHE_HOME: '/Users/example/.cache' }, 'darwin'),
-      '/Users/example/Library/Caches/clowder-ai/codex-api-key-homes',
+      resolveCodexApiKeyIsolationRoot({ HOME: '/home/user', XDG_CACHE_HOME: '/home/user/.cache' }, 'darwin'),
+      '/home/user/Library/Caches/clowder-ai/codex-api-key-homes',
     );
     assert.equal(
       resolveCodexApiKeyIsolationRoot({ HOME: '/home/example', XDG_CACHE_HOME: '/var/cache/example' }, 'linux'),

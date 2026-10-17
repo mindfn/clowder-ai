@@ -227,27 +227,30 @@ export class ClaudeSdkAgentService implements AgentService {
         handle,
         dispatch: async (dispatchInput, dispatchOptions) => {
           if (dispatchOptions.expectedInvocationId !== invocationId) {
-            return { accepted: false, reason: 'active_run_mismatch' };
+            return { accepted: false, reason: 'active_run_mismatch', acceptance: 'not_accepted' };
           }
-          if (!turnInputs.isAccepting || !query) return { accepted: false, reason: 'active_run_closed' };
+          if (!turnInputs.isAccepting || !query)
+            return { accepted: false, reason: 'active_run_closed', acceptance: 'not_accepted' };
           const text = appendLocalImagePathHints(dispatchInput.text.trim(), dispatchInput.imagePaths ?? []);
-          if (!text) return { accepted: false, reason: 'invalid_input' };
+          if (!text) return { accepted: false, reason: 'invalid_input', acceptance: 'not_accepted' };
           turnInputs.beginDispatch();
           try {
             if (dispatchOptions.force) {
-              if (!query.interrupt) return { accepted: false, reason: 'provider_rejected' };
+              if (!query.interrupt) return { accepted: false, reason: 'provider_rejected', acceptance: 'not_accepted' };
               await withActiveRunControlDeadline(query.interrupt(), this.activeRunControlTimeoutMs);
             }
             const message = createSdkUserMessage(text, activeSessionId);
             if (dispatchInput.onInputRead) inputReadCallbacks.set(message.uuid, dispatchInput.onInputRead);
             if (!turnInputs.push(message)) {
               inputReadCallbacks.delete(message.uuid);
-              return { accepted: false, reason: 'active_run_closed' };
+              return { accepted: false, reason: 'active_run_closed', acceptance: 'not_accepted' };
             }
             return { accepted: true, handle };
           } catch (err) {
             log.warn({ err, invocationId }, 'Claude SDK active-run dispatch rejected');
-            return { accepted: false, reason: 'provider_rejected' };
+            // Failures in interrupt/preparation happen before the supplemental
+            // input is pushed. They cannot have handed this body to the SDK.
+            return { accepted: false, reason: 'exception', acceptance: 'not_accepted' };
           } finally {
             turnInputs.finishDispatch();
           }

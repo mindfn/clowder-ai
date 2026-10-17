@@ -1048,6 +1048,7 @@ export interface ChatState {
     threadId: string,
     artifact: ThreadArtifactDTO,
     navigationOrigin?: WorkspaceFileNavigationOrigin,
+    presentation?: WorkspaceOpenRequest['presentation'],
   ) => void;
   /**
    * Open one exact workspace file, or show one path in its file tree, in the Workbench of `threadId`.
@@ -1055,10 +1056,15 @@ export interface ChatState {
    * thread; it does not switch projects. Returns false when `threadId` is not the current thread, so a
    * caller never navigates to nothing.
    */
-  openWorkspacePath: (threadId: string, target: WorkspacePathOpenTarget) => boolean;
+  openWorkspacePath: (
+    threadId: string,
+    target: WorkspacePathOpenTarget,
+    presentation?: WorkspaceOpenRequest['presentation'],
+  ) => boolean;
   openPublication: (
     target: Extract<WorkspaceOpenRequest['target'], { kind: 'publication' | 'message-publication' }>,
     hostThreadId: string,
+    presentation?: WorkspaceOpenRequest['presentation'],
   ) => boolean;
   /** Acknowledge one exact transient request after F307 has consumed it. */
   consumeWorkspaceOpenRequest: (revision: number) => void;
@@ -1477,7 +1483,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...mirrorActiveFlat(state, durablePatch),
       };
     }),
-  openPublishedArtifact: (threadId, artifact, navigationOrigin) =>
+  openPublishedArtifact: (threadId, artifact, navigationOrigin, presentation) =>
     set((state) => {
       if (state.currentThreadId !== threadId) return {};
       const patch = { rightPanelOpen: true, rightPanelMode: 'workspace' as const, workspaceMode: 'dev' as const };
@@ -1489,13 +1495,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         workspaceOpenRequest: {
           revision,
           disposition: 'preview' as const,
+          ...(presentation ? { presentation } : {}),
           threadId,
           target: { kind: 'artifact' as const, artifact, ...(navigationOrigin ? { navigationOrigin } : {}) },
         },
       };
     }),
   // An explicit open is honoured under a presentation lock too, as the file-stamp path it replaces was.
-  openWorkspacePath: (threadId, target) => {
+  openWorkspacePath: (threadId, target, presentation) => {
     const state = get();
     if (state.currentThreadId !== threadId) return false;
     const patch = { rightPanelOpen: true, rightPanelMode: 'workspace' as const, workspaceMode: 'dev' as const };
@@ -1504,7 +1511,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ...patch,
       ...mirrorActiveFlat(state, patch),
       workspaceOpenRevision: revision,
-      workspaceOpenRequest: { revision, threadId, target, disposition: 'preview' },
+      workspaceOpenRequest: {
+        revision,
+        threadId,
+        target,
+        disposition: 'preview',
+        ...(presentation ? { presentation } : {}),
+      },
     });
     return true;
   },
@@ -1869,7 +1882,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // Phase H: Workspace mode
   workspaceMode: 'dev' as const,
-  openPublication: (target, hostThreadId) => {
+  openPublication: (target, hostThreadId, presentation) => {
     // An asynchronous owner read must not steal focus in a conversation opened in the meantime.
     if (get().currentThreadId !== hostThreadId) return false;
     set((state) => {
@@ -1878,7 +1891,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return {
         ...patch,
         workspaceOpenRevision: revision,
-        workspaceOpenRequest: { revision, threadId: hostThreadId, target, disposition: 'preview' },
+        workspaceOpenRequest: {
+          revision,
+          threadId: hostThreadId,
+          target,
+          disposition: 'preview',
+          ...(presentation ? { presentation } : {}),
+        },
         ...mirrorActiveFlat(state, patch),
       };
     });

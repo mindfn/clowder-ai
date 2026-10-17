@@ -236,7 +236,7 @@ test('app-server registers one exact active-run dispatcher and fences it at turn
     { text: 'stale', messageIds: ['message-3'] },
     { force: false, expectedInvocationId: 'turn-invocation-stale' },
   );
-  assert.deepEqual(mismatched, { accepted: false, reason: 'active_run_mismatch' });
+  assert.deepEqual(mismatched, { accepted: false, reason: 'active_run_mismatch', acceptance: 'not_accepted' });
 
   wire.inbox.push({
     method: 'turn/completed',
@@ -248,7 +248,7 @@ test('app-server registers one exact active-run dispatcher and fences it at turn
     { text: 'too late', messageIds: ['message-4'] },
     { force: false, expectedInvocationId: 'turn-invocation-1' },
   );
-  assert.deepEqual(terminal, { accepted: false, reason: 'active_run_closed' });
+  assert.deepEqual(terminal, { accepted: false, reason: 'active_run_closed', acceptance: 'not_accepted' });
 });
 
 test('first input read requires its exact native completion, not turn acceptance or a duplicate', async () => {
@@ -444,7 +444,7 @@ test('a rejected steer cannot bind another turn', async () => {
     { text: 'lands on another turn', messageIds: ['message-stale'] },
     { force: false, expectedInvocationId: 'turn-invocation-rejected' },
   );
-  assert.deepEqual(rejected, { accepted: false, reason: 'active_run_mismatch' });
+  assert.deepEqual(rejected, { accepted: false, reason: 'active_run_mismatch', acceptance: 'unknown' });
   wire.inbox.push({
     method: 'turn/completed',
     params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },

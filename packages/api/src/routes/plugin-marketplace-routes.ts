@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { GitMarketplaceSources } from '../domains/plugin/manager/git-marketplace-sources.js';
+import type { GitMarketplaceSources } from '../domains/plugin/manager/marketplace/git-marketplace-sources.js';
 import { pluginAccessError, requirePluginOwnerLocalAccess } from './plugin-access-guards.js';
 
 export function registerPluginMarketplaceRoutes(app: FastifyInstance, sources: GitMarketplaceSources): void {

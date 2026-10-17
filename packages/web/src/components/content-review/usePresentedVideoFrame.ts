@@ -1,5 +1,6 @@
 'use client';
 import { type RefObject, useCallback, useEffect, useState } from 'react';
+import { useArtworkVideoPosition } from './ArtworkMediaViewport';
 
 type PresentedFrame = { mediaTime: number; observedPlayhead: number };
 function matchesPosition(frame: PresentedFrame | null, position: number) {
@@ -7,7 +8,7 @@ function matchesPosition(frame: PresentedFrame | null, position: number) {
 }
 
 /** Seeking is a readiness signal, not a revocation of frame evidence that already belongs to that seek. */
-export function usePresentedVideoFrame(videoRef: RefObject<HTMLVideoElement>, src: string | null) {
+export function usePresentedVideoFrame(videoRef: RefObject<HTMLVideoElement>, src: string | null, identity?: string) {
   const [frame, setFrame] = useState<PresentedFrame | null>(null);
   const [seeking, setSeeking] = useState(false);
   useEffect(() => {
@@ -54,5 +55,6 @@ export function usePresentedVideoFrame(videoRef: RefObject<HTMLVideoElement>, sr
     },
     [videoRef],
   );
+  useArtworkVideoPosition(videoRef, identity, src, seekTo);
   return { frameTime: seeking ? null : (frame?.mediaTime ?? null), onSeeking, onSeeked, seekTo };
 }

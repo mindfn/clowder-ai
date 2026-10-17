@@ -38,11 +38,29 @@ export async function verifyV2ExplorationReading({ fixture, browser, catalog, ca
     assert.equal(await work.locator('.exploration-version-nav').getAttribute('data-map-open'), 'true');
     assert.equal(await work.getByRole('button', { name: /^阅读 / }).count(), catalog.nodes.length);
     const adoption = work.getByRole('region', { name: '生效与阅读状态' });
-    assert((await adoption.innerText()).includes('当前生效：'));
+    assert((await adoption.innerText()).includes('当前采用：'));
+    assert((await adoption.innerText()).includes('来源当前版本：'));
     await capture(page, 's3-v2-settings-map');
     await work.getByRole('button', { name: '完整谱系', exact: true }).click();
     const graph = page.getByRole('dialog', { name: '完整版本谱系', exact: true });
     assert.equal(await graph.getByRole('button', { name: /^阅读 / }).count(), catalog.nodes.length);
+    await graph.getByRole('button', { name: '看全图', exact: true }).click();
+    for (const label of ['本项目版本', '公开归档 · 已登记派生', '公开归档 · 父版未登记']) {
+      await graph.getByRole('region', { name: `谱系分组：${label}`, exact: true }).waitFor();
+    }
+    assert.equal(await graph.getByRole('region', { name: /^谱系分组：/ }).count(), 3);
+    const beside = await graph.locator('[data-label-visible="true"]').evaluateAll((nodes) =>
+      nodes.every((node) => {
+        const point = node.getBoundingClientRect();
+        const label = node.querySelector('.exploration-node-title').getBoundingClientRect();
+        return Math.abs(label.y + label.height / 2 - (point.y + point.height / 2)) <= 10;
+      }),
+    );
+    assert.ok(beside, 'fit labels belong beside their own points, not between vertically adjacent versions');
+    const lastLabel = graph.getByRole('button', { name: '阅读 v8', exact: true }).locator('.exploration-node-title');
+    const labelBox = await lastLabel.boundingBox();
+    const canvasBox = await graph.getByRole('application', { name: '可平移缩放的版本画布' }).boundingBox();
+    assert.ok(labelBox && canvasBox && labelBox.y + labelBox.height <= canvasBox.y + canvasBox.height + 1);
     await capture(page, 's3-v2-full-lineage');
     await graph.getByRole('button', { name: '返回比较', exact: true }).click();
     const runsFor = (title) =>

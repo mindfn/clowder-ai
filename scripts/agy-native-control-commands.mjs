@@ -5,6 +5,21 @@ import { expandSegmentBindings } from './native-effect-shell-expansion.mjs';
 import { shellInvocation } from './native-effect-shell-tokenizer.mjs';
 import { fileProgramAnalysis } from './native-effect-write-effects.mjs';
 
+function isReadOnlySecurityCall(call) {
+  const [operation, ...args] = call.operands;
+  if (operation === 'help' || operation === 'error') return true;
+  if (operation === '-h') return args.length === 0;
+  if (operation === 'show-keychain-info') return args.length === 0 || (args.length === 1 && !args[0].startsWith('-'));
+  if (!['default-keychain', 'list-keychains', 'login-keychain'].includes(operation)) return false;
+  // Only documented read forms are admitted. Unknown options or operations may
+  // mutate an implicit keychain/trust/auth target without naming a protected file.
+  return (
+    args.length === 0 ||
+    (args.length === 1 && /^(?:-h|-d(?:user|system|common|dynamic))$/.test(args[0])) ||
+    (args.length === 2 && args[0] === '-d' && /^(?:user|system|common|dynamic)$/.test(args[1]))
+  );
+}
+
 function fileTargets(call) {
   // dd's output operand is a key/value word; its input remains a read.
   if (['dd', 'gdd'].includes(call.name))
@@ -67,6 +82,7 @@ export function commandTouchesAgyControl(command, cwd, profileHome, isControl, d
               isControl,
               depth + 1,
             );
+          if (profileHome && call.name.toLowerCase() === 'security') return !isReadOnlySecurityCall(call);
           // Printing a filename is data. Read-only calls do not mutate the carrier.
           if (
             ['echo', 'printf', 'cd', 'pushd'].includes(call.name) ||

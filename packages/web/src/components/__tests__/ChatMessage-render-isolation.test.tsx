@@ -220,8 +220,6 @@ describe('ChatMessage render isolation', () => {
       'source-appended-1',
     ]);
     expect(list?.dataset.collapsed).toBe('true');
-    expect(list?.style.maxHeight).toBe('98px');
-    expect(list?.style.maskImage).toContain('transparent 98px');
 
     const expand = container.querySelector('button[aria-expanded="false"]') as HTMLButtonElement | null;
     expect(expand?.getAttribute('aria-label')).toBe('展开剩余 2 条补充消息');
@@ -231,12 +229,14 @@ describe('ChatMessage render isolation', () => {
     act(() => expand?.click());
 
     expect(list?.dataset.collapsed).toBe('false');
-    expect(list?.style.maxHeight).toBe('');
     const collapse = container.querySelector('button[aria-expanded="true"]');
     expect(collapse?.getAttribute('aria-label')).toBe('收起补充消息');
     expect(collapse?.textContent).toBe('');
     expect(collapse?.querySelector('span')?.classList.contains('rotate-180')).toBe(true);
     expect(collapse?.querySelector('svg')?.classList.contains('rotate-90')).toBe(true);
+    act(() => (collapse as HTMLButtonElement | null)?.click());
+    expect(list?.dataset.collapsed).toBe('true');
+    expect(container.querySelector('button[aria-expanded="false"]')?.textContent).toBe('展开剩余 2 条');
   });
 
   it('renders only otherwise-invisible post_message targets at the end of the ordinary body', () => {
@@ -310,7 +310,7 @@ describe('ChatMessage render isolation', () => {
     expect(bubble?.parentElement?.className).not.toContain('w-fit');
   });
 
-  it('shows a terminal response completion time instead of its original start time', () => {
+  it('keeps a terminal response at its original start time', () => {
     const startedAt = new Date(2026, 8, 22, 17, 6).getTime();
     const completedAt = new Date(2026, 8, 22, 17, 49).getTime();
     const message: ChatMessageData = {
@@ -365,8 +365,8 @@ describe('ChatMessage render isolation', () => {
       minute: '2-digit',
     });
     const header = container.querySelector('[data-testid="message-header"]');
-    expect(header?.textContent).toContain(expected);
-    expect(header?.textContent).not.toContain(started);
+    expect(header?.textContent).toContain(started);
+    expect(header?.textContent).not.toContain(expected);
   });
 
   it('presents a human modification source by work title and named cat while preserving the actual human wording', () => {

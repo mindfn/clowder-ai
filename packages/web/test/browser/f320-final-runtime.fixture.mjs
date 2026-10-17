@@ -73,6 +73,7 @@ export async function startFinalAccountPreview({
   const variant = (id) => ({
     id: `${id}-default`,
     catId: id,
+    carrier: 'cli',
     clientId: 'openai',
     defaultModel: 'fixture',
     mcpSupport: true,
@@ -369,6 +370,7 @@ export async function startFinalAccountPreview({
       if (!metadata || !!metadata.executionAccount !== expectAccountSnapshot || events.some((e) => e.type === 'error'))
         throw new Error(`fixture invocation failed: ${events.filter((e) => e.type === 'error').map((e) => e.content)}`);
       messages.push({
+        from: { kind: 'agent', catId: catId },
         id: `reply-${messages.length}`,
         threadId: THREAD_ID,
         type: 'assistant',

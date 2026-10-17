@@ -19,6 +19,7 @@ interface ArtifactWorkHostInput {
   rightPanelMode: 'status' | 'workspace' | 'transcript';
   currentThreadId?: string | null;
   mediaComposerSurfaceId?: string | null;
+  workModeRequested?: boolean;
 }
 
 function invalidationReason(
@@ -42,6 +43,7 @@ export function useArtifactWorkHostPresentation({
   rightPanelMode,
   currentThreadId,
   mediaComposerSurfaceId,
+  workModeRequested,
 }: ArtifactWorkHostInput) {
   const layout = useF307ExperienceWorkbenchStore((state) => state.layout);
   const presentation = useF307ExperienceWorkbenchStore((state) => state.artifactWorkPresentation);
@@ -56,11 +58,13 @@ export function useArtifactWorkHostPresentation({
     narrowWorkComposerActive,
     splitPreferenceActive,
     workspaceWideActive,
+    workModeActive,
   } = projectWorkspaceWorkHost(
     {
       threadId,
       currentThreadId,
       mediaComposerSurfaceId,
+      workModeRequested,
       viewMode,
       isDesktop,
       statusPanelOpen,
@@ -150,6 +154,7 @@ export function useArtifactWorkHostPresentation({
     fullWindowActive,
     narrowWorkComposerActive,
     workspaceWideActive,
+    workModeActive,
     chatBasis: presentation.desktopWorkChatBasis,
     invalidateHost,
     resizeChatBasis,

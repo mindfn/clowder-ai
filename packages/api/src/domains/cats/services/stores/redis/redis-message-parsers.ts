@@ -31,6 +31,7 @@ import {
   dotAskMetadataSchema,
   entrustedWorkHumanTerminalReceiptV1Schema,
   evolutionPreparationSubmissionV1Schema,
+  evolutionUseSourceV1Schema,
   isCloudBridgeRetryV1,
   isLifecycleStoredMessageMetadata,
   isMessageFrom,
@@ -257,6 +258,7 @@ type ExtraCarrierPersistence = ExtraCarrierPersistenceClassification<{
   realtimeCompanion: 'parsed';
   liveCompanion: 'parsed';
   liveAdmission: 'parsed';
+  routingTargetSource: 'parsed';
   rich: 'parsed';
   callbackRichRequestDigest: 'parsed';
   isExplicitPost: 'parsed';
@@ -291,6 +293,7 @@ type ExtraCarrierPersistence = ExtraCarrierPersistenceClassification<{
   custodyOfferV1: 'derived';
   entrustedWorkHumanTerminalReceiptV1: 'parsed';
   evolutionPreparationSubmissionV1: 'parsed';
+  evolutionUseSourceV1: 'parsed';
   pluginMessage: 'parsed';
   routingWarnings: 'parsed';
   cloudBridgeRetry: 'parsed';
@@ -564,6 +567,11 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
       result.evolutionPreparationSubmissionV1 = evolutionPreparationSubmission.data;
       hasField = true;
     }
+    const evolutionUseSource = evolutionUseSourceV1Schema.safeParse(parsed.evolutionUseSourceV1);
+    if (evolutionUseSource.success) {
+      result.evolutionUseSourceV1 = evolutionUseSource.data;
+      hasField = true;
+    }
 
     const realtimeCompanion = parseRealtimeCompanionCarrier(parsed.realtimeCompanion);
     if (realtimeCompanion) {
@@ -580,6 +588,10 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
       parsed.liveAdmission.targetId
     ) {
       result.liveAdmission = { sessionId: parsed.liveAdmission.sessionId, targetId: parsed.liveAdmission.targetId };
+      hasField = true;
+    }
+    if (parsed.routingTargetSource === 'prose' || parsed.routingTargetSource === 'explicit') {
+      result.routingTargetSource = parsed.routingTargetSource;
       hasField = true;
     }
     const liveCompanion = parseLiveCompanionCarrier(parsed.liveCompanion);

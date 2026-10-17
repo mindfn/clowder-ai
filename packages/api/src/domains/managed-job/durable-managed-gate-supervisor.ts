@@ -25,8 +25,16 @@ export class DurableGateSupervisorFenceError extends Error {
   }
 }
 
+let supervisorBirthIdentity: UnixProcessIdentity | null = null;
+
 function currentSupervisorIdentity(): UnixProcessIdentity | null {
-  return readUnixProcessSnapshotSync({ pids: [process.pid] })?.get(process.pid) ?? null;
+  // This process's birth identity cannot change during its lifetime. Observe it
+  // before first admission; renewal authority comes from the transactional lease,
+  // not a new ps invocation. Unknown initial observations remain retryable.
+  if (supervisorBirthIdentity?.pid === process.pid) return supervisorBirthIdentity;
+  const observed = readUnixProcessSnapshotSync({ pids: [process.pid] })?.get(process.pid);
+  if (observed) supervisorBirthIdentity = { ...observed };
+  return observed ?? null;
 }
 
 function previousSupervisorIsProvenDead(current: {

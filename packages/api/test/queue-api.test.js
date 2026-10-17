@@ -220,6 +220,92 @@ describe('Queue Management API', () => {
     if (app) await app.close();
   });
 
+  async function routingRecoveryFixture() {
+    const result = enqueueEntry(deps.invocationQueue, {
+      from: { kind: 'agent', catId: 'codex' },
+      source: 'agent',
+      kind: 'message_wake',
+      sourceId: 'routing-source',
+      messageId: 'routing-source',
+      targetCats: ['opus'],
+    });
+    const source = {
+      id: 'routing-source',
+      threadId: 't1',
+      userId: 'user-a',
+      from: { kind: 'agent', catId: 'codex' },
+      content: 'Original request',
+      deliveryStatus: 'queued',
+    };
+    const records = new Map([[source.id, source]]);
+    deps.messageStore.getById.mock.mockImplementation(async (id) => records.get(id) ?? null);
+    await deps.invocationQueue.markProcessingByIdDurable('t1', result.entry.id, 'opus');
+    await deps.invocationQueue.holdClaimedRoutingTarget('t1', [result.entry.id], 'opus', deps.messageStore);
+    await deps.invocationQueue.restoreClaimedEntries('t1', [result.entry.id]);
+    deps.queueProcessor.retryRoutingTarget = mock.fn(async () => ({ started: true }));
+    return { result, source, records, url: '/api/threads/t1/messages/routing-source/routing-targets/opus' };
+  }
+
+  it('reads pending F293 recovery and retries only its original target under the authenticated owner', async () => {
+    const { url, result } = await routingRecoveryFixture();
+    const headers = { 'x-cat-cafe-user': 'user-a' };
+    const read = await app.inject({ method: 'GET', url, headers });
+    assert.equal(read.statusCode, 200, read.body);
+    assert.equal(read.json().status, 'failed');
+    const retry = await app.inject({ method: 'POST', url: `${url}/retry`, headers });
+    assert.equal(retry.statusCode, 202, retry.body);
+    assert.deepEqual(deps.queueProcessor.retryRoutingTarget.mock.calls[0].arguments, [
+      't1',
+      'user-a',
+      result.entry.id,
+      'opus',
+    ]);
+  });
+
+  it('does not turn stale or cross-owner routing history into retry authority', async () => {
+    const { url, source } = await routingRecoveryFixture();
+    assert.equal((await app.inject({ method: 'POST', url: `${url}/retry` })).statusCode, 401);
+    assert.equal(
+      (await app.inject({ method: 'POST', url: `${url}/retry`, headers: { 'x-cat-cafe-user': 'user-b' } })).statusCode,
+      404,
+    );
+    source.recall = { exposure: 'none' };
+    assert.equal(
+      (await app.inject({ method: 'POST', url: `${url}/retry`, headers: { 'x-cat-cafe-user': 'user-a' } })).statusCode,
+      404,
+    );
+    assert.equal(deps.queueProcessor.retryRoutingTarget.mock.calls.length, 0);
+  });
+
+  it('never reopens a consumed Queue target from an old routing receipt', async () => {
+    const { url, result } = await routingRecoveryFixture();
+    assert.ok(await deps.invocationQueue.claimQueuedEntryForWithdrawal('t1', 'user-a', result.entry.id));
+    assert.ok(await deps.invocationQueue.commitClaimedWithdrawal('t1', result.entry.id));
+    const response = await app.inject({
+      method: 'POST',
+      url: `${url}/retry`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+    });
+    assert.equal(response.statusCode, 409, response.body);
+    assert.equal(deps.queueProcessor.retryRoutingTarget.mock.calls.length, 0);
+  });
+
+  it('does not accept browser fallback identity, disabled members or an already-dispatched target', async () => {
+    const { url, source } = await routingRecoveryFixture();
+    const post = (headers = { 'x-cat-cafe-user': 'user-a' }) =>
+      app.inject({ method: 'POST', url: `${url}/retry`, headers });
+    assert.equal((await post({ origin: 'http://127.0.0.1:3011', 'x-cat-cafe-user': 'user-a' })).statusCode, 401);
+    deps.isCatAvailable.mock.mockImplementation(() => false);
+    assert.equal((await post()).statusCode, 409);
+    deps.isCatAvailable.mock.mockImplementation(() => true);
+    source.lifecycle = {
+      kind: 'input',
+      dispatchRefs: [{ targetId: 'opus', phase: 'dispatched', statusMessageId: 'response' }],
+    };
+    assert.equal((await post()).statusCode, 409);
+    assert.equal(deps.queueProcessor.retryRoutingTarget.mock.calls.length, 0);
+  });
+
   // ── Auth ──
 
   it('returns 401 when userId header missing', async () => {

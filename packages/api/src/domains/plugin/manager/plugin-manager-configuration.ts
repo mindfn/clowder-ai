@@ -14,7 +14,6 @@ import {
   writePluginConfig,
   writePluginOperationState,
 } from '../plugin-config-store.js';
-import { type PluginManagerConfigurationPort, PluginManagerServiceError } from '../plugin-manager-service.js';
 import { effectivePluginConfigurationValue } from './plugin-configuration-values.js';
 import {
   type ContractConfigurationField,
@@ -22,6 +21,7 @@ import {
   configFieldProjection,
   operationFieldProjection,
 } from './plugin-manager-field-projection.js';
+import { type PluginManagerConfigurationPort, PluginManagerServiceError } from './plugin-manager-service.js';
 
 const CONFIGURATION_KEY = /^[A-Za-z][A-Za-z0-9._-]*$/;
 

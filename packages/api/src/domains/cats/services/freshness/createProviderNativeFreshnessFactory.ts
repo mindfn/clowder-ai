@@ -2,11 +2,10 @@ import type { CatId } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { InvocationDeps } from '../agents/invocation/invoke-single-cat.js';
 import type { DeliveryCursorStore } from '../stores/ports/DeliveryCursorStore.js';
-import { isDelivered, type StoredMessage } from '../stores/ports/MessageStore.js';
 import type { IThreadStore } from '../stores/ports/ThreadStore.js';
-import { canViewMessage } from '../stores/visibility.js';
 import { FreshnessAttentionEventLog } from './FreshnessAttentionEventLog.js';
 import { bindFreshnessNoticeBroker, FreshnessNoticeBroker } from './FreshnessNoticeBroker.js';
+import { freshnessMessageFilter } from './freshness-candidate.js';
 import {
   createQueueChecker,
   type FreshnessMessageReader,
@@ -36,13 +35,7 @@ export function createProviderNativeFreshnessFactory(
   }) => {
     const thread = await deps.threadStore.get(threadId);
     const playMode = (thread?.thinkingMode ?? 'debug') === 'play';
-    const viewer = playMode ? ({ type: 'cat', catId } as const) : ({ type: 'user' } as const);
-    const messageFilter = (message: Record<string, unknown>): boolean => {
-      const stored = message as unknown as StoredMessage;
-      if (stored.deletedAt || !isDelivered(stored) || stored.origin === 'briefing') return false;
-      if (!playMode) return true;
-      return canViewMessage(stored, viewer);
-    };
+    const messageFilter = freshnessMessageFilter(catId, playMode);
     const queue = deps.getQueue?.();
     const queueChecker: QueuedMessageChecker | undefined = queue
       ? createQueueChecker(queue, { parentInvocationId: invocationId })

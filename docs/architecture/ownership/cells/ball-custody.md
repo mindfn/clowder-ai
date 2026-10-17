@@ -24,6 +24,7 @@ code_anchors:
   - packages/api/src/domains/ball-custody/managed-command-wake-lifecycle.ts
   - packages/api/src/domains/ball-custody/durable-managed-gate-recovery.ts
   - packages/api/src/domains/ball-custody/durable-managed-gate-recovery-child-contract.ts
+  - packages/api/src/domains/ball-custody/durable-managed-alpha-observation.ts
   - packages/api/src/domains/ball-custody/durable-managed-gate-recovery-policy.ts
   - packages/api/src/domains/ball-custody/durable-managed-gate-recovery-state.ts
   - packages/api/src/domains/ball-custody/durable-managed-gate-recovery-store.ts
@@ -74,6 +75,7 @@ doc_anchors:
   - docs/features/F167-a2a-chain-quality.md
   - feature-specs/2026-08-18-f167-hold-rescue-authorization.md
   - feature-specs/2026-09-20-gate-feedback-time-delivery.md
+  - feature-specs/2026-10-16-alpha-sleep-consumer.md
   - feature-specs/2026-07-11-f167-phase-s-action-successor-single-flight.md
   - feature-specs/2026-07-16-f167-s1-phase-t-custody-cutover.md
   - docs/features/F233-ball-custody-observability.md

@@ -1,4 +1,4 @@
-import type { CatId } from '@cat-cafe/shared';
+import type { CatId, CliDiagnostics } from '@cat-cafe/shared';
 import { isCliError, isCliTimeout } from '../../../../../../utils/cli-spawn.js';
 import { sanitizeCliStderr } from '../../../../../../utils/sanitize-cli-stderr.js';
 import type { AgentMessage, MessageMetadata } from '../../../types.js';
@@ -8,7 +8,7 @@ import {
   parseAgyStreamJsonLine,
   summarizeAgyStreamJsonTurn,
 } from '../agy-stream-json-parser.js';
-import { AgyNativeResumeMismatchError } from './agy-native-errors.js';
+import { AgyNativeResumeMismatchError, missingAgyNativeInitError } from './agy-native-errors.js';
 import type { AgyNativePermissionMode } from './agy-native-policy.js';
 import { agyNativeToolIdentity, agyNativeToolResultContent } from './agy-native-tool-result.js';
 import { AGY_NATIVE_MCP_TOOLS, AGY_NATIVE_PROTOCOL_TOOLS, AGY_NATIVE_TOOLS } from './agy-native-tools.js';
@@ -17,6 +17,7 @@ export interface AgyNativeObservedTurn {
   readonly sessionId: string;
   readonly turn: AgyStreamJsonTurn;
   readonly transportError: string | null;
+  readonly cliDiagnostics?: CliDiagnostics;
   readonly transportExit?: { readonly code: number | null; readonly signal: string | null };
   readonly cancelledBeforeTerminal?: boolean;
 }
@@ -32,6 +33,8 @@ interface ExpectedNativeInit {
   readonly spawnCwd: string;
   readonly model: string;
   readonly permissionMode?: AgyNativePermissionMode;
+  readonly command?: string;
+  readonly invocationId?: string;
 }
 
 const MAX_AGY_NATIVE_STREAM_CHARS = 8 * 1024 * 1024;
@@ -89,12 +92,14 @@ export async function* observeAgyNativeTurn(
   const lines: string[] = [];
   let sessionId: string | null = null;
   let transportError: string | null = null;
+  let cliDiagnostics: CliDiagnostics | undefined;
   let transportExit: AgyNativeObservedTurn['transportExit'];
   let resultCount = 0;
   let resultSeenBeforeCancellation = false;
   let streamChars = 0;
   for await (const raw of stream) {
     if (isCliError(raw) || isCliTimeout(raw)) {
+      cliDiagnostics = raw.cliDiagnostics;
       transportExit = !transportError && isCliError(raw) ? { code: raw.exitCode, signal: raw.signal } : undefined;
       transportError = raw.message;
       continue;
@@ -122,7 +127,14 @@ export async function* observeAgyNativeTurn(
       yield { kind: 'step', event };
     }
   }
-  if (!sessionId) throw new Error('AGY native stream ended without a verified init');
+  if (!sessionId) {
+    throw missingAgyNativeInitError(lines, transportError, cliDiagnostics, {
+      command: expected.command ?? 'agy',
+      signal: transportExit?.signal ?? null,
+      ...(transportExit ? { exitCode: transportExit.code } : {}),
+      ...(expected.invocationId ? { invocationId: expected.invocationId } : {}),
+    });
+  }
   const turn = verifiedNativeTerminal(lines, sessionId, resultCount);
   yield {
     kind: 'complete',
@@ -130,6 +142,7 @@ export async function* observeAgyNativeTurn(
       sessionId,
       turn,
       transportError,
+      ...(cliDiagnostics ? { cliDiagnostics } : {}),
       ...(transportExit ? { transportExit } : {}),
       cancelledBeforeTerminal: signal?.aborted === true && !resultSeenBeforeCancellation,
     },
@@ -204,6 +217,7 @@ export function projectAgyNativeTurn(
   compactionRequested = false,
 ): AgentMessage[] {
   const { turn, transportError } = observed;
+  const retainedErrorEvidence = turn.sessionTurnCount > 1 || turn.recoveredErrorSteps.length > 0;
   const completedCompactionEvidence =
     compactionRequested &&
     typeof turn.completedCompactionStep === 'number' &&
@@ -211,12 +225,12 @@ export function projectAgyNativeTurn(
     turn.unknownEvents.length === 0 &&
     !cancelled;
   // Official 1.3.5 also exits 3 after a completed /compact when result carries
-  // a previous turn's error. This exception is only for the proven checkpoint,
+  // a previous or recovered attempt's error. This is only for the proven checkpoint,
   // never ordinary work, timeout/signal, an incomplete step or a new error step.
   const retainedCompactionExit =
     completedCompactionEvidence &&
     turn.upstreamStatus === 'ERROR' &&
-    turn.sessionTurnCount > 1 &&
+    retainedErrorEvidence &&
     observed.transportExit?.code === 3 &&
     observed.transportExit.signal === null;
   const transportFailed = Boolean(transportError) && !retainedCompactionExit;
@@ -224,7 +238,7 @@ export function projectAgyNativeTurn(
   const retainedSessionError =
     turn.outcome === 'error' &&
     turn.upstreamStatus === 'ERROR' &&
-    turn.sessionTurnCount > 1 &&
+    retainedErrorEvidence &&
     (typeof turn.completedResponseStep === 'number' || completedCompaction) &&
     turn.unknownEvents.length === 0 &&
     !transportFailed &&
@@ -250,6 +264,7 @@ export function projectAgyNativeTurn(
             upstreamOutcome: turn.outcome,
             retainedSessionError: sanitizeCliStderr(turn.upstreamError ?? turn.diagnosis).slice(0, 2000),
             completedResponseStep: turn.completedResponseStep,
+            recoveredErrorSteps: turn.recoveredErrorSteps,
             ...(retainedCompactionExit
               ? { retainedCompactionExit: observed.transportExit, upstreamTransportError: transportError }
               : {}),
@@ -312,6 +327,7 @@ export function projectAgyNativeTurn(
       : unexpectedTool
         ? 'AGY_UNEXPECTED_TOOL'
         : 'AGY_NATIVE_FAILED';
+  if (transportFailed && !cancelled && observed.cliDiagnostics) metadata.cliDiagnostics = observed.cliDiagnostics;
   messages.push({
     type: 'error',
     catId,

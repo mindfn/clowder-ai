@@ -2751,6 +2751,8 @@ describe('HubCatEditor', () => {
     expect(modelSuggestions).toEqual(['gpt-5.3-codex-spark', 'gpt-5.4']);
     expect(document.body.textContent).toContain('当前模型不在此认证信息的模型列表中');
 
+    await changeField(queryField(container, 'input[aria-label="Nickname"]'), 'Save baseline regression');
+
     const saveButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === '保存',
     );
@@ -3002,6 +3004,8 @@ describe('HubCatEditor', () => {
 
     expect(queryField<HTMLSelectElement>(container, 'select[aria-label="用哪个号"]').value).toBe('');
 
+    await changeField(queryField(container, 'input[aria-label="Nickname"]'), 'Save baseline regression');
+
     const saveButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === '保存',
     );
@@ -3089,6 +3093,8 @@ describe('HubCatEditor', () => {
 
     expect(queryField<HTMLSelectElement>(container, 'select[aria-label="用哪个号"]').value).toBe('');
 
+    await changeField(queryField(container, 'input[aria-label="Nickname"]'), 'Save baseline regression');
+
     const saveButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === '保存',
     );
@@ -3145,6 +3151,8 @@ describe('HubCatEditor', () => {
       );
     });
     await flushEffects();
+
+    await changeField(queryField(container, 'input[aria-label="Nickname"]'), 'Save baseline regression');
 
     const saveButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === '保存',
@@ -3691,7 +3699,7 @@ describe('HubCatEditor', () => {
     expect(queryField<HTMLSelectElement>(container, 'select[aria-label^="Codex Sandbox"]').disabled).toBe(false);
     expect(queryField<HTMLSelectElement>(container, 'select[aria-label^="Codex Approval"]').disabled).toBe(false);
     expect(queryField<HTMLSelectElement>(container, 'select[aria-label^="Codex Auth Mode"]').disabled).toBe(false);
-    expect(document.body.textContent).toContain('运行时持久化');
+    expect(document.body.textContent).toContain('没有改动');
     expect(document.body.textContent).toContain('保存');
     expect(document.body.textContent).not.toContain('删除成员');
     expect(document.body.textContent).not.toContain('账号与运行方式');
@@ -3941,6 +3949,8 @@ describe('HubCatEditor', () => {
     expect(queryField<HTMLSelectElement>(container, 'select[aria-label="Session Strategy"]').value).toBe('compress');
     expect(document.body.querySelector('input[aria-label="Session Observe Threshold"]')).toBeTruthy();
     expect(document.body.querySelector('input[aria-label="Session Observe Threshold (upper)"]')).toBeTruthy();
+
+    await changeField(queryField(container, 'input[aria-label="Nickname"]'), 'Changed legacy member');
 
     const saveButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === '保存',
@@ -4324,6 +4334,7 @@ describe('HubCatEditor', () => {
     await flushEffects();
 
     await changeField(queryField(container, 'input[aria-label="Nickname"]'), '新昵称');
+    await changeField(queryField(container, 'input[aria-label="Model"]'), 'another-model');
     await changeField(queryField(container, 'select[aria-label^="Codex Sandbox"]'), 'danger-full-access', 'change');
 
     const saveButton = Array.from(document.body.querySelectorAll('button')).find(
@@ -4345,13 +4356,15 @@ describe('HubCatEditor', () => {
     const rollbackPayload = JSON.parse(String(catPatches[1]?.[1]?.body));
     expect(rollbackPayload.nickname).toBe('旧昵称');
     expect(rollbackPayload.defaultModel).toBe('gpt-5.4');
-    expect(rollbackPayload.accountRef).toBe('codex-sponsor');
+    expect(rollbackPayload).not.toHaveProperty('accountRef');
     expect(document.body.textContent).toContain('Codex PATCH failed');
     expect(onSaved).not.toHaveBeenCalled();
   });
 
-  it('rolls back prior strategy and config mutations when a later Codex config PATCH fails', async () => {
-    const onSaved = vi.fn(() => Promise.resolve());
+  it.each(['patch', 'readback'] as const)('rolls back all member/config changes after %s failure', async (failure) => {
+    const onSaved = vi.fn(() =>
+      failure === 'readback' ? Promise.reject(new Error('Readback failed')) : Promise.resolve(),
+    );
     const existingCat = {
       id: 'codex',
       name: 'codex',
@@ -4444,7 +4457,7 @@ describe('HubCatEditor', () => {
       }
       if (path === '/api/config' && init?.method === 'PATCH') {
         configPatchCount += 1;
-        if (configPatchCount === 2) {
+        if (failure === 'patch' && configPatchCount === 2) {
           return Promise.resolve(jsonResponse({ error: 'Second Codex PATCH failed' }, 500));
         }
         return Promise.resolve(jsonResponse({ config: {} }));
@@ -4500,8 +4513,17 @@ describe('HubCatEditor', () => {
     expect(catPatches).toHaveLength(2);
     const rollbackPayload = JSON.parse(String(catPatches[1]?.[1]?.body));
     expect(rollbackPayload.nickname).toBe('旧昵称');
-    expect(document.body.textContent).toContain('Second Codex PATCH failed');
-    expect(onSaved).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain(failure === 'patch' ? 'Second Codex PATCH failed' : 'Readback failed');
+    expect(onSaved).toHaveBeenCalledTimes(failure === 'readback' ? 1 : 0);
+    if (failure === 'readback') {
+      expect(configPatches).toHaveLength(4);
+      expect(configPatches.map(([, init]) => JSON.parse(String(init?.body)).value)).toEqual([
+        'danger-full-access',
+        'never',
+        'on-request',
+        'workspace-write',
+      ]);
+    }
   });
 
   it('rolls back already-applied strategy mutations when later save requests throw', async () => {

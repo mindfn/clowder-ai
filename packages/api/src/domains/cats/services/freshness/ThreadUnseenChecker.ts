@@ -15,14 +15,13 @@
 import type { CatId } from '@cat-cafe/shared';
 import { cursorFor, parseCursor } from '../stores/cursor.js';
 import type { DeliveryCursorStore } from '../stores/ports/DeliveryCursorStore.js';
-import { isFreshnessSelfSourceMessage, isFreshnessSelfSourceQueueEntry } from './FreshnessSourcePolicy.js';
+import { isFreshnessSelfSourceQueueEntry } from './FreshnessSourcePolicy.js';
+import { isFreshnessCandidate } from './freshness-candidate.js';
 import {
   type FreshnessMessageReader,
   type FreshnessReadableMessage,
   getFreshnessSenderLabel,
   getQueuedFreshnessSenderLabel,
-  isExpectedA2AReplyForCat,
-  isFreshnessRoutableMessage,
   type QueuedMessageChecker,
 } from './freshness-unseen-source.js';
 
@@ -104,11 +103,7 @@ export class ThreadUnseenChecker implements UnseenChecker {
       scanned += batch?.length ?? 0;
       const qualifying = [];
       for (const msg of batch ?? []) {
-        if (!isFreshnessRoutableMessage(msg)) continue;
-        if (messageFilter && !messageFilter(msg as unknown as Record<string, unknown>)) continue;
-        if (this.deps.exposureReason?.(msg) === 'same_live_call_exposure') continue;
-        if (isFreshnessSelfSourceMessage(msg, catId, threadId)) continue;
-        if (!this.deps.includeExpectedA2AReplies && (await isExpectedA2AReplyForCat(msg, catId, messageStore)))
+        if (!(await isFreshnessCandidate(msg, { ...this.deps, catId, threadId, messageStore, messageFilter })))
           continue;
         qualifying.push(msg);
       }

@@ -1,6 +1,11 @@
 import type { EvolutionExplorationNodeV1 } from '@cat-cafe/shared';
 import { describe, expect, it } from 'vitest';
-import { layoutExplorationLineage, lineageDetailLevel } from '../exploration/exploration-lineage';
+import {
+  layoutExplorationLineage,
+  layoutExplorationLineageV2,
+  lineageDetailLevel,
+  sparseLineageEdgeRoute,
+} from '../exploration/exploration-lineage';
 import { DEFAULT_EXPLORATION, explorationReadingSchema } from '../exploration/exploration-reading';
 import { lineageLabels } from '../exploration/lineage-labels';
 
@@ -14,6 +19,26 @@ const node = (id: string, parents: string[] = []): EvolutionExplorationNodeV1 =>
   changes: [],
   parentEdges: parents.map((parent) => ({ parentNodeRef: ref(parent), sourceRef: ref(`${parent}:${id}`) })),
 });
+
+const cortex = (id: string): EvolutionExplorationNodeV1 => ({
+  ...node(id),
+  kind: 'public_archive',
+  nodeRef: ref(`cortex-archive-container:${id}`),
+  sourceRef: ref(`cortex-source:${id}`),
+});
+
+function segmentCrossesBox(
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  box: { left: number; top: number; right: number; bottom: number },
+) {
+  const steps = 80;
+  return Array.from({ length: steps + 1 }, (_, index) => index / steps).some((ratio) => {
+    const x = start.x + (end.x - start.x) * ratio;
+    const y = start.y + (end.y - start.y) * ratio;
+    return x > box.left && x < box.right && y > box.top && y < box.bottom;
+  });
+}
 
 describe('readable lineage at different scales', () => {
   it('changes information density rather than shrinking all node text into unreadable cards', () => {
@@ -57,5 +82,48 @@ describe('readable lineage at different scales', () => {
     expect(map.nodes[0].y).toBe((leaves[0].y + lastLeaf.y) / 2);
     expect(map.width / map.height).toBeGreaterThan(2);
     expect(new Set(map.nodes.map((entry) => `${entry.x}:${entry.y}`)).size).toBe(63);
+  });
+
+  it('puts registered ancestry, parentless archives, and Cortex in named non-overlapping canvas regions', () => {
+    const nodes = [node('v0'), node('v1', ['v0']), node('v5'), node('v6'), cortex('matches')];
+    const map = layoutExplorationLineageV2(nodes, [], 'map');
+
+    expect(map.regions.map((region) => region.label)).toEqual([
+      '公开归档 · 已登记派生',
+      '公开归档 · 父版未登记',
+      'Cortex · 比赛归档',
+    ]);
+    const [registered, parentless, matches] = map.regions;
+    expect(registered.nodeKeys).toHaveLength(2);
+    expect(parentless.nodeKeys).toHaveLength(2);
+    expect(matches.nodeKeys).toHaveLength(1);
+    for (const [earlier, later] of [
+      [registered, parentless],
+      [parentless, matches],
+    ] as const) {
+      expect(earlier.top + earlier.height).toBeLessThan(later.top);
+    }
+  });
+
+  it('routes sparse parent edges from the left ports below right-side labels', () => {
+    const parent = { x: 24, y: 48 };
+    const child = { x: 232, y: 48 };
+    const zoom = 0.4;
+    const route = sparseLineageEdgeRoute(parent, child, zoom);
+    const label = {
+      left: parent.x + 88 + 18 / zoom,
+      top: parent.y + 56 - 9 / zoom,
+      right: parent.x + 88 + 18 / zoom + 26 / zoom,
+      bottom: parent.y + 56 + 9 / zoom,
+    };
+
+    expect(route[1]?.x).toBeLessThan(parent.x + 88);
+    expect(route.at(-2)?.x).toBeLessThan(child.x + 88);
+    expect(
+      route.slice(1).some((point, index) => {
+        const start = route[index];
+        return start ? segmentCrossesBox(start, point, label) : false;
+      }),
+    ).toBe(false);
   });
 });

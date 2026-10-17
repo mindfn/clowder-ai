@@ -5,7 +5,7 @@
  * message. There is no direct routeExecution fallback.
  */
 
-import type { CatId } from '@cat-cafe/shared';
+import type { CatId, RoutingPreflightDecisionV1 } from '@cat-cafe/shared';
 import type { ActionSuccessorFence } from '../domains/ball-custody/ActionSuccessorAdmissionService.js';
 import type { InvocationQueue, QueueEntry } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import {
@@ -37,6 +37,11 @@ import {
   lifecycleResponseTerminalPatchFromAppendInput,
   settleLifecycleResponseInputs,
 } from '../domains/cats/services/stores/ports/MessageStore.js';
+import {
+  inferRoutingContextIntent,
+  preflightRoutingDispatch,
+  type RoutingDispatchPreflightPort,
+} from '../domains/routing-context/RoutingDispatchPreflightPort.js';
 import { wrapWithDispatchSpan } from '../infrastructure/telemetry/dispatch-span.js';
 import type { CallerTraceContext } from '../infrastructure/telemetry/genai-semconv.js';
 import { emitQueueUpdated } from '../utils/queue-enrichment.js';
@@ -60,6 +65,8 @@ export interface QueueProcessorLike {
 }
 
 export interface A2ATriggerDeps {
+  /** Read-only caller annotation; actual-send routing independently checks fresh truth. */
+  routingDispatchPreflight?: RoutingDispatchPreflightPort;
   socketManager: A2ATriggerSocketManager;
   invocationTracker?: {
     has(threadId: string, catId: string): boolean;
@@ -229,7 +236,7 @@ export async function commitCompletedResponseAndEnqueueA2ATargets(
   opts: {
     responseMessageId: string;
     invocationId: string;
-    terminal: Pick<LifecycleResponseTerminalPatch, 'status' | 'completedAt' | 'reason'>;
+    terminal: Pick<LifecycleResponseTerminalPatch, 'status' | 'completedAt' | 'reason' | 'expectedInputMessageIds'>;
     message: AppendMessageInput;
     targetCats: CatId[];
     userId: string;
@@ -564,7 +571,7 @@ export async function enqueueA2ATargets(
     preAdmittedEntries?: readonly QueueEntry[];
     preAdmittedReplayed?: boolean;
   },
-): Promise<{ enqueued: CatId[]; coalesced?: CatId[] }> {
+): Promise<{ enqueued: CatId[]; coalesced?: CatId[]; routingPreflight?: RoutingPreflightDecisionV1 }> {
   if (!deps.invocationQueue) throw new Error('A2A dispatch requires the shared Queue admission port');
   const { log } = deps;
   const { threadId, callerCatId } = opts;
@@ -794,8 +801,20 @@ export async function enqueueA2ATargets(
     '[DIAG/a2a] enqueueA2ATargets single-ledger admission',
   );
 
+  const intent = inferRoutingContextIntent(opts.content);
+  // An already-admitted failure return schedules its exact predecessor to read
+  // an existing result. It is not a new availability-based recipient decision.
+  const routingPreflight =
+    preAdmittedEntry?.sourceCategory !== 'a2a_failure' && deps.routingDispatchPreflight
+      ? await preflightRoutingDispatch(deps.routingDispatchPreflight, {
+          ownerId: opts.userId,
+          targetCatIds: requestedTargetCats,
+          ...(intent ? { intent } : {}),
+        })
+      : undefined;
   return {
     enqueued,
     ...(coalesced.length > 0 ? { coalesced } : {}),
+    ...(routingPreflight ? { routingPreflight } : {}),
   };
 }

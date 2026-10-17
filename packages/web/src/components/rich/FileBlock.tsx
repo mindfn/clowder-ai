@@ -1,10 +1,9 @@
 'use client';
 
-import { useState } from 'react';
-import { useChatArtworkEntry } from '@/components/content-review/useChatArtworkEntry';
+import { useChatArtworkLightbox } from '@/components/content-review/useChatArtworkLightbox';
 import type { PublishedMessageCoordinate } from '@/components/content-review/usePublishedContent';
-import { Lightbox } from '@/components/Lightbox';
 import type { RichFileBlock } from '@/stores/chat-types';
+import { API_URL } from '@/utils/api-client';
 import { CompactLabel } from '../content-overflow';
 import { HubIcon } from '../hub-icons';
 import { usePublishedFileOpen } from './usePublishedFileOpen';
@@ -56,8 +55,7 @@ export function FileBlock({
   const ext = block.fileName.split('.').pop()?.toLowerCase() ?? '';
   const iconName = EXT_ICON_NAMES[ext] ?? 'file-text';
   const safeHref = isSafeUrl(block.url) ? block.url : undefined;
-  const published = useChatArtworkEntry(publication);
-  const [previewReason, setPreviewReason] = useState<string | null>(null);
+  const published = useChatArtworkLightbox(publication);
   const source = published.source(block.url, { kind: 'rich-file', blockId: block.id });
   const legacyPublication = usePublishedFileOpen(block.url, sourceThreadId, messageId, sourceMessageIds);
   if (source || (published.isV2 && isVideoFile(block) && safeHref))
@@ -67,10 +65,15 @@ export function FileBlock({
           <button
             type="button"
             disabled={published.busy}
-            onClick={async () => {
-              const result = await published.open(source, block.fileName);
-              if (result.status === 'preview' && published.isV2) setPreviewReason(result.reason);
-            }}
+            onClick={() =>
+              void published.enlarge({
+                url: block.url.startsWith('/') ? `${API_URL}${block.url}` : block.url,
+                title: block.fileName,
+                alt: block.fileName,
+                mediaType: isVideoFile(block) ? 'video' : 'image',
+                entry: source,
+              })
+            }
             className="flex w-full items-center gap-3 text-left"
           >
             <HubIcon name={isVideoFile(block) ? 'play' : 'file-text'} className="h-5 w-5 shrink-0 text-cafe-muted" />
@@ -85,15 +88,7 @@ export function FileBlock({
             </p>
           ) : null}
         </div>
-        {previewReason && (
-          <Lightbox
-            url={block.url}
-            alt={block.fileName}
-            mediaType={isVideoFile(block) ? 'video' : 'image'}
-            annotationUnavailableReason={previewReason}
-            onClose={() => setPreviewReason(null)}
-          />
-        )}
+        {published.lightbox}
       </>
     );
 

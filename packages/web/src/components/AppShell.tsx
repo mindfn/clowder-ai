@@ -147,6 +147,7 @@ function AppShellContent({ children, pathname }: AppShellProps & { pathname: str
   const activeDestination = (isV2 || isMemoryPagePreview) && isMemoryRoute(pathname) ? 'memory' : null;
   const rightPanelMode = useChatStore((state) => state.rightPanelMode);
   const rightPanelOpen = useChatStore((state) => state.rightPanelOpen);
+  const workModeRequest = useChatStore((state) => state.workspaceOpenRequest);
   const viewMode = useChatStore((state) => state.viewMode);
   const currentThreadId = useChatStore((state) => state.currentThreadId);
   const workLayout = useF307ExperienceWorkbenchStore((state) => state.layout);
@@ -163,6 +164,10 @@ function AppShellContent({ children, pathname }: AppShellProps & { pathname: str
       statusPanelOpen: rightPanelOpen,
       rightPanelMode,
       shellPresentation: presentation,
+      workModeRequested:
+        isChatRoute &&
+        workModeRequest?.threadId === (routeThreadId ?? currentThreadId) &&
+        workModeRequest?.presentation === 'work-mode',
     },
     workLayout,
     workPresentation,

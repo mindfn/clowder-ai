@@ -78,11 +78,11 @@ function input(
 const text = (i: ExecutionRowInput) => rowStatusText(deriveExecutionRow(i), nameOf);
 
 describe('the ten states of the one row', () => {
-  it('1  one running: who, "正在回话", the clock, a ■', () => {
+  it('1  one running: who, "处理中", the clock, a ■', () => {
     const e = live('opus');
     const model = deriveExecutionRow(input({ executions: [e] }));
     expect(model.status).toBe('working');
-    expect(rowStatusText(model, nameOf)).toBe('宪宪 正在回话 2:05');
+    expect(rowStatusText(model, nameOf)).toBe('宪宪 处理中 2:05');
     expect(model.stop).toEqual({ kind: 'button', execution: e });
     expect(model.panelToggle).toBe(false);
     expect(model.forceReset).toEqual([]);
@@ -92,7 +92,7 @@ describe('the ten states of the one row', () => {
     const e = live('opus');
     const i = input({ executions: [e], queue: { entries: [entry('q1'), entry('q2')] } });
     const model = deriveExecutionRow(i);
-    expect(text(i)).toBe('宪宪 正在回话 2:05 · 排队 2');
+    expect(text(i)).toBe('宪宪 处理中 2:05 · 排队 2');
     expect(model.panelToggle).toBe(true);
     expect(model.stop.kind).toBe('button');
   });
@@ -262,7 +262,7 @@ describe('rules the states do not state', () => {
 
   it('pending Queue and live execution retain their separate facts', () => {
     const i = input({ executions: [live('opus')], queue: { entries: [entry('a')] } });
-    expect(text(i)).toBe('宪宪 正在回话 2:05 · 排队 1');
+    expect(text(i)).toBe('宪宪 处理中 2:05 · 排队 1');
     expect(deriveExecutionRow(i).resume).toBe(null);
   });
 

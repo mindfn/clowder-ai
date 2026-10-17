@@ -135,7 +135,7 @@ test('SDK native unseen scan correlates exact message identities, not v2 cursor 
   const seed = messages.append({
     userId: 'owner',
     threadId: 't',
-    catId: null,
+    from: { kind: 'user', userId: 'owner' },
     content: 'seed',
     mentions: [],
     timestamp: 1,
@@ -144,7 +144,7 @@ test('SDK native unseen scan correlates exact message identities, not v2 cursor 
   const next = messages.append({
     userId: 'owner',
     threadId: 't',
-    catId: null,
+    from: { kind: 'user', userId: 'owner' },
     content: 'new',
     mentions: [],
     timestamp: 2,
@@ -172,7 +172,7 @@ test('production freshness factory wires SDK exact IDs through prepared, full-re
     const log = new FreshnessAttentionEventLog(redis);
     const messages = new MessageStore();
     const cursor = new DeliveryCursorStore();
-    const input = { userId: 'owner', threadId: 't', catId: null, mentions: [] };
+    const input = { userId: 'owner', threadId: 't', from: { kind: 'user', userId: 'owner' }, mentions: [] };
     const seed = messages.append({ ...input, content: 'seed', timestamp: 1 });
     await cursor.ackSeenCursor('owner', 'opus', 't', cursorFor(seed));
     const next = messages.append({ ...input, content: 'new requirement', timestamp: 2 });

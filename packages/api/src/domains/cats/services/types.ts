@@ -918,6 +918,8 @@ export interface AgentClientDispatchInput {
   readonly text: string;
   readonly imagePaths?: readonly string[];
   readonly messageIds: readonly string[];
+  /** Correlates the first handoff and read-only reconciliation; not a provider dedup guarantee. */
+  readonly deliveryId?: string;
   /** Exact adapter evidence; delivery and Stop never wait for this callback. */
   readonly onInputRead?: () => Promise<void>;
 }
@@ -936,7 +938,14 @@ export type AgentClientDispatchResult =
     }
   | {
       readonly accepted: false;
-      readonly reason: 'active_run_mismatch' | 'active_run_closed' | 'invalid_input' | 'provider_rejected';
+      readonly reason:
+        | 'active_run_mismatch'
+        | 'active_run_closed'
+        | 'invalid_input'
+        | 'provider_rejected'
+        | 'exception';
+      /** Absent evidence is unknown. Only an explicit pre-handoff refusal can be automatically retried. */
+      readonly acceptance?: 'not_accepted' | 'unknown';
     };
 
 /** Live-only adapter. Durable Queue/History state must never be stored here. */
@@ -947,6 +956,7 @@ export interface AgentClientActiveRunDispatcher {
   /** Exact native consumption of this run’s first input; never awaited by delivery or Stop. */
   readonly initialInputRead?: Promise<number>;
   dispatch(input: AgentClientDispatchInput, options: AgentClientDispatchOptions): Promise<AgentClientDispatchResult>;
+  inspectInput?(deliveryId: string): Promise<'accepted' | 'not_accepted' | 'unknown'>;
 }
 
 export interface AgentClientActiveRunDispatchRegistration {
@@ -1011,7 +1021,7 @@ export type ClaudeCompactionHooksFactory = (identity: {
 
 export interface LocalSessionMetadata {
   sessionId: string;
-  clientId: 'openai' | 'anthropic';
+  clientId: import('@cat-cafe/shared').LocalSessionClientId;
   firstPrompt: string;
   projectPath: string;
   lastActivityAt: number;

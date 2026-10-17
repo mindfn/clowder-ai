@@ -17,7 +17,7 @@ import type {
 import { type RawArchiveSink, sanitizeRawEvent } from '../codex-audit-hooks.js';
 import { compileL0ViaSubprocess } from '../l0-compiler.js';
 import { createAgyNativeContinuityInput } from './agy-native-continuity.js';
-import { AgyNativeResumeMismatchError } from './agy-native-errors.js';
+import { AgyNativeResumeMismatchError, AgyNativeStartupError } from './agy-native-errors.js';
 import { prepareAgyNativeLaunch } from './agy-native-launch.js';
 import { preflightAgyNativeWorkspace } from './agy-native-policy.js';
 import { AgyNativeProfileBusyError } from './agy-native-profile-turn.js';
@@ -262,11 +262,14 @@ export class AgyNativeAgentService implements AgentService {
           spawnCwd: launch.cliOptions.cwd,
           model: this.model,
           permissionMode: launch.permissionMode,
+          command: launch.cliOptions.command,
+          ...(options?.invocationId ? { invocationId: options.invocationId } : {}),
           ...(launch.resumeSessionId ? { sessionId: launch.resumeSessionId } : {}),
         },
         options?.signal,
       )) {
         if (observation.kind === 'init') {
+          launch.bindSession(observation.sessionId);
           await continuityInput?.acceptVerifiedInit(observation.sessionId);
           metadata.sessionId = observation.sessionId;
           yield {
@@ -303,6 +306,9 @@ export class AgyNativeAgentService implements AgentService {
     } catch (error) {
       if (preparedNotice) idleFreshness?.defer(preparedNotice);
       const cancelled = options?.signal?.aborted === true;
+      if (!cancelled && error instanceof AgyNativeStartupError && error.cliDiagnostics) {
+        metadata.cliDiagnostics = error.cliDiagnostics;
+      }
       yield* failure(
         cancelled
           ? 'AGY_CANCELLED'

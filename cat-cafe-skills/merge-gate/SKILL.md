@@ -728,9 +728,11 @@ gh pr comment {PR_NUMBER} --body '@codex review'
 
 | 原 reviewer | 降级到 | 说明 |
 |-------------|--------|------|
-| 云端 Codex / 任一Maine Coon（OpenAI 池） | **另一 provider** 的在役本地 reviewer（Anthropic 侧常规 review 先找 Sonnet；按 dossier 常驻索引 + F293 可用性选具体个体） | **跨 provider family**：OpenAI 各 model 共享 API 池，一个没猫粮 = 都没猫粮 |
-| Ragdoll某个体 | 常规 review 先找 Sonnet（须非作者）；再选其他在役常规 reviewer | 同族或跨族；稀缺创作/判断席位不进迭代循环 |
-| **禁止** | Siamese | 家族约束：不做代码 review（新版本是否放宽，等真实任务证据写进 dossier 再改） |
+| 云端 Codex / 任一Maine Coon（OpenAI 池） | **另一 provider** 的在役非作者 reviewer：kimi 或 gemini-argon（只审不写代码）；按 dossier + F293 可用性选择 | **跨 provider family**：同一 provider 的额度不足时不在其内部换 model |
+| Ragdoll某个体 | 非作者Maine Coon、kimi 或 gemini-argon（只审不写代码） | 稀缺创作/判断席位不进迭代循环 |
+| **禁止** | 作者自己 | 同族不同个体可审，同一个体不能自审 |
+
+Sonnet 常规 review 暂停（2026-10-15 operator 试行，来源见 dossier v0.11），不作为降级默认选项。本次只明确允许 gemini-argon 参与 review，不把其他Siamese一并加入常规 reviewer，也不授权 Argon 写代码。
 
 **铁律：降级后仍须校验"reviewer ≠ 作者"**——降级表是建议顺序，不能覆盖 self-review 禁令。
 

@@ -62,24 +62,22 @@ export function AuthenticatedMediaImage({
     return <output className="text-sm text-cafe-muted">图片加载中</output>;
   }
   const src = isHmr ? (activePrivateSrc ?? '') : url.startsWith('/uploads/') ? `${API_URL}${url}` : url;
-  return (
+  const image = (
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={src}
       alt={alt}
       className={className}
-      role={onOpen ? 'button' : undefined}
-      tabIndex={onOpen ? 0 : undefined}
-      onClick={() => onOpen?.(src)}
-      onKeyDown={(event) => {
-        if (onOpen && (event.key === 'Enter' || event.key === ' ')) {
-          event.preventDefault();
-          onOpen(src);
-        }
-      }}
       onError={() => {
         if (isHmr) setFailed(true);
       }}
     />
+  );
+  return onOpen ? (
+    <button type="button" className="block max-w-full" aria-label={alt} onClick={() => onOpen(src)}>
+      {image}
+    </button>
+  ) : (
+    image
   );
 }

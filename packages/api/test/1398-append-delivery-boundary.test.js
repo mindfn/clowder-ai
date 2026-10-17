@@ -444,7 +444,15 @@ describe('delivery owns Append admission, without model-read state', () => {
       ]);
       await waitFor(() => otherDispatch.mock.calls.length === 1);
       assert.equal(otherDispatch.mock.calls.length, 1, 'other target advances before first ACK');
-      assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', first.entry.id), null);
+      assert.deepEqual(
+        harness.queue.getEntrySnapshot('thread-1', 'user-1', first.entry.id).delivery.routingHeldTargetIds,
+        ['opus'],
+      );
+      assert.equal(
+        harness.messageStore.getById(first.message.id).lifecycle.dispatchRefs[0].appendAcceptance,
+        'pending',
+      );
+      await waitFor(() => harness.queue.getEntrySnapshot('thread-1', 'user-1', other.entry.id) === null);
       assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', later.entry.id).status, 'queued');
       assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', other.entry.id), null);
     } finally {
@@ -709,52 +717,57 @@ describe('delivery owns Append admission, without model-read state', () => {
     assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id), null);
   });
 
-  it('automatic Append rejection after handoff compensates once and releases only its target', async () => {
+  it('automatic definite Append rejection restores only its original target for the next run', async () => {
     const harness = createHarness();
     const admitted = await admit(harness);
     const release = deferred();
     const run = bindRun(harness, async () => {
       await release.promise;
-      return { accepted: false, reason: 'active_run_closed' };
+      return { accepted: false, reason: 'active_run_closed', acceptance: 'not_accepted' };
     });
     await harness.processor.requestDrain('thread-1');
-    assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id), null);
+    assert.deepEqual(
+      harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id).delivery.routingHeldTargetIds,
+      ['opus'],
+    );
     assert.equal(
       harness.messageStore.getById(admitted.message.id).lifecycle.dispatchRefs[0].statusMessageId,
       run.response.id,
     );
     release.resolve();
-    await waitFor(
-      () => harness.messageStore.getById(admitted.message.id).lifecycle.dispatchRefs[0].phase === 'settled',
-    );
+    await waitFor(() => harness.messageStore.getById(admitted.message.id).lifecycle.appendFailures?.length === 1);
     const source = harness.messageStore.getById(admitted.message.id);
-    const ref = source.lifecycle.dispatchRefs[0];
-    assert.notEqual(ref.statusMessageId, run.response.id);
-    assert.equal(harness.messageStore.getById(ref.statusMessageId).lifecycle.kind, 'delivery_failure');
+    assert.deepEqual(source.lifecycle.dispatchRefs, []);
     assert.deepEqual(activeInputs(harness), []);
-    assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id), null);
+    const queued = await harness.queue.getDurableEntry('thread-1', admitted.entry.id);
+    assert.deepEqual(queued.payload, admitted.entry.payload);
+    assert.deepEqual(queued.targets, ['opus']);
     await harness.processor.requestDrain('thread-1');
     assert.equal(
       harness.messageStore
         .getByThread('thread-1', 100, 'user-1')
         .filter((message) => message.lifecycle?.kind === 'delivery_failure').length,
-      1,
+      0,
     );
   });
 
-  it('publishes one exact failure when the carrier rejects delivery without resurrecting Queue work', async () => {
+  it('an uncertain carrier outcome keeps its exact run binding and a held original Queue owner', async () => {
     const harness = createHarness();
     const admitted = await admit(harness);
-    const run = bindRun(harness, async () => ({ accepted: false, reason: 'active_run_closed' }));
+    const run = bindRun(harness, async () => ({ accepted: false, reason: 'provider_rejected', acceptance: 'unknown' }));
     assert.equal((await append(harness, admitted, run)).outcome, 'rejected');
     const source = await harness.messageStore.getById(admitted.message.id);
-    assert.equal(source.deliveryStatus, 'delivered');
-    const ref = source.lifecycle.dispatchRefs[0];
-    assert.equal(ref.phase, 'settled');
-    assert.notEqual(ref.statusMessageId, run.response.id);
-    assert.equal((await harness.messageStore.getById(ref.statusMessageId)).lifecycle.kind, 'delivery_failure');
-    assert.deepEqual(activeInputs(harness), []);
-    assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id), null);
+    assert.equal(source.lifecycle.dispatchRefs[0].statusMessageId, run.response.id);
+    assert.deepEqual(activeInputs(harness), [source.id]);
+    const queued = await harness.queue.getDurableEntry('thread-1', admitted.entry.id);
+    assert.deepEqual(queued.delivery.routingHeldTargetIds, ['opus']);
+    assert.deepEqual(queued.payload, admitted.entry.payload);
+    assert.equal(
+      harness.messageStore
+        .getByThread('thread-1', 100, 'user-1')
+        .filter((message) => message.lifecycle?.kind === 'delivery_failure').length,
+      0,
+    );
   });
 });
 
@@ -876,7 +889,12 @@ describe('existing ingress chains use common send admission and wake', () => {
         assert.deepEqual(admission.targets, ['opus'], 'ingress must preserve the admitted target');
         assert.equal(admission.delivery.authorIntentByTarget.opus.requested, policy);
         if (policy === 'continue_current') {
-          await waitFor(() => dispatch.mock.calls.length === 1);
+          await waitFor(() => harness.queue.getEntrySnapshot('thread-1', 'user-1', admission.id) === null);
+          assert.equal(dispatch.mock.calls.length, 1);
+          assert.equal(
+            harness.messageStore.getById(admission.payload.messageId).lifecycle.dispatchRefs[0].appendAcceptance,
+            'accepted',
+          );
           assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', admission.id), null);
         } else {
           assert.equal(dispatch.mock.calls.length, 0);
@@ -920,18 +938,24 @@ it('manual private Append preserves independent read receipts without a public s
   assert.deepEqual(harness.messageStore.getById(admitted.message.id).lifecycle.dispatchRefs[0].inputRead, read);
 });
 
-it('private provider rejection keeps its failure private and never restores executable queue work', async () => {
+it('private definite rejection restores its original private source for the same target', async () => {
   const harness = createHarness();
   const admitted = await admit(harness, { visibility: 'whisper', whisperTo: ['opus'] });
-  const run = bindRun(harness, async () => ({ accepted: false, reason: 'active_run_closed' }));
+  const run = bindRun(harness, async () => ({
+    accepted: false,
+    reason: 'active_run_closed',
+    acceptance: 'not_accepted',
+  }));
   assert.equal((await append(harness, admitted, run)).outcome, 'rejected');
   const source = harness.messageStore.getById(admitted.message.id);
-  const failure = harness.messageStore.getById(source.lifecycle.dispatchRefs[0].statusMessageId);
-  assert.equal(failure.visibility, 'whisper');
-  assert.deepEqual(failure.whisperTo, ['opus']);
+  assert.equal(source.visibility, 'whisper');
+  assert.deepEqual(source.whisperTo, ['opus']);
+  assert.deepEqual(source.lifecycle.dispatchRefs, []);
   assert.deepEqual(harness.messageStore.getById(run.response.id).lifecycle.inputMessageIds, []);
   assert.deepEqual(activeInputs(harness), []);
-  assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id), null);
+  const queued = await harness.queue.getDurableEntry('thread-1', admitted.entry.id);
+  assert.deepEqual(queued.payload, admitted.entry.payload);
+  assert.deepEqual(queued.targets, ['opus']);
 });
 
 it('private native read evidence survives public projection and a terminal response race', async () => {

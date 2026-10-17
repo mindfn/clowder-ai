@@ -457,8 +457,19 @@ export class LocalPluginPackageAdmission {
     }
   }
 
+  /** Internal Host seam: catalog callers have already verified release bytes and Host grant policy. */
+  async admitVerifiedCatalogCandidate(
+    inventoryAtRequest: PluginInventorySnapshot,
+    candidate: PackageAdmissionCandidate,
+  ): Promise<InventoryMutationResult> {
+    if (candidate.provenance?.kind !== 'catalog') {
+      throw new PluginInventoryError('INVENTORY_INVARIANT', 'verified catalog candidate must retain its source');
+    }
+    return this.admitCandidate({ kind: 'catalog' }, inventoryAtRequest, candidate);
+  }
+
   private async admitCandidate(
-    source: LocalPluginPackageSource,
+    source: LocalPluginPackageSource | { readonly kind: 'catalog' },
     inventoryAtRequest: PluginInventorySnapshot,
     candidate: PackageAdmissionCandidate,
   ): Promise<InventoryMutationResult> {
@@ -474,6 +485,7 @@ export class LocalPluginPackageAdmission {
       const localUpdate =
         current !== undefined &&
         (source.kind === 'local-directory' ||
+          source.kind === 'catalog' ||
           (candidate.provenance?.kind === source.kind &&
             previousPackage?.provenance?.kind === source.kind &&
             candidate.provenance.packageName !== undefined &&

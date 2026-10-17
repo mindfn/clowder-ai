@@ -3,7 +3,7 @@ title: F309 Phase U media message intake contract
 status: active
 owner: codex61-sol
 created: 2026-10-03
-updated: 2026-10-03
+updated: 2026-10-16
 feature: F309
 description: "F309 Task412 媒体消息接手的冻结合同：真实 Human 单发送、多范围原子请求、原 Task 归属、稳定选区映射与持久 Host 回执。"
 description_source: model
@@ -40,7 +40,7 @@ The existing send-message `contextAttachments` array accepts a `MediaContextAtta
   id: "cover",
   kind: "media",
   title: "秋日封面",
-  mediaType: "image/png", // or video/mp4; a hint checked against the owner
+  mediaType: "image/png", // image/jpeg, image/webp or video/mp4; checked against the owner
   source: { kind: "artifact-review", reviewId, round, expectedReviewRevision },
   taskContext: { kind: "media", taskId, expectedTaskRevision, reviewId, round, expectedReviewRevision },
   selections: [
@@ -54,7 +54,17 @@ The existing send-message `contextAttachments` array accepts a `MediaContextAtta
 
 The original Human words live in ordinary message `content`, once. Ordinary uploaded images can coexist as display blocks. They carry no source authority. Each selection has a stable, unique id, one existing `ArtifactReviewAnchor`, and optional local instruction. Preserve the order and ids across a retry; do not renumber surviving selections after deletion. A set is limited to 12. The combined modification outcome (global words plus named instructions) keeps the existing 4,000-character limit; an oversized aggregate returns a typed input error before request reservation, without truncation. An empty set identifies the whole work; the server derives its exact full-media anchor. Multiple media attachments in one takeover must identify the same source, media kind and Task context, and cannot mix whole-work and selected-work attachments. Text/media source mixtures are rejected. The existing 12-attachment/48,000-character collection limits still apply.
 
-Image coordinates remain original-image coordinates. Video ranges retain the exact `streamId`, ticks and optional frame anchors already used by K3. Evolution anchors are transformed once by the existing canonical source-to-derived-media mapping.
+Image coordinates use the original image’s EXIF-oriented display pixels, including mirrored orientations, with dimensions signed by its actual source owner. Video ranges retain the exact `streamId`, ticks and optional frame anchors already used by K3. Evolution anchors are transformed once by the existing canonical source-to-derived-media mapping.
+
+## JPEG/WebP admission and display
+
+Task414 extends the existing media MIME union to `image/jpeg` and `image/webp`, alongside PNG/MP4. The original F063 root/locator/revision or exact publication/owner/ledger remains the authority. A bounded decoder verifies actual format, one image page, full decode and EXIF orientation; corrupt, mismatched and animated content is refused. PNG retains its prior signature/orientation fence. The extension does not borrow an evolution identity or grant a new writeback path.
+
+Original MIME, bytes, SHA, locator and publication identity are retained. Browsers disagree on WebP EXIF: existing authenticated media reads accept `display=oriented` for a disposable, bounded, auto-oriented PNG projection, served `private, no-store` after the original exact-owner authorization. This projection is display-only. Normal media reads and downloads remain byte exact in the original format; comparisons pair these original identities with their verified display pixels. JPEG uses the browser’s native EXIF display. Selections and candidate comparisons use the same display coordinate space.
+
+A candidate keeps its real encoding and original owner lineage. Workspace adoption still requires an explicit Human decision, the original F063 edit-session token and base-SHA CAS. Published rounds use the original fresh review/ledger/task revisions and approve/request-changes decisions; they do not expose workspace file adoption. Revocation, drift, cancellation, late outcomes and immutable history retain their prior fences.
+
+Actual evidence is in Task414 quality and continuity (internal): JPEG EXIF6 and WebP EXIF7, each with Workspace and exact publication sources across 1440/light and 390/dark, raw download MIME/SHA, numbered selections, same original ChatInput, real callback/Queue/candidate, fresh-browser compare/decision, history and Chat/Home/Works return. The native provider and Human issuer are explicit isolated test boundaries; no actual model edit or production Human mutation is claimed.
 
 ## Authenticated takeover and progress
 

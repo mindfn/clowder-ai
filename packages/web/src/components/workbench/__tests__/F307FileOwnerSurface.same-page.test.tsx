@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { clearModificationFocus, focusModification } from '@/components/content-review/modification-focus';
 import { writeShellPresentation } from '@/components/shell/shell-presentation';
 import type { WorkspaceFileSave } from '@/components/workspace/workspace-file-draft';
+import { addWorkspaceFileQuoteToChat } from '@/components/workspace/workspace-file-quote';
 import { useChatStore } from '@/stores/chatStore';
 import { revision, view } from '../content-review/__tests__/WorkspaceContentReviewSurface.fixture';
 import { F307FileOwnerSurface } from '../F307FileOwnerSurface';
@@ -177,19 +178,45 @@ it('keeps source, edit/save, listening and return in the same original file surf
   expect(onReturn).toHaveBeenCalledWith({ kind: 'workspace-home-search', query: 'notes' });
 });
 
-it('the file toolbar opens the original explicit modification flow for that exact owner/version', async () => {
+it('the file toolbar uses that exact file/version in the existing Chat without opening a second request form', async () => {
   await render();
   const reader = host.querySelector('[data-testid="workspace-file-viewer"]');
   expect(reader).not.toBeNull();
-  await click('请猫修改');
-  const landing = host.querySelector<HTMLElement>('[data-testid="original-modification-landing"]');
-  expect(landing).not.toBeNull();
-  expect(JSON.parse(landing?.dataset.source ?? '{}')).toMatchObject({
-    kind: 'workspace',
-    locator: { worktreeId: 'worktree-a', path: 'notes.md' },
-    expectedSourceRevision: revision,
+  const composer = document.createElement('div');
+  composer.dataset.guideId = 'chat.input';
+  const input = document.createElement('textarea');
+  input.value = 'original draft';
+  input.setSelectionRange(3, 8, 'backward');
+  composer.append(input);
+  document.body.append(composer);
+  useChatStore.setState({ pendingChatInsert: { threadId: 'thread-a', text: input.value } });
+  expect(
+    addWorkspaceFileQuoteToChat('thread-a', {
+      text: sourceText,
+      comment: 'keep this place',
+      worktreeId: 'worktree-a',
+      path: 'notes.md',
+      revision,
+    }),
+  ).toEqual({ kind: 'added' });
+  const queued = useChatStore.getState().pendingChatInsert;
+  expect(queued?.contextAttachments?.[0]).toMatchObject({
+    text: sourceText,
+    comment: 'keep this place',
+    source: { kind: 'workspace_file', worktreeId: 'worktree-a', path: 'notes.md', revision },
   });
-  expect(useChatStore.getState().pendingChatInsert).toBeNull();
+  const requestsBefore = mocks.apiFetch.mock.calls.length;
+  try {
+    await click('请猫修改');
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe('original draft');
+    expect([input.selectionStart, input.selectionEnd, input.selectionDirection]).toEqual([3, 8, 'backward']);
+    expect(useChatStore.getState().pendingChatInsert).toBe(queued);
+    expect(mocks.apiFetch.mock.calls.slice(requestsBefore)).toEqual([]);
+    expect(host.querySelector('[data-testid="original-modification-landing"]')).toBeNull();
+  } finally {
+    composer.remove();
+  }
   expect(host.querySelector('[data-testid="workspace-file-viewer"]')).toBe(reader);
   expect(host.querySelectorAll('[data-testid="workspace-content-review-text"]')).toHaveLength(1);
 });

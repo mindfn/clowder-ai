@@ -9,6 +9,10 @@ export function pianoRecords(count) {
     const n = index + 1;
     const content = `消息 ${n}：${'用实际消息高度定位，保持原阅读位置和草稿。'.repeat(1 + (index % 5))}`;
     return {
+      from:
+        index % 4 === 0
+          ? { kind: 'user', userId: 'owner-proof' }
+          : { kind: 'agent', catId: cats[index % cats.length].id },
       id: `piano-${n}`,
       catId: index % 4 === 0 ? null : cats[index % cats.length].id,
       timestamp: 1791500000000 + index * 1000,

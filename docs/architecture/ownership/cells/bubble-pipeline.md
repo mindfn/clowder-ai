@@ -13,7 +13,6 @@ code_anchors:
   - packages/api/src/domains/cats/services/stores/ports/MessageStore.ts
   - packages/shared/src/types/bubble-pipeline.ts
   - packages/shared/src/types/turn-execution.ts
-  - packages/api/src/domains/cats/services/stores/ports/MessageStore.ts
   - packages/web/src/stores/chatStore.ts
   - packages/web/src/hooks/useAgentMessages.ts
   - packages/web/src/hooks/system-info-visible.ts

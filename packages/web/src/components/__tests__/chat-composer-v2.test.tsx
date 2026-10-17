@@ -101,6 +101,25 @@ function button(label: string) {
 }
 
 describe('v2 two-level composer', () => {
+  it('offers a choice only during work and consumes it on this send without changing defaults', async () => {
+    useChatStore.setState({
+      hasActiveInvocation: true,
+      activeInvocations: { 'one-shot-run': { catId: 'opus', mode: 'execute', startedAt: Date.now() } },
+    });
+    await act(async () => renderComposer());
+    act(() => button('添加')?.click());
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="message-disposition-trigger"]');
+    expect(trigger).not.toBeNull();
+    act(() => trigger?.click());
+    act(() => document.querySelector<HTMLButtonElement>('[data-disposition-option="continue_current"]')?.click());
+    act(() => button('添加')?.click());
+    typeInto('继续这个方向');
+    await act(async () => button('发送消息')?.click());
+    expect(onSend.mock.calls[0]?.[6]).toBe('continue_current');
+    typeInto('下一条按默认发送');
+    await act(async () => button('发送消息')?.click());
+    expect(onSend.mock.calls[1]?.[6]).toBeUndefined();
+  });
   it('keeps mobile controls on one row and clips header and draft dividers inside the card', () => {
     threadReplyDrafts.set('thread-layout', {
       id: 'message-parent',

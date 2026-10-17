@@ -15,7 +15,14 @@ import {
  * PATCH /api/threads/:threadId/sessions/:catId/bind - Manual bind CLI session ID (#72)
  */
 
-import { type CatId, catRegistry, type SessionRecord } from '@cat-cafe/shared';
+import {
+  type CatId,
+  catRegistry,
+  humanSessionFirstLine,
+  isLocalSessionId,
+  localSessionImportTool,
+  type SessionRecord,
+} from '@cat-cafe/shared';
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import { z } from 'zod';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
@@ -658,7 +665,8 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
 
     let importMetadata: Awaited<ReturnType<NonNullable<LocalSessionImportOptions['inspectLocalSession']>>> | undefined;
     if (parseResult.data.externalImport) {
-      if (!z.string().uuid().safeParse(cliSessionId).success)
+      const member = catRegistry.tryGet(catId)?.config;
+      if (!member || !localSessionImportTool(member) || !isLocalSessionId(member.clientId, cliSessionId))
         return reply.status(400).send({ error: 'Invalid session ID' });
       const conflict = await localSessionConflict(opts, cliSessionId, userId, threadId);
       if (conflict) return reply.status(409).send(conflict);
@@ -673,6 +681,9 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
       if (!opts.inspectLocalSession) return reply.status(503).send({ error: 'Session inspection is unavailable' });
       try {
         importMetadata = await opts.inspectLocalSession(catId, cliSessionId);
+        if (importMetadata.sessionId !== cliSessionId || importMetadata.clientId !== member.clientId)
+          throw new Error('Native session inspection returned a different identity');
+        importMetadata = { ...importMetadata, firstPrompt: humanSessionFirstLine(importMetadata.firstPrompt) };
       } catch (error) {
         return reply.status(409).send(localSessionFailure(error));
       }

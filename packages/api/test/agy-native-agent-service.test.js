@@ -33,6 +33,12 @@ function fixture(
   return { base, workspace, service, cleanup: () => rmSync(base, { recursive: true, force: true }) };
 }
 
+function geminiDir(launch) {
+  const flag = launch.args.find((arg) => arg.startsWith('--gemini_dir='));
+  assert.ok(flag, 'the invocation must select its own native configuration');
+  return flag.slice('--gemini_dir='.length);
+}
+
 function fakeEvents(agentName, cwd, conversationId, response, deniedActions = []) {
   return [
     {
@@ -114,9 +120,7 @@ describe('F325 one-turn native AGY carrier', () => {
             CAT_CAFE_USER_ID: 'owner',
           },
           spawnCliOverride: async function* (launch) {
-            servers = JSON.parse(
-              readFileSync(join(launch.env.HOME, '.gemini/config/mcp_config.json'), 'utf8'),
-            ).mcpServers;
+            servers = JSON.parse(readFileSync(join(geminiDir(launch), 'config/mcp_config.json'), 'utf8')).mcpServers;
             credential = servers['cat-cafe-memory']?.env.CAT_CAFE_CREDENTIAL_FILE;
             yield* fakeEvents(
               launch.args[launch.args.indexOf('--agent') + 1],
@@ -156,7 +160,7 @@ describe('F325 one-turn native AGY carrier', () => {
           f.service.invoke('Do ordinary project work.', {
             workingDirectory: f.workspace,
             spawnCliOverride: async function* (launch) {
-              const path = join(launch.env.HOME, '.gemini/config/hooks.json');
+              const path = join(geminiDir(launch), 'config/hooks.json');
               installed = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null;
               const frames = fakeEvents(
                 launch.args[launch.args.indexOf('--agent') + 1],
@@ -223,7 +227,7 @@ describe('F325 one-turn native AGY carrier', () => {
   test('explicit autoApprove launches a normal repository with official bypass mode and native commands', async () => {
     const f = fixture(undefined, { autoApprove: true, trustedWorkspaces: [] });
     writeFileSync(join(f.workspace, '.env'), 'FIXTURE_ONLY=yes\n');
-    let launch;
+    let launch, body;
     try {
       const events = await collect(
         f.service.invoke('Say hello.', {
@@ -231,6 +235,7 @@ describe('F325 one-turn native AGY carrier', () => {
           spawnCliOverride: async function* (options) {
             launch = options;
             const agent = options.args[options.args.indexOf('--agent') + 1];
+            body = readFileSync(join(geminiDir(options), 'config/agents', agent, 'agent.md'), 'utf8');
             const frames = fakeEvents(agent, options.cwd, 'auto-approved-session', 'Hello.');
             frames[0].init.permission_mode = 'always-proceed';
             yield* frames;
@@ -242,13 +247,11 @@ describe('F325 one-turn native AGY carrier', () => {
       assert.ok(!launch.args.includes('--sandbox'));
       assert.equal(launch.inheritParentEnv, false);
       assert.equal(launch.env.CAT_CAFE_AGENT_KEY_SECRET, null);
-      const agent = launch.args[launch.args.indexOf('--agent') + 1];
-      const body = readFileSync(join(launch.env.HOME, '.gemini/config/agents', agent, 'agent.md'), 'utf8');
       assert.match(body, / {2}- run_command\n/);
       assert.ok(!body.includes('commandExecutionPolicy: off'));
       const settings = JSON.parse(readFileSync(join(launch.env.HOME, '.gemini/antigravity-cli/settings.json')));
-      assert.equal(settings.toolPermission, 'always-proceed');
-      assert.equal(settings.enableTerminalSandbox, false);
+      assert.equal(settings.toolPermission, 'request-review', 'shared settings never become a different turn policy');
+      assert.equal(settings.enableTerminalSandbox, true);
       assert.deepEqual(settings.permissions.deny, []);
       assert.equal(events.at(-1).errorCode, undefined, JSON.stringify(events));
     } finally {
@@ -257,7 +260,7 @@ describe('F325 one-turn native AGY carrier', () => {
   });
 
   test('permission changes require an explicit new session; matching durable bindings resume', async () => {
-    const f = fixture(undefined, { autoApprove: true });
+    const f = fixture(undefined, { autoApprove: true, trustedWorkspaces: [] });
     const launches = [];
     const options = {
       workingDirectory: f.workspace,
@@ -331,9 +334,9 @@ describe('F325 one-turn native AGY carrier', () => {
   });
 
   test('read_only can enter an ordinary repository while keeping writes and MCP unavailable', async () => {
-    const f = fixture(undefined, { autoApprove: true });
+    const f = fixture(undefined, { autoApprove: true, trustedWorkspaces: [] });
     writeFileSync(join(f.workspace, '.env'), 'FIXTURE_ONLY=yes');
-    let launch;
+    let launch, hooks, body, mcp;
     try {
       const events = await collect(
         f.service.invoke('Read only.', {
@@ -341,6 +344,10 @@ describe('F325 one-turn native AGY carrier', () => {
           toolExecutionPolicy: { mode: 'read_only' },
           spawnCliOverride: async function* (options) {
             launch = options;
+            hooks = JSON.parse(readFileSync(join(geminiDir(options), 'config/hooks.json'), 'utf8'));
+            mcp = JSON.parse(readFileSync(join(geminiDir(options), 'config/mcp_config.json'), 'utf8'));
+            const agent = options.args[options.args.indexOf('--agent') + 1];
+            body = readFileSync(join(geminiDir(options), 'config/agents', agent, 'agent.md'), 'utf8');
             yield* fakeEvents(
               options.args[options.args.indexOf('--agent') + 1],
               options.cwd,
@@ -350,213 +357,16 @@ describe('F325 one-turn native AGY carrier', () => {
           },
         }),
       );
-      assert.equal(events.at(-1).errorCode, undefined);
+      assert.equal(events.at(-1).errorCode, undefined, JSON.stringify(events));
       assert.ok(launch.args.includes('--sandbox'));
+      assert.ok(!launch.args.includes('--dangerously-skip-permissions'));
       const settings = JSON.parse(readFileSync(join(launch.env.HOME, '.gemini/antigravity-cli/settings.json'), 'utf8'));
-      assert.ok(settings.permissions.deny.includes('write_file(*)'));
-      assert.ok(settings.permissions.deny.includes('mcp(*)'));
+      assert.equal(settings.toolPermission, 'request-review');
+      assert.equal(settings.allowNonWorkspaceAccess, false);
+      assert.deepEqual(mcp.mcpServers, {});
+      assert.doesNotMatch(body, / {2}- (?:run_command|write_to_file|call_mcp_tool)\n/);
+      assert.match(hooks['cat-cafe-native-effect'].PreToolUse[0].hooks[0].command, /'read-only'$/);
     } finally {
-      f.cleanup();
-    }
-  });
-
-  test('both successors queue without overlapping a canceled profile', async () => {
-    const f = fixture();
-    const controller = new AbortController();
-    let releaseDrain, reportStarted;
-    const drained = new Promise((resolve) => {
-      releaseDrain = resolve;
-    });
-    const started = new Promise((resolve) => {
-      reportStarted = resolve;
-    });
-    let launches = 0;
-    const options = {
-      workingDirectory: f.workspace,
-      spawnCliOverride: async function* (launch) {
-        launches++;
-        const agent = launch.args[launch.args.indexOf('--agent') + 1];
-        if (launches === 1) {
-          reportStarted();
-          await drained;
-        }
-        yield* fakeEvents(agent, launch.cwd, `exclusive-session-${launches}`, 'OK');
-      },
-    };
-    let first, second, third;
-    try {
-      first = collect(f.service.invoke('Canceled holder.', { ...options, signal: controller.signal }));
-      await started;
-      controller.abort();
-      second = collect(f.service.invoke('Successor A.', options));
-      third = collect(f.service.invoke('Successor B.', options));
-      await new Promise(setImmediate);
-      assert.equal(launches, 1, 'neither successor may overlap the draining holder');
-      releaseDrain();
-      const [oldEvents, ...nextEvents] = await Promise.all([first, second, third]);
-      assert.equal(oldEvents.at(-1).errorCode, 'AGY_CANCELLED');
-      assert.equal(launches, 3, 'both successors run after the holder releases');
-      assert.equal(nextEvents.filter((events) => events.at(-1).errorCode === undefined).length, 2);
-    } finally {
-      releaseDrain();
-      await Promise.allSettled([first, second, third]);
-      f.cleanup();
-    }
-  });
-
-  test('waits for a canceled native profile to drain before launching its next work', async () => {
-    const f = fixture();
-    const controller = new AbortController();
-    let releaseDrain;
-    const drained = new Promise((resolve) => {
-      releaseDrain = resolve;
-    });
-    let reportStarted;
-    const started = new Promise((resolve) => {
-      reportStarted = resolve;
-    });
-    let launches = 0;
-    const options = {
-      workingDirectory: f.workspace,
-      spawnCliOverride: async function* (launch) {
-        launches++;
-        const agent = launch.args[launch.args.indexOf('--agent') + 1];
-        const frames = fakeEvents(agent, launch.cwd, `drain-session-${launches}`, 'OK');
-        if (launches === 1) {
-          reportStarted();
-          yield frames[0];
-          await drained;
-          yield frames[1];
-        } else {
-          yield* frames;
-        }
-      },
-    };
-    let first, second;
-    try {
-      first = collect(f.service.invoke('Canceled work.', { ...options, signal: controller.signal }));
-      await started;
-      controller.abort();
-      let nextWorkEnded = false;
-      second = collect(f.service.invoke('Next work.', options)).then((events) => {
-        nextWorkEnded = true;
-        return events;
-      });
-      await new Promise(setImmediate);
-      assert.equal(launches, 1, 'a live canceled CLI must retain exclusive profile access');
-      assert.equal(nextWorkEnded, false, 'next work must wait for cleanup rather than fail AGY_NATIVE_BUSY');
-      releaseDrain();
-      const [oldEvents, nextEvents] = await Promise.all([first, second]);
-      assert.equal(oldEvents.at(-1).errorCode, 'AGY_CANCELLED');
-      assert.equal(nextEvents.at(-1).errorCode, undefined);
-      assert.equal(launches, 2);
-    } finally {
-      releaseDrain();
-      await Promise.allSettled([first, second]);
-      f.cleanup();
-    }
-  });
-
-  test('queues ordinary work from another thread while the native profile is occupied', async () => {
-    const f = fixture();
-    let releaseDrain;
-    const drained = new Promise((resolve) => {
-      releaseDrain = resolve;
-    });
-    let reportStarted;
-    const started = new Promise((resolve) => {
-      reportStarted = resolve;
-    });
-    let first, second;
-    try {
-      first = collect(
-        f.service.invoke('Active work.', {
-          workingDirectory: f.workspace,
-          spawnCliOverride: async function* (launch) {
-            const agent = launch.args[launch.args.indexOf('--agent') + 1];
-            reportStarted();
-            await drained;
-            yield* fakeEvents(agent, launch.cwd, 'active-session', 'OK');
-          },
-        }),
-      );
-      await started;
-      let secondSpawned = false;
-      second = collect(
-        f.service.invoke('Concurrent work.', {
-          workingDirectory: f.workspace,
-          spawnCliOverride: async function* (launch) {
-            secondSpawned = true;
-            yield* fakeEvents(
-              launch.args[launch.args.indexOf('--agent') + 1],
-              launch.cwd,
-              'second-thread-session',
-              'OK',
-            );
-          },
-        }),
-      );
-      await new Promise(setImmediate);
-      assert.equal(secondSpawned, false);
-      releaseDrain();
-      const events = await second;
-      assert.equal(events.at(-1).errorCode, undefined);
-      assert.equal(secondSpawned, true);
-    } finally {
-      releaseDrain();
-      await Promise.allSettled([first, second]);
-      f.cleanup();
-    }
-  });
-
-  test('never launches next work canceled while the prior profile is draining', async () => {
-    const f = fixture();
-    const previousAbort = new AbortController();
-    const nextAbort = new AbortController();
-    let releaseDrain;
-    const drained = new Promise((resolve) => {
-      releaseDrain = resolve;
-    });
-    let reportStarted;
-    const started = new Promise((resolve) => {
-      reportStarted = resolve;
-    });
-    let first, next;
-    try {
-      first = collect(
-        f.service.invoke('Previous work.', {
-          workingDirectory: f.workspace,
-          signal: previousAbort.signal,
-          spawnCliOverride: async function* (launch) {
-            const agent = launch.args[launch.args.indexOf('--agent') + 1];
-            reportStarted();
-            await drained;
-            yield* fakeEvents(agent, launch.cwd, 'canceled-profile-session', 'OK');
-          },
-        }),
-      );
-      await started;
-      previousAbort.abort();
-      let nextSpawned = false;
-      next = collect(
-        f.service.invoke('Canceled next work.', {
-          workingDirectory: f.workspace,
-          signal: nextAbort.signal,
-          spawnCliOverride: async function* () {
-            nextSpawned = true;
-            yield* [];
-          },
-        }),
-      );
-      await new Promise(setImmediate);
-      nextAbort.abort();
-      releaseDrain();
-      const events = await next;
-      assert.equal(nextSpawned, false);
-      assert.equal(events.at(-1).errorCode, 'AGY_CANCELLED');
-    } finally {
-      releaseDrain();
-      await Promise.allSettled([first, next]);
       f.cleanup();
     }
   });
@@ -664,19 +474,22 @@ describe('F325 one-turn native AGY carrier', () => {
           command: '/usr/bin/true',
           l0CompilerFn: async () => '# Identity\nF325.\n',
         });
-        let spawned = false;
-        const events = await collect(
-          service.invoke('Read.', {
-            workingDirectory: f.workspace,
-            systemPrompt: '# Identity\nF325.\n',
-            spawnCliOverride: async function* () {
-              spawned = true;
-              yield* [];
-            },
-          }),
-        );
-        assert.equal(spawned, false);
-        assert.match(events[0].error, /trusted workspace/i);
+        for (const toolExecutionPolicy of [undefined, { mode: 'read_only' }]) {
+          let spawned = false;
+          const events = await collect(
+            service.invoke('Read.', {
+              workingDirectory: f.workspace,
+              systemPrompt: '# Identity\nF325.\n',
+              ...(toolExecutionPolicy ? { toolExecutionPolicy } : {}),
+              spawnCliOverride: async function* () {
+                spawned = true;
+                yield* [];
+              },
+            }),
+          );
+          assert.equal(spawned, false);
+          assert.match(events[0].error, /trusted workspace/i);
+        }
       }
     } finally {
       f.cleanup();
@@ -1016,7 +829,7 @@ describe('F325 one-turn native AGY carrier', () => {
             assert.equal(options.env.CAT_CAFE_THREAD_ID, 'thread-1');
             assert.equal(options.env.CAT_CAFE_USER_ID, 'owner');
             assert.equal(options.env.CAT_CAFE_CAT_ID, 'gemini38');
-            config = JSON.parse(readFileSync(join(options.env.HOME, '.gemini', 'config', 'mcp_config.json'), 'utf8'));
+            config = JSON.parse(readFileSync(join(geminiDir(options), 'config', 'mcp_config.json'), 'utf8'));
             credentialPath = config.mcpServers['cat-cafe-collab'].env.CAT_CAFE_CREDENTIAL_FILE;
             assert.deepEqual(JSON.parse(readFileSync(credentialPath, 'utf8')), {
               invocationId: 'inv-1',

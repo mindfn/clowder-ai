@@ -152,7 +152,7 @@ it.each<{ label: string; origin: WorkspaceFileViewerProps['navigationOrigin'] }>
     origin: { kind: 'workspace-tools-search', threadId: 'origin', query: 'guide.md', viewportOffsetPx: 10 },
   },
   { label: '‹ 工具搜索', origin: { kind: 'workspace-home-search', query: 'guide.md' } },
-  { label: '返回来源', origin: undefined },
+  { label: '‹ 文件', origin: undefined },
 ])('keeps $label on the same-page reader with quote controls', ({ label, origin }) => {
   const p = { ...props(), navigationOrigin: origin, onBack: vi.fn(), showFileQuotes: true };
   act(() => root.render(<WorkspaceFileViewer {...p} />));

@@ -77,7 +77,7 @@ export interface SessionRecord {
   /** User-requested adoption of an existing native history; persisted across reloads. */
   externalImport?: {
     cliSessionId: string;
-    clientId: 'openai' | 'anthropic';
+    clientId: import('../utils/local-session-import.js').LocalSessionClientId;
     firstPrompt: string;
     projectPath: string;
     lastActivityAt: number;

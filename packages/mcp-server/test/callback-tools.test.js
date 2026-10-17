@@ -209,7 +209,7 @@ describe('MCP Callback Tools', () => {
       targetCats: ['codex'],
       clientMessageId: 'invalid-subject-ref',
       action: {
-        subjectRef: 'github:zts212653/cat-cafe#3677@181099d2',
+        subjectRef: 'github:zts212653/clowder-ai#3677@181099d2',
         actionFamily: 'implement',
         successorSlot: 'implementer',
         mode: 'single',
@@ -421,7 +421,7 @@ describe('MCP Callback Tools', () => {
       clientMessageId: 'typed-local-review-agent-key',
       localReviewVerdict: 'approved',
       reviewedHeadSha: 'b'.repeat(40),
-      reviewSubjectRef: 'pr:zts212653/cat-cafe#4255',
+      reviewSubjectRef: 'pr:zts212653/clowder-ai#4255',
       acceptedSourceRef,
       acceptedRevision,
     });
@@ -435,7 +435,7 @@ describe('MCP Callback Tools', () => {
       targetCats: ['codex'],
       localReviewVerdict: 'approved',
       reviewedHeadSha: 'b'.repeat(40),
-      reviewSubjectRef: 'pr:zts212653/cat-cafe#4255',
+      reviewSubjectRef: 'pr:zts212653/clowder-ai#4255',
       acceptedSourceRef,
       acceptedRevision,
     });
@@ -973,7 +973,7 @@ describe('MCP Callback Tools', () => {
       clientMessageId: 'typed-cross-thread-local-review',
       localReviewVerdict: 'approved',
       reviewedHeadSha: 'b'.repeat(40),
-      reviewSubjectRef: 'pr:zts212653/cat-cafe#4255',
+      reviewSubjectRef: 'pr:zts212653/clowder-ai#4255',
       acceptedSourceRef: 'docs/features/F314-development-episode-alignment-experiment.md',
       acceptedRevision: 'a'.repeat(40),
     });
@@ -981,7 +981,7 @@ describe('MCP Callback Tools', () => {
     assert.equal(result.isError, undefined);
     assert.equal(JSON.parse(capturedOptions.body).localReviewVerdict, 'approved');
     assert.equal(JSON.parse(capturedOptions.body).reviewedHeadSha, 'b'.repeat(40));
-    assert.equal(JSON.parse(capturedOptions.body).reviewSubjectRef, 'pr:zts212653/cat-cafe#4255');
+    assert.equal(JSON.parse(capturedOptions.body).reviewSubjectRef, 'pr:zts212653/clowder-ai#4255');
     assert.equal(
       JSON.parse(capturedOptions.body).acceptedSourceRef,
       'docs/features/F314-development-episode-alignment-experiment.md',
@@ -2297,7 +2297,7 @@ describe('MCP Callback Tools', () => {
       idempotencyKey: 'invalid-multi-subject-ref',
       searchEvidenceRefs: ['message:incident-f167'],
       action: {
-        subjectRef: 'github:zts212653/cat-cafe#3677@181099d2',
+        subjectRef: 'github:zts212653/clowder-ai#3677@181099d2',
         actionFamily: 'implement',
         successorSlot: 'implementer',
         mode: 'single',
@@ -2458,7 +2458,7 @@ describe('MCP Callback Tools', () => {
     };
 
     await handleRegisterPrTracking({
-      repoFullName: 'zts212653/cat-cafe',
+      repoFullName: 'zts212653/clowder-ai',
       prNumber: 832,
       when: [{ kind: 'pr_head_changed' }],
       nextStep: 'Inspect the new HEAD.',
@@ -2466,7 +2466,7 @@ describe('MCP Callback Tools', () => {
     });
 
     const body = JSON.parse(capturedOptions.body);
-    assert.equal(body.repoFullName, 'zts212653/cat-cafe');
+    assert.equal(body.repoFullName, 'zts212653/clowder-ai');
     assert.equal(body.prNumber, 832);
     assert.equal(body.catId, undefined, 'catId must not appear in body when omitted');
     assert.equal(capturedOptions.headers['x-invocation-id'], 'test-invocation');
@@ -2483,7 +2483,7 @@ describe('MCP Callback Tools', () => {
     };
 
     await handleRegisterPrTracking({
-      repoFullName: 'zts212653/cat-cafe',
+      repoFullName: 'zts212653/clowder-ai',
       prNumber: 100,
       when: [{ kind: 'pr_ci_terminal' }],
       nextStep: 'Continue merge-gate.',
@@ -2493,7 +2493,7 @@ describe('MCP Callback Tools', () => {
 
     const body = JSON.parse(capturedOptions.body);
     assert.equal(body.catId, undefined, 'cat identity must come from callback authentication');
-    assert.equal(body.repoFullName, 'zts212653/cat-cafe');
+    assert.equal(body.repoFullName, 'zts212653/clowder-ai');
     assert.equal(body.prNumber, 100);
   });
 

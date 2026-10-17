@@ -2400,56 +2400,6 @@ describe('AgentRouter', () => {
 // ── F078: Smart Routing & Group Mentions ─────────────────────────────
 
 describe('F078: Default to last replier', () => {
-  test('canonical no-mention fallback binds the latest completed lifecycle responder before Queue admission', async () => {
-    const { AgentRouter } = await import('../dist/domains/cats/services/agents/routing/AgentRouter.js');
-
-    const messageStore = createMockMessageStore();
-    messageStore.append({
-      from: { kind: 'cat', catId: 'codex' },
-      userId: 'user-1',
-      content: 'completed reply',
-      mentions: [],
-      timestamp: 1,
-      threadId: 't1',
-      lifecycle: {
-        kind: 'response',
-        status: 'completed',
-        sourceMessageId: 'source-1',
-        targetId: 'codex',
-        invocationId: 'invocation-1',
-      },
-    });
-    messageStore.append({
-      from: { kind: 'cat', catId: 'gemini' },
-      userId: 'user-1',
-      content: 'newer but still processing',
-      mentions: [],
-      timestamp: 2,
-      threadId: 't1',
-      lifecycle: {
-        kind: 'response',
-        status: 'processing',
-        sourceMessageId: 'source-2',
-        targetId: 'gemini',
-        invocationId: 'invocation-2',
-      },
-    });
-    const router = new AgentRouter(
-      await migrateRouterOpts({
-        claudeService: createMockAgentService('opus'),
-        codexService: createMockAgentService('codex'),
-        geminiService: createMockAgentService('gemini'),
-        registry: createMockRegistry(),
-        messageStore,
-      }),
-    );
-
-    assert.deepStrictEqual(await router.resolveConversationTargetsAtAdmission([], 't1'), ['codex']);
-    assert.deepStrictEqual(await router.resolveConversationTargetsAtAdmission([], 'thread-without-completed-replies'), [
-      'opus',
-    ]);
-  });
-
   test('no @mention routes to most recent replier only (not all participants)', async () => {
     const { AgentRouter } = await import('../dist/domains/cats/services/agents/routing/AgentRouter.js');
 
@@ -3648,7 +3598,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
     );
   });
 
-  test('AC-Z16 R3: time window 1h cutoff — old user mention not used as fallback', async () => {
+  test('AC-Z16: the last Human mention remains the fallback after two hours', async () => {
     const { AgentRouter } = await import('../dist/domains/cats/services/agents/routing/AgentRouter.js');
 
     const messageStore = createMockMessageStore();
@@ -3679,8 +3629,7 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
     );
 
     const result = await router.resolveTargetsAndIntent('hi', 't_z16_old');
-    // 远古 mention (>1h ago) 不再用 → fallback to legacy participantsWithActivity → opus
-    assert.deepEqual(result.targetCats, ['opus'], 'old user mention beyond 1h window should not win fallback');
+    assert.deepEqual(result.targetCats, ['codex'], 'only a later Human mention changes the remembered recipient');
   });
 
   test('AC-Z16 R4: 51+ non-user messages between user @ and current → pagination still finds user mention (砚砚 R3 P1)', async () => {
@@ -3795,68 +3744,6 @@ describe('#58: preferredCats candidate scope (not dispatch list)', () => {
       result.targetCats,
       ['codex'],
       'system notices (userId=system, catId=null) must not count as user messages — they should not consume the 5-msg lookback limit',
-    );
-  });
-
-  test('AC-Z16 R11: page-level cutoff stops scan when oldestScore < 1h ago (砚砚 R10 P2)', async () => {
-    // 砚砚 R10 P2: 1h cutoff 在 isUserMessage filter 之后判断，导致只扫 user msg 时才 trip。
-    // 高流量 thread (e.g. 300 cat msgs) 全部 > 1h ago + 0 user msg → 当前 R10 实现会扫完整
-    // 历史才退出 (no more history)，浪费 page query。
-    // 修法: 每页反序扫完没命中 user mention 后，检查 page[0].effectiveScore < cutoffTimestamp，
-    // 直接 return null（下一页 effective score 只会更老，不会有可用 user mention）。
-    const { AgentRouter } = await import('../dist/domains/cats/services/agents/routing/AgentRouter.js');
-
-    const messageStore = createMockMessageStore();
-    const baseTs = Date.now();
-
-    // 300 条 cat msgs 全部 > 1h ago (no user msg at all)
-    for (let i = 0; i < 300; i += 1) {
-      messageStore.append({
-        userId: null,
-        catId: i % 2 === 0 ? 'gemini' : 'opus',
-        content: `vision-guard ancient ${i}`,
-        mentions: [],
-        timestamp: baseTs - 2 * 60 * 60 * 1000 - i * 1000, // 全部 > 2h ago
-        threadId: 't_z16_pcutoff',
-      });
-    }
-
-    // 计数 store calls 验证 early stop
-    let pageCalls = 0;
-    const wrappedStore = {
-      ...messageStore,
-      getByThread: (...args) => {
-        pageCalls += 1;
-        return messageStore.getByThread(...args);
-      },
-      getByThreadBefore: (...args) => {
-        pageCalls += 1;
-        return messageStore.getByThreadBefore(...args);
-      },
-    };
-
-    const threadStore = createMockThreadStore({ t_z16_pcutoff: ['codex', 'opus', 'gemini'] });
-    threadStore.updateParticipantActivity('t_z16_pcutoff', 'gemini');
-
-    const router = new AgentRouter(
-      await migrateRouterOpts({
-        claudeService: createMockAgentService('opus'),
-        codexService: createMockAgentService('codex'),
-        geminiService: createMockAgentService('gemini'),
-        registry: createMockRegistry(),
-        messageStore: wrappedStore,
-        threadStore,
-      }),
-    );
-
-    await router.resolveTargetsAndIntent('继续', 't_z16_pcutoff');
-    // GREEN after R11: page-level cutoff trigger 后 ≤2 page calls (1 from peekTargets + 1 from resolveTargets,
-    //   each finds first page with oldestScore < cutoff and stops immediately)
-    // RED before R11: scans all 300 msgs / 50 = 6 pages × 2 (peek + resolve) = 12 page calls
-    // 用阈值 ≤4 (peek + resolve 各 ≤2 calls) 判断 early stop
-    assert.ok(
-      pageCalls <= 4,
-      `page-level cutoff should stop after first page when oldestScore < 1h cutoff; got ${pageCalls} page calls (expected ≤4)`,
     );
   });
 

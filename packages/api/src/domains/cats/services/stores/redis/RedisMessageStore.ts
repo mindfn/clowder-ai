@@ -1,4 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import {
+  type CompanionDeliveryAcceptance,
+  companionDeliveryMatches,
+  readCompanionDraftSubmissions,
+  readStoredCompanionDelivery,
+} from '../companion-submission-state.js';
 import type { UserMentionHandlingRef } from '../ports/MessageStore.js';
 import { messageIdempotencyScope } from '../ports/MessageStore.js';
 import {
@@ -8,6 +14,7 @@ import {
 } from '../user-mention-index.js';
 import { withOwnerUncertaintyIndex } from './owner-uncertainty-lua.js';
 import { readOwnerUncertainty } from './owner-uncertainty-read.js';
+import { recordRedisCompanionAcceptance } from './redis-companion-acceptance.js';
 import {
   HANDLE_USER_MENTIONS_LUA,
   MIGRATE_HANDLED_USER_MENTIONS_LUA,
@@ -59,6 +66,7 @@ import {
   RedisQueueLedgerStore,
 } from '../../agents/invocation/queue-ledger/RedisQueueLedgerStore.js';
 import { cursorFor, parseCursor } from '../cursor.js';
+import type { LifecycleAppendRecoveryInput, LifecycleAppendRecoveryResult } from '../lifecycle-append-recovery.js';
 import { messageFrom } from '../message-from.js';
 import { notifyMessageTimelineChange } from '../notify-message-timeline-change.js';
 import type {
@@ -68,7 +76,6 @@ import type {
   BoundedThreadMessagePage,
   ClearOwnerComposerDraftResult,
   CommitLifecycleAppendAdmissionResult,
-  CommitLifecycleAppendRejectionResult,
   CommitLifecyclePreAdmissionFailureResult,
   CommitLifecycleResponseTerminalResult,
   CustodyOfferTransitionInput,
@@ -76,7 +83,6 @@ import type {
   HostMessageExtra,
   IdempotentAppendResult,
   LifecycleAppendAdmissionInput,
-  LifecycleAppendRejectionInput,
   LifecycleInputDispatchPatch,
   LifecyclePreAdmissionFailureInput,
   LifecycleResponseTerminalPatch,
@@ -120,11 +126,11 @@ import {
   isDelivered,
   isValidCustodyOfferTransition,
   lifecycleInputIdentityForStoredMessage,
+  lifecycleResponseInputsChanged,
   matchesLifecyclePreAdmissionFailure,
   mergeMessageExtra,
   preAdmissionFailureIdempotencyKey,
   prepareLifecycleAppendAdmission,
-  prepareLifecycleAppendRejection,
   prepareLifecycleResponseTerminalMessage,
   prepareLifecycleResponseTerminalWithLedgerTargets,
   prepareQueueLedgerMessageAdmission,
@@ -141,6 +147,7 @@ import {
   resolveThreadMessageVisibility,
 } from '../visibility.js';
 import { HUMAN_SOURCE_HASH_LUA, humanSourceHash } from './redis-human-source-hash.js';
+import { commitRedisLifecycleAppendRecovery } from './redis-lifecycle-append-recovery.js';
 import { appendMessage } from './redis-message-append.js';
 import { CANCEL_LUA, REASSIGN_LUA } from './redis-message-delivery-lua-scripts.js';
 import { appendMessageAndObservePriorFrontier } from './redis-message-frontier-append.js';
@@ -715,6 +722,10 @@ if existingFailureId and redis.call('EXISTS', kp .. 'msg:' .. existingFailureId)
   return {2, existingFailureId}
 end
 
+if redis.call('HGET', sourceHash, 'recall') or redis.call('HGET', sourceHash, '_tombstone') then
+  return {-4, ''}
+end
+
 local existingVisibility = redis.call('HGET', sourceHash, 'visibilitySeq')
 local existingLifecycle = redis.call('HGET', sourceHash, 'lifecycle')
 if existingLifecycle == false then existingLifecycle = '' end
@@ -722,6 +733,12 @@ if sourceMode == 'queued_input' then
   if redis.call('HGET', sourceHash, 'deliveryStatus') ~= 'queued' then return {-2, ''} end
   if (existingVisibility and existingVisibility ~= '') or existingLifecycle ~= expectedSourceLifecycleRaw or
      settledSourceLifecycleRaw == '' then
+    return {-4, ''}
+  end
+elseif sourceMode == 'delivered_input' then
+  if redis.call('HGET', sourceHash, 'deliveryStatus') ~= 'delivered' or
+     not existingVisibility or existingVisibility == '' or
+     existingLifecycle ~= expectedSourceLifecycleRaw or settledSourceLifecycleRaw == '' then
     return {-4, ''}
   end
 elseif sourceMode == 'public_wake' then
@@ -764,7 +781,7 @@ if failureSeq > 9007199254730991 then
   return redis.error_reply('VISIBILITY_SEQ_EXHAUSTED: seq=' .. tostring(failureSeq))
 end
 
--- All guards passed: publish a queued input, or settle an already-public wake.
+-- All guards passed: publish a queued input, or preserve an already-public source.
 if sourceMode == 'queued_input' then
   redis.call('HSET', sourceHash,
     'deliveryStatus', 'delivered',
@@ -866,6 +883,8 @@ redis.call('HSET', KEYS[1],
 redis.call('HDEL', KEYS[1], 'contentBlocks', 'replyTo')
 if ARGV[5] ~= '' then redis.call('HSET', KEYS[1], 'contentBlocks', ARGV[5]) end
 if ARGV[6] ~= '' then redis.call('HSET', KEYS[1], 'replyTo', ARGV[6]) end
+if ARGV[8] ~= '' then redis.call('HSET', KEYS[1], 'companionSubmissions', ARGV[8]) end
+redis.call('PERSIST', KEYS[1])
 return {1, nextRevision}
 `;
 
@@ -957,7 +976,7 @@ local messageId = redis.call('HGET', KEYS[1], 'id')
 for keyIndex = 4, #KEYS do
   redis.call('ZREM', KEYS[keyIndex], messageId)
 end
-redis.call('HDEL', KEYS[1], 'contentBlocks', 'toolEvents', 'metadata', 'extra', 'pluginMessage', 'lifecycle', 'thinking', 'replyTo')
+redis.call('HDEL', KEYS[1], 'contentBlocks', 'toolEvents', 'metadata', 'extra', 'pluginMessage', 'lifecycle', 'thinking', 'replyTo', 'companionDeliveryReceipt')
 redis.call('ZREM', KEYS[3], redis.call('HGET', KEYS[1], 'id'))
 
 return {1, 0, sourceText, existingText, nextDraftRevision}
@@ -1026,6 +1045,8 @@ function prepareRedisLifecycleResponseTerminal(
   if (current.lifecycle.invocationId !== patch.invocationId) {
     return { kind: 'result', result: { kind: 'conflict', reason: 'invocation_mismatch', message: current } };
   }
+  if (lifecycleResponseInputsChanged(current, patch))
+    return { kind: 'result', result: { kind: 'conflict', reason: 'inputs_changed', message: current } };
   if (
     !Number.isFinite(patch.completedAt) ||
     patch.completedAt < current.lifecycle.startedAt ||
@@ -1535,7 +1556,7 @@ export class RedisMessageStore {
       return { outcome: 'enqueued', message: result.message, entries, deduped: false };
     }
     assertQueueMessageReplay(result.message, input);
-    const identities = [...buildAdmission(result.message.id)];
+    const identities = [...buildAdmission(result.message.id, undefined, result.message)];
     const persisted = await Promise.all(identities.map((entry) => ledgerStore.get(entry.threadId, entry.id)));
     // A receiver may retire pending work while this replay is resolving.
     // The committed source remains the acknowledgement; never recreate its row.
@@ -1546,6 +1567,7 @@ export class RedisMessageStore {
       ...buildAdmission(
         result.message.id,
         persisted.filter((entry): entry is QueueLedgerEntry => entry !== null),
+        result.message,
       ),
     ];
     if (
@@ -2074,6 +2096,9 @@ export class RedisMessageStore {
       text: data.text ?? '',
       ...(contentBlocks ? { contentBlocks } : {}),
       ...(data.replyTo ? { replyTo: data.replyTo } : {}),
+      ...(data.companionSubmissions
+        ? { companionSubmissions: readCompanionDraftSubmissions(JSON.parse(data.companionSubmissions)) }
+        : {}),
       updatedAt,
     };
   }
@@ -2103,6 +2128,9 @@ export class RedisMessageStore {
       input.contentBlocks ? JSON.stringify(input.contentBlocks) : '',
       input.replyTo ?? '',
       String(input.updatedAt),
+      input.companionSubmissions === undefined
+        ? ''
+        : JSON.stringify(readCompanionDraftSubmissions(input.companionSubmissions)),
     )) as [number, number];
     if (Number(result[0]) === 0) return { kind: 'revision_mismatch', actualRevision: Number(result[1]) };
     const draft = await this.getOwnerComposerDraft(ownerUserId, threadId);
@@ -2227,6 +2255,7 @@ export class RedisMessageStore {
           : {}),
       });
     const deletedAt = data.deletedAt ? parseInt(data.deletedAt, 10) : undefined;
+    const companionDeliveryReceipt = readStoredCompanionDelivery(data.companionDeliveryReceipt);
     return {
       id: data.id,
       threadId: data.threadId || DEFAULT_THREAD_ID,
@@ -2234,6 +2263,7 @@ export class RedisMessageStore {
       ...(from ? { from } : {}),
       catId: (data.catId || null) as CatId | null,
       content: data.content ?? '',
+      ...(companionDeliveryReceipt ? { companionDeliveryReceipt } : {}),
       ...(lifecycle ? { lifecycle } : {}),
       ...(contentBlocks ? { contentBlocks } : {}),
       ...(toolEvents ? { toolEvents } : {}),
@@ -3539,6 +3569,27 @@ export class RedisMessageStore {
   }
 
   /** F096: Update message extra data (merge semantics — preserves existing fields). */
+  async recordCompanionDeliveryAcceptance(
+    id: string,
+    input: CompanionDeliveryAcceptance,
+  ): Promise<StoredMessage | null> {
+    const message = await this.getById(id);
+    if (
+      !message ||
+      message.userId !== input.ownerUserId ||
+      message.threadId !== input.threadId ||
+      !companionDeliveryMatches(message, input)
+    )
+      return null;
+    if (!(await recordRedisCompanionAcceptance(this.redis, id, input, message.content))) return null;
+    const current = await this.getById(id);
+    return current &&
+      current.companionDeliveryReceipt &&
+      companionDeliveryMatches(current, current.companionDeliveryReceipt)
+      ? current
+      : null;
+  }
+
   async updateExtra(id: string, extra: HostMessageExtra): Promise<StoredMessage | null> {
     const msg = await this.getById(id);
     if (!msg) return null;
@@ -3742,7 +3793,16 @@ export class RedisMessageStore {
       return { kind: 'replayed', inputMessage: source, failureMessage: existingFailure };
     }
 
+    if (source.recall || source._tombstone) {
+      return { kind: 'conflict', reason: 'invalid_failure', inputMessage: structuredClone(source) };
+    }
     const isQueuedInput = source.deliveryStatus === 'queued';
+    // One sibling may already have published this input. Only settle recipients
+    // with no dispatch reference; keep the original publication coordinates.
+    const isDeliveredInput =
+      source.deliveryStatus === 'delivered' &&
+      source.lifecycle?.kind === 'input' &&
+      (source.lifecycle.dispatchRefs?.length ?? 0) > 0;
     const isPublicAgentWake =
       source.deliveryStatus === undefined &&
       messageFrom(source).kind === 'agent' &&
@@ -3755,9 +3815,8 @@ export class RedisMessageStore {
       input.failedAt < source.timestamp ||
       input.requestedTargets.some((target) => typeof target !== 'string' || target.length === 0) ||
       uniqueTargets.size !== input.requestedTargets.length ||
-      input.requestedTargets.length > 1 ||
-      (isPublicAgentWake && input.requestedTargets.length === 0) ||
-      (!isQueuedInput && !isPublicAgentWake)
+      (!isQueuedInput && input.requestedTargets.length === 0) ||
+      (!isQueuedInput && !isDeliveredInput && !isPublicAgentWake)
     ) {
       return { kind: 'conflict', reason: 'invalid_failure', inputMessage: source };
     }
@@ -3824,7 +3883,7 @@ export class RedisMessageStore {
       failureInput.contentBlocks === undefined ? '' : JSON.stringify(failureInput.contentBlocks),
       MessageKeys.idempotency('system', source.threadId, idempotencyKey),
       String(this.ttlSeconds ?? 0),
-      isPublicAgentWake ? 'public_wake' : 'queued_input',
+      isQueuedInput ? 'queued_input' : isDeliveredInput ? 'delivered_input' : 'public_wake',
       JSON.stringify(failureInput.from),
     )) as [number | string, string];
     const outcome = Number(result[0]);
@@ -3949,36 +4008,11 @@ export class RedisMessageStore {
     return { kind: 'conflict', reason: 'response_lifecycle_conflict' };
   }
 
-  async commitLifecycleAppendRejection(
-    input: LifecycleAppendRejectionInput,
-  ): Promise<CommitLifecycleAppendRejectionResult> {
-    const ids = [...input.inputMessageIds, input.run.responseMessageId];
-    const keys = ids.map((id) => MessageKeys.detail(id));
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      const [messages, rawLifecycles] = await Promise.all([
-        Promise.all(ids.map((id) => this.getById(id))),
-        Promise.all(keys.map((key) => this.redis.hget(key, 'lifecycle'))),
-      ]);
-      if (messages.some((message) => !message)) return { kind: 'not_found' };
-      const prepared = prepareLifecycleAppendRejection(messages as StoredMessage[], input);
-      if (prepared.kind !== 'prepared') return prepared;
-      if (prepared.replayed) return { kind: 'replayed', messages: messages as StoredMessage[] };
-      const argv = prepared.lifecycles.flatMap((lifecycle, index) => [
-        rawLifecycles[index] ?? '',
-        JSON.stringify(lifecycle),
-      ]);
-      const outcome = Number(await this.redis.eval(CAS_LIFECYCLE_APPEND_ADMISSION_LUA, keys.length, ...keys, ...argv));
-      if (outcome === 0) continue;
-      if (outcome === -1) return { kind: 'not_found' };
-      if (outcome === -2) return { kind: 'conflict', reason: 'scope_mismatch' };
-      if (outcome !== 1) throw new Error(`unexpected lifecycle Append rejection outcome: ${outcome}`);
-      const applied = await Promise.all(ids.map((id) => this.getById(id)));
-      if (applied.some((message) => !message)) {
-        throw new Error('lifecycle Append rejection committed but a message vanished');
-      }
-      return { kind: 'applied', messages: applied as StoredMessage[] };
-    }
-    return { kind: 'conflict', reason: 'lifecycle_conflict' };
+  commitLifecycleAppendRecovery(
+    input: LifecycleAppendRecoveryInput,
+    ledgerStore: QueueLedgerStore,
+  ): Promise<LifecycleAppendRecoveryResult> {
+    return commitRedisLifecycleAppendRecovery(this.redis, this, input, ledgerStore);
   }
 
   /**

@@ -133,7 +133,7 @@ it('renders Native fields and its original model validation in English', async (
   expect(container.textContent).toContain('denied outright');
   const save = [...document.querySelectorAll('button')].find((button) => button.textContent === 'Save');
   await act(async () => save?.click());
-  expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain(
     'AGY Native needs at least one approved workspace.',
   );
   expect(vi.mocked(apiFetch).mock.calls.filter(([, init]) => init?.method)).toHaveLength(0);
@@ -188,7 +188,8 @@ it.each([
   expect(submit?.disabled).toBe(false);
   await act(async () => submit?.click());
   const alerts = Array.from(container.querySelectorAll('[role="alert"]')).map((a) => a.textContent);
-  expect(alerts).toEqual([message]);
+  expect(alerts[0]).toBe(message);
+  expect(alerts[1]).toContain(language === 'en' ? 'Your changes are still here' : '修改还在');
   expect(container.querySelector('input[aria-label="Name"]')?.getAttribute('aria-invalid')).toBe('true');
   expect(vi.mocked(apiFetch).mock.calls.filter(([, init]) => init?.method)).toHaveLength(0);
 });

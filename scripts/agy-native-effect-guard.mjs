@@ -22,8 +22,19 @@ function profileControlPath(path, profileHome) {
   const roots = [resolve(profileHome), kernelPath(profileHome)].filter(Boolean).map((root) => root.toLowerCase());
   if (roots.includes(path)) return true;
   const root = roots.find((root) => path.startsWith(`${root}/`));
-  const suffix = root ? path.slice(root.length + 1) : '';
+  // The run's data alias is the account's native storage. Keep ordinary brain
+  // artifacts writable there; configuration and the alias directory itself stay protected.
+  const suffix = (root ? path.slice(root.length + 1) : '').replace(
+    /^\.cat-cafe-native-runs\/run-[a-z0-9]+\/(?=\.gemini\/antigravity-cli\/)/,
+    '',
+  );
   return (
+    suffix === 'library' ||
+    suffix === 'library/keychains' ||
+    suffix.startsWith('library/keychains/') ||
+    suffix === 'library/preferences' ||
+    suffix === 'library/preferences/com.apple.security.plist' ||
+    suffix === '.gemini/antigravity-cli/antigravity-oauth-token' ||
     suffix === '.gemini' ||
     suffix === '.gemini/antigravity-cli' ||
     suffix === '.gemini/config' ||
@@ -31,7 +42,9 @@ function profileControlPath(path, profileHome) {
     /^\.gemini\/antigravity-cli\/(?:settings\.json|skills(?:\/|$)|plugins(?:\/|$)|\.cat-cafe-skills[-.])/.test(
       suffix,
     ) ||
-    suffix.startsWith('.cat-cafe-native-turn.sqlite')
+    suffix.startsWith('.cat-cafe-native-turn.sqlite') ||
+    suffix === '.cat-cafe-native-runs' ||
+    suffix.startsWith('.cat-cafe-native-runs/')
   );
 }
 

@@ -176,7 +176,7 @@ test('selects the newest validated release independently of catalog array order'
   assert.equal(snapshot.entries[0].packageDigest, `sha512-${Buffer.alloc(64, 8).toString('base64')}`);
 });
 
-test('fails closed when catalog validation fails and omits entries outside Host admission scope', async () => {
+test('fails closed when catalog validation fails but discovers valid entries without Host grants', async () => {
   const invalid = new MachineOfficialPluginCatalog({
     loadCatalog: async () => rawCatalog(),
     validateCatalog: () => ({ valid: false, errors: [{ message: 'invalid' }] }),
@@ -196,11 +196,15 @@ test('fails closed when catalog validation fails and omits entries outside Host 
     hostPolicies: [],
     now: () => 3_000,
   });
-  assert.deepEqual(await missingPolicy.snapshot(), {
-    entries: [],
-    status: 'fresh',
-    checkedAt: 3_000,
-  });
+  const discovered = await missingPolicy.snapshot();
+  assert.equal(discovered.status, 'fresh');
+  assert.equal(discovered.checkedAt, 3_000);
+  assert.equal(discovered.entries.length, 1);
+  assert.equal(discovered.entries[0].pluginId, 'dev.clowder.video-analysis');
+  assert.deepEqual(discovered.entries[0].effectiveGrants, []);
+  const manager = await new OfficialPluginManagerCatalogAdapter(missingPolicy, []).snapshot();
+  assert.equal(manager.candidates[0].pluginId, 'dev.clowder.video-analysis');
+  assert.deepEqual(manager.candidates[0].capabilities, []);
 });
 
 test('retains the last canonical machine catalog when a later read fails', async () => {

@@ -225,7 +225,7 @@ it('does not borrow active from the saved strategy for a draft; discard restores
   expect(contextText()).toContain('This strategy has not been saved');
   expect(statusText()).not.toContain('Available');
   expect(writes()).toHaveLength(0);
-  await click('Discard');
+  await click('Discard changes');
   expect(statusText()).toContain('Available');
   expect(container.querySelector<HTMLSelectElement>('#member-context select')?.value).toBe('compress');
 });

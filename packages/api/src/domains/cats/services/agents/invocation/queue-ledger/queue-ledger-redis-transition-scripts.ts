@@ -87,7 +87,7 @@ local raw = redis.call('HGET', KEYS[1], id)
 if not raw then return {-1, ''} end
 local row = cjson.decode(raw)
 
-if mode == 'queued' then
+if mode == 'queued' or mode == 'claimed' then
   if row.status ~= 'claimed' or row.claimId ~= claimId then return {0, raw} end
   local nextRow = row
   if replacementRaw and replacementRaw ~= '' then
@@ -96,12 +96,14 @@ if mode == 'queued' then
       return redis.error_reply('QUEUE_COMMIT_IDENTITY_MISMATCH')
     end
   end
-  nextRow.status = 'queued'
-  nextRow.processingStartedAt = nil
-  nextRow.claimId = nil
-  nextRow.claimedAt = nil
-  nextRow.claimedTargetIds = nil
-  nextRow.claimedFromTargetless = nil
+  nextRow.status = mode
+  if mode == 'queued' then
+    nextRow.processingStartedAt = nil
+    nextRow.claimId = nil
+    nextRow.claimedAt = nil
+    nextRow.claimedTargetIds = nil
+    nextRow.claimedFromTargetless = nil
+  end
   local next = encodeRow(nextRow)
   redis.call('HSET', KEYS[1], id, next)
   return {1, next}
@@ -164,6 +166,19 @@ if mode == 'processing' then
     removeMessageIndex(row)
   else
     row.targets = remainingTargets
+    for _, field in ipairs({'appendPendingByTarget', 'appendRecoveryByTarget'}) do
+      if row.delivery and row.delivery[field] then
+        for target, _ in pairs(row.delivery[field]) do if retired[target] then row.delivery[field][target] = nil end end
+      end
+    end
+    if row.delivery and row.delivery.routingHeldTargetIds then
+      local remainingHolds = {}
+      for i = 1, #row.delivery.routingHeldTargetIds do
+        local target = row.delivery.routingHeldTargetIds[i]
+        if not retired[target] then remainingHolds[#remainingHolds + 1] = target end
+      end
+      row.delivery.routingHeldTargetIds = remainingHolds
+    end
     if #remainingClaimedTargets > 0 then
       row.status = 'claimed'
       row.claimedTargetIds = remainingClaimedTargets

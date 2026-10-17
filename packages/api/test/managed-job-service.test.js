@@ -312,9 +312,12 @@ test('a long command renews its worker lease without inventing another state tra
   assert.equal(service.get(principal, job.jobId).state, 'succeeded');
   assert.equal(
     service.transitions(principal, job.jobId).length,
-    6,
-    'submit, visible admission, worker birth, attempt, observed exit, terminal',
+    7,
+    'submit, visible admission, worker birth, attempt, observed exit, proven cleanup, terminal; no heartbeat transition',
   );
+  const history = service.transitions(principal, job.jobId);
+  assert.equal(history.at(-2).cleanupProven, true, 'cleanup proof must be durable before terminal publication');
+  assert.notEqual(history.at(-2).state, 'terminal');
 });
 
 const ownerCode = `

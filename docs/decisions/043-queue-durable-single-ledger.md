@@ -1,14 +1,24 @@
 ---
+description: "定义 F117 的唯一持久 Queue、History dispatch 与 response 边界，记录普通投递、停止、回放与恢复的现行设计。"
+description_source: model
+description_author: codex-astra
+description_updated_at: 2026-10-15T06:58:00Z
+description_generated_by: codex-astra@gpt-6-astra
+description_confirmed_by: codex-astra
+description_generated_at: 2026-10-15T06:40:00Z
 decision_id: ADR-043
 related_features: [F117, F039, F047, F122, F175, F254, F264]
 topics: [queue, delivery, lifecycle, persistence, architecture]
 doc_kind: decision
 created: 2026-09-02
+source_ref: https://github.com/zts212653/clowder-ai/blob/7fca378fa010a288484e909446a2faeee5a7fbe2/docs/decisions/043-queue-durable-single-ledger.md
 ---
 
 # ADR-043: 消息队列 = 独立持久化的有序工单账本
 
-> **Status**: accepted | **Decider**: co-creator | **Analysis**: 布偶猫(opus) | **Implementation**: 缅因猫/砚砚 | **Priority**: P1
+Architecture cell: dispatch, bubble-pipeline, ball-custody
+
+> **Status**: accepted | **Decider**: co-creator | **Analysis**: Ragdoll(opus) | **Implementation**: Maine Coon/Maine Coon | **Priority**: P1
 > **Supersedes (设计层)**: F039 / F122 / F175 / F047 中关于队列状态与 Steer 预留的描述
 
 ## 背景
@@ -157,7 +167,7 @@ Queue admission，不在客户端 admission 后追加第二次 Steer。Steer mod
 成员信息逐成员投影，前端不得硬编码或从本地活跃态猜测。不支持时 action 禁用，原因只在 hover/focus tooltip
 呈现，不增加常驻解释行；默认 `continue_current` 与显式 Steer 在无 active parent 时都诚实保留为 `next_work`，不自动中断，并由普通 FIFO drain 处理。
 
-普通公开输入在共同 send、原子 Message + Queue 准入前解析有效成员 mention，缺少有效可用目标时用既有 completed responder/default fallback；未匹配的 @ 原样留在正文并忽略，不产生 warning 或特殊等待。目标与显式意图或 thread/global/product 默认策略一起持久快照；同 ID 重放复用首次接纳事实。A2A、whisper 和其他授权绑定输入保持 exact 收件人，不扩大私密可见性。历史/恢复 targetless 工作由正常 Queue recovery 处理。
+普通公开输入在共同 send、原子 Message + Queue 准入前解析有效成员 mention，缺少有效可用目标时，预览、共同 send 与公开 Queue recovery 共用既有隐式会话规则（最近用户 mention、健康回话者、首选成员、默认成员，并保留 concierge / #ideate / thread policy）；未匹配的 @ 原样留在正文并忽略，不产生 warning 或特殊等待。目标与显式意图或 thread/global/product 默认策略一起持久快照；同 ID 重放复用首次接纳事实。A2A、whisper 和其他授权绑定输入保持 exact 收件人，不扩大私密可见性。历史/恢复 targetless 工作由正常 Queue recovery 处理。
 
 Steer modal 可多选，成员候选为 thread participants、路由目标与 fallback 的并集去重；fallback 直接读取 Queue admission 使用的同一 resolver 投影，Web 不另算。每位成员可以分别选择 guide 或 interrupt。
 
@@ -214,7 +224,7 @@ Message 已进入成员可见 History，其他 target 的 Queue 责任仍由同�
 
 ### D9 — 停止是对持久执行真相的权威终态化，投影不能反过来卡住它
 
-> 来源：co-creator 2026-09-03 worktree 验收决策（thread `thread_msr51149hym0i79f`）。取代 F220 Phase 3「force-reset 逃生口」作为用户概念的地位。
+> 来源：co-creator 2026-09-03 worktree 验收决策（thread `[thread-id]`）。取代 F220 Phase 3「force-reset 逃生口」作为用户概念的地位。
 
 用户只有两种状态（在运行 / 未运行）和一种动作（停止：单只猫 / 全部）。**停止的成功判据是投影进入「未运行」**；进程是否真的退出由服务端在后台保证。用户不需要区分「正常停」与「强制重置」，也不需要理解逃生舱。
 

@@ -58,6 +58,14 @@ export const homeCopy = defineShellCopy(
         waitUnknown: '等待时长未知',
         justRegistered: '刚刚登记',
         waited: (duration: string) => `已等待 ${duration}`,
+        waitForFix: '等正式环境更新到包含这次修复',
+        revisionUnconfirmed: '还没确认正式环境已包含',
+        waitForBoot: '等正式环境重启并就绪',
+        bootUnconfirmed: '还没确认正式环境已重启并就绪',
+        readySummary: '条件已满足，可以接回',
+        returnDetails: '接回后',
+        readyDetails: '继续处理',
+        resumeForecast: (count: number) => `main 上已有新版本，正式环境更新后这 ${count} 件会接回`,
         // F323's own condition (a revision included, or a new boot, with these services ready). Said as a target while the
         // row is waiting or unknown; said as done only when the canonical state is ready_to_return. One sentence each.
         awaitingRevision: (revision: string, services: string) => `等待运行版本包含 ${revision}，${services} 就绪`,
@@ -68,7 +76,7 @@ export const homeCopy = defineShellCopy(
         canContinue: (nextStep: string) => `可以继续：${nextStep}`,
         nextStepFallback: '回原任务确认下一步',
         reasonUnavailable: '暂时读不到运行状态，这项等待先保留。',
-        reasonIncomplete: '运行状态信息不足，还不能确认条件已满足',
+        reasonIncomplete: '还没确认正式环境已满足这项等待',
         reasonRecheck: '检测到可能就绪，正在复核并安排原猫接回。',
         // A row the server could not classify and gave no reason for: the flat list has no 暂不能判定 heading to carry it.
         undetermined: '暂时无法判定条件是否已满足',
@@ -111,7 +119,6 @@ export const homeCopy = defineShellCopy(
       // Name and one-line description of each tool row. What a row opens is not here (home-rows.ts hands the host the same
       // destination object the classic launcher does); the words only.
       rows: {
-        now: { label: '正在发生', description: '所有正在进行的工作' },
         files: { label: '文件与代码', description: '按目录浏览项目文件' },
         changes: { label: '变更', description: '工作区里已修改的文件' },
         git: { label: 'Git', description: '分支、提交与仓库状态' },
@@ -179,6 +186,15 @@ export const homeCopy = defineShellCopy(
         waitUnknown: 'Wait time unknown',
         justRegistered: 'Just added',
         waited: (duration: string) => `Waiting for ${duration}`,
+        waitForFix: 'Waiting for the live version to include this fix',
+        revisionUnconfirmed: "Haven't confirmed the live version includes this fix",
+        waitForBoot: 'Waiting for the live environment to restart and be ready',
+        bootUnconfirmed: "Haven't confirmed the live environment has restarted and is ready",
+        readySummary: 'Ready to resume',
+        returnDetails: 'After resuming',
+        readyDetails: 'Continue',
+        resumeForecast: (count: number) =>
+          `A newer version is on main; after the live update, ${count} ${count === 1 ? 'item will' : 'items will'} resume`,
         // One service keeps the naming table's sentence ("…and the API is ready"); several are a list, which takes no article.
         awaitingRevision: (revision: string, services: string) =>
           `Waiting until the running version includes ${revision} and ${services.includes('+') ? `${services} are` : `the ${services} is`} ready`,
@@ -190,7 +206,7 @@ export const homeCopy = defineShellCopy(
         canContinue: (nextStep: string) => `Ready to resume: ${nextStep}`,
         nextStepFallback: 'Confirm the next step in the original task',
         reasonUnavailable: "Can't read run status right now; this item stays.",
-        reasonIncomplete: 'Not enough runtime information to confirm the condition is met',
+        reasonIncomplete: "Haven't confirmed the live environment meets this condition",
         reasonRecheck: 'Looks ready; rechecking before the original cat resumes.',
         undetermined: "Can't tell yet whether the condition is met",
         candidate: (revision: string) => `Candidate ${revision}`,
@@ -227,7 +243,6 @@ export const homeCopy = defineShellCopy(
         },
       },
       rows: {
-        now: { label: 'Happening now', description: 'All work currently running' },
         files: { label: 'Files & code', description: 'Browse project files by folder' },
         changes: { label: 'Changes', description: 'Files modified in the workspace' },
         git: { label: 'Git', description: 'Branches, commits and repository status' },
@@ -280,6 +295,7 @@ export const homeCopy = defineShellCopy(
       'wait.candidate': [['aaaaaaaa'], ['bbbbbbbb']],
       'wait.observed': [['just now'], ['4 minutes ago']],
       'wait.satisfiable': [[1], [3]],
+      'wait.resumeForecast': [[0], [1], [3]],
       'wait.unknownEvidence': [[1], [3]],
       'tools.changedFiles': [[1], [2], [12]],
       'tools.search.viewAll': [[9], [40]],

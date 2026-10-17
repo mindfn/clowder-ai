@@ -25,7 +25,6 @@ import { CatColorField } from './hub-cat-editor-color-field';
 import { SectionCard, SelectField, TextField } from './hub-cat-editor-fields';
 import { VoiceConfigSection } from './hub-cat-editor-voice';
 import { TagEditor } from './hub-tag-editor';
-
 import {
   useEditorLabel,
   useEditorText,
@@ -33,6 +32,8 @@ import {
   useMemberFieldError,
   useMembersCopy,
 } from './members/editor-presentation';
+import { MemberChangedField, MemberChangeMark, useMemberChanged } from './members/MemberChangeMark';
+import { MemberOperationFeedback } from './members/MemberOperationFeedback';
 
 type FormPatch = Partial<HubCatEditorFormState>;
 
@@ -154,54 +155,59 @@ export function IdentitySection({
         placeholder="角色定位，如 代码审查专家"
       />
 
-      <div className="flex items-center gap-3">
-        <span className="text-xs font-bold text-cafe-secondary sm:w-[150px] sm:shrink-0">
-          {page ? t('头像') : 'Avatar'}
-        </span>
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          className="flex items-center gap-2 rounded-[10px] bg-[var(--console-field-bg,var(--console-card-bg))] px-3 py-1.5 text-compact text-cafe-secondary transition hover:opacity-80"
-        >
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-cafe-surface-canvas text-micro text-cafe-secondary">
-            {avatarSrc ? (
-              <AvatarImageWithFallback src={avatarSrc} alt="Avatar preview" className="h-full w-full object-cover" />
-            ) : (
-              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label="Default avatar">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8Zm-2-9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm4 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
-              </svg>
-            )}
-          </div>
-          <span>{t(avatarUploading ? '上传中…' : '点击上传')}</span>
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp"
-          className="hidden"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (!file) return;
-            void onAvatarUpload(file).finally(() => {
-              if (fileInputRef.current) fileInputRef.current.value = '';
-            });
-          }}
-        />
-        <input
-          aria-label="Avatar"
-          value={form.avatar}
-          onChange={(event) => onChange({ avatar: event.target.value })}
-          className="sr-only"
-        />
-      </div>
+      <MemberChangedField label="Avatar">
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-bold text-cafe-secondary sm:w-[150px] sm:shrink-0">
+            {page ? t('头像') : 'Avatar'}
+          </span>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-2 rounded-[10px] bg-[var(--console-field-bg,var(--console-card-bg))] px-3 py-1.5 text-compact text-cafe-secondary transition hover:opacity-80"
+          >
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-cafe-surface-canvas text-micro text-cafe-secondary">
+              {avatarSrc ? (
+                <AvatarImageWithFallback src={avatarSrc} alt="Avatar preview" className="h-full w-full object-cover" />
+              ) : (
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" role="img" aria-label="Default avatar">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8Zm-2-9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm4 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
+                </svg>
+              )}
+            </div>
+            <span>{t(avatarUploading ? '上传中…' : '点击上传')}</span>
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              void onAvatarUpload(file).finally(() => {
+                if (fileInputRef.current) fileInputRef.current.value = '';
+              });
+            }}
+          />
+          <input
+            aria-label="Avatar"
+            value={form.avatar}
+            onChange={(event) => onChange({ avatar: event.target.value })}
+            className="sr-only"
+          />
+        </div>
+        {(cat || !page) && <MemberOperationFeedback source="avatar" />}
+      </MemberChangedField>
 
       {/* F056 KD-18 / AC-E4: single-hue input — all derivation from one primary color
        * (cat-persona-tokens.css OKLCH formulas). Secondary is deprecated; mirror
        * primary → secondary to keep the API payload backward-compatible. */}
-      <CatColorField
-        value={form.colorPrimary}
-        onChange={(hex) => onChange({ colorPrimary: hex, colorSecondary: hex })}
-      />
+      <MemberChangedField label="Background Color">
+        <CatColorField
+          value={form.colorPrimary}
+          onChange={(hex) => onChange({ colorPrimary: hex, colorSecondary: hex })}
+        />
+      </MemberChangedField>
 
       {hasDossier && (
         <p className="rounded-lg bg-conn-purple-bg px-3 py-1.5 text-xs text-conn-purple-text">
@@ -233,26 +239,28 @@ export function IdentitySection({
         placeholder="可选，留空表示无特殊注意"
       />
 
-      <div className="flex items-start gap-3">
-        <span className="w-[140px] shrink-0 pt-1 text-sm font-medium text-cafe-secondary">
-          {page ? t('技能标签') : 'Strengths'}
-        </span>
-        <div className="min-w-0 flex-1">
-          <TagEditor
-            tags={strengthTags}
-            onChange={(tags) => onChange({ strengths: joinTags(tags) })}
-            addLabel={t('+ 选择')}
-            placeholder={t('输入标签，例如 security')}
-            emptyLabel={t('(无)')}
+      <MemberChangedField label="Strengths">
+        <div className="flex items-start gap-3">
+          <span className="w-[140px] shrink-0 pt-1 text-sm font-medium text-cafe-secondary">
+            {page ? t('技能标签') : 'Strengths'}
+          </span>
+          <div className="min-w-0 flex-1">
+            <TagEditor
+              tags={strengthTags}
+              onChange={(tags) => onChange({ strengths: joinTags(tags) })}
+              addLabel={t('+ 选择')}
+              placeholder={t('输入标签，例如 security')}
+              emptyLabel={t('(无)')}
+            />
+          </div>
+          <input
+            aria-label="Strengths"
+            value={form.strengths}
+            onChange={(event) => onChange({ strengths: event.target.value })}
+            className="sr-only"
           />
         </div>
-        <input
-          aria-label="Strengths"
-          value={form.strengths}
-          onChange={(event) => onChange({ strengths: event.target.value })}
-          className="sr-only"
-        />
-      </div>
+      </MemberChangedField>
 
       {!page && <VoiceConfigSection form={form} onChange={onChange} onRefAudioUpload={onRefAudioUpload} />}
     </SectionCard>
@@ -301,12 +309,17 @@ function ComboField({
 }) {
   const listId = `combo-${label.replace(/\s+/g, '-').toLowerCase()}`;
   const displayLabel = useEditorLabel(label);
+  const changed = useMemberChanged(ariaLabel ?? label);
   const invalid = useMemberFieldError(ariaLabel ?? label);
   const t = useEditorText();
   return (
-    <label className="flex flex-col gap-1.5 text-cafe-secondary sm:flex-row sm:items-center sm:gap-3">
+    <label
+      data-member-changed={changed || undefined}
+      className="flex flex-col gap-1.5 text-cafe-secondary sm:flex-row sm:items-center sm:gap-3"
+    >
       <span className="text-xs font-bold text-cafe-secondary sm:w-[150px] sm:shrink-0">
         {displayLabel}
+        <MemberChangeMark label={ariaLabel ?? label} />
         {required && <span className="ml-0.5 text-cafe-accent">*</span>}
       </span>
       <div className="min-w-0 flex-1">
@@ -377,6 +390,7 @@ export function ProtectedCloudIdentitySection({
 
   return (
     <SectionCard title="认证与模型" tone={drifted ? 'error' : 'neutral'} data-guide-id="member-editor.auth-config">
+      <MemberOperationFeedback source="accounts" />
       <div className="space-y-3 rounded-xl bg-[var(--console-field-bg,var(--console-card-bg))] px-4 py-3">
         <div>
           <p className={`text-sm font-extrabold ${drifted ? 'text-conn-red-text' : 'text-cafe'}`}>
@@ -415,6 +429,7 @@ export function ProtectedCloudIdentitySection({
             >
               {t(restoring ? '恢复中…' : '恢复云端身份')}
             </button>
+            <MemberOperationFeedback source="restore" />
           </div>
         ) : (
           <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1 text-xs">
@@ -516,6 +531,7 @@ export function AccountSection({
 
   return (
     <SectionCard title="认证与模型" tone={hasError ? 'error' : 'neutral'} data-guide-id="member-editor.auth-config">
+      <MemberOperationFeedback source="accounts" />
       <div className="space-y-2">
         <SelectField
           label="Client"
@@ -807,23 +823,25 @@ export function RoutingSection({
   }, [reservedPatterns, page, copy]);
   return (
     <SectionCard title="别名与 @ 路由" tone={hasError ? 'error' : 'neutral'} aria-invalid={invalid || undefined}>
-      <TagEditor
-        tags={aliases}
-        onChange={updateAliases}
-        addLabel={t('+ 添加')}
-        placeholder={page ? copy.砚砚(form.nickname || form.name || t('成员')) : '砚砚'}
-        emptyLabel={t('(至少添加 1 个别名，否则无法 @)')}
-        validate={validateAlias}
-        lockedTags={presentFixedPatterns}
-        minCount={presentFixedPatterns.length > 0 ? 0 : 1}
-      />
-      <textarea
-        aria-label="Aliases"
-        value={form.mentionPatterns}
-        onChange={(event) => updateAliases(currentAliasTags({ ...form, mentionPatterns: event.target.value }))}
-        placeholder="@codex, @缅因猫"
-        className="sr-only"
-      />
+      <MemberChangedField label="Aliases">
+        <TagEditor
+          tags={aliases}
+          onChange={updateAliases}
+          addLabel={t('+ 添加')}
+          placeholder={page ? copy.砚砚(form.nickname || form.name || t('成员')) : '砚砚'}
+          emptyLabel={t('(至少添加 1 个别名，否则无法 @)')}
+          validate={validateAlias}
+          lockedTags={presentFixedPatterns}
+          minCount={presentFixedPatterns.length > 0 ? 0 : 1}
+        />
+        <textarea
+          aria-label="Aliases"
+          value={form.mentionPatterns}
+          onChange={(event) => updateAliases(currentAliasTags({ ...form, mentionPatterns: event.target.value }))}
+          placeholder="@codex, @缅因猫"
+          className="sr-only"
+        />
+      </MemberChangedField>
     </SectionCard>
   );
 }

@@ -35,6 +35,7 @@ const inputs: ChatMessage[] = [
   },
 ];
 const response: ChatMessage = {
+  from: { kind: 'agent', catId: 'codex' },
   id: 'response',
   type: 'assistant',
   content: '回执示例',
@@ -55,15 +56,8 @@ const response: ChatMessage = {
 function Proof() {
   const presentation = useShellPresentation();
   const [open, setOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [fail, setFail] = useState(false);
   const [effective, setEffective] = useState<'next_work' | 'continue_current'>('next_work');
   const trigger = useRef<HTMLButtonElement>(null);
-  const choose = async (_scope: 'thread' | 'global', value: 'next_work' | 'continue_current') => {
-    setError(fail ? '保存失败，请重试' : null);
-    if (!fail) setEffective(value);
-    return !fail;
-  };
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 p-4 text-cafe-primary">
       <div className="flex gap-4">
@@ -86,7 +80,6 @@ function Proof() {
         >
           switch theme
         </button>
-        <button onClick={() => setFail(!fail)}>fail save</button>
       </div>
       <article data-message-id="source-1" className="rounded-lg bg-cafe-surface p-3">
         原文
@@ -117,14 +110,20 @@ function Proof() {
       {open && (
         <ChatInputAddMenu
           presentation={presentation}
+          hasActiveInvocation
           triggerRef={trigger}
           messageDisposition={{
             snapshot: { productDefault: 'next_work', thread: null, global: null, effective, source: 'product' },
             effective,
             source: 'product',
+            oneShot: effective,
+            setOneShot: (value) => setEffective(value),
+            clearOneShot: () => setEffective('next_work'),
             loading: false,
-            error,
-            setPreference: choose,
+            error: null,
+            setPreference: async () => {
+              throw new Error('One-shot choices must not save a preference');
+            },
           }}
           onClose={() => setOpen(false)}
           onAddContext={() => {}}

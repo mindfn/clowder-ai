@@ -311,7 +311,7 @@ describe('F307 real surface adapters', () => {
       catId: 'codex-sol',
       createdAt: 1787880000000,
       sourceMessageId: 'message-review-ready',
-      ref: 'zts212653/cat-cafe#4030',
+      ref: 'zts212653/clowder-ai#4030',
     };
 
     const surface = createArtifactSurface({ threadId: 'thread-f307', artifact });

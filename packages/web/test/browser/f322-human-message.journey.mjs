@@ -37,6 +37,7 @@ const cats = [
   avatar: `/avatars/${id}.png`,
   color: { primary, secondary: '#eeeeee' },
   mentionPatterns: [`@${id}`],
+  carrier: 'cli',
   clientId: 'fixture',
   defaultModel: 'fixture',
 }));

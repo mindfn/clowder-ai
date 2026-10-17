@@ -27,7 +27,6 @@ export function MemberEditorPage({
   hasDossier,
   onDelete,
   header,
-  history,
 }: HubCatEditorProps & { editor: HubCatEditorController }) {
   const t = useMemberText();
   const copy = useMembersCopy();
@@ -51,8 +50,8 @@ export function MemberEditorPage({
     const field =
       main.current?.querySelector<HTMLElement>('[aria-invalid="true"]') ??
       main.current?.querySelector<HTMLElement>('[role="alert"]');
-    field?.focus();
-    field?.scrollIntoView?.({ block: 'center' });
+    field?.focus({ preventScroll: true });
+    if (!field?.closest('.member-save-bar')) field?.scrollIntoView?.({ block: 'center' });
   }, [validationAttempt]);
   const save = async () => {
     await e.handleSave();
@@ -69,12 +68,7 @@ export function MemberEditorPage({
           { id: 'advanced', label: '高级' },
         ]
       : []),
-    ...(cat
-      ? [
-          { id: 'history', label: '路由历史' },
-          { id: 'delete', label: '删除成员' },
-        ]
-      : []),
+    ...(cat ? [{ id: 'delete', label: '删除成员' }] : []),
   ];
   const identitySection = (
     <div id="member-identity">
@@ -138,11 +132,6 @@ export function MemberEditorPage({
               />
             </>
           )}
-          {e.error && (
-            <p role="alert" tabIndex={-1} className="member-error">
-              {t(e.error)}
-            </p>
-          )}
           <div className="member-editor-layout">
             {cat && (
               <nav aria-label={t('成员目录')}>
@@ -153,7 +142,7 @@ export function MemberEditorPage({
                 ))}
               </nav>
             )}
-            <div className="member-editor-fields">
+            <fieldset className="member-editor-fields" disabled={e.saving}>
               {!cat && identitySection}
               <div id="member-model">
                 {cat?.id === 'gpt-dot' ? (
@@ -235,7 +224,6 @@ export function MemberEditorPage({
               )}
               {cat && (
                 <>
-                  <section id="member-history">{history}</section>
                   <section id="member-delete">
                     <h3>{t('删除成员')}</h3>
                     {cat.identityProtection ? (
@@ -256,9 +244,9 @@ export function MemberEditorPage({
                   </section>
                 </>
               )}
-            </div>
+            </fieldset>
           </div>
-          {(!cat || e.dirtyCount > 0) && <MemberSaveBar editor={e} creating={!cat} anchor={main} onSave={save} />}
+          <MemberSaveBar editor={e} creating={!cat} onSave={save} />
           <UnifiedAuthModal
             open={e.showAuthModal && e.createAccountClient !== undefined}
             initialClientId={e.createAccountClient}

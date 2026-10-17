@@ -1,6 +1,6 @@
 ---
 feature_ids: [F325]
-tips_exempt: "Renewed 2026-10-14: This records repair toward normal member capability parity and still-incomplete acceptance, not a newly usable public entry. The former Task-only tool/file restrictions are not the product goal; add user-facing discovery when the complete working path is delivered and verified."
+tips_exempt: "Renewed 2026-10-15 for native concurrency repair: This records repair toward normal member capability parity and still-incomplete acceptance, not a newly usable public entry. The former Task-only tool/file restrictions are not the product goal; add user-facing discovery when the complete working path is delivered and verified."
 related_features: [F053, F061, F143, F149, F161, F174, F178, F194, F201, F203, F210, F211, F241, F254, F261, F286, F296, F299, F306, F318, F320, F323, F324]
 topics: [antigravity, acp, native-carrier, parity, migration, managed-job]
 doc_kind: spec
@@ -19,7 +19,13 @@ description_updated_at: 2026-09-29T06:01:16Z
 
 **实现与验收进展（2026-10-14 16:40 UTC）**：[同一个 PR #5510](https://github.com/zts212653/clowder-ai/pull/5510) 已于 16:00 UTC 合入 `4fd53e548ba7fdf3d27720b08629fe1eca4a3bbf`。Sonnet 对最终 `1ee83e6f52e995e970d888a61ead2371ca52ab00` 独立复审 approved（执行线程 source1026：`private-source-id`）。正常 MCP/原生工具、共享 guard、流式/工具错误恢复、skills/媒体、当轮用量、持久 session 与发送正文前的 verified init 已接通；Native 压缩沿既有 F296 控制与 epoch owner 接线。Action Plane 单一持久 job 包含独立 worker、lease/fencing、principal 幂等/显式 retry lineage、取消/恢复、日志与 metrics/trace。旧 Gemini CLI/IDE execution、专用 Task/file grant 和 task-test 旁路已在 PR 中退役，历史 reader 保留。合入还修正共享 shell reader 把重定向当 argv 的根因，保护 Claude/Codex 与 Native 的目录判断；非作者 4099 条差分未发现 deny→allow 放松。后文旧 P1 描述是历史基线，不是新的产品限制。
 
-**尚未结算**：正式runtime仍为boot29 / `9e20438625509a4dea7b8e9d0f19946b836a9a4c`，本任务未重启。原Task2347已登记deployment g5，等待API/Web包含#5551 merge（及祖先#5510）后续做真实入口验收。协议只证明配置与CLI init/request选择的模型，没有独立backend served-model证明，保持`modelVerified=false`；AC-A2不提前签字，是否接受此明确限制的建议见上述报告，尚待operator裁定。Linux/Windows未认证。独立整体愿景结论仍保留原边界，不以作者的体验纠正报告代签或关闭Feature。
+**凭据控制面复审修正（source440）**：Sol6.1在71上发现security证书/identity/login/trust隐式修改仍可绕过。Astra复现4红/4阳性后，在同PR提交`c515439ea3a0d8ce10c32e52112eab4e055e590b`，按整类命令只放行经证明的只读形式，其余拒绝；原反例及相关guard合计18/18，57个本机命令名判定扫描无漏项。仅2文件变化，其他独立已测delta保持，Sol6.1 source462已typed approved、53/53独立检查通过；不替真实OAuth刷新或原线程验收签字。
+
+**当前review路由**：You source052曾指定后续开发reviews交SiameseArgon；当前source548（`[thread-id]#private-source-id`）因正式环境仍有串行等待，直接改派小太阳Sol6.1审PR #5583。Sol6.1 source551已接exact `fb975c33f4dd2a2dfa05e10c52b3962738693325`的四文件增量。原Argon请求source535的持久队列回执已为`withdrawn`、attempt `cancelled/source_withdrawn`，当前队列无该审查，不重复唤醒。Astra继续原Task/实现，旧#5580及其他独立批准保持原审查归属；本次改派不代表新批准或正式加载。
+
+**独立恢复判断已通过**：Argon source097（`private-source-id`）typed approved证据cut `c9a356870747b70cac8ffa17f0c001e58a3c4200`，无P1/P2，认可解除旧会话续接、只读补读准入与OAuth五秒保存超时三项具体阻塞；核过38件原件哈希及历史/成员不变。其批准不覆盖整体Feature终态。
+
+**尚未结算**：boot35已实看当前回复的桌面、手机与刷新呈现，其他页面旅程不据此代签；macOS桌面无逐帧记录，不能扩大无弹窗的保证。自动阈值 handoff 的 unavailable 会阻止实际动作，需原持续工作结果的策略证据/具体裁定；既有 Native 手动压缩与续接实证保留。协议只证明配置与CLI init/request选择的模型，没有独立backend served-model证明，保持`modelVerified=false`；AC-A2不提前签字。source1141提出的明确限制建议尚待operator裁定。Linux/Windows未认证。独立整体愿景结论不通过，不以作者报告代签或关闭Feature。原#5510工位因规范收尾的后续main内容检查未通过而具名retained至2026-10-15 20:25 UTC，#5551修正工位已释放；保留不冒充删除。
 
 原 A–E、F261 有效需求与迁移/历史边界继续被同一 Task 承接；未以部分进度关闭 Feature，也未重启正式 runtime。
 

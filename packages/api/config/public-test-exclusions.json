@@ -10,12 +10,12 @@
       "introducedBy": "78f3bc57c",
       "expiresOn": "2027-12-31",
       "audit": {
-        "reviewedOn": "2026-10-02",
-        "sourceHead": "9663e789484fbf7569f1159c9779f1c9ab89375e",
-        "publicHead": "b1fe2966fa0a97d1e3cd2e174ed59fd1477b4fc4",
+        "reviewedOn": "2026-10-17",
+        "sourceHead": "235bb90755fdba01cf968e27af08ded14a4d039d",
+        "publicHead": "7fca378fa010a288484e909446a2faeee5a7fbe2",
         "status": "resource_contract",
-        "matchedFileCount": 51,
-        "matchedFilesHash": "3280e54b7a01d83d43912c5eb4e07126c500507e5a16f06119d705c59b3ef2bd"
+        "matchedFileCount": 41,
+        "matchedFilesHash": "1fc29e45db82f9c0eb56d4ba75520f789d7196477da65b633fcfaf60aed8208d"
       },
       "publicAudit": {
         "reviewedOn": "2026-10-15",
@@ -58,7 +58,25 @@
           "test/redis-repo-comment-cursor.test.js",
           "test/signal-intake/redis-signal-intake.test.js"
         ]
-      }
+      },
+      "auditHistory": [
+        {
+          "reviewedOn": "2026-10-02",
+          "sourceHead": "9663e789484fbf7569f1159c9779f1c9ab89375e",
+          "publicHead": "b1fe2966fa0a97d1e3cd2e174ed59fd1477b4fc4",
+          "status": "resource_contract",
+          "matchedFileCount": 51,
+          "matchedFilesHash": "3280e54b7a01d83d43912c5eb4e07126c500507e5a16f06119d705c59b3ef2bd"
+        },
+        {
+          "reviewedOn": "2026-10-15",
+          "sourceHead": "235bb90755fdba01cf968e27af08ded14a4d039d",
+          "publicHead": "7fca378fa010a288484e909446a2faeee5a7fbe2",
+          "status": "resource_contract",
+          "matchedFileCount": 49,
+          "matchedFilesHash": "e0a7a8a6cbefb0de3a9e5eb5801f04f470cf4057f94afb4a0615c12cc13b2b0e"
+        }
+      ]
     },
     {
       "id": "redis-restore-source-script",
@@ -593,6 +611,23 @@
         "status": "source_dependency_failure",
         "matchedFileCount": 1,
         "matchedFilesHash": "2a15edf12af91760ca24a3c5c95c08b9d099bc69bcceb49ea2d3a497a01bfc90"
+      }
+    },
+    {
+      "id": "alpha-managed-home-integration",
+      "match": "^test/alpha-managed-(?:lifecycle|materialization|scheduler|sleep)-integration\\.test\\.js$",
+      "category": "source_only",
+      "reason": "These four exact home Alpha integration suites import the private Alpha subscription/execution runtime from scripts/lib, which the public export omits. Public CI 38882854646 at 663c2663 fails all four with the same missing alpha-browser-subscription.mjs dependency. Portable Alpha scheduler, admission, observation and recovery-identity contracts pass in that same public CI and remain selected; no product-failure test is excluded.",
+      "owner": "@codex-astra",
+      "introducedBy": "cd8a6b10d768a88df1970d00f76ef27969c2b7fd",
+      "expiresOn": "2026-12-31",
+      "audit": {
+        "reviewedOn": "2026-10-16",
+        "sourceHead": "ed9bebc296b37f0acdea4f577de7a3147e245d69",
+        "publicHead": "663c2663ee7a8aeee3fb5e9b83adf95b01e5d14d",
+        "status": "source_dependency_failure",
+        "matchedFileCount": 4,
+        "matchedFilesHash": "da6493a123d4a298eda738be855df78dabbead0fb79e40ca9ef67d885846c14b"
       }
     }
   ]

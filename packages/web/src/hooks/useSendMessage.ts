@@ -10,6 +10,7 @@ import { observeComposerDraft } from '@/components/composer-draft-flush-registry
 import { useChatCommands } from '@/hooks/useChatCommands';
 import { type ChatMessage as ChatMessageData, useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
+import { reconcileThreadWithServer } from './queue-reconciliation';
 
 export type UploadStatus = 'idle' | 'uploading' | 'failed';
 
@@ -149,6 +150,9 @@ export function useSendMessage(activeThreadId?: string) {
           throw new Error('Server did not return a canonical Queue admission');
         }
         acknowledgeSendComposerDraftConsumption(threadId, admission);
+        // A successful send must remain visible even if its Queue socket event was
+        // missed. Reuse the same fenced server snapshot as reconnect, not a local bubble.
+        if (admission.status === 'queued') void reconcileThreadWithServer(threadId, () => false, 'SendAdmission');
         setUploadStatus('idle');
         setUploadError(null);
         window.dispatchEvent(new CustomEvent('guide:confirm', { detail: { target: 'chat.input' } }));

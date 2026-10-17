@@ -693,6 +693,7 @@ test('root reply keeps child identity distinct after hydration at desktop and 39
       return json(route, {
         messages: [
           {
+            from: { kind: 'agent', catId: 'codex-sol' },
             id: 'f307-root-final-with-child',
             type: 'assistant',
             catId: 'codex-sol',

@@ -85,7 +85,7 @@ describe('GET /api/schedule/tasks — hold-ball tombstones', () => {
         holdLifecycle: {
           mode: 'timer',
           status: 'retired_by_event',
-          subjectKey: 'zts212653/cat-cafe#2779',
+          subjectKey: 'zts212653/clowder-ai#2779',
           expectedSignalKey: 'review_posted',
           wakeAt: Date.now() + 60_000,
           createdBy: 'hold-ball:codex',
@@ -155,7 +155,7 @@ describe('GET /api/schedule/tasks — hold-ball tombstones', () => {
         holdLifecycle: {
           mode: 'timer',
           status: 'retired_by_event',
-          subjectKey: 'zts212653/cat-cafe#2779',
+          subjectKey: 'zts212653/clowder-ai#2779',
           expectedSignalKey: 'review_posted',
           wakeAt: Date.now() + 60_000,
           createdBy: 'hold-ball:codex',

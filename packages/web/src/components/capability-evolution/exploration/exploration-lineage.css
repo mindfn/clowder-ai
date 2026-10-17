@@ -81,6 +81,7 @@
 }
 .exploration-node {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: 6px;
   width: 100%;
@@ -130,6 +131,9 @@
 }
 .exploration-node[aria-pressed="true"] .exploration-node-title {
   color: var(--cafe-text);
+}
+.exploration-node-wrap[data-adopted="true"] .exploration-node {
+  border-color: var(--evolution-focus);
 }
 .exploration-fold {
   position: absolute;
@@ -184,6 +188,9 @@
 }
 .exploration-lineage[data-density="points"] .exploration-node[aria-pressed="true"]::before {
   inset: 10px;
+  background: var(--evolution-focus);
+}
+.exploration-lineage[data-density="points"] .exploration-node-wrap[data-adopted="true"] .exploration-node::before {
   background: var(--evolution-focus);
 }
 .exploration-node-wrap[data-current="true"]::after {

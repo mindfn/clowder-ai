@@ -1,4 +1,9 @@
-import { type MediaPublicationSource, type ReviewedMediaAsset, reviewedMediaAssetSchema } from '@cat-cafe/shared';
+import {
+  type MediaPublicationSource,
+  type ReviewedMediaAsset,
+  reviewedMediaAssetSchema,
+  reviewedMediaTypeSchema,
+} from '@cat-cafe/shared';
 import { MediaOwnerError } from './media-errors.js';
 import { findMessagePublicationLanding, MessagePublicationChoiceRequired } from './message-publication-landing.js';
 import { publishedMediaContentRef, samePublicationScope } from './publication.js';
@@ -111,7 +116,7 @@ export class PublishedMediaService {
 
   private async importPublication(
     scope: ContentPublicationScopeV1,
-    source: { bytes: Buffer; mediaType: 'image/png' | 'video/mp4'; publication: ContentSourcePublicationV1 },
+    source: { bytes: Buffer; mediaType: ReviewedMediaAsset['mediaType']; publication: ContentSourcePublicationV1 },
     input: { operationId: string; principal: MediaReviewPrincipal },
     revalidate: () => Promise<unknown>,
   ): Promise<ReviewedMediaAsset> {
@@ -206,12 +211,12 @@ export class PublishedMediaService {
     await this.access.authorizeScope(description.publicationScope, principal, true, contentRef);
     if (!description.sourcePublication || !description.publicationScope) throw new MediaOwnerError('access_denied');
     await this.deps.sources.assertVisible(description.publicationScope, description.sourcePublication, principal);
-    if (description.mediaType !== 'image/png' && description.mediaType !== 'video/mp4')
-      throw new MediaOwnerError('invalid_media');
+    const mime = reviewedMediaTypeSchema.safeParse(description.mediaType);
+    if (!mime.success) throw new MediaOwnerError('invalid_media');
     let media = this.metadata.get(description.blobDigest);
     if (!media) {
       const loaded = await this.deps.owner.load(contentRef, ownerRevision);
-      media = await probeImmutableMedia(loaded.bytes, description.mediaType);
+      media = await probeImmutableMedia(loaded.bytes, mime.data);
       this.remember(description.blobDigest, media);
     }
     const receipt = (await this.deps.owner.listOutbox(contentRef)).find((item) => item.ownerRevision === ownerRevision);

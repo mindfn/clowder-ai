@@ -29,6 +29,11 @@ test('auth and workspace fences precede every exploration owner read', async () 
   ]) {
     const { app, counts } = await fixture(user, workspace);
     assert.equal((await app.inject({ url })).statusCode, status);
+    const rangedMedia = `${url}-media/${'a'.repeat(64)}?${new URLSearchParams({
+      experimentRef: JSON.stringify({ ownerFeatureId: 'F100', ownerStateRef: 'experiment' }),
+      recordRef: JSON.stringify({ ownerFeatureId: 'F100', ownerStateRef: 'record' }),
+    })}`;
+    assert.equal((await app.inject({ url: rangedMedia, headers: { range: 'bytes=0-1' } })).statusCode, status);
     assert.deepEqual(counts(), { reads: 0, writes: 0 });
   }
 });
@@ -83,6 +88,20 @@ test('rejects owner data from another Program, node, window or measurement and c
     },
     (value) => {
       value.currentVersionRefs = [source('forged-adoption')];
+    },
+    (value) => {
+      value.nodes[0].preview = {
+        experimentRef: source('another-experiment'),
+        recordRef: source('record'),
+        media: {
+          mediaRef: source('cover', 'a'.repeat(64)),
+          kind: 'image',
+          contentType: 'image/png',
+          label: 'cross-version cover',
+          provenance: 'original',
+          sourceRecordRef: source('actual-response'),
+        },
+      };
     },
     (value) => {
       value.experiments[0].recordCount = 2;
@@ -179,8 +198,28 @@ test('serves only a currently published media record and verifies the exact byte
   assert.deepEqual(response.rawPayload, bytes);
   assert.equal(response.headers['x-content-type-options'], 'nosniff');
   assert.match(response.headers['cache-control'], /no-store/);
+  assert.equal(response.headers['accept-ranges'], 'bytes');
+  for (const [range, start, end] of [
+    ['bytes=2-6', 2, 6],
+    ['bytes=4-', 4, bytes.length - 1],
+    ['bytes=-4', bytes.length - 4, bytes.length - 1],
+  ]) {
+    const part = await app.inject({ url: mediaUrl, headers: { range } });
+    assert.equal(part.statusCode, 206);
+    assert.equal(part.headers['content-range'], `bytes ${start}-${end}/${bytes.length}`);
+    assert.equal(Number(part.headers['content-length']), end - start + 1);
+    assert.deepEqual(part.rawPayload, bytes.subarray(start, end + 1));
+    assert.match(part.headers['cache-control'], /no-store/);
+  }
+  for (const range of ['bytes=999-', 'bytes=5-2', 'bytes=0-1,3-4', 'invalid']) {
+    const invalid = await app.inject({ url: mediaUrl, headers: { range } });
+    assert.equal(invalid.statusCode, 416);
+    assert.equal(invalid.headers['content-range'], `bytes */${bytes.length}`);
+    assert.equal(invalid.rawPayload.length, 0);
+  }
   served = Buffer.from('tampered');
   assert.equal((await app.inject({ url: mediaUrl })).statusCode, 422);
+  assert.equal((await app.inject({ url: mediaUrl, headers: { range: 'bytes=0-1' } })).statusCode, 422);
   served = bytes;
   const verifiedMedia = adapter.explorationMedia;
   adapter.explorationMedia = async () => ({ status: 'unavailable', reason: '来源暂不可读' });
@@ -188,6 +227,7 @@ test('serves only a currently published media record and verifies the exact byte
   adapter.explorationMedia = verifiedMedia;
   published = false;
   assert.equal((await app.inject({ url: mediaUrl })).statusCode, 404);
+  assert.equal((await app.inject({ url: mediaUrl, headers: { range: 'bytes=0-1' } })).statusCode, 404);
   assert.equal(counts().writes, 0);
 });
 

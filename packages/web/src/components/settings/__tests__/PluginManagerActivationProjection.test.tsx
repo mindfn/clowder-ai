@@ -5,7 +5,7 @@ import type {
   PluginInstanceRecord,
   PluginInventorySnapshot,
 } from '../../../../../api/src/domains/plugin/host-inventory/types';
-import { projectPluginManagerCatalogCandidate } from '../../../../../api/src/domains/plugin/plugin-manager-projection';
+import { projectPluginManagerCatalogCandidate } from '../../../../../api/src/domains/plugin/manager/plugin-manager-projection';
 import { PluginManagerContent } from '../plugin-manager/PluginManagerContent';
 import { designFixture } from '../plugin-manager/plugin-manager-live-api';
 

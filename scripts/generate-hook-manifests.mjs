@@ -139,7 +139,7 @@ const TIER1_HOOKS = [
     transparencyTier: 'visible-by-default',
     governanceTier: 'immutable',
     inputs: ['restrictions'],
-    userExplanation: '猫不能做什么（如暹罗猫禁止写代码）',
+    userExplanation: '成员配置中明确声明的任务限制',
   },
   {
     id: 'S3',

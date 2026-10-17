@@ -108,7 +108,7 @@ function formatRoutingPreflight(
       : undefined;
   const actionCopy =
     disposition === 'rejected'
-      ? `本次未执行。${retryAt !== undefined ? `自动调用可在 ${new Date(retryAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 后重新尝试。` : ''}`
+      ? `本次未执行，这条消息会等待你重试。${retryAt !== undefined ? `后续新的自动发送可在 ${new Date(retryAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 后重新检查。` : ''}`
       : target.ownerAttempt === true
         ? '这次仍会按你的选择尝试。'
         : '本次仍按原目标尝试。';

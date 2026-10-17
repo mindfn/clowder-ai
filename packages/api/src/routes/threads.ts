@@ -1,5 +1,6 @@
 import { type CloudBindingRefusal, catRegistry } from '@cat-cafe/shared';
 import { resolveCloudConversationCat } from '../domains/cats/services/cloud-bridge/cloud-conversation-identity.js';
+import { pluginPrTitleReader } from './plugin/pr-artifact-title-reader.js';
 /**
  * Thread API Routes
  * POST   /api/threads     - 创建对话
@@ -19,6 +20,10 @@ import type { InvocationTracker } from '../domains/cats/services/agents/invocati
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import type { TaskProgressStore } from '../domains/cats/services/agents/invocation/TaskProgressStore.js';
 import { collectRecentGlobalWorkCandidates } from '../domains/cats/services/agents/routing/recent-global-work-reader.js';
+import {
+  type PrTitleReader,
+  readArtifactPrTitles,
+} from '../domains/cats/services/agents/routing/thread-artifact-pr-titles.js';
 import {
   aggregateProjectedThreadArtifacts,
   collectAllThreadMessages,
@@ -464,6 +469,8 @@ interface ThreadIndexBuilder {
 }
 
 export interface ThreadsRoutesOptions {
+  /** Presentation metadata for already owner-scoped, formally attached PR works. */
+  prTitleReader?: PrTitleReader;
   threadStore: IThreadStore;
   /**
    * F297 Phase B: batched active-execution presence for the Sidebar snapshot (C10).
@@ -1639,11 +1646,14 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       threadId,
       projectAppliedWorkspaceReceipts(messages),
     );
-    const artifacts = aggregateProjectedThreadArtifacts({
-      messageArtifacts: [...projectMessageArtifacts(messages), ...acceptedFiles.artifacts],
-      prTasks,
-      fileLedger: worksView ? [] : fileLedger,
-    });
+    const artifacts = await readArtifactPrTitles(
+      aggregateProjectedThreadArtifacts({
+        messageArtifacts: [...projectMessageArtifacts(messages), ...acceptedFiles.artifacts],
+        prTasks,
+        fileLedger: worksView ? [] : fileLedger,
+      }),
+      worksView ? (opts.prTitleReader ?? pluginPrTitleReader(app, request)) : undefined,
+    );
     const projected = await projectGlobalArtifactWorkLineage(
       opts.artifactWorkLineage,
       userId,
@@ -1750,7 +1760,11 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       rawQuery as { type?: string; cat?: string; q?: string | string[] },
     );
 
-    const projected = await projectGlobalArtifactWorkLineage(opts.artifactWorkLineage, userId, all);
+    const titled = await readArtifactPrTitles(
+      all,
+      worksView ? (opts.prTitleReader ?? pluginPrTitleReader(app, request)) : undefined,
+    );
+    const projected = await projectGlobalArtifactWorkLineage(opts.artifactWorkLineage, userId, titled);
     return worksView
       ? {
           ...projected,

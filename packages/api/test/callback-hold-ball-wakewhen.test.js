@@ -6,15 +6,14 @@
  *
  * T8: wakeWhen runner cancelled on hold_ball cancel → no stale wake
  * T9: wakeWhen re-hold retires only the old carrier; authorized job keeps running
- * T10: messageStore.append failure → fallback task NOT removed
  * T11: cancelWakeWhenRunner export + activeRunners registry
- * T12: execution-plane queue full → fallback task NOT removed
- * T13: execution-plane trigger failure → fallback task NOT removed
+ * T12: atomic wake admission refused → fallback task NOT removed
+ * T13: atomic wake admission throws → fallback task NOT removed
  * T14: positive execution-plane ack + durable carrier → fallback task retired
  */
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, test } from 'node:test';
@@ -225,6 +224,18 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     assert.fail('command did not reach its durable terminal');
+  }
+
+  async function waitForWakeHandling(deps, taskId, handled) {
+    await waitForCommandTerminal(deps, taskId);
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      if (handled()) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.fail(
+      `wake handling did not settle: ${deps.dynamicTaskStore.getById(taskId)?.params.holdLifecycle.managedCommand.state}`,
+    );
   }
 
   for (const actorUserId of ['scheduler', 'system']) {
@@ -1936,65 +1947,18 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
   });
 
-  // ─── T10: messageStore.append failure → fallback kept alive ─────────────
-  test('T10: wake delivery failure keeps fallback reminder alive', async () => {
-    let appendCount = 0;
-    const deps = makeStubDeps({
-      messageStore: {
-        getByIdempotencyKey() {
-          return null;
-        },
-        async append(msg) {
-          appendCount++;
-          // First append = visibility message (hold registered) → succeed
-          if (appendCount <= 1) {
-            return { id: `msg-${appendCount}`, ...msg };
-          }
-          // Second append = wake completion message → FAIL
-          throw new Error('simulated messageStore failure');
-        },
-      },
-    });
-    const app = await createApp(deps);
-    const thread = await threadStore.create('user-hb-t10', 'hb-t10');
-    const { invocationId, callbackToken } = await registry.create('user-hb-t10', 'codex', thread.id);
-    const headers = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken };
-
-    // Create wakeWhen hold with a fast command
-    const r1 = await app.inject({
-      method: 'POST',
-      url: '/api/callbacks/hold-ball',
-      headers,
-      payload: {
-        reason: 'fast gate',
-        nextStep: 'check fast',
-        wakeWhen: { command: 'echo done' },
-      },
-    });
-    assert.equal(r1.statusCode, 200);
-    const { taskId } = JSON.parse(r1.body);
-
-    // Wait for command to complete + async callback to fire
-    await new Promise((r) => setTimeout(r, 500));
-
-    // P1-2 fix: fallback reminder task should NOT have been removed
-    // because wake message delivery failed
-    const fallbackRemoved = deps._removedIds.includes(taskId);
-    assert.equal(
-      fallbackRemoved,
-      false,
-      'fallback task should NOT be removed when wake delivery fails — cat needs the fallback wake',
-    );
-  });
-
-  test('T12: queue-full trigger keeps fallback reminder alive after completion message is written', async () => {
+  // F117 replaced standalone message append with atomic wake admission; T13 covers its failure.
+  test('T12: refused atomic wake admission keeps the completed command recoverable', async (t) => {
+    let admissionCalls = 0;
     const deps = makeStubDeps({
       // Queue capacity refused the row. One transaction means nothing is written at all.
       async admitManagedWake() {
+        admissionCalls += 1;
         return {};
       },
     });
     const app = await createApp(deps);
+    t.after(() => app.close());
     const thread = await threadStore.create('user-hb-t12', 'hb-t12');
     const { invocationId, callbackToken } = await registry.create('user-hb-t12', 'codex', thread.id);
 
@@ -2011,7 +1975,16 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     assert.equal(response.statusCode, 200);
     const { taskId } = JSON.parse(response.body);
 
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await waitForWakeHandling(deps, taskId, () => {
+      const command = deps.dynamicTaskStore.getById(taskId)?.params.holdLifecycle.managedCommand;
+      return admissionCalls > 0 && command?.messageClaimedAt === undefined;
+    });
+    assert.equal(admissionCalls, 1, 'the refused admission must actually have been attempted');
+    const task = deps.dynamicTaskStore.getById(taskId);
+    assert.equal(task.enabled, true);
+    assert.equal(task.params.holdLifecycle.managedCommand.state, 'condition_met');
+    assert.equal(task.params.holdLifecycle.managedCommand.result.exitCode, 0);
+    assert.equal(deps._unregisteredIds.includes(taskId), false);
 
     // This used to assert the completion message was durable BEFORE dispatch. One transaction
     // removes that ordering: a refused admission leaves no wake message behind to reconcile.
@@ -2027,13 +2000,16 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     );
   });
 
-  test('T13: trigger throw keeps fallback reminder alive after completion message is written', async () => {
+  test('T13: failed atomic wake admission keeps the completed command recoverable', async (t) => {
+    let admissionCalls = 0;
     const deps = makeStubDeps({
       async admitManagedWake() {
+        admissionCalls += 1;
         throw new Error('simulated execution-plane failure');
       },
     });
     const app = await createApp(deps);
+    t.after(() => app.close());
     const thread = await threadStore.create('user-hb-t13', 'hb-t13');
     const { invocationId, callbackToken } = await registry.create('user-hb-t13', 'codex', thread.id);
 
@@ -2050,7 +2026,16 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     assert.equal(response.statusCode, 200);
     const { taskId } = JSON.parse(response.body);
 
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await waitForWakeHandling(deps, taskId, () => {
+      const command = deps.dynamicTaskStore.getById(taskId)?.params.holdLifecycle.managedCommand;
+      return admissionCalls > 0 && command?.messageClaimedAt === undefined;
+    });
+    assert.equal(admissionCalls, 1, 'the failed admission must actually have been attempted');
+    const task = deps.dynamicTaskStore.getById(taskId);
+    assert.equal(task.enabled, true);
+    assert.equal(task.params.holdLifecycle.managedCommand.state, 'condition_met');
+    assert.equal(task.params.holdLifecycle.managedCommand.result.exitCode, 0);
+    assert.equal(deps._unregisteredIds.includes(taskId), false);
 
     // An admission that throws committed neither half, so no wake receipt may survive it — the
     // fallback reminder below is what keeps the wake recoverable, not a stranded message.
@@ -2066,7 +2051,7 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     );
   });
 
-  test('T14: dispatched trigger retires fallback only after its durable carrier succeeds', async () => {
+  test('T14: dispatched trigger retires fallback only after its durable carrier succeeds', async (t) => {
     const deps = makeStubDeps({
       invocationRecordStore: {
         getByIdempotencyKey(_threadId, _userId, key) {
@@ -2075,6 +2060,7 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
       },
     });
     const app = await createApp(deps);
+    t.after(() => app.close());
     const thread = await threadStore.create('user-hb-t14', 'hb-t14');
     const { invocationId, callbackToken } = await registry.create('user-hb-t14', 'codex', thread.id);
 
@@ -2091,7 +2077,8 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     assert.equal(response.statusCode, 200);
     const { taskId } = JSON.parse(response.body);
 
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    // Admission only proves the detached worker spawned; terminal persistence and wake handling follow it.
+    await waitForWakeHandling(deps, taskId, () => deps._unregisteredIds.includes(taskId));
 
     const tombstone = deps._insertedTasks.find((task) => task.id === taskId);
     assert.equal(deps._removedIds.includes(taskId), false, 'completion receipt must remain queryable by taskId');

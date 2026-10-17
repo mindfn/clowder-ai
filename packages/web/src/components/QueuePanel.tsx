@@ -369,10 +369,10 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
           <button
             type="button"
             onClick={handleClear}
-            title="全部停止后续处理（保留原消息）"
+            title="停止正在运行的回复，并清空排队；保留原消息"
             className="text-xs text-cafe-muted hover:text-conn-red-text transition-colors"
           >
-            全部停止
+            停止回复并清空排队
           </button>
         </div>
       </div>

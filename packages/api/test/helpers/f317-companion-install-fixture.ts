@@ -33,7 +33,8 @@ export async function modernCompanionInstallFixture(
     | '0.1.0-alpha.15'
     | '0.1.0-alpha.19'
     | '0.1.0-alpha.20'
-    | '0.1.0-alpha.24',
+    | '0.1.0-alpha.24'
+    | '0.1.0-alpha.25',
   alterArchive?: (bytes: Buffer) => Buffer,
   observePresentation?: (
     receipt: LivePresentationObservation,
@@ -41,29 +42,33 @@ export async function modernCompanionInstallFixture(
   ) => Promise<LivePresentationReply>,
 ) {
   const contract =
-    version === '0.1.0-alpha.24'
-      ? '0.1.0-beta.27'
-      : version === '0.1.0-alpha.15' || version === '0.1.0-alpha.19' || version === '0.1.0-alpha.20'
-        ? '0.1.0-beta.24'
-        : version === '0.1.0-alpha.14'
-          ? '0.1.0-beta.23'
-          : '0.1.0-beta.21';
+    version === '0.1.0-alpha.25'
+      ? '0.1.0-beta.28'
+      : version === '0.1.0-alpha.24'
+        ? '0.1.0-beta.27'
+        : version === '0.1.0-alpha.15' || version === '0.1.0-alpha.19' || version === '0.1.0-alpha.20'
+          ? '0.1.0-beta.24'
+          : version === '0.1.0-alpha.14'
+            ? '0.1.0-beta.23'
+            : '0.1.0-beta.21';
   const f = await staticEditorFixture(
     { ...desktopWindowManifest(windowHtml, '1.3.0'), pluginId: 'official.companion', version },
     windowHtml,
   );
   const actualArchive =
-    version === '0.1.0-alpha.24'
-      ? process.env.F317_VERIFIED_PRESENTATION_ARCHIVE
-      : version === '0.1.0-alpha.20'
-        ? process.env.F317_VERIFIED_LIVE_TAIL_ARCHIVE
-        : version === '0.1.0-alpha.19'
-          ? process.env.F317_VERIFIED_SUBTITLE_RETURN_ARCHIVE
-          : version === '0.1.0-alpha.15'
-            ? process.env.F317_VERIFIED_UNIFIED_ARCHIVE
-            : version === '0.1.0-alpha.14'
-              ? process.env.F317_VERIFIED_MODERN_ARCHIVE
-              : undefined;
+    version === '0.1.0-alpha.25'
+      ? process.env.F317_VERIFIED_LETTER_ARCHIVE
+      : version === '0.1.0-alpha.24'
+        ? process.env.F317_VERIFIED_PRESENTATION_ARCHIVE
+        : version === '0.1.0-alpha.20'
+          ? process.env.F317_VERIFIED_LIVE_TAIL_ARCHIVE
+          : version === '0.1.0-alpha.19'
+            ? process.env.F317_VERIFIED_SUBTITLE_RETURN_ARCHIVE
+            : version === '0.1.0-alpha.15'
+              ? process.env.F317_VERIFIED_UNIFIED_ARCHIVE
+              : version === '0.1.0-alpha.14'
+                ? process.env.F317_VERIFIED_MODERN_ARCHIVE
+                : undefined;
   const originalBytes = actualArchive ? await readFile(actualArchive) : f.bytes;
   const bytes = alterArchive ? alterArchive(originalBytes) : originalBytes;
   const entry = actualArchive
@@ -134,6 +139,8 @@ export async function modernCompanionInstallFixture(
         ...context,
         app,
         ownerUserId: owner,
+        messages,
+        verifyConversationThread: async (threadId) => threadId === 'home',
         origin: 'http://localhost:5102',
         openConversation: async () => true,
         ...(observePresentation ? { observePresentation } : {}),

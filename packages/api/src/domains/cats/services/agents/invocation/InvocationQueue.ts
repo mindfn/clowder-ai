@@ -37,12 +37,15 @@ import {
   actionSuccessorFencesMatch,
 } from '../../../../ball-custody/ActionSuccessorAdmissionContract.js';
 import type { CloudDispatchProvenance } from '../../cloud-bridge/types.js';
+import type { LifecycleAppendRecoveryInput } from '../../stores/lifecycle-append-recovery.js';
 import {
   type AppendMessageInput,
   assertQueueMessageReplay,
   type IMessageStore,
+  LifecycleResponseInputsChangedError,
   type LifecycleResponseTerminalPatch,
   messageIdempotencyScope,
+  reusesProseRouting,
   type StoredMessage,
 } from '../../stores/ports/MessageStore.js';
 import type { ToolExecutionPolicy } from '../../types.js';
@@ -58,6 +61,7 @@ import {
 } from './queue-ledger/QueueLedger.js';
 import { createQueueLedgerAdmission } from './queue-ledger/QueueLedgerAdmission.js';
 import { assertQueueLedgerExecutionScope } from './queue-ledger/QueueLedgerValidation.js';
+import { isOwnerRecoverableRoutingTarget } from './queue-routing-recovery-policy.js';
 
 export type QueueEntry = QueueLedgerEntry;
 
@@ -76,6 +80,8 @@ type LifecycleTargetRetirementResult =
 
 export interface QueueEnqueueInput {
   pluginPublicInvocation?: PluginPublicInvocationCarrierV1;
+  /** Server-owned deliberate repeat keeps the originally selected recipient. */
+  exactTargets?: boolean;
   /** Consumer observers register after commit and before the shared drain notification. Not persisted. */
   onQueueEntriesAdmitted?: (entries: readonly QueueEntry[], message?: StoredMessage) => void | Promise<void>;
   threadId: string;
@@ -224,9 +230,13 @@ export function isSystemPinnedQueueEntry(entry: Pick<QueueEntry, 'from' | 'sourc
  * attempt is terminal-failed. The entry itself may still carry eligible siblings
  * or remain visible to lifecycle/recovery code.
  */
-export function isOrdinaryQueueTargetEligible(entry: Pick<QueueEntry, 'status' | 'targets'>, catId: string): boolean {
+export function isOrdinaryQueueTargetEligible(
+  entry: Pick<QueueEntry, 'status' | 'targets' | 'delivery'>,
+  catId: string,
+): boolean {
   return (
     (entry.status === 'queued' || entry.status === 'claimed') &&
+    !entry.delivery.routingHeldTargetIds?.includes(catId) &&
     (entry.targets.length === 0 || entry.targets.includes(catId))
   );
 }
@@ -513,7 +523,16 @@ export class InvocationQueue {
       const terminal = await this.ledgerStore.commit(row.threadId, row.id, row.claimId, 'withdrawn', Date.now());
       return terminal.outcome === 'updated' ? [terminal.entry] : [];
     }
-    const dispatchedTargets = new Set(source?.lifecycle?.dispatchRefs?.map((ref) => ref.targetId) ?? []);
+    const dispatchedTargets = new Set(
+      source?.lifecycle?.dispatchRefs
+        ?.filter(
+          (ref) =>
+            !row.delivery.appendPendingByTarget?.[ref.targetId] ||
+            ref.appendAcceptance === 'accepted' ||
+            ref.inputRead?.status === 'read',
+        )
+        .map((ref) => ref.targetId) ?? [],
+    );
     const claimedTargets = row.claimedTargetIds ?? [];
     if (claimedTargets.length > 0 && claimedTargets.every((targetId) => dispatchedTargets.has(targetId))) {
       // A response lifecycle is the durable receiver. A crash after that
@@ -717,7 +736,8 @@ export class InvocationQueue {
       throw new Error('Whisper Queue targets must be authorized recipients');
     }
     const exactTargets = Boolean(
-      message.visibility === 'whisper' ||
+      input.exactTargets ||
+        message.visibility === 'whisper' ||
         input.executionScope ||
         input.actionSuccessorFence ||
         input.waitContinuationCarrier ||
@@ -729,6 +749,9 @@ export class InvocationQueue {
         input.kind === 'message_wake',
     );
     const reuseResolvedTargets = !exactTargets;
+    if (exactTargets && message.extra?.routingTargetSource === 'prose') {
+      throw new Error('Exact Queue admission cannot use prose routing provenance');
+    }
     const requestedTargetCats = [...input.targetCats];
     const committed = message.idempotencyKey
       ? await messageStore.getByIdempotencyKey(input.userId, messageIdempotencyScope(message), message.idempotencyKey)
@@ -752,16 +775,21 @@ export class InvocationQueue {
     const enqueuedAt = this.nextEnqueuedAt();
     const result = await messageStore.appendWithQueueLedgerAdmission(
       message,
-      (messageId, replayEntries) =>
-        this.createLedgerRows(
-          input,
+      (messageId, replayEntries, replaySource) => {
+        // The store supplies the actual winner, including commits after our preflight.
+        // Only an unchanged prose request may reuse its derived expansion and intent.
+        const reuseProse = replaySource && reusesProseRouting(replaySource, message);
+        const replay = reuseProse ? replayEntries?.find((entry) => entry.id === queueEntryId(messageId)) : undefined;
+        return this.createLedgerRows(
+          replay ? { ...input, intent: replay.execution.intent } : input,
           messageId,
           enqueuedAt,
           messageId,
           replayEntries,
           reuseResolvedTargets,
-          requestedTargetCats,
-        ),
+          reuseProse ? (replay?.payload.requestedTargetCats ?? replaySource.mentions) : requestedTargetCats,
+        );
+      },
       this.ledgerStore,
       input.from.kind === 'user' ? MAX_QUEUE_DEPTH : undefined,
     );
@@ -820,6 +848,8 @@ export class InvocationQueue {
       input.from.kind === 'user' ? MAX_QUEUE_DEPTH : undefined,
     );
     if (result.kind === 'full') return { outcome: 'full' };
+    if (result.kind === 'conflict' && result.reason === 'inputs_changed')
+      throw new LifecycleResponseInputsChangedError();
     if (result.kind !== 'applied' && result.kind !== 'replayed') {
       throw new Error(
         `lifecycle response terminal Queue admission conflict: ${result.kind}:${'reason' in result ? result.reason : 'missing'}`,
@@ -1075,6 +1105,7 @@ export class InvocationQueue {
     entryId: string,
     targetCatId: string,
     claimedAt = Date.now(),
+    allowRoutingHeldTarget = false,
   ): Promise<DurableSteerClaimResult> {
     const entry = this.findEntry(threadId, userId, entryId);
     if (!entry) return { outcome: 'rejected', reason: 'entry_not_found' };
@@ -1083,7 +1114,10 @@ export class InvocationQueue {
     if (
       isSystemPinnedQueueEntry(entry) ||
       entry.execution.liveSessionId ||
-      (!assignsTargetlessConversation && !isOrdinaryQueueTargetEligible(entry, targetCatId))
+      (!assignsTargetlessConversation &&
+        !(allowRoutingHeldTarget
+          ? entry.targets.includes(targetCatId)
+          : isOrdinaryQueueTargetEligible(entry, targetCatId)))
     ) {
       return { outcome: 'rejected', reason: 'entry_ineligible' };
     }
@@ -1163,6 +1197,28 @@ export class InvocationQueue {
     return result?.changed ?? false;
   }
 
+  /** Preserve a refused pending target under the same durable claim, never a second ledger. */
+  async holdClaimedRoutingTarget(
+    threadId: string,
+    entryIds: readonly string[],
+    targetCatId: string,
+    messageStore: Pick<IMessageStore, 'getById'>,
+  ): Promise<void> {
+    for (const entryId of entryIds) {
+      const claimId = this.ledgerClaimIds.get(entryId);
+      const entry = await this.ledgerStore.get(threadId, entryId);
+      if (!entry || !entry.targets.includes(targetCatId)) continue;
+      const source = entry.payload.messageId ? await messageStore.getById(entry.payload.messageId) : null;
+      if (!isOwnerRecoverableRoutingTarget(entry, source, targetCatId)) continue;
+      if (!claimId || entry.claimId !== claimId || !entry.claimedTargetIds?.includes(targetCatId))
+        throw new Error('routing refusal lost its exact Queue claim');
+      entry.delivery.routingHeldTargetIds = [...new Set([...(entry.delivery.routingHeldTargetIds ?? []), targetCatId])];
+      const result = await this.ledgerStore.commit(threadId, entryId, claimId, 'claimed', Date.now(), entry);
+      if (result.outcome !== 'updated') throw new Error('routing refusal could not persist its Queue hold');
+      this.cacheLedgerEntries([result.entry]);
+    }
+  }
+
   async restoreClaimedEntries(threadId: string, entryIds: readonly string[]): Promise<boolean> {
     let restoredAll = true;
     for (const entryId of entryIds) {
@@ -1183,6 +1239,67 @@ export class InvocationQueue {
       this.cacheLedgerEntries([restored.entry]);
     }
     return restoredAll;
+  }
+
+  /** Persist first-handoff custody before any native call; release its short claim only after History admission. */
+  async prepareLifecycleAppendHandoff(
+    entry: QueueEntry,
+    pending: NonNullable<QueueEntry['delivery']['appendPendingByTarget']>,
+    releaseClaim = false,
+  ): Promise<void> {
+    const current = await this.ledgerStore.get(entry.threadId, entry.id);
+    const claimId = this.ledgerClaimIds.get(entry.id);
+    if (!current || current.status !== 'claimed' || !claimId || current.claimId !== claimId)
+      throw new Error('Append preparation lost its original Queue claim');
+    const replacement = structuredClone(current);
+    replacement.delivery.appendPendingByTarget = { ...replacement.delivery.appendPendingByTarget, ...pending };
+    replacement.delivery.routingHeldTargetIds = [
+      ...new Set([...(replacement.delivery.routingHeldTargetIds ?? []), ...Object.keys(pending)]),
+    ];
+    const result = await this.ledgerStore.commit(entry.threadId, entry.id, claimId, 'claimed', Date.now(), replacement);
+    if (result.outcome !== 'updated') throw new Error('Append preparation did not commit');
+    this.cacheLedgerEntries([result.entry]);
+    if (releaseClaim && !(await this.restoreClaimedEntries(entry.threadId, [entry.id])))
+      throw new Error('Append handoff claim release did not commit');
+  }
+
+  async recoverLifecycleAppend(messageStore: IMessageStore, input: LifecycleAppendRecoveryInput) {
+    // A lost store reply cannot justify dropping the original Queue owner. Replay
+    // this one atomic transaction, never the provider call or source admission.
+    const commit = () => messageStore.commitLifecycleAppendRecovery(input, this.ledgerStore);
+    let result;
+    try {
+      result = await commit();
+    } catch {
+      result = await commit();
+    }
+    if (result.kind === 'applied' || result.kind === 'replayed') {
+      if (result.entry.status !== 'claimed') this.ledgerClaimIds.delete(result.entry.id);
+      this.forgetAdmittedEntries(result.entry.threadId, result.entry.id);
+      this.cacheLedgerEntries([result.entry]);
+    }
+    return result;
+  }
+
+  async retireReadAppendRecovery(
+    threadId: string,
+    messageId: string,
+    targetId: string,
+    responseMessageId: string,
+  ): Promise<boolean> {
+    const entryId = queueEntryId(messageId);
+    const entry = await this.ledgerStore.get(threadId, entryId);
+    if (
+      !entry ||
+      (entry.delivery.appendRecoveryByTarget?.[targetId]?.responseMessageId !== responseMessageId &&
+        entry.delivery.appendPendingByTarget?.[targetId]?.responseMessageId !== responseMessageId)
+    )
+      return false;
+    const result = await this.ledgerStore.reconcileTargets(threadId, entryId, [], [targetId], {});
+    if (result.outcome !== 'updated' && result.outcome !== 'replayed') return false;
+    this.removeCachedEntry(threadId, entryId);
+    if (result.entry) this.cacheLedgerEntries([result.entry]);
+    return true;
   }
 
   /** Claim one queued row before an external withdrawal side effect. */
@@ -1354,7 +1471,9 @@ export class InvocationQueue {
       !entry ||
       entry.status !== 'queued' ||
       !entry.targets.includes(targetCatId) ||
+      !isOrdinaryQueueTargetEligible(entry, targetCatId) ||
       !isOrdinaryBodyReadEntry(entry) ||
+      entry.delivery.appendRecoveryByTarget?.[targetCatId] ||
       entry.payload.messageId !== messageId
     ) {
       return null;
@@ -1388,10 +1507,43 @@ export class InvocationQueue {
     return { entry: admitted.entry, newlySeen: true };
   }
 
-  async claimPreAdmissionFailureAcrossUsersDurable(threadId: string, entryId: string): Promise<QueueEntry | null> {
-    const best = this.peekOldestAcrossUsers(threadId);
-    if (!best || best.id !== entryId) return null;
-    return this.claimLedgerEntry(best);
+  async claimPreAdmissionFailureAcrossUsersDurable(
+    threadId: string,
+    entryId: string,
+    expectedTargets: readonly string[],
+  ): Promise<QueueEntry | null> {
+    const queued = this.listQueuedAcrossUsers(threadId);
+    const index = queued.findIndex((entry) => entry.id === entryId);
+    const selected = queued[index];
+    // Failure belongs to the resolved pending recipients, never a replacement
+    // added by Steer or a target whose owner has since placed it on hold.
+    const matchesResolvedRecipients = (entry: QueueEntry) =>
+      entry.targets.length === expectedTargets.length &&
+      entry.targets.every((target, position) => target === expectedTargets[position]) &&
+      !entry.delivery.routingHeldTargetIds?.some((target) => entry.targets.includes(target));
+    if (!selected || !matchesResolvedRecipients(selected)) return null;
+    // Recheck the current order after asynchronous target resolution. Disjoint
+    // work may settle, but a targetless or overlapping predecessor is a barrier.
+    if (
+      queued
+        .slice(0, index)
+        .some(
+          (entry) =>
+            entry.targets.length === 0 ||
+            selected.targets.length === 0 ||
+            entry.targets.some((target) => selected.targets.includes(target)),
+        )
+    )
+      return null;
+    const claimed = await this.claimLedgerEntry(selected);
+    if (!claimed) return null;
+    // Claim freezes the durable row. Compare that authoritative snapshot before
+    // publishing any failure; a racing edit remains queued for fresh resolution.
+    if (!matchesResolvedRecipients(claimed)) {
+      await this.rollbackProcessingDurable(threadId, entryId);
+      return null;
+    }
+    return claimed;
   }
 
   /** Durable counterpart of markProcessingAcrossUsers. */
@@ -1922,6 +2074,7 @@ export class InvocationQueue {
     catId: string,
     parentInvocationId: string | undefined,
   ): boolean {
+    if (entry.delivery.appendRecoveryByTarget?.[catId]) return false;
     // All ordinary sources follow the same saved policy and exact-parent fence.
     const authorIntent = entry.delivery.authorIntentByTarget?.[catId];
     return Boolean(

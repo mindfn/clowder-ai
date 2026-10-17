@@ -107,9 +107,11 @@ export interface AgyStreamJsonTurn {
   readonly upstreamStatus: string | null;
   readonly upstreamError: string | null;
   readonly sessionTurnCount: number;
-  /** Current input has a matching completed final response and no carrier-error step. */
+  /** Current input has a matching completed final response after any recovered errors. */
   readonly completedResponseStep: number | null;
   readonly completedCompactionStep: number | null;
+  /** Completed error-message steps strictly between this input and its proven completion. */
+  readonly recoveredErrorSteps: readonly number[];
   readonly outcome: AgyTurnOutcome;
   readonly diagnosis: string;
   readonly unknownEvents: readonly string[];
@@ -416,18 +418,21 @@ export function summarizeAgyStreamJsonTurn(lines: Iterable<string>): AgyStreamJs
   const latestUsage = usageSteps.at(-1)?.[1];
   const steps = [...state.steps.entries()];
   const inputs = steps.filter(([, step]) => step.type === 'user_input' && step.state === 'DONE');
+  const inputIndex = inputs.length === 1 ? inputs[0]?.[0] : undefined;
   const finalStep = lastStepIndex === null ? undefined : state.steps.get(lastStepIndex);
-  // Fixed CLI 1.3.5 can carry a previous turn's error in result after a clean
-  // resumed turn. Require positive current-turn evidence; text alone is not it.
+  // CLI result can retain a prior-turn error or an earlier failed attempt in
+  // this turn. A completed error message is superseded only by a later proven
+  // final response/checkpoint; a terminal or unfinished error still blocks it.
   const completedCurrentStep =
-    inputs.length === 1 &&
+    inputIndex !== undefined &&
     lastStepIndex !== null &&
-    lastStepIndex > inputs[0]![0] &&
+    lastStepIndex > inputIndex &&
     finalStep?.state === 'DONE' &&
-    steps.every(
-      ([, step]) =>
-        ['user_input', 'system_message', 'agent_response', 'tool', 'checkpoint'].includes(step.type) &&
-        (step.type === 'tool' || step.state !== 'ERROR'),
+    steps.every(([index, step]) =>
+      step.type === 'error_message'
+        ? step.state === 'DONE' && index > inputIndex && index < lastStepIndex
+        : ['user_input', 'system_message', 'agent_response', 'tool', 'checkpoint'].includes(step.type) &&
+          (step.type === 'tool' || step.state !== 'ERROR'),
     );
   const completedResponseStep =
     completedCurrentStep &&
@@ -437,6 +442,10 @@ export function summarizeAgyStreamJsonTurn(lines: Iterable<string>): AgyStreamJs
       ? lastStepIndex
       : null;
   const completedCompactionStep = completedCurrentStep && finalStep?.type === 'checkpoint' ? lastStepIndex : null;
+  const recoveredErrorSteps =
+    completedResponseStep !== null || completedCompactionStep !== null
+      ? steps.filter(([, step]) => step.type === 'error_message').map(([index]) => index)
+      : [];
 
   return {
     conversationId,
@@ -453,6 +462,7 @@ export function summarizeAgyStreamJsonTurn(lines: Iterable<string>): AgyStreamJs
     sessionTurnCount: result?.numTurns ?? 0,
     completedResponseStep,
     completedCompactionStep,
+    recoveredErrorSteps,
     outcome,
     diagnosis: describeOutcome(outcome, deniedActions, orderedToolCalls, result?.error ?? null, anomalies),
     unknownEvents,
