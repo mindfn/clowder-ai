@@ -315,3 +315,95 @@ test('rejects an oversized machine catalog before buffering it', async () => {
     /size limit/,
   );
 });
+
+function releaseCatalog(version, seed) {
+  const raw = rawCatalog();
+  const release = raw.plugins[0].versions[0];
+  release.version = version;
+  release.artifact.version = version;
+  release.artifact.tarballUrl = `https://registry.npmjs.org/@clowder-ai/video-analysis/-/video-analysis-${version}.tgz`;
+  release.artifact.integrity = `sha512-${Buffer.alloc(64, seed).toString('base64')}`;
+  return raw;
+}
+
+for (const [name, mutate, code] of [
+  ['rollback', () => releaseCatalog('1.0.0', 1), 'CATALOG_ROLLBACK_REJECTED'],
+  [
+    'same-version digest change',
+    (raw) => {
+      raw.plugins[0].versions[0].artifact.integrity = digest;
+      return raw;
+    },
+    'CATALOG_EQUIVOCATION_REJECTED',
+  ],
+  [
+    'same-version archive change',
+    (raw) => {
+      raw.plugins[0].versions[0].artifact.tarballUrl += '?changed';
+      return raw;
+    },
+    'CATALOG_EQUIVOCATION_REJECTED',
+  ],
+  [
+    'same-version presentation change',
+    (raw) => {
+      raw.plugins[0].name = 'Different publisher claim';
+      return raw;
+    },
+    'CATALOG_EQUIVOCATION_REJECTED',
+  ],
+  [
+    'same-version package identity change',
+    (raw) => {
+      raw.plugins[0].versions[0].artifact.packageName = '@other/package';
+      return raw;
+    },
+    'CATALOG_EQUIVOCATION_REJECTED',
+  ],
+  ['new-version digest reuse', () => releaseCatalog('3.0.0', 2), 'CATALOG_EQUIVOCATION_REJECTED'],
+]) {
+  test(`machine release continuity rejects ${name} and preserves the trusted snapshot`, async () => {
+    let raw = releaseCatalog('2.0.0', 2);
+    let now = 1;
+    const provider = new MachineOfficialPluginCatalog({
+      loadCatalog: async () => raw,
+      validateCatalog: canonicalValidator,
+      hostPolicies: [],
+      refreshTtlMs: 1,
+      now: () => now,
+    });
+    const first = await provider.snapshot();
+    raw = mutate(structuredClone(raw));
+    now++;
+    const rejected = await provider.snapshot();
+    assert.equal(rejected.status, 'degraded');
+    assert.equal(rejected.errorCode, code);
+    assert.deepEqual(rejected.entries, first.entries);
+    raw = releaseCatalog('3.0.0', 3);
+    now++;
+    const recovered = await provider.snapshot();
+    assert.equal(recovered.status, 'fresh');
+    assert.equal(recovered.entries[0].version, '3.0.0');
+  });
+}
+
+test('continuity retains historical digest bindings across upgrades and temporary catalog omission', async () => {
+  let raw = releaseCatalog('1.0.0', 1);
+  const provider = new MachineOfficialPluginCatalog({
+    loadCatalog: async () => raw,
+    validateCatalog: canonicalValidator,
+    hostPolicies: [],
+    refreshTtlMs: 0,
+  });
+  await provider.snapshot();
+  raw = releaseCatalog('2.0.0', 2);
+  const trusted = await provider.snapshot();
+  raw = releaseCatalog('3.0.0', 1);
+  const reused = await provider.snapshot();
+  assert.equal(reused.errorCode, 'CATALOG_EQUIVOCATION_REJECTED');
+  assert.deepEqual(reused.entries, trusted.entries);
+  raw = { schemaVersion: '1', plugins: [] };
+  assert.equal((await provider.snapshot()).status, 'fresh');
+  raw = releaseCatalog('1.0.0', 1);
+  assert.equal((await provider.snapshot()).errorCode, 'CATALOG_ROLLBACK_REJECTED');
+});

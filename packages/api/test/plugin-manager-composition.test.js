@@ -703,6 +703,52 @@ export default { create() { return { async start() {
     });
   }
 
+  for (const nextVersion of ['1.0.0', '2.0.0']) {
+    it(`fresh catalog after Host restart cannot replace installed v2 with ${nextVersion} different bytes`, async () => {
+      const { composition, entry, runtime, projectRoot } = await harness({
+        packageManifest: manifest({ version: '2.0.0' }),
+      });
+      await composition.manager.install({
+        source: { kind: 'catalog', catalogId: entry.catalogId },
+        expectedVersion: entry.version,
+        expectedDigest: entry.packageDigest,
+      });
+      const before = await runtime.inventoryStore.snapshot();
+      await runtime.shutdown('restart_continuity_test');
+      const restarted = createDormantPluginRuntimeComposition({ projectRoot, messageStore: new MessageStore() });
+      const nextManifest = manifest({ version: nextVersion });
+      const nextArchive = await packageArchive({
+        packageManifest: nextManifest,
+        extraFiles: { 'dist/entrypoint.js': '// different release bytes' },
+      });
+      const nextEntry = catalogEntry(nextArchive.integrity, { version: nextVersion });
+      let fetched = 0;
+      const next = createPluginManagerRuntimeComposition({
+        runtime: restarted,
+        catalogProvider: { snapshot: async () => ({ entries: [nextEntry], status: 'fresh', checkedAt: 1 }) },
+        catalogManifests: [nextManifest],
+        fetchOfficialArchive: async () => {
+          fetched++;
+          return nextArchive.bytes;
+        },
+      });
+      try {
+        await assert.rejects(
+          next.manager.install({
+            source: { kind: 'catalog', catalogId: nextEntry.catalogId },
+            expectedVersion: nextEntry.version,
+            expectedDigest: nextEntry.packageDigest,
+          }),
+          (error) => error.code === 'UPDATE_NOT_NEWER',
+        );
+        assert.equal(fetched, 0, 'reject before package preparation or runtime suspension');
+        assert.deepEqual(await restarted.inventoryStore.snapshot(), before);
+      } finally {
+        await restarted.shutdown('restart_continuity_test_done');
+      }
+    });
+  }
+
   it('keeps an installed catalog plugin manageable while discovery is offline and fences uninstall', async () => {
     let offline = false;
     const { composition, entry, runtime } = await harness({ offline: () => offline });

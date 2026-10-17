@@ -136,6 +136,9 @@ export class OfficialPluginPackageInstaller {
       return this.withVerifiedPackage(entry, async () => existing);
     }
 
+    // The Manager's replacement callback shares rollback with local admission, but
+    // official releases still obey inventory-backed continuity after Host restart.
+    if (admitVerified) await this.assertNewerReplacement(entry);
     try {
       return await this.withVerifiedPackage(entry, async (candidate) => {
         if (admitVerified) return admitVerified(candidate);
@@ -447,6 +450,24 @@ export class OfficialPluginPackageInstaller {
       signalSchemas: {},
       provenance: { kind: 'catalog', catalogId: entry.catalogId, packageName: entry.packageName },
     });
+  }
+
+  private async assertNewerReplacement(entry: OfficialPluginCatalogEntry): Promise<void> {
+    const snapshot = await this.options.inventory.store.snapshot();
+    const known = snapshot.packages.find((record) => record.packageDigest === entry.packageDigest);
+    if (known) assertInstalledPackageVersion(entry, known.version);
+    const instance = snapshot.instances.find(
+      (candidate) => candidate.pluginId === entry.pluginId && candidate.lifecycleState === 'installed',
+    );
+    if (!instance) return;
+    const installed = snapshot.packages.find((record) => record.packageDigest === instance.packageDigest);
+    const comparison = installed ? compareOfficialPluginVersions(entry.version, installed.version) : undefined;
+    if (comparison === undefined || comparison <= 0) {
+      throw new OfficialPluginInstallError(
+        'UPDATE_NOT_NEWER',
+        'official catalog release is not newer than the installed package',
+      );
+    }
   }
 
   private async existingExactInstall(entry: OfficialPluginCatalogEntry) {
