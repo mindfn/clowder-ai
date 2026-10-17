@@ -64,6 +64,15 @@ description_confirmed_by: codex-astra
 > [clowder-ai#1478](https://github.com/zts212653/clowder-ai/issues/1478); formal review and
 > published-package integration verified; Train B home intake merged, runtime activation separate) | **Owner**: community @mindfn + Clowder AI maintainers | **Priority**: P1
 
+> **Train C1 delivery status (2026-10-17)**: implementation and basic validation are complete in
+> draft Host PR [#1487](https://github.com/zts212653/clowder-ai/pull/1487) and paired Plugins PR
+> [clowder-ai-plugins#54](https://github.com/zts212653/clowder-ai-plugins/pull/54). The next gate is
+> the operator's final worktree experience pass, followed by the agreed integration/soak and maintainer
+> review. Dot remains Host-bundled by explicit scope decision, and Tripo is not part of C1; neither is an
+> unfinished W2 implementation item. Package source updates do not update an already-installed immutable
+> package copy: experience delivery must explicitly replace the installed package before claiming that its
+> README or runtime changed.
+
 ## Architecture Ownership
 
 Architecture cell: plugin
@@ -501,7 +510,8 @@ The external-package K-2 path currently covers:
 | 2026-09-23 | P1 frozen and landed as contract 0.1.0-beta.20 / SDK 0.2.0-beta.3: `media_ref` + Host media ledger (`hmr_*`, entitlement grant / revoke / audit, `media.read`), `rich_block` minimal set, `pendingPublication` receipt, lifecycle event rows, permission matrix (21). Host half: P1-H-a (vendor + P gate), P1-H-b1 / b2 (M gate). |
 | 2026-09-24 | P1.1 frozen and landed as contract beta.21 / SDK beta.4: four lifecycle events carry a required `threadId` (shared `ThreadId`). Host consumed it in W2-5c (invocation lifecycle delivery `host.messaging.lifecycle` via the declared `lifecycleAction.method`, ordered on the per-thread delivery tail; `lifecycleId` / `presentation` gated by the subscription declaration). |
 | 2026-09-24 | P1.3 frozen and landed as contract beta.22 / SDK beta.5: subscription `presentation: 'v1' | 'v2'`; started event gains `placeholderLine?` and `replyTo?` (shared `MessageId`, Host message ids only). Host consumption pending (W2-5c-p2). |
-| 2026-09-24 | W2 Host pieces closed: W2-1 real E2E (wecom-agent / feishu), W2-2a / 2c, W2-3a, W2-5a + W2-5p-H, W2-5e1a / 1b / 2 / 3 (inbound media: staging → real import → post-processing → owner-authenticated `GET /api/media/hmr/:hmrId`), W2-5c (+ patches v2 / v3), W2-5f (delivery presentation + `replyTo` projection without changing Hub `replyTo`). Remaining W2 Host pieces: W2-5b (outbound media + TTS), W2-5c-p2 (beta.22), cross-repo gate with real artifacts, W2-2b real-page acceptance, W2-3b, ChatGPT Pro, W2-4 (delete connector framework + IM pages). W3 (github cluster), W4 (collective backend, GenOffice docx) and Feishu meeting sync not started. |
+| 2026-09-24 | Historical W2 checkpoint (superseded by the 2026-10-17 row): W2-1 real E2E, W2-2a / 2c, W2-3a, W2-5a + W2-5p-H, W2-5e1a / 1b / 2 / 3, W2-5c (+ patches v2 / v3) and W2-5f were closed; later slices were still pending at this date. |
+| 2026-10-17 | Train C1 implementation and basic validation closed across Host `fa4eaed4` and Plugins `1814ef0`: W2-5b outbound media/TTS, W2-5c-p2, real-artifact gates, connector parity and deletion of the old connector framework are complete; GitHub Operations, Collective/GenOffice and Feishu meeting intake are package-owned. The current default README is Chinese with a parallel `README.en.md`; internal wiring is no longer presented as a user capability. Dot intentionally remains Host-bundled, Tripo remains excluded, and C2 owns plugin UI embedding plus removal of the temporary per-route Community forwarding declarations. Final operator experience, installed-copy replacement where needed, soak and maintainer review remain delivery gates rather than unfinished W2 development. |
 
 ## Agent Tool Admission
 
@@ -533,6 +543,12 @@ Phase 1 is accepted and absorbed as the trusted, repository-local plugin framewo
 Phase 2 is accepted as the correct home for schedule resources and the existing GitHub integration migration. The clowder-ai#844/#846 direction is welcome only after the conflicting standalone anchor is removed and replaced with `F202 Phase 2` in title, body, feature docs, roadmap text, and commits that would enter source truth.
 
 Concrete product plugins such as Weixin MP (F204) and MediaHub providers (F205) keep their own feature anchors because they add new user-visible capabilities on top of F202. GitHub schedule migration is different: it moves an existing core integration into the F202 lifecycle boundary and therefore belongs under this feature.
+
+For Train C1, the implementation boundary is now closed at the two draft PRs named above. Do not reopen
+completed W2 slices merely because an old task or timeline snapshot still says `todo`/`doing`; refresh that
+projection instead. Conversely, do not turn CI or source synchronization into an acceptance claim: the
+operator still needs to exercise the current Host worktree with the current installed package copies before
+the maintainer merge request.
 
 K-2A through K-2D remain the accepted Host-owned external-package foundation. Their historical
 no-activation-route restriction describes that foundation slice, not the current Train B implementation.
