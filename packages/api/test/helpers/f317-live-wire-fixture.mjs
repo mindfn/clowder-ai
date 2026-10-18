@@ -1,4 +1,4 @@
-export function wireFixture({ holdFirstTurn = false } = {}) {
+export function wireFixture({ holdFirstTurn = false, observeInputRead = false } = {}) {
   const queue = [];
   let waiting;
   let closed = false;
@@ -41,6 +41,15 @@ export function wireFixture({ holdFirstTurn = false } = {}) {
         if (message.method === 'turn/start') {
           const id = ++starts === 1 ? 'first' : `turn-${starts}`;
           push({ id: message.id, result: { turn: { id } } });
+          if (observeInputRead && message.params.clientUserMessageId)
+            push({
+              method: 'item/completed',
+              params: {
+                threadId: 'native',
+                turnId: id,
+                item: { type: 'userMessage', clientId: message.params.clientUserMessageId },
+              },
+            });
           if (!holdFirstTurn || starts !== 1) push(completed(id));
         }
         if (message.method === 'turn/steer')

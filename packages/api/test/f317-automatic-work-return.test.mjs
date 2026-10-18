@@ -123,6 +123,16 @@ test('normal callback dispatch automatically starts the partner and returns both
   assert.ok(second.messages.some((message) => message.id === returned.messageId && message.content.includes('第2版')));
   await eventually(() => !h.tracker.has(f.thread.id, 'codex-sol'), 'second partner execution must finish');
   assert.deepEqual(h.errors, []);
+  await eventually(() => h.nativeCompletions.length === 3, 'both actual Queue returns must complete new native roots');
+  assert.deepEqual(h.nativeCompletions, ['first', 'turn-2', 'turn-3']);
+  assert.deepEqual(
+    h.nativeWrites
+      .filter((row) => row.method === 'turn/start')
+      .slice(1)
+      .map((row) => row.params.input[0].text),
+    h.appends.map((input) => input.text),
+    'the real provider adapter receives each exact Queue body after the previous native turn ended',
+  );
   const reentered = await new LiveRecoveryReader({
     tasks: f.tasks,
     messages: f.messages,

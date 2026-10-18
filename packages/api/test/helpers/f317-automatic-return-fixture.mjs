@@ -10,6 +10,7 @@ import { InvocationQueue } from '../../src/domains/cats/services/agents/invocati
 import { InvocationRegistry } from '../../src/domains/cats/services/agents/invocation/InvocationRegistry.ts';
 import { InvocationTracker } from '../../src/domains/cats/services/agents/invocation/InvocationTracker.ts';
 import { QueueProcessor } from '../../src/domains/cats/services/agents/invocation/QueueProcessor.ts';
+import { CodexAppServerClient } from '../../src/domains/cats/services/agents/providers/CodexAppServerClient.ts';
 import { InMemoryTurnExecutionStore } from '../../src/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.ts';
 import { DeliveryCursorStore } from '../../src/domains/cats/services/stores/ports/DeliveryCursorStore.ts';
 import { InvocationRecordStore } from '../../src/domains/cats/services/stores/ports/InvocationRecordStore.ts';
@@ -17,6 +18,7 @@ import { settleLifecycleResponseInputs } from '../../src/domains/cats/services/s
 import { MessageLiveInboxSource } from '../../src/domains/concierge/live/inbox/MessageLiveInboxSource.ts';
 import { LiveCarrierOperationGate } from '../../src/domains/concierge/live/LiveCarrierOperationGate.ts';
 import { callbacksRoutes } from '../../src/routes/callbacks.ts';
+import { wireFixture } from './f317-live-wire-fixture.mjs';
 import { appendTestLifecycleResponseSource } from './message-from-fixtures.js';
 
 export async function eventually(predicate, message) {
@@ -27,7 +29,7 @@ export async function eventually(predicate, message) {
   assert.fail(typeof message === 'function' ? message() : message);
 }
 
-/** Formal callback admission and automatic QueueProcessor; only partner inference/native rendering are test ports. */
+/** Real callback -> QueueProcessor -> native Client adapter; only inference and provider wire are synthetic. */
 export async function automaticReturnFixture(t, f, provider) {
   if (!catRegistry.has('codex-astra'))
     catRegistry.register('codex-astra', {
@@ -236,27 +238,69 @@ export async function automaticReturnFixture(t, f, provider) {
     generation: 1,
   };
   const source = new MessageLiveInboxSource({ store: f.messages, queue, authorize: async () => !closed });
-  const releaseDispatcher = tracker.bindAgentClientActiveRunDispatcher(
-    scope.threadId,
-    scope.catId,
-    {
-      invocationId: live.invocationId,
-      capabilities: { append: true, steer: true, inputReadReceipt: true },
-      handle: { provider: 'openai', carrier: 'codex_app_server', threadId: 'native-live', turnId: 'active-live-turn' },
-      dispatch: async (input) => {
-        appends.push(input);
-        return { accepted: true, inputReadAt: Date.now() };
+  const native = wireFixture({ observeInputRead: true });
+  const finished = Promise.withResolvers();
+  const nativeCompletions = [];
+  const nativeRun = (async () => {
+    for await (const event of new CodexAppServerClient({ wire: native.wire }).run({
+      thread: { kind: 'start' },
+      prompt: { kind: 'frozen', prompt: 'synthetic Live call' },
+      activeRunDispatch: {
+        invocationId: live.invocationId,
+        register: (dispatcher) => {
+          const release = tracker.bindAgentClientActiveRunDispatcher(
+            scope.threadId,
+            scope.catId,
+            {
+              ...dispatcher,
+              get handle() {
+                return dispatcher.handle;
+              },
+              dispatch: async (input, options) => {
+                const result = await dispatcher.dispatch(input, options);
+                if (result.accepted) appends.push(input);
+                return result;
+              },
+            },
+            'live-parent',
+          );
+          assert.ok(release, 'normal Queue append has an exact active Live target');
+          return release;
+        },
       },
-    },
-    'live-parent',
-  );
-  assert.ok(releaseDispatcher, 'normal Queue append has an exact active Live target');
+      live: { finished: finished.promise, ready: async () => {}, observe: async () => {} },
+    })) {
+      if (event.type === 'app_server.live_turn_completed') nativeCompletions.push(event.turnId);
+    }
+  })();
+  void nativeRun.catch((error) => errors.push(error));
+  await eventually(() => nativeCompletions.includes('first'), 'native bootstrap must complete before partner returns');
   t.after(async () => {
     closed = true;
-    releaseDispatcher();
-    gate.close();
-    await gate.drain();
-    await app.close();
+    try {
+      await eventually(() => nativeCompletions.length === appends.length + 1, 'native Queue turns must settle');
+    } finally {
+      finished.resolve();
+      await nativeRun.catch((error) => errors.push(error));
+      gate.close();
+      await gate.drain();
+      await app.close();
+    }
   });
-  return { live, scope, source, queue, tracker, records, turns, starts, appends, errors, post, read };
+  return {
+    live,
+    scope,
+    source,
+    queue,
+    tracker,
+    records,
+    turns,
+    starts,
+    appends,
+    errors,
+    post,
+    read,
+    nativeWrites: native.writes,
+    nativeCompletions,
+  };
 }

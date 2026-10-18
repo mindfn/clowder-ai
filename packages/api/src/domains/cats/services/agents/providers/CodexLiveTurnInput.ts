@@ -1,4 +1,5 @@
 import type {
+  AgentClientDispatchInput,
   LiveProviderInputOutcome,
   PreparedProviderRequestV1,
   ProviderRequestGenerationCommitV1,
@@ -36,6 +37,14 @@ interface Submission {
   resolve(id: string): void;
   reject(error: unknown): void;
 }
+interface QueueSubmission {
+  dispatchInput: AgentClientDispatchInput;
+  onSubmitted(turnId: string | null): void;
+  onAccepted(turnId: string): void;
+  resolve(id: string): void;
+  reject(error: unknown): void;
+}
+type NativeSubmission = Submission | QueueSubmission;
 interface Deps {
   enqueue(value: unknown): void;
   isOpen(): boolean;
@@ -49,12 +58,25 @@ interface Deps {
 export class CodexLiveTurnInput {
   readonly tick = Symbol('live-idle-tick');
   private tickQueued = false;
-  private readonly pending = new Set<Submission>();
+  private readonly pending = new Set<NativeSubmission>();
   constructor(private readonly deps: Deps) {}
   submitText(text: string, sourceMessageId: string): Promise<string> {
     if (!this.deps.isOpen()) return Promise.reject(new Error('Live call ended'));
     return new Promise((resolve, reject) => {
       const submission = { input: { kind: 'text' as const, text, sourceRef: sourceMessageId }, resolve, reject };
+      this.pending.add(submission);
+      this.deps.enqueue(submission);
+    });
+  }
+  /** Queue already owns this input; serialize its exact handoff on the native turn loop. */
+  submitQueueInput(
+    input: AgentClientDispatchInput,
+    onSubmitted: (turnId: string | null) => void,
+    onAccepted: (turnId: string) => void,
+  ): Promise<string> {
+    if (!this.deps.isOpen()) return Promise.reject(new Error('Live call ended'));
+    return new Promise((resolve, reject) => {
+      const submission = { dispatchInput: input, onSubmitted, onAccepted, resolve, reject };
       this.pending.add(submission);
       this.deps.enqueue(submission);
     });
@@ -121,8 +143,8 @@ export class CodexLiveTurnInput {
     this.tickQueued = false;
     return true;
   }
-  isSubmission(value: unknown): value is Submission {
-    return this.pending.has(value as Submission);
+  isSubmission(value: unknown): value is NativeSubmission {
+    return this.pending.has(value as NativeSubmission);
   }
   async sendContext(value: Submission, threadId: string, activeTurnId: string | null): Promise<string | null> {
     let request: ProviderRequestGenerationCommitV1 | undefined;
@@ -160,7 +182,8 @@ export class CodexLiveTurnInput {
       this.pending.delete(value);
     }
   }
-  async sendText(value: Submission, threadId: string, activeTurnId: string | null): Promise<string | null> {
+  async sendText(value: NativeSubmission, threadId: string, activeTurnId: string | null): Promise<string | null> {
+    if ('dispatchInput' in value) return this.sendQueueInput(value, threadId, activeTurnId);
     let request: ProviderRequestGenerationCommitV1 | undefined;
     try {
       const recorded = await this.record(value.input);
@@ -191,6 +214,40 @@ export class CodexLiveTurnInput {
       return accepted;
     } catch (error) {
       await this.settle(request, this.failureOutcome(error));
+      value.reject(error);
+      return null;
+    } finally {
+      this.pending.delete(value);
+    }
+  }
+  private async sendQueueInput(
+    value: QueueSubmission,
+    threadId: string,
+    activeTurnId: string | null,
+  ): Promise<string | null> {
+    try {
+      if (!this.deps.isOpen()) throw new Error('Live call ended');
+      const input = value.dispatchInput;
+      value.onSubmitted(activeTurnId);
+      const result = asCodexAppServerRecord(
+        await this.deps.request(activeTurnId ? 'turn/steer' : 'turn/start', {
+          threadId,
+          ...(input.deliveryId ? { clientUserMessageId: input.deliveryId } : {}),
+          input: [
+            ...(input.text.trim() ? [{ type: 'text', text: input.text }] : []),
+            ...(input.imagePaths ?? []).map((path) => ({ type: 'localImage', path })),
+          ],
+          ...(activeTurnId ? { expectedTurnId: activeTurnId } : {}),
+        }),
+      );
+      const accepted = activeTurnId ? result?.turnId : asCodexAppServerRecord(result?.turn)?.id;
+      if (typeof accepted !== 'string' || !accepted || (activeTurnId && accepted !== activeTurnId))
+        throw new Error('Live Queue input acceptance identity unavailable');
+      // Install exact consumption/reconciliation identity before the notification loop resumes.
+      value.onAccepted(accepted);
+      value.resolve(accepted);
+      return accepted;
+    } catch (error) {
       value.reject(error);
       return null;
     } finally {
