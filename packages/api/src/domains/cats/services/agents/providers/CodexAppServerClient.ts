@@ -231,12 +231,8 @@ export class CodexAppServerClient {
     let latestUsage: JsonObject | null = null;
     let activeThreadId: string | null = null;
     let activeTurnId: string | null = null;
-    let lastLiveTurnId: string | null = null;
     let activeRunDispatchOpen = false;
-    const inputReadCallbacks = new Map<
-      string,
-      { turnId: string | null; notify: (turnId: string) => Promise<void>; observing: boolean }
-    >();
+    const inputReadCallbacks = new Map<string, { turnId: string; notify: () => Promise<void>; observing: boolean }>();
     let releaseActiveRunDispatch: (() => void) | undefined;
     let transportDisposition: 'release' | 'evict' = 'release';
     let liveHasPendingChildren = false;
@@ -258,14 +254,12 @@ export class CodexAppServerClient {
       !runClosed &&
       !liveFinished &&
       !liveError &&
-      !this.pumpEnded &&
-      !this.pumpFailure &&
       !input.signal?.aborted &&
       input.live?.acceptsInput?.() !== false;
     const liveInputs = new CodexLiveTurnInput({
       enqueue: (value) => this.notifications.push(value),
       isOpen: canSubmitLiveInput,
-      request: (method, params, onSubmitted) => this.request(method, params, onSubmitted),
+      request: (method, params) => this.request(method, params),
       ...(input.prepareLiveRequest ? { prepare: input.prepareLiveRequest } : {}),
       ...(input.beforeProviderLaunch ? { commit: input.beforeProviderLaunch } : {}),
       ...(input.onLiveInputOutcome ? { outcome: input.onLiveInputOutcome } : {}),
@@ -469,7 +463,6 @@ export class CodexAppServerClient {
       const turn = asCodexAppServerRecord(turnResult?.turn);
       if (typeof turn?.id !== 'string') throw new Error('Codex app-server did not return a turn id');
       activeTurnId = turn.id;
-      lastLiveTurnId = turn.id;
       if (initialClientId) {
         inputReadCallbacks.set(initialClientId, {
           turnId: activeTurnId,
@@ -487,7 +480,6 @@ export class CodexAppServerClient {
       const bindAcceptedLiveTurn = async (accepted: string): Promise<void> => {
         if (accepted === activeTurnId || !input.live) return;
         activeTurnId = accepted;
-        lastLiveTurnId = accepted;
         latestUsage = null;
         // The RPC receipt is authoritative even when retries arrive before turn/started.
         this.lifecycle.transition('turn_accepted', {
@@ -513,34 +505,25 @@ export class CodexAppServerClient {
         this.lifecycle.transition('turn_accepted', { threadId, turnId: activeTurnId, turnAccepted: true }),
       );
       this.lifecycle.armInactivityTimeout(timeoutMs, timeoutHandler);
-      const initialTurnId = activeTurnId;
-      const registerActiveRunDispatch = (): void => {
-        if (!input.activeRunDispatch || activeRunDispatchOpen || (input.live && !canSubmitLiveInput())) return;
+      if (input.activeRunDispatch) {
         const invocationId = input.activeRunDispatch.invocationId;
         const handle: AgentClientActiveRunHandle = {
           provider: 'openai_codex',
           carrier: 'codex_app_server',
           threadId,
-          turnId: initialTurnId,
+          turnId: activeTurnId,
         };
         activeRunDispatchOpen = true;
-        const acceptedInputTurns = new Map<string, string>();
         const release = input.activeRunDispatch.register({
           invocationId,
           capabilities: { append: true, steer: true, inputReadReceipt: true },
           ...(initialClientId ? { initialInputRead } : {}),
-          get handle() {
-            return input.live && lastLiveTurnId ? { ...handle, turnId: lastLiveTurnId } : handle;
-          },
+          handle,
           dispatch: async (dispatchInput, options) => {
             if (options.expectedInvocationId !== invocationId) {
               return { accepted: false, reason: 'active_run_mismatch', acceptance: 'not_accepted' };
             }
-            if (
-              !activeRunDispatchOpen ||
-              activeThreadId !== threadId ||
-              (!input.live && activeTurnId !== handle.turnId)
-            ) {
+            if (!activeRunDispatchOpen || activeThreadId !== threadId || activeTurnId !== handle.turnId) {
               return { accepted: false, reason: 'active_run_closed', acceptance: 'not_accepted' };
             }
             const text = dispatchInput.text.trim();
@@ -548,39 +531,6 @@ export class CodexAppServerClient {
             if (!text && imagePaths.length === 0)
               return { accepted: false, reason: 'invalid_input', acceptance: 'not_accepted' };
             const clientUserMessageId = dispatchInput.deliveryId ?? randomUUID();
-            if (input.live) {
-              if (!canSubmitLiveInput())
-                return { accepted: false, reason: 'active_run_closed', acceptance: 'not_accepted' };
-              let submitted = false;
-              try {
-                const accepted = await liveInputs.submitQueueInput(
-                  { ...dispatchInput, imagePaths, deliveryId: clientUserMessageId },
-                  (turnId) => {
-                    submitted = true;
-                    inputReadCallbacks.set(clientUserMessageId, {
-                      turnId,
-                      notify: async (observedTurnId) => {
-                        acceptedInputTurns.set(clientUserMessageId, observedTurnId);
-                        await dispatchInput.onInputRead?.();
-                      },
-                      observing: false,
-                    });
-                  },
-                  (turnId) => {
-                    acceptedInputTurns.set(clientUserMessageId, turnId);
-                    const pending = inputReadCallbacks.get(clientUserMessageId);
-                    if (pending) pending.turnId = turnId;
-                  },
-                );
-                return { accepted: true, handle: { ...handle, turnId: accepted } };
-              } catch (error) {
-                return {
-                  accepted: false,
-                  reason: error instanceof CodexAppServerRpcError ? 'provider_rejected' : 'exception',
-                  acceptance: submitted ? 'unknown' : 'not_accepted',
-                };
-              }
-            }
             if (dispatchInput.onInputRead) {
               inputReadCallbacks.set(clientUserMessageId, {
                 turnId: handle.turnId,
@@ -613,12 +563,10 @@ export class CodexAppServerClient {
             }
           },
           inspectInput: async (deliveryId) => {
-            const acceptedTurnId = input.live ? acceptedInputTurns.get(deliveryId) : handle.turnId;
-            if (!acceptedTurnId) return 'unknown';
             const result = asCodexAppServerRecord(await this.request('thread/read', { threadId, includeTurns: true }));
             const thread = asCodexAppServerRecord(result?.thread);
             if (thread?.id !== threadId || !Array.isArray(thread.turns)) return 'unknown';
-            const turn = thread.turns.map(asCodexAppServerRecord).find((candidate) => candidate?.id === acceptedTurnId);
+            const turn = thread.turns.map(asCodexAppServerRecord).find((candidate) => candidate?.id === handle.turnId);
             if (!Array.isArray(turn?.items)) return 'unknown';
             return turn.items.some((value) => {
               const item = asCodexAppServerRecord(value);
@@ -629,8 +577,7 @@ export class CodexAppServerClient {
           },
         });
         if (typeof release === 'function') releaseActiveRunDispatch = release;
-      };
-      registerActiveRunDispatch();
+      }
       if (input.live) {
         await input.live.observe({ method: 'turn/started', params: { threadId, turn: { id: activeTurnId } } });
         await input.live.ready(threadId, {
@@ -666,7 +613,6 @@ export class CodexAppServerClient {
         const isText = liveInputs.isSubmission(envelope);
         const isIdleTick = liveInputs.consumeTick(envelope);
         if (isText || isIdleTick) {
-          registerActiveRunDispatch();
           if (isText) acceptedLiveTurn = await liveInputs.sendText(envelope, threadId, activeTurnId);
           else if (
             (!activeTurnId && input.live?.hasPendingInboxWake?.()) ||
@@ -695,7 +641,6 @@ export class CodexAppServerClient {
           if (record?.method === 'turn/started' && typeof started?.id === 'string' && started.id !== activeTurnId) {
             latestUsage = null;
             activeTurnId = started.id;
-            lastLiveTurnId = started.id;
             subexecutionTracker.advanceRootTurn(activeTurnId);
           }
           if (record) await input.live.observe(record);
@@ -712,29 +657,19 @@ export class CodexAppServerClient {
         }
         if (subexecution.scope === 'child') continue;
         const itemObserved = record?.method === 'item/started' || record?.method === 'item/completed';
-        const observedInputTurnId = typeof params?.turnId === 'string' && params.turnId ? params.turnId : null;
-        if (
-          record?.method === 'item/completed' &&
-          params?.threadId === threadId &&
-          observedInputTurnId &&
-          observedInputTurnId === activeTurnId
-        ) {
+        const exactCompletedItem =
+          record?.method === 'item/completed' && params?.threadId === threadId && params?.turnId === activeTurnId;
+        if (exactCompletedItem) {
           const item = asCodexAppServerRecord(params?.item);
           const clientId =
             item?.type === 'userMessage' && typeof item.clientId === 'string' ? item.clientId : undefined;
           const receipt = clientId ? inputReadCallbacks.get(clientId) : undefined;
-          if (
-            clientId &&
-            receipt &&
-            (receipt.turnId === observedInputTurnId || (input.live && receipt.turnId === null)) &&
-            !receipt.observing
-          ) {
+          if (clientId && receipt && receipt.turnId === params?.turnId && !receipt.observing) {
             // Native completion means this exact pending input entered prompt
             // history; turn/steer acknowledgement alone does not prove consumption.
-            receipt.turnId = observedInputTurnId;
             receipt.observing = true;
             void Promise.resolve()
-              .then(() => receipt.notify(observedInputTurnId))
+              .then(receipt.notify)
               .then(() => inputReadCallbacks.delete(clientId))
               .catch(() => {
                 // Persistence never blocks provider/Stop; a replay may retry it.
@@ -876,7 +811,7 @@ export class CodexAppServerClient {
     return observations;
   }
 
-  private request(method: string, params: JsonObject, onSubmitted?: () => void): Promise<unknown> {
+  private request(method: string, params: JsonObject): Promise<unknown> {
     if (this.pumpFailure) return Promise.reject(this.pumpFailure);
     if (this.pumpEnded) return Promise.reject(new Error('Codex app-server stream is already closed'));
     const id = this.nextRequestId++;
@@ -886,7 +821,7 @@ export class CodexAppServerClient {
     // The stream can close while the transport write is still in flight. Mark the
     // response promise handled now; the returned write chain still propagates it.
     void promise.catch(() => {});
-    return this.write({ id, method, params }, onSubmitted)
+    return this.write({ id, method, params })
       .then(() => {
         if (this.pumpFailure) throw this.pumpFailure;
         if (this.pumpEnded) throw new Error('Codex app-server stream is already closed');
@@ -964,14 +899,8 @@ export class CodexAppServerClient {
     }
   }
 
-  private async write(message: JsonObject, onSubmitted?: () => void): Promise<void> {
+  private async write(message: JsonObject): Promise<void> {
     await this.deps.onEnvelope?.('outbound', message);
-    if (onSubmitted) {
-      if (this.pumpFailure) throw this.pumpFailure;
-      if (this.pumpEnded) throw new Error('Codex app-server stream is already closed');
-      // No async work remains between this witness and entering the transport write.
-      onSubmitted();
-    }
     await this.deps.wire.write(message);
   }
 

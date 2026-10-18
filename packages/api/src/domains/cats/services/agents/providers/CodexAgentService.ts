@@ -2558,25 +2558,21 @@ export class CodexAgentService implements AgentService {
               prepareRecoveryRequest,
               prepareLiveRequest: (input) => {
                 const sourceRefs = Object.freeze(
-                  (input.kind === 'text' ? [input.sourceRef] : (input.sourceRefs ?? [])).map((ref) => ({
-                    owner: input.kind !== 'context' ? ('message' as const) : ('runtime_context' as const),
+                  (input.kind === 'context' ? (input.sourceRefs ?? []) : [input.sourceRef]).map((ref) => ({
+                    owner: input.kind === 'text' ? ('message' as const) : ('runtime_context' as const),
                     ref,
                   })),
                 );
                 return Object.freeze({
-                  ...prepareProviderRequest(input.kind !== 'context' ? input.text : LIVE_CONTEXT_TRIGGER, 'app_server'),
+                  ...prepareProviderRequest(input.kind === 'text' ? input.text : LIVE_CONTEXT_TRIGGER, 'app_server'),
                   message: Object.freeze({
-                    body: input.kind !== 'context' ? input.text : LIVE_CONTEXT_TRIGGER,
+                    body: input.kind === 'text' ? input.text : LIVE_CONTEXT_TRIGGER,
                     injectionDecision:
-                      input.kind === 'queue'
-                        ? 'app_server_live_queue_input'
-                        : input.kind === 'text'
-                          ? 'app_server_live_typed_input'
-                          : 'app_server_live_context_input',
-                    sourceRefs: input.kind !== 'context' ? sourceRefs : Object.freeze([]),
+                      input.kind === 'text' ? 'app_server_live_typed_input' : 'app_server_live_context_input',
+                    sourceRefs: input.kind === 'text' ? sourceRefs : Object.freeze([]),
                   }),
                   nativeInstructions:
-                    input.kind === 'context'
+                    input.kind !== 'text'
                       ? Object.freeze([
                           {
                             body: input.text,

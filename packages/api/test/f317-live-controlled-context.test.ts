@@ -126,9 +126,8 @@ test('Host context is bound to one invocation and call generation; stopping revo
   try {
     await call.start('offer');
     assert.equal(call.hasPendingInboxWake(), false, 'Live startup does not install a thread-unread notifier');
-    assert.equal(nativeWakes, 1, 'talking publishes Queue readiness once; it does not request an unread scan');
+    assert.equal(nativeWakes, 0);
     await call.onSafeBoundary('tool_complete');
-    assert.equal(nativeWakes, 1, 'unrelated thread items cannot produce another wake');
     assert.equal(submittedText, '');
     assert.deepEqual(submittedRefs, []);
     const scope = call.contextScope({ invocationId: 'original-invocation', catId, threadId: 'home' });

@@ -1,5 +1,4 @@
 import type {
-  AgentClientDispatchInput,
   LiveProviderInputOutcome,
   PreparedProviderRequestV1,
   ProviderRequestGenerationCommitV1,
@@ -10,7 +9,7 @@ import type { CodexLiveContextKind } from './CodexLiveRunPort.js';
 import { CodexAppServerRpcError } from './codex-app-server-rpc-error.js';
 
 export interface LiveProviderInput {
-  kind: 'text' | 'context' | 'queue';
+  kind: 'text' | 'context';
   text: string;
   sourceRef: string;
   sourceRefs?: readonly string[];
@@ -37,18 +36,10 @@ interface Submission {
   resolve(id: string): void;
   reject(error: unknown): void;
 }
-interface QueueSubmission {
-  dispatchInput: AgentClientDispatchInput;
-  onSubmitted(turnId: string | null): void;
-  onAccepted(turnId: string): void;
-  resolve(id: string): void;
-  reject(error: unknown): void;
-}
-type NativeSubmission = Submission | QueueSubmission;
 interface Deps {
   enqueue(value: unknown): void;
   isOpen(): boolean;
-  request(method: string, params: CodexAppServerJsonObject, onSubmitted?: () => void): Promise<unknown>;
+  request(method: string, params: CodexAppServerJsonObject): Promise<unknown>;
   prepare?(input: LiveProviderInput): PreparedProviderRequestV1;
   commit?(input: PreparedProviderRequestV1): Promise<ProviderRequestGenerationCommitV1>;
   outcome?(receipt: LiveProviderInputOutcome): Promise<void>;
@@ -58,25 +49,12 @@ interface Deps {
 export class CodexLiveTurnInput {
   readonly tick = Symbol('live-idle-tick');
   private tickQueued = false;
-  private readonly pending = new Set<NativeSubmission>();
+  private readonly pending = new Set<Submission>();
   constructor(private readonly deps: Deps) {}
   submitText(text: string, sourceMessageId: string): Promise<string> {
     if (!this.deps.isOpen()) return Promise.reject(new Error('Live call ended'));
     return new Promise((resolve, reject) => {
       const submission = { input: { kind: 'text' as const, text, sourceRef: sourceMessageId }, resolve, reject };
-      this.pending.add(submission);
-      this.deps.enqueue(submission);
-    });
-  }
-  /** Queue already owns this input; serialize its exact handoff on the native turn loop. */
-  submitQueueInput(
-    input: AgentClientDispatchInput,
-    onSubmitted: (turnId: string | null) => void,
-    onAccepted: (turnId: string) => void,
-  ): Promise<string> {
-    if (!this.deps.isOpen()) return Promise.reject(new Error('Live call ended'));
-    return new Promise((resolve, reject) => {
-      const submission = { dispatchInput: input, onSubmitted, onAccepted, resolve, reject };
       this.pending.add(submission);
       this.deps.enqueue(submission);
     });
@@ -143,8 +121,8 @@ export class CodexLiveTurnInput {
     this.tickQueued = false;
     return true;
   }
-  isSubmission(value: unknown): value is NativeSubmission {
-    return this.pending.has(value as NativeSubmission);
+  isSubmission(value: unknown): value is Submission {
+    return this.pending.has(value as Submission);
   }
   async sendContext(value: Submission, threadId: string, activeTurnId: string | null): Promise<string | null> {
     let request: ProviderRequestGenerationCommitV1 | undefined;
@@ -182,8 +160,7 @@ export class CodexLiveTurnInput {
       this.pending.delete(value);
     }
   }
-  async sendText(value: NativeSubmission, threadId: string, activeTurnId: string | null): Promise<string | null> {
-    if ('dispatchInput' in value) return this.sendQueueInput(value, threadId, activeTurnId);
+  async sendText(value: Submission, threadId: string, activeTurnId: string | null): Promise<string | null> {
     let request: ProviderRequestGenerationCommitV1 | undefined;
     try {
       const recorded = await this.record(value.input);
@@ -214,58 +191,6 @@ export class CodexLiveTurnInput {
       return accepted;
     } catch (error) {
       await this.settle(request, this.failureOutcome(error));
-      value.reject(error);
-      return null;
-    } finally {
-      this.pending.delete(value);
-    }
-  }
-  private async sendQueueInput(
-    value: QueueSubmission,
-    threadId: string,
-    activeTurnId: string | null,
-  ): Promise<string | null> {
-    let request: ProviderRequestGenerationCommitV1 | undefined;
-    let submitted = false;
-    try {
-      const input = value.dispatchInput;
-      const recorded = await this.record({
-        kind: 'queue',
-        text: input.text,
-        sourceRef: input.messageIds[0] ?? '',
-        sourceRefs: input.messageIds,
-      });
-      request = recorded.request;
-      if (!this.deps.isOpen()) throw new Error('Live call ended');
-      const result = asCodexAppServerRecord(
-        await this.deps.request(
-          activeTurnId ? 'turn/steer' : 'turn/start',
-          {
-            threadId,
-            ...(input.deliveryId ? { clientUserMessageId: input.deliveryId } : {}),
-            input: [
-              ...(recorded.text.trim() ? [{ type: 'text', text: recorded.text }] : []),
-              ...(input.imagePaths ?? []).map((path) => ({ type: 'localImage', path })),
-            ],
-            ...(activeTurnId ? { expectedTurnId: activeTurnId } : {}),
-          },
-          () => {
-            if (!this.deps.isOpen()) throw new Error('Live call ended');
-            value.onSubmitted(activeTurnId);
-            submitted = true;
-          },
-        ),
-      );
-      const accepted = activeTurnId ? result?.turnId : asCodexAppServerRecord(result?.turn)?.id;
-      if (typeof accepted !== 'string' || !accepted || (activeTurnId && accepted !== activeTurnId))
-        throw new Error('Live Queue input acceptance identity unavailable');
-      // Install exact consumption/reconciliation identity before the notification loop resumes.
-      value.onAccepted(accepted);
-      await this.settle(request, 'accepted', accepted);
-      value.resolve(accepted);
-      return accepted;
-    } catch (error) {
-      await this.settle(request, submitted ? this.failureOutcome(error) : 'cancelled');
       value.reject(error);
       return null;
     } finally {
@@ -305,8 +230,8 @@ export class CodexLiveTurnInput {
     const prepared = this.deps.prepare?.(input);
     if (input.kind === 'context' && !prepared) throw new Error('Live context evidence unavailable');
     let text = input.text;
-    if (prepared && input.kind !== 'context') text = requireExactPreparedProviderMessage(prepared);
-    if (prepared && input.kind === 'context') text = this.verifiedApplicationText(input, prepared);
+    if (prepared && input.kind === 'text') text = requireExactPreparedProviderMessage(prepared);
+    if (prepared && input.kind !== 'text') text = this.verifiedApplicationText(input, prepared);
     let request: ProviderRequestGenerationCommitV1 | undefined;
     if (this.deps.commit) {
       if (!prepared) throw new Error('Live request evidence unavailable');
