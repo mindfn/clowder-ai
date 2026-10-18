@@ -6773,105 +6773,107 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.equal(sessionRecordCreated, true, 'should create SessionRecord when sessionChain enabled');
   });
 
-  it('F317 Live follow-ups retain the accepted output fence and exact rejected receipts without repeating bootstrap nudges', async () => {
-    const activeRecord = {
-      id: 'sr-live-input',
-      seq: 0,
-      status: 'active',
-      catId: 'opus',
-      threadId: 'thread-live-input',
-      userId: 'u1',
-    };
-    const durable = [];
-    let confirmations = 0;
-    const prepared = (body, injectionDecision) => ({
-      v: 1,
-      message: { body, ...(injectionDecision ? { injectionDecision } : {}) },
-      nativeInstructions: [],
-      runtime: { provider: 'openai', carrier: 'app_server' },
-      tools: { finalSurface: 'unknown' },
-      providerNativeVisibility: 'unknown',
+  for (const inputKind of ['typed', 'context', 'queue']) {
+    it(`F317 Live ${inputKind} follow-ups retain the accepted output fence and exact rejected receipts without repeating bootstrap nudges`, async () => {
+      const activeRecord = {
+        id: 'sr-live-input',
+        seq: 0,
+        status: 'active',
+        catId: 'opus',
+        threadId: 'thread-live-input',
+        userId: 'u1',
+      };
+      const durable = [];
+      let confirmations = 0;
+      const prepared = (body, injectionDecision) => ({
+        v: 1,
+        message: { body, ...(injectionDecision ? { injectionDecision } : {}) },
+        nativeInstructions: [],
+        runtime: { provider: 'openai', carrier: 'app_server' },
+        tools: { finalSurface: 'unknown' },
+        providerNativeVisibility: 'unknown',
+      });
+      const service = {
+        l0CompilerFn: dummyL0CompilerFn,
+        async *invoke(prompt, options) {
+          await options.beforeProviderLaunch(prepared(prompt));
+          yield { type: 'text', catId: 'opus', content: 'bootstrap accepted', timestamp: Date.now() };
+          for (const outcome of ['rejected', 'accepted', 'cancelled', 'accepted']) {
+            const request = await options.beforeProviderLaunch(
+              prepared('follow-up without nudge', `app_server_live_${inputKind}_input`),
+            );
+            await options.onLiveInputOutcome({
+              request,
+              outcome,
+              ...(outcome === 'accepted' ? { nativeTurnId: 'native-real' } : {}),
+            });
+            yield { type: 'text', catId: 'opus', content: `ongoing output after ${outcome}`, timestamp: Date.now() };
+          }
+          yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+        },
+      };
+      const messages = await collect(
+        invokeSingleCat(
+          {
+            ...makeDeps(),
+            sessionChainStore: {
+              getChain: async () => [activeRecord],
+              getActive: async () => activeRecord,
+              get: async () => activeRecord,
+              create: async () => activeRecord,
+              update: async () => activeRecord,
+            },
+            transcriptWriter: {
+              appendEvent() {},
+              appendDurableEvent: async (_session, event) => {
+                durable.push(event);
+              },
+              keyedContentDigest: async () => `hmac-sha256:${'a'.repeat(64)}`,
+            },
+          },
+          {
+            catId: 'opus',
+            service,
+            prompt: 'test',
+            userId: 'u1',
+            threadId: activeRecord.threadId,
+            isLastCat: true,
+            liveCompanion: {},
+            entityNudgePresentation: {
+              sourceMessageId: 'source',
+              candidates: {},
+              service: {
+                preparePresentation: () => ({
+                  promptContext: '[entity-nudge]known source[/entity-nudge]',
+                  confirmAssembled: () => {
+                    confirmations++;
+                  },
+                }),
+              },
+            },
+          },
+        ),
+      );
+      assert.equal(
+        messages.filter((message) => message.type === 'text').length,
+        5,
+        JSON.stringify(messages.filter((message) => message.type === 'error')),
+      );
+      assert.equal(confirmations, 1, 'bootstrap nudge is confirmed once, never invented in a follow-up');
+      assert.deepEqual(
+        durable
+          .filter((event) => event.type === 'request_generation_terminal')
+          .map((event) => [event.generationOrdinal, event.outcome]),
+        [
+          [1, 'accepted'],
+          [2, 'rejected'],
+          [3, 'accepted'],
+          [4, 'cancelled'],
+          [5, 'accepted'],
+        ],
+      );
     });
-    const service = {
-      l0CompilerFn: dummyL0CompilerFn,
-      async *invoke(prompt, options) {
-        await options.beforeProviderLaunch(prepared(prompt));
-        yield { type: 'text', catId: 'opus', content: 'bootstrap accepted', timestamp: Date.now() };
-        for (const outcome of ['rejected', 'accepted', 'cancelled', 'accepted']) {
-          const request = await options.beforeProviderLaunch(
-            prepared('follow-up without nudge', 'app_server_live_typed_input'),
-          );
-          await options.onLiveInputOutcome({
-            request,
-            outcome,
-            ...(outcome === 'accepted' ? { nativeTurnId: 'native-real' } : {}),
-          });
-          yield { type: 'text', catId: 'opus', content: `ongoing output after ${outcome}`, timestamp: Date.now() };
-        }
-        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
-      },
-    };
-    const messages = await collect(
-      invokeSingleCat(
-        {
-          ...makeDeps(),
-          sessionChainStore: {
-            getChain: async () => [activeRecord],
-            getActive: async () => activeRecord,
-            get: async () => activeRecord,
-            create: async () => activeRecord,
-            update: async () => activeRecord,
-          },
-          transcriptWriter: {
-            appendEvent() {},
-            appendDurableEvent: async (_session, event) => {
-              durable.push(event);
-            },
-            keyedContentDigest: async () => `hmac-sha256:${'a'.repeat(64)}`,
-          },
-        },
-        {
-          catId: 'opus',
-          service,
-          prompt: 'test',
-          userId: 'u1',
-          threadId: activeRecord.threadId,
-          isLastCat: true,
-          liveCompanion: {},
-          entityNudgePresentation: {
-            sourceMessageId: 'source',
-            candidates: {},
-            service: {
-              preparePresentation: () => ({
-                promptContext: '[entity-nudge]known source[/entity-nudge]',
-                confirmAssembled: () => {
-                  confirmations++;
-                },
-              }),
-            },
-          },
-        },
-      ),
-    );
-    assert.equal(
-      messages.filter((message) => message.type === 'text').length,
-      5,
-      JSON.stringify(messages.filter((message) => message.type === 'error')),
-    );
-    assert.equal(confirmations, 1, 'bootstrap nudge is confirmed once, never invented in a follow-up');
-    assert.deepEqual(
-      durable
-        .filter((event) => event.type === 'request_generation_terminal')
-        .map((event) => [event.generationOrdinal, event.outcome]),
-      [
-        [1, 'accepted'],
-        [2, 'rejected'],
-        [3, 'accepted'],
-        [4, 'cancelled'],
-        [5, 'accepted'],
-      ],
-    );
-  });
+  }
 
   it('capacity-recovery prepared requests skip the entity-nudge exact check and never re-confirm delivery', async () => {
     // A capacity-recovery request carries an empty body by design (turn/start

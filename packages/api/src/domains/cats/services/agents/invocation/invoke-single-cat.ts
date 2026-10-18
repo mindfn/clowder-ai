@@ -5473,9 +5473,11 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                 launchCountThisAttempt += 1;
                 const liveFollowup =
                   Boolean(params.liveCompanion) &&
-                  ['app_server_live_typed_input', 'app_server_live_context_input'].includes(
-                    prepared.message.injectionDecision ?? '',
-                  );
+                  [
+                    'app_server_live_typed_input',
+                    'app_server_live_context_input',
+                    'app_server_live_queue_input',
+                  ].includes(prepared.message.injectionDecision ?? '');
                 let committed: ProviderRequestGenerationCommitV1;
                 if (generationRecorder) {
                   const reason =

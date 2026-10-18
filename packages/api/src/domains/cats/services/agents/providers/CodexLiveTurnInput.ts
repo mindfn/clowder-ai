@@ -48,7 +48,7 @@ type NativeSubmission = Submission | QueueSubmission;
 interface Deps {
   enqueue(value: unknown): void;
   isOpen(): boolean;
-  request(method: string, params: CodexAppServerJsonObject): Promise<unknown>;
+  request(method: string, params: CodexAppServerJsonObject, onSubmitted?: () => void): Promise<unknown>;
   prepare?(input: LiveProviderInput): PreparedProviderRequestV1;
   commit?(input: PreparedProviderRequestV1): Promise<ProviderRequestGenerationCommitV1>;
   outcome?(receipt: LiveProviderInputOutcome): Promise<void>;
@@ -237,18 +237,24 @@ export class CodexLiveTurnInput {
       });
       request = recorded.request;
       if (!this.deps.isOpen()) throw new Error('Live call ended');
-      value.onSubmitted(activeTurnId);
-      submitted = true;
       const result = asCodexAppServerRecord(
-        await this.deps.request(activeTurnId ? 'turn/steer' : 'turn/start', {
-          threadId,
-          ...(input.deliveryId ? { clientUserMessageId: input.deliveryId } : {}),
-          input: [
-            ...(recorded.text.trim() ? [{ type: 'text', text: recorded.text }] : []),
-            ...(input.imagePaths ?? []).map((path) => ({ type: 'localImage', path })),
-          ],
-          ...(activeTurnId ? { expectedTurnId: activeTurnId } : {}),
-        }),
+        await this.deps.request(
+          activeTurnId ? 'turn/steer' : 'turn/start',
+          {
+            threadId,
+            ...(input.deliveryId ? { clientUserMessageId: input.deliveryId } : {}),
+            input: [
+              ...(recorded.text.trim() ? [{ type: 'text', text: recorded.text }] : []),
+              ...(input.imagePaths ?? []).map((path) => ({ type: 'localImage', path })),
+            ],
+            ...(activeTurnId ? { expectedTurnId: activeTurnId } : {}),
+          },
+          () => {
+            if (!this.deps.isOpen()) throw new Error('Live call ended');
+            value.onSubmitted(activeTurnId);
+            submitted = true;
+          },
+        ),
       );
       const accepted = activeTurnId ? result?.turnId : asCodexAppServerRecord(result?.turn)?.id;
       if (typeof accepted !== 'string' || !accepted || (activeTurnId && accepted !== activeTurnId))

@@ -258,12 +258,14 @@ export class CodexAppServerClient {
       !runClosed &&
       !liveFinished &&
       !liveError &&
+      !this.pumpEnded &&
+      !this.pumpFailure &&
       !input.signal?.aborted &&
       input.live?.acceptsInput?.() !== false;
     const liveInputs = new CodexLiveTurnInput({
       enqueue: (value) => this.notifications.push(value),
       isOpen: canSubmitLiveInput,
-      request: (method, params) => this.request(method, params),
+      request: (method, params, onSubmitted) => this.request(method, params, onSubmitted),
       ...(input.prepareLiveRequest ? { prepare: input.prepareLiveRequest } : {}),
       ...(input.beforeProviderLaunch ? { commit: input.beforeProviderLaunch } : {}),
       ...(input.onLiveInputOutcome ? { outcome: input.onLiveInputOutcome } : {}),
@@ -874,7 +876,7 @@ export class CodexAppServerClient {
     return observations;
   }
 
-  private request(method: string, params: JsonObject): Promise<unknown> {
+  private request(method: string, params: JsonObject, onSubmitted?: () => void): Promise<unknown> {
     if (this.pumpFailure) return Promise.reject(this.pumpFailure);
     if (this.pumpEnded) return Promise.reject(new Error('Codex app-server stream is already closed'));
     const id = this.nextRequestId++;
@@ -884,7 +886,7 @@ export class CodexAppServerClient {
     // The stream can close while the transport write is still in flight. Mark the
     // response promise handled now; the returned write chain still propagates it.
     void promise.catch(() => {});
-    return this.write({ id, method, params })
+    return this.write({ id, method, params }, onSubmitted)
       .then(() => {
         if (this.pumpFailure) throw this.pumpFailure;
         if (this.pumpEnded) throw new Error('Codex app-server stream is already closed');
@@ -962,8 +964,14 @@ export class CodexAppServerClient {
     }
   }
 
-  private async write(message: JsonObject): Promise<void> {
+  private async write(message: JsonObject, onSubmitted?: () => void): Promise<void> {
     await this.deps.onEnvelope?.('outbound', message);
+    if (onSubmitted) {
+      if (this.pumpFailure) throw this.pumpFailure;
+      if (this.pumpEnded) throw new Error('Codex app-server stream is already closed');
+      // No async work remains between this witness and entering the transport write.
+      onSubmitted();
+    }
     await this.deps.wire.write(message);
   }
 
