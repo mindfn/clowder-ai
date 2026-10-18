@@ -14,7 +14,7 @@ description_updated_at: 2026-09-16T16:24:46Z
 
 # F318: Claude Agent SDK Native Carrier — 对齐 Codex app-server 能力
 
-> **Status**: in-progress（Phase A ✅；Phase B 候选已合入（优先 F254 原生感知，默认关闭）；Phase C/D 未整体完成） | **Owner**: Ragdoll (@opus5, claude-opus-5) | **Priority**: P1
+> **Status**: in-progress（Phase A ✅；Phase B SDK carrier 候选已合入（默认关闭）；freshness 通知能力已由 #1615 退役；Phase C/D 其余 carrier 能力未整体完成） | **Owner**: Ragdoll (@opus5, claude-opus-5) | **Priority**: P1
 
 ## 当前交付边界（#1615，2026-10-18）
 
