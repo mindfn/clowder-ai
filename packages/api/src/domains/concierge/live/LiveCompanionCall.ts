@@ -275,6 +275,8 @@ export class LiveCompanionCall implements CodexLiveRunPort {
       const answer = await bounded(this.answer.promise, 30_000);
       if (this.startupSignal.aborted) throw new Error('Live call ended during connection');
       this.state = 'talking';
+      // Publish input readiness through the existing native loop; Queue then drains its retained entries.
+      this.client.wakeBoundary?.();
       await this.lateResults.recover().catch((error) => this.options.reportInboxFailure?.(error));
       await this.resultReturn.flushOpening((message, turnId) => this.recordTranscript(message, turnId));
       if (this.boundaryContexts.hasPendingWake()) this.client.wakeBoundary?.();

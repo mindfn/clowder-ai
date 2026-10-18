@@ -511,13 +511,15 @@ export class CodexAppServerClient {
         this.lifecycle.transition('turn_accepted', { threadId, turnId: activeTurnId, turnAccepted: true }),
       );
       this.lifecycle.armInactivityTimeout(timeoutMs, timeoutHandler);
-      if (input.activeRunDispatch) {
+      const initialTurnId = activeTurnId;
+      const registerActiveRunDispatch = (): void => {
+        if (!input.activeRunDispatch || activeRunDispatchOpen || (input.live && !canSubmitLiveInput())) return;
         const invocationId = input.activeRunDispatch.invocationId;
         const handle: AgentClientActiveRunHandle = {
           provider: 'openai_codex',
           carrier: 'codex_app_server',
           threadId,
-          turnId: activeTurnId,
+          turnId: initialTurnId,
         };
         activeRunDispatchOpen = true;
         const acceptedInputTurns = new Map<string, string>();
@@ -547,10 +549,12 @@ export class CodexAppServerClient {
             if (input.live) {
               if (!canSubmitLiveInput())
                 return { accepted: false, reason: 'active_run_closed', acceptance: 'not_accepted' };
+              let submitted = false;
               try {
                 const accepted = await liveInputs.submitQueueInput(
                   { ...dispatchInput, imagePaths, deliveryId: clientUserMessageId },
                   (turnId) => {
+                    submitted = true;
                     inputReadCallbacks.set(clientUserMessageId, {
                       turnId,
                       notify: async (observedTurnId) => {
@@ -571,7 +575,7 @@ export class CodexAppServerClient {
                 return {
                   accepted: false,
                   reason: error instanceof CodexAppServerRpcError ? 'provider_rejected' : 'exception',
-                  acceptance: 'unknown',
+                  acceptance: submitted ? 'unknown' : 'not_accepted',
                 };
               }
             }
@@ -623,7 +627,8 @@ export class CodexAppServerClient {
           },
         });
         if (typeof release === 'function') releaseActiveRunDispatch = release;
-      }
+      };
+      registerActiveRunDispatch();
       if (input.live) {
         await input.live.observe({ method: 'turn/started', params: { threadId, turn: { id: activeTurnId } } });
         await input.live.ready(threadId, {
@@ -659,6 +664,7 @@ export class CodexAppServerClient {
         const isText = liveInputs.isSubmission(envelope);
         const isIdleTick = liveInputs.consumeTick(envelope);
         if (isText || isIdleTick) {
+          registerActiveRunDispatch();
           if (isText) acceptedLiveTurn = await liveInputs.sendText(envelope, threadId, activeTurnId);
           else if (
             (!activeTurnId && input.live?.hasPendingInboxWake?.()) ||

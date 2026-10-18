@@ -10,7 +10,7 @@ import type { CodexLiveContextKind } from './CodexLiveRunPort.js';
 import { CodexAppServerRpcError } from './codex-app-server-rpc-error.js';
 
 export interface LiveProviderInput {
-  kind: 'text' | 'context';
+  kind: 'text' | 'context' | 'queue';
   text: string;
   sourceRef: string;
   sourceRefs?: readonly string[];
@@ -225,16 +225,26 @@ export class CodexLiveTurnInput {
     threadId: string,
     activeTurnId: string | null,
   ): Promise<string | null> {
+    let request: ProviderRequestGenerationCommitV1 | undefined;
+    let submitted = false;
     try {
-      if (!this.deps.isOpen()) throw new Error('Live call ended');
       const input = value.dispatchInput;
+      const recorded = await this.record({
+        kind: 'queue',
+        text: input.text,
+        sourceRef: input.messageIds[0] ?? '',
+        sourceRefs: input.messageIds,
+      });
+      request = recorded.request;
+      if (!this.deps.isOpen()) throw new Error('Live call ended');
       value.onSubmitted(activeTurnId);
+      submitted = true;
       const result = asCodexAppServerRecord(
         await this.deps.request(activeTurnId ? 'turn/steer' : 'turn/start', {
           threadId,
           ...(input.deliveryId ? { clientUserMessageId: input.deliveryId } : {}),
           input: [
-            ...(input.text.trim() ? [{ type: 'text', text: input.text }] : []),
+            ...(recorded.text.trim() ? [{ type: 'text', text: recorded.text }] : []),
             ...(input.imagePaths ?? []).map((path) => ({ type: 'localImage', path })),
           ],
           ...(activeTurnId ? { expectedTurnId: activeTurnId } : {}),
@@ -245,9 +255,11 @@ export class CodexLiveTurnInput {
         throw new Error('Live Queue input acceptance identity unavailable');
       // Install exact consumption/reconciliation identity before the notification loop resumes.
       value.onAccepted(accepted);
+      await this.settle(request, 'accepted', accepted);
       value.resolve(accepted);
       return accepted;
     } catch (error) {
+      await this.settle(request, submitted ? this.failureOutcome(error) : 'cancelled');
       value.reject(error);
       return null;
     } finally {
@@ -287,8 +299,8 @@ export class CodexLiveTurnInput {
     const prepared = this.deps.prepare?.(input);
     if (input.kind === 'context' && !prepared) throw new Error('Live context evidence unavailable');
     let text = input.text;
-    if (prepared && input.kind === 'text') text = requireExactPreparedProviderMessage(prepared);
-    if (prepared && input.kind !== 'text') text = this.verifiedApplicationText(input, prepared);
+    if (prepared && input.kind !== 'context') text = requireExactPreparedProviderMessage(prepared);
+    if (prepared && input.kind === 'context') text = this.verifiedApplicationText(input, prepared);
     let request: ProviderRequestGenerationCommitV1 | undefined;
     if (this.deps.commit) {
       if (!prepared) throw new Error('Live request evidence unavailable');
