@@ -17,6 +17,25 @@ function sourceFiles(directory) {
 }
 
 describe('F254 freshness instruction source contract', () => {
+  it('retires the notification owner and every runtime unread-notice prompt, including Live', () => {
+    for (const relativePath of [
+      'domains/cats/services/freshness/FreshnessNoticeBroker.ts',
+      'domains/cats/services/freshness/ThreadUnseenChecker.ts',
+      'domains/cats/services/freshness/createProviderNativeFreshnessFactory.ts',
+      'domains/cats/services/agents/providers/claude-sdk-input.ts',
+      'domains/concierge/live/host/live-inbox-host.ts',
+      'domains/concierge/live/inbox/LiveInbox.ts',
+    ])
+      assert.equal(existsSync(resolve(sourceRoot, relativePath)), false, relativePath);
+    for (const path of sourceFiles(sourceRoot)) {
+      assert.doesNotMatch(
+        readFileSync(path, 'utf8'),
+        /📬 freshness notice|freshnessController|activeInvocationFreshness/,
+        path,
+      );
+    }
+  });
+
   it('never directs current-thread unread handling to the project-memory list_recent surface', () => {
     const violations = [];
     const promptMarkers = /未读消息|新消息|查看并回应|freshness notice/i;
@@ -35,20 +54,6 @@ describe('F254 freshness instruction source contract', () => {
     }
 
     assert.deepEqual(violations, [], 'freshness prompts must use a full, contiguous cat_cafe_get_thread_context read');
-  });
-
-  it('every freshness read instruction selects unread independently from the full projection', () => {
-    const paths = [
-      'domains/cats/services/freshness/FreshnessNoticeBroker.ts',
-      'domains/concierge/conversation-duty.ts',
-    ];
-    for (const path of paths) {
-      const instructions = readFileSync(resolve(sourceRoot, path), 'utf8')
-        .split('\n')
-        .filter((line) => line.includes('get_thread_context') && line.includes('responseMode'));
-      assert.ok(instructions.length > 0, path);
-      for (const instruction of instructions) assert.match(instruction, /readIntent(?:: |=)"unread"/, path);
-    }
   });
 
   it(
