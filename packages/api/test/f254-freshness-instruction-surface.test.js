@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const apiRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourceRoot = resolve(apiRoot, 'src');
+const mcpSourceRoot = resolve(apiRoot, '../mcp-server/src');
 const stagingContentPath = resolve(apiRoot, '../../cat-cafe-skills/refs/l0-staging-content.md');
 
 function sourceFiles(directory) {
@@ -27,10 +28,10 @@ describe('F254 freshness instruction source contract', () => {
       'domains/concierge/live/inbox/LiveInbox.ts',
     ])
       assert.equal(existsSync(resolve(sourceRoot, relativePath)), false, relativePath);
-    for (const path of sourceFiles(sourceRoot)) {
+    for (const path of [...sourceFiles(sourceRoot), ...sourceFiles(mcpSourceRoot)]) {
       assert.doesNotMatch(
         readFileSync(path, 'utf8'),
-        /📬 freshness notice|freshnessController|activeInvocationFreshness/,
+        /📬 freshness notice|freshnessController|activeInvocationFreshness|Freshness reason:|acknowledgeHeld|catchUpCall|收到来信提示/,
         path,
       );
     }
@@ -57,7 +58,7 @@ describe('F254 freshness instruction source contract', () => {
   });
 
   it(
-    'home staging freshness instructions select unread independently from the full projection',
+    'private L0 staging does not restore a retired freshness notice handling rule',
     {
       skip:
         !existsSync(resolve(apiRoot, '../../sync-manifest.yaml')) &&
@@ -66,8 +67,7 @@ describe('F254 freshness instruction source contract', () => {
     },
     () => {
       const staging = readFileSync(stagingContentPath, 'utf8');
-      const instruction = staging.split('\n').find((line) => line.includes('**Freshness notice 处理**'));
-      assert.match(instruction, /readIntent: "unread"/);
+      assert.doesNotMatch(staging, /\*\*Freshness notice 处理\*\*|收到来信提示/);
     },
   );
 });
