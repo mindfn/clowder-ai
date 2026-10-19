@@ -147,7 +147,7 @@ describe('F322 new-shell Workspace home · 工具清单', () => {
       expect(meta('surface:git')).toBe('feat/f322-workspace-home');
       expect(meta('surface:changes')).toBe('3 个文件');
       expect(meta('surface:terminal')).toBeUndefined();
-      expect(mocks.apiFetch).toHaveBeenCalledWith('/api/workspace/diff?worktreeId=wt-1', expect.anything());
+      expect(mocks.apiFetch).toHaveBeenCalledWith('/api/workspace/diff?worktreeId=wt-1&view=files', expect.anything());
     });
 
     it('writes no number when it cannot read one, and none for zero changes', async () => {

@@ -6,13 +6,13 @@ import type { BeginHumanAuthIntent } from './identity-store.js';
 const HUMAN_AUTH_COMPLETION_COOKIE = 'collective_auth_completion';
 const HUMAN_AUTH_COMPLETION_COOKIE_PATH = '/api/auth/completions/exchange';
 
-export async function readJsonBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+export async function readJsonBody(request: IncomingMessage, maxBytes = 256 * 1024): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.length;
-    if (size > 256 * 1_024) {
+    if (size > maxBytes) {
       throw new CollectiveServiceError('FORBIDDEN', 'Request body is too large', 413);
     }
     chunks.push(buffer);
@@ -111,6 +111,15 @@ export function normalizedOrigin(value: string | undefined): string | undefined 
   } catch {
     return undefined;
   }
+}
+
+export function requestOrigin(request: IncomingMessage): string {
+  const host = request.headers.host;
+  if (!host) throw new CollectiveServiceError('FORBIDDEN', 'Request host is unavailable', 400);
+  const protocol = (request.socket as { encrypted?: boolean }).encrypted ? 'https:' : 'http:';
+  const candidate = `${protocol}//${host}`;
+  if (!URL.canParse(candidate)) throw new CollectiveServiceError('FORBIDDEN', 'Request host is invalid', 400);
+  return new URL(candidate).origin;
 }
 
 export function requireAllowedOrigin(

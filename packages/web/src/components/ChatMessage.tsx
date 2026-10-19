@@ -34,7 +34,7 @@ import { CollapsibleMarkdown } from './CollapsibleMarkdown';
 import { ConnectorBubble } from './ConnectorBubble';
 import { ContentBlocks } from './ContentBlocks';
 import { EvolutionUseSourceDock } from './capability-evolution/EvolutionUseSourceDock';
-import { isHiddenChatRow, projectSystemRowSurface } from './chat-row-surface';
+import { isAbsorbedManagedJobMessage, isHiddenChatRow, projectSystemRowSurface } from './chat-row-surface';
 import { CliOutputBlock } from './cli-output/CliOutputBlock';
 import { toCliEvents } from './cli-output/toCliEvents';
 import {
@@ -46,6 +46,7 @@ import { CompanionMessageAvatar, CompanionMessageIdentity } from './concierge/Co
 import { ContentModificationReceiptCard } from './content-review/ContentModificationReceiptCard';
 import { ContentModificationSourceMessage } from './content-review/ContentModificationSourceMessage';
 import { MediaMessageRequestStatus } from './content-review/MediaMessageRequestStatus';
+import { messageArtworkItems } from './content-review/message-artwork-gallery';
 import { contentModificationReceiptOf } from './content-review/modification-receipt-copy';
 import { TextMessageRequestStatus } from './content-review/TextMessageRequestStatus';
 import { DirectionPill } from './DirectionPill';
@@ -81,7 +82,7 @@ import { SubexecutionActivity } from './SubexecutionActivity';
 import { SummaryCard } from './SummaryCard';
 import { SystemNoticeBar } from './SystemNoticeBar';
 import { useShellPresentation } from './shell/shell-presentation';
-import { TerminalDiagnosticsPanel } from './TerminalDiagnosticsPanel';
+import { NativeFailureDiagnostics, TerminalDiagnosticsPanel } from './TerminalDiagnosticsPanel';
 import { ThinkingContent } from './ThinkingContent';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 
@@ -225,6 +226,7 @@ function ChatMessageContent({
           messageId: message.id,
           messageRevision: String(message.timestamp),
           origins: message.projectionPublicationOrigins,
+          media: messageArtworkItems(message),
         }
       : undefined;
   const disclosureThreadId = renderThreadId ?? 'default';
@@ -532,11 +534,21 @@ function ChatMessageContent({
   }
 
   if (isConnector) {
+    if (isAbsorbedManagedJobMessage(message, threadMessages)) {
+      return <div data-message-id={message.id} aria-hidden="true" className="h-0" />;
+    }
     if (isConnectorSystemNotice(message)) {
       if (isLinkedCloudBindingRecoveryNotice(message, threadMessages)) return null;
-      return <SystemNoticeBar message={message} />;
+      return <SystemNoticeBar message={message} footer={dispatchLine} />;
     }
-    return <ConnectorBubble message={message} threadId={currentThreadId} timelineMessages={threadMessages} />;
+    return (
+      <ConnectorBubble
+        message={message}
+        threadId={currentThreadId}
+        timelineMessages={threadMessages}
+        footer={dispatchLine}
+      />
+    );
   }
 
   // Zero-exposure recall is an invisible storage tombstone. History filtering
@@ -1106,25 +1118,22 @@ function ChatMessageContent({
           className={catStyle?.font}
           disclosureKey={bodyDisclosureKey}
         />
+      ) : isCrossThreadLetter && crossThreadSourceThreadId ? (
+        <CrossThreadLetter
+          sourceThreadId={crossThreadSourceThreadId}
+          sourceInvocationId={message.extra?.crossPost?.sourceInvocationId}
+          senderCatId={message.catId}
+          content={message.content}
+          targetCats={message.extra?.targetCats}
+          mentionsUser={message.mentionsUser}
+          getCatById={getCatById}
+        >
+          {assistantBody}
+        </CrossThreadLetter>
       ) : (
-        <>
-          {isCrossThreadLetter && crossThreadSourceThreadId ? (
-            <CrossThreadLetter
-              sourceThreadId={crossThreadSourceThreadId}
-              sourceInvocationId={message.extra?.crossPost?.sourceInvocationId}
-              senderCatId={message.catId}
-              content={message.content}
-              targetCats={message.extra?.targetCats}
-              mentionsUser={message.mentionsUser}
-              getCatById={getCatById}
-            >
-              {assistantBody}
-            </CrossThreadLetter>
-          ) : (
-            assistantBody
-          )}
-        </>
+        assistantBody
       )}
+      <NativeFailureDiagnostics message={message} />
       {implicitStructuredTargets.length > 0 ? (
         <div
           data-testid="implicit-structured-targets"
@@ -1217,29 +1226,6 @@ export const ChatMessage = memo(function ChatMessage(props: ChatMessageProps) {
     const threadId = props.threadId ?? state.currentThreadId;
     return threadId === state.currentThreadId ? state.queue : state.threadStates[threadId]?.queue;
   });
-  const lifecycleTimeline = useChatStore(
-    (state) =>
-      props.timelineMessages ??
-      (props.message.lifecycle?.dispatchRefs?.length
-        ? getOrderedMessageTimeline(state.messages)
-        : EMPTY_TIMELINE_MESSAGES),
-  );
   if (isHiddenChatRow(props.message)) return null;
-  return (
-    <>
-      <ChatMessageContent {...props} queue={queue} />
-      {props.message.type === 'connector' ? (
-        <MessageDispatchAvatars
-          message={props.message}
-          timelineMessages={lifecycleTimeline}
-          activeRuns={props.activeRuns ?? []}
-          queue={queue}
-          getCatLabel={(catId) => {
-            const cat = props.getCatById(catId);
-            return cat ? formatCatName(cat) : catId;
-          }}
-        />
-      ) : null}
-    </>
-  );
+  return <ChatMessageContent {...props} queue={queue} />;
 });

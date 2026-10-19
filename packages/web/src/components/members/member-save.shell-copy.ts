@@ -26,7 +26,8 @@ export const memberSaveCopy = defineShellCopy(
       nextWork: '模型与接入设置从下一次接活开始生效',
       updated: '新设置将用于后续操作',
       createHint: '添加后默认启用，可以在列表里关掉',
-      dirty: (count: number, names: string[]) => `${count} 处修改还没保存：${names.join('、')}`,
+      dirtyPrefix: (count: number) => `${count} 处修改还没保存：`,
+      dirtyFields: (names: string[]) => names.join('、'),
       failed: (reason: string) => `没保存上：${reason}。你的修改还在，没有丢。`,
     },
     en: {
@@ -53,17 +54,15 @@ export const memberSaveCopy = defineShellCopy(
       nextWork: 'Model and connection settings apply to the next work dispatch',
       updated: 'The saved settings apply to subsequent operations',
       createHint: 'New members are enabled by default; you can disable them in the list',
-      dirty: (count: number, names: string[]) =>
-        `${count} unsaved ${count === 1 ? 'change' : 'changes'}: ${names.join(', ')}`,
+      dirtyPrefix: (count: number) => `${count} unsaved ${count === 1 ? 'change' : 'changes'}: `,
+      dirtyFields: (names: string[]) => names.join(', '),
       failed: (reason: string) => `Not saved: ${reason}. Your changes are still here.`,
     },
   },
   {
     samples: {
-      dirty: [
-        [1, ['Model']],
-        [2, ['Model', 'Nickname']],
-      ],
+      dirtyPrefix: [[1], [2]],
+      dirtyFields: [[['Model']], [['Model', 'Nickname']]],
       failed: [['Service unavailable'], ['Permission denied']],
     },
   },

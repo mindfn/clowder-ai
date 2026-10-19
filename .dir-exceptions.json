@@ -1,6 +1,41 @@
 {
   "exceptions": [
     {
+      "path": "packages/api/src/domains/collaborative-content/collective-artifact",
+      "owner": "codex61-sol",
+      "reason": "2026-10-18 W4 source fix-forward: #5670 introduced 28 files for shared Markdown, retained media and custody transfer. Keep the independently reviewed owner/receipt boundaries stable during Alpha acceptance; reassess Markdown, media and custody subdirectories together with their import directions before expiry.",
+      "expiresAt": "2026-10-31",
+      "ticket": "F290 W4 / cat-cafe#5670 / clowder-ai#1614"
+    },
+    {
+      "path": "packages/api/src/domains/collaborative-content/modification",
+      "owner": "codex61-sol",
+      "reason": "2026-10-18 W4 source fix-forward: #5670 grew this directory from 23 to 27 files with collective acceptance, custody snapshots and resolution. These adapters share the existing modification journal and settlement lifecycle; reassess a collective adapter subgroup without splitting effect/receipt recovery across owners before expiry.",
+      "expiresAt": "2026-10-31",
+      "ticket": "F290 W4 / cat-cafe#5670 / clowder-ai#1614"
+    },
+    {
+      "path": "packages/api/src/domains/collaborative-content/workspace-review",
+      "owner": "codex61-sol",
+      "reason": "2026-10-18 W4 source fix-forward: #5670 grew this directory from 24 to 26 files with the two collective custody adapters. Preserve the reviewed public/private review-source boundary during acceptance; reassess custody and source-adapter grouping with the existing composition root before expiry.",
+      "expiresAt": "2026-10-31",
+      "ticket": "F290 W4 / cat-cafe#5670 / clowder-ai#1614"
+    },
+    {
+      "path": "packages/api/src/domains/plugin/builtin-runtime",
+      "owner": "codex61-sol",
+      "reason": "2026-10-18 W4 source fix-forward: #5670 grew this directory from 24 to 25 files with collective-artifact-command.ts. Keep the existing Host verifier and invocation composition imports stable while the parallel F290 UI integration proceeds; reassess the artifact command versus participation/runtime adapter boundary before expiry.",
+      "expiresAt": "2026-10-31",
+      "ticket": "F290 W4 / cat-cafe#5670 / clowder-ai#1614"
+    },
+    {
+      "path": "packages/api/src/domains/video-studio/content-owner",
+      "owner": "codex61-sol",
+      "reason": "2026-10-18 W4 source fix-forward: #5670 grew this directory from 20 to 25 files with collective scope, snapshot, custody fence, validation and errors. Keep owner effect/receipt and private/public isolation imports stable; #5712 concurrently changes this owner. Reassess collective custody and publication subgroups with the content owner before expiry.",
+      "expiresAt": "2026-10-31",
+      "ticket": "F290 W4 / cat-cafe#5670 / clowder-ai#1614"
+    },
+    {
       "path": "packages/api/src/domains/concierge/live",
       "owner": "codex-astra",
       "reason": "2026-10-13 public sync: 24 to 27 files after F317 presentation observations, response timing and native subexecution records. These readers share the existing live-call lifecycle; retain the reviewed import boundaries for this cut and reassess an observation/projection split before expiry.",

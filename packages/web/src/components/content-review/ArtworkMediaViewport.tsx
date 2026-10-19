@@ -1,14 +1,17 @@
 'use client';
 
-import { createContext, type ReactNode, type RefObject, useContext, useEffect, useRef } from 'react';
+import { createContext, type ReactNode, type RefObject, useContext, useEffect, useMemo } from 'react';
 
 type Position = { seconds: number; paused: boolean };
 const Context = createContext<Map<string, Position> | null>(null);
 
 /** Thread-local viewport continuity only. A position is neither a media grant nor presented-frame evidence. */
-export function ArtworkMediaViewportProvider({ children }: { children: ReactNode }) {
-  const positions = useRef(new Map<string, Position>());
-  return <Context.Provider value={positions.current}>{children}</Context.Provider>;
+export function ArtworkMediaViewportProvider({ children, scopeKey }: { children: ReactNode; scopeKey: number }) {
+  // Retire the old visit's map without remounting the Chat below it. Old player
+  // cleanup may still write its captured map; it cannot populate the new one.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: this map belongs to one presentation visit.
+  const positions = useMemo(() => new Map<string, Position>(), [scopeKey]);
+  return <Context.Provider value={positions}>{children}</Context.Provider>;
 }
 
 export function useArtworkVideoPosition(

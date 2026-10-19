@@ -207,6 +207,17 @@ export function projectMessageArtifacts(messages: readonly AggregatorMessage[]):
   return out;
 }
 
+/** A single gallery cannot make one catalogue response or one F309 lookup unbounded. */
+export function projectMessageArtifactSlice(message: AggregatorMessage, offset: number, limit: number) {
+  const artifacts: ThreadArtifactDTO[] = [];
+  let total = 0;
+  visitMessageArtifacts([message], (artifact) => {
+    if (total >= offset && artifacts.length < limit) artifacts.push(artifact);
+    total += 1;
+  });
+  return { artifacts, total };
+}
+
 const RECENT_MESSAGE_ARTIFACT_TYPES = new Set<ThreadArtifactDTO['type']>(['image', 'video', 'file']);
 
 function compareMessageRecentArtifacts(left: ThreadArtifactDTO, right: ThreadArtifactDTO): number {

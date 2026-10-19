@@ -17,7 +17,7 @@ const available = (id: string, text: string) => ({
   kind: 'message',
   messageId: id,
   sourceThreadId: 'source',
-  author: { kind: 'cat', catId: 'opus' },
+  from: { kind: 'agent', catId: 'opus' },
   timestamp: 100,
   readableContent: text,
 });
@@ -132,6 +132,7 @@ describe('F322 forwarded paper card', () => {
       richBlock: {
         id: 'block-1',
         kind: 'card',
+        v: 1,
         title: 'Immutable source',
         actions: [{ label: 'Do not invoke', action: 'send-message' }],
       },

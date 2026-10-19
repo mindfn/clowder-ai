@@ -153,6 +153,8 @@ export type ScheduleLifecycleNotifier = (notice: ScheduleLifecycleNotice) => voi
 
 /** Phase 1b+2: context passed to execute — carries actor resolution + context spec */
 export interface ExecuteContext {
+  /** One scheduled occurrence, stable for every delivery/retry within this execution. */
+  occurrenceId: string;
   /** Aborted when this work item's scheduler timeout fires. */
   signal: AbortSignal;
   /** Cat resolved by ActorResolver, or null if no actor spec / no match */

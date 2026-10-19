@@ -75,4 +75,13 @@ export interface GlobalArtifactsResponse {
   workLineage: 'resolved' | 'unavailable';
   /** Present on bounded views. False means older owner history was intentionally not scanned. */
   complete?: boolean;
+  /** Only on opt-in Works pages. Positions convey no authority; every page rechecks owner access. */
+  nextCursor?: string;
+}
+
+/** Opt-in `view=works&read=pages`: page size is never a claimed whole-catalogue total. */
+export interface GlobalWorksPageResponse extends Omit<GlobalArtifactsResponse, 'total' | 'complete' | 'view'> {
+  view: 'works';
+  pageTotal: number;
+  complete: boolean;
 }

@@ -43,6 +43,7 @@ import {
   isEntrustedWorkSubjectKey,
   type ReplaceAutomationStateIfGenerationInput,
   type ReplaceDeploymentWaitIfGenerationInput,
+  TaskPageCursorExpiredError,
   type UpdateEntrustedWorkStoreInput,
   type UpdateEntrustedWorkStoreResult,
 } from './TaskStoreContract.js';
@@ -298,6 +299,22 @@ export class TaskStore implements ITaskStore {
     }
     result.sort((a, b) => a.id.localeCompare(b.id));
     return result;
+  }
+
+  listByThreadPage(
+    threadId: string,
+    limit: number,
+    afterId?: string,
+  ): { tasks: TaskItem[]; scannedCount: number; nextCursor?: string } {
+    const tasks = this.listByThread(threadId);
+    const cursor = afterId ? tasks.findIndex((task) => task.id === afterId) : -1;
+    if (afterId && cursor < 0) throw new TaskPageCursorExpiredError('Works task cursor expired');
+    const page = tasks.slice(cursor + 1, cursor + 1 + limit);
+    return {
+      tasks: page,
+      scannedCount: page.length,
+      ...(cursor + 1 + page.length < tasks.length ? { nextCursor: page.at(-1)?.id } : {}),
+    };
   }
 
   delete(taskId: string): boolean {

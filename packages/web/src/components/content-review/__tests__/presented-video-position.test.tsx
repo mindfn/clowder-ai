@@ -16,10 +16,10 @@ it('retains the same source playhead across presentation remounts, while requiri
     // biome-ignore lint/a11y/useMediaCaption: This metadata-only test player never loads media.
     return <video ref={video} />;
   }
-  const render = (key: string, identity = 'review:revision-1:stream-0') =>
+  const render = (key: string, identity = 'review:revision-1:stream-0', threadId = 'original-thread') =>
     act(async () =>
       root.render(
-        <ArtworkLightboxProvider threadId="original-thread">
+        <ArtworkLightboxProvider threadId={threadId}>
           <Player key={key} identity={identity} />
         </ArtworkLightboxProvider>,
       ),
@@ -47,6 +47,15 @@ it('retains the same source playhead across presentation remounts, while requiri
     Object.defineProperty(replacement, 'readyState', { value: 1 });
     await act(async () => replacement.dispatchEvent(new Event('loadedmetadata')));
     expect(replacement.currentTime).toBe(0);
+    expect(frameTime).toBeNull();
+
+    // A source identity may appear in another Chat, but its old playhead is thread-local.
+    await render('other-thread', 'review:revision-1:stream-0', 'thread-b');
+    const otherThread = host.querySelector('video');
+    if (!otherThread) throw new Error('other thread player missing');
+    Object.defineProperty(otherThread, 'readyState', { value: 1 });
+    await act(async () => otherThread.dispatchEvent(new Event('loadedmetadata')));
+    expect(otherThread.currentTime).toBe(0);
     expect(frameTime).toBeNull();
   } finally {
     await act(async () => root.unmount());

@@ -10,6 +10,7 @@ import {
 } from '@cat-cafe/shared';
 import Database from 'better-sqlite3';
 import { ContentAcceptanceStore } from '../modification/acceptance-store.js';
+import { CollectiveModificationCustody } from '../modification/collective-custody.js';
 import { ContentModificationJournal } from '../modification/journal.js';
 import type { MediaPublicationReturnIntent } from '../modification/media-publication/media-publication-return.js';
 import { registerPublicationRecovery } from '../modification/publication-recovery-registration.js';
@@ -86,6 +87,7 @@ export class ArtifactReviewStore {
   readonly requests: ContentModificationJournal;
   readonly text: ModificationTextStore;
   readonly acceptances: ContentAcceptanceStore;
+  readonly collectiveCustody: CollectiveModificationCustody;
 
   constructor(path: string) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -123,6 +125,7 @@ export class ArtifactReviewStore {
     this.requests = new ContentModificationJournal(this.database);
     this.text = new ModificationTextStore(this.database);
     this.acceptances = new ContentAcceptanceStore(this.database);
+    this.collectiveCustody = new CollectiveModificationCustody(this.database);
   }
 
   close(): void {

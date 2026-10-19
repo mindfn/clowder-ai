@@ -27,11 +27,13 @@ test('public participation exposes only current-source context, reply, interest,
   assert.deepEqual(normalizeToolExecutionPolicy(policy), policy);
   assert.deepEqual(parseToolExecutionPolicy(JSON.stringify(policy)), policy);
   for (const tool of [
+    'collective_artifact_command',
     'collective_current_context',
     'collective_read_context',
     'collective_reply',
     'collective_set_interest',
     'collective_propose_work',
+    'collective_suggest_project_work',
   ]) {
     assert.equal(toolExecutionPolicyDenial(policy, `cat_cafe_${tool}`), null);
     assert.equal(toolExecutionPolicyDenial(policy, `/api/callbacks/${tool.replaceAll('_', '-')}`), null);

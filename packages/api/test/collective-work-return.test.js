@@ -71,6 +71,9 @@ function fixture() {
     submittedArtifact: undefined,
   };
   const connector = {
+    async readArtifactContext() {
+      return { status: 'available', requests: [] };
+    },
     async currentWorkDecision() {
       return { decisionMode: 'automatic', delegationState: 'unavailable', grants: [] };
     },

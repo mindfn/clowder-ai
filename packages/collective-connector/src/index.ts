@@ -1,3 +1,10 @@
+export type {
+  CollectiveArtifactCustodyTransferPort,
+  CollectiveCustodyOwnerAuthority,
+  CollectiveCustodyOwnerOperation,
+} from './artifact-custody-owner-port.js';
+export type { CollectiveArtifactMediaReadPort, CollectiveArtifactMediaResult } from './artifact-media-owner-port.js';
+export type { CollectiveArtifactOwnerPort, CollectiveArtifactOwnerResult } from './artifact-owner-client.js';
 export type { StandingInterestInput } from './attention-custody.js';
 export { type ChannelListeningInput, channelListeningInputSchema } from './channel-listening-custody.js';
 export {

@@ -9,15 +9,17 @@ export function MemberSaveBar({
   editor,
   creating,
   onSave,
+  modal = false,
 }: {
   editor: HubCatEditorController;
   creating: boolean;
   onSave: () => void;
+  modal?: boolean;
 }) {
   const copy = useShellCopy(memberSaveCopy);
   return (
-    <section className="members-v2 member-save-bar" aria-label={copy.region}>
-      <MemberSaveFeedback editor={editor} creating={creating} onSave={onSave} />
+    <section className={`members-v2 member-save-bar${modal ? ' member-save-modal' : ''}`} aria-label={copy.region}>
+      <MemberSaveFeedback editor={editor} creating={creating} onSave={onSave} classic={modal} />
     </section>
   );
 }

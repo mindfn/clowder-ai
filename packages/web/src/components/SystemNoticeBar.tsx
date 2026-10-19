@@ -1,6 +1,7 @@
 'use client';
 
 import { type CloudBridgeOutboundReceiptV1, isCloudBridgeOutboundReceiptV1 } from '@cat-cafe/shared';
+import type { ReactNode } from 'react';
 import { getCachedCats } from '@/hooks/useCatData';
 import type { ChatMessage as ChatMessageType } from '@/stores/chatStore';
 import { CloudDotReceipt } from './CloudDotReceipt';
@@ -34,6 +35,7 @@ function NoticeIcon({ icon }: { icon?: string }) {
 
 interface SystemNoticeBarProps {
   message: ChatMessageType;
+  footer?: ReactNode;
 }
 
 const RECEIPT_STATUS_LABEL: Record<CloudBridgeOutboundReceiptV1['status'], string> = {
@@ -80,7 +82,7 @@ function CloudOutboundAudit({ message, receipt }: { message: ChatMessageType; re
   );
 }
 
-export function SystemNoticeBar({ message }: SystemNoticeBarProps) {
+export function SystemNoticeBar({ message, footer }: SystemNoticeBarProps) {
   const source = message.source;
   if (!source) return null;
 
@@ -113,6 +115,7 @@ export function SystemNoticeBar({ message }: SystemNoticeBarProps) {
             </div>
           </div>
         </div>
+        {footer}
       </div>
     </div>
   );

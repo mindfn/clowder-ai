@@ -184,6 +184,8 @@ describe.each(['page', 'modal'] as const)('%s member save feedback', (presentati
     await change('Nickname', 'Another name');
     const footer = document.querySelector('[data-testid="member-save-feedback"]');
     expect(footer?.textContent).toContain('2 处修改还没保存');
+    expect(footer?.querySelector('strong')?.textContent).toBe('2 处修改还没保存：');
+    expect(footer?.querySelector('strong')?.textContent).not.toContain('模型');
     expect(footer?.textContent).toContain('模型');
     expect(footer?.textContent).toContain('昵称');
     expect(document.querySelector('input[aria-label="Model"]')?.closest('label')?.textContent).toContain('已改');

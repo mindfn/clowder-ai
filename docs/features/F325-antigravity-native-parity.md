@@ -1,6 +1,6 @@
 ---
 feature_ids: [F325]
-tips_exempt: "Renewed 2026-10-15 for native concurrency repair: This records repair toward normal member capability parity and still-incomplete acceptance, not a newly usable public entry. The former Task-only tool/file restrictions are not the product goal; add user-facing discovery when the complete working path is delivered and verified."
+tips_exempt: "Renewed 2026-10-17 after merged native finish and live identity verification: This records repair toward normal member capability parity and still-incomplete acceptance, not a newly usable public entry. The former Task-only tool/file restrictions are not the product goal; add user-facing discovery when the complete working path is delivered and verified."
 related_features: [F053, F061, F143, F149, F161, F174, F178, F194, F201, F203, F210, F211, F241, F254, F261, F286, F296, F299, F306, F318, F320, F323, F324]
 topics: [antigravity, acp, native-carrier, parity, migration, managed-job]
 doc_kind: spec
@@ -17,6 +17,8 @@ description_updated_at: 2026-09-29T06:01:16Z
 
 **我们要的结果**：You 从家里正常入口叫出Siamese，便能对话、创作、查记忆、用工具、读改代码与测试、接 review、接住插话、停止和续接；长任务独立持久、重启可恢复，历史与身份保留，过时入口退役。以家里 Codex app-server / Claude 已落地的实际能力为参照，在相同授权与受保护目标边界下可用。普通工作不能要求人为维护 Native 专属的短工具清单或只为验收准备的空目录。任何真实上游限制须有当前证据和可用替代；本地尚未接线不能冒充不支持。
 
+剩余问题按具体结果持有：认证过期后自动、安全且不重放副作用的自然恢复尚无阳性；原视频已有约5分49秒有声1080p成片，但截至该观察cutoff未完成原线程要求的可播放交片，质量也未由本回看签字；自动阈值handoff、后台served-model、其他平台及Phase C/S4未结算部分继续按各自原件核实。沙盘成功回合的 `toolResultsConfirmed=false` 仅作为待定位线索，不能说所有结果已确认，也不能未经定位宣布新bug。早期401、长时间沉默和审查漏检保留为历史反例；不把修复前故障推断为当前必现，不要求Siamese再演一轮已有证据的日常能力。
+
 **实现与验收进展（2026-10-14 16:40 UTC）**：[同一个 PR #5510](https://github.com/zts212653/clowder-ai/pull/5510) 已于 16:00 UTC 合入 `4fd53e548ba7fdf3d27720b08629fe1eca4a3bbf`。Sonnet 对最终 `1ee83e6f52e995e970d888a61ead2371ca52ab00` 独立复审 approved（执行线程 source1026：`private-source-id`）。正常 MCP/原生工具、共享 guard、流式/工具错误恢复、skills/媒体、当轮用量、持久 session 与发送正文前的 verified init 已接通；Native 压缩沿既有 F296 控制与 epoch owner 接线。Action Plane 单一持久 job 包含独立 worker、lease/fencing、principal 幂等/显式 retry lineage、取消/恢复、日志与 metrics/trace。旧 Gemini CLI/IDE execution、专用 Task/file grant 和 task-test 旁路已在 PR 中退役，历史 reader 保留。合入还修正共享 shell reader 把重定向当 argv 的根因，保护 Claude/Codex 与 Native 的目录判断；非作者 4099 条差分未发现 deny→allow 放松。后文旧 P1 描述是历史基线，不是新的产品限制。
 
 **凭据控制面复审修正（source440）**：Sol6.1在71上发现security证书/identity/login/trust隐式修改仍可绕过。Astra复现4红/4阳性后，在同PR提交`c515439ea3a0d8ce10c32e52112eab4e055e590b`，按整类命令只放行经证明的只读形式，其余拒绝；原反例及相关guard合计18/18，57个本机命令名判定扫描无漏项。仅2文件变化，其他独立已测delta保持，Sol6.1 source462已typed approved、53/53独立检查通过；不替真实OAuth刷新或原线程验收签字。
@@ -25,7 +27,7 @@ description_updated_at: 2026-09-29T06:01:16Z
 
 **独立恢复判断已通过**：Argon source097（`private-source-id`）typed approved证据cut `c9a356870747b70cac8ffa17f0c001e58a3c4200`，无P1/P2，认可解除旧会话续接、只读补读准入与OAuth五秒保存超时三项具体阻塞；核过38件原件哈希及历史/成员不变。其批准不覆盖整体Feature终态。
 
-**尚未结算**：boot35已实看当前回复的桌面、手机与刷新呈现，其他页面旅程不据此代签；macOS桌面无逐帧记录，不能扩大无弹窗的保证。自动阈值 handoff 的 unavailable 会阻止实际动作，需原持续工作结果的策略证据/具体裁定；既有 Native 手动压缩与续接实证保留。协议只证明配置与CLI init/request选择的模型，没有独立backend served-model证明，保持`modelVerified=false`；AC-A2不提前签字。source1141提出的明确限制建议尚待operator裁定。Linux/Windows未认证。独立整体愿景结论不通过，不以作者报告代签或关闭Feature。原#5510工位因规范收尾的后续main内容检查未通过而具名retained至2026-10-15 20:25 UTC，#5551修正工位已释放；保留不冒充删除。
+**尚未结算的具体边界**：上述日常能力独立补证已经成立，不再用整项未关闭否定它。boot35已实看当前回复的桌面、手机与刷新呈现，其他页面旅程不据此代签；macOS桌面无逐帧记录，不能扩大无弹窗的保证。自动阈值 handoff 的 unavailable 会阻止实际动作，需原持续工作结果的策略证据/具体裁定；既有 Native 手动压缩与续接实证保留。协议只证明配置与CLI init/request选择的模型，没有独立backend served-model证明，保持`modelVerified=false`；AC-A2不提前签字。source1141提出的明确限制建议尚待operator裁定。Linux/Windows未认证。整体愿景尚未获完整放行，不以作者报告或本次部分补证关闭Feature。原#5510工位的历史记录是具名retained至2026-10-15 20:25 UTC，#5551修正工位已释放；未新查库存，不把旧到期记录当当前有效续留，也不冒称删除。
 
 原 A–E、F261 有效需求与迁移/历史边界继续被同一 Task 承接；未以部分进度关闭 Feature，也未重启正式 runtime。
 
@@ -168,6 +170,21 @@ provider background task、模型说“做完了”、进程退出均不替代 d
 | S4 | coding task / worktree | Siamese、执行伙伴 | 首 PR 合入并加载→Siamese亲自读/改/测→非作者 review→修复→参加后续建设 | 实际载体版本、工具 receipt、diff/commit、测试与 review 往返；代写不算 |
 
 ## Acceptance Criteria
+
+### 2026-10-17 自然使用证据的结算
+
+来源为上述Sol6.1独立报告与source426（`private-source-id`）。下列按能力确认实际结果；原AC含多个契约的复合条件仍按完整条件结算，未整项勾选不表示该能力从未可用。
+
+| 能力 / 对应AC | 已成立并消费的证据 | 仍需单独核验的边界 |
+|---|---|---|
+| 普通工具、媒体与多轮续聊（A1/A4、Primary Journey） | Argon日常文件/命令/MCP/浏览器/读图、世界线同Native会话两轮半小时复验；失败后能修正继续 | 官方协议负例与特殊中断分别沿原测试/实录；不重复普通招呼 |
+| 记忆与身份（A3/B1/B6） | 共享历史读取、文件恢复上下文与正常身份持续成立；既有原生压缩/注入实证继续有效 | 不把共享历史读取自动等同语义搜索、分页和scope全契约通过 |
+| 有用审查与创作（B5、E2/E3） | #5608审出假绿并复审；猫猫星球实玩和多轮验改；动画参照包、沙盘文档及视频工程真实存在 | 双尾漏检、长空档保留；视频交片/观感仍缺，ordinary succeeded不代替交付 |
+| 同猫跨线程并行（A4） | 两个不同Native会话实际重叠380.452秒并分别成功；已超出受控探针证据 | 双成员隔离、取消影响等不同条件沿boot33等原实证 |
+| 停止、插话与恢复（B3/B4） | 自然撤回被接住、真实user_cancel、人发新输入后续办均有现场 | 不冒充精确live steer、F254全链、子进程清理或安全自动恢复 |
+| 长时间工作与持久任务（C1–C9） | 56.02分钟普通执行成功；既有Managed Job跨重启与真实失败回流仍计入 | ordinary turn不代替独立worker/lease/唯一wake；20轮故障、12B目标和监控逐项按原证据结算 |
+| 真实建设（E3/S4） | Flash既有读改测/反馈实证有效；Argon自然审查、资料写入和工程贡献有效，成员分开归属 | 严格合入/加载后的小代码读改测顺序不拿文档贡献偷换，不把两成员经历拼成同一人 |
+| 迁移与整体结果（A2、D1–D4、E1/E2） | 正式boot37已加载两项修复并继续普通工作；旧现场可读可续 | served-model、其他平台、全consumer/回滚、认证自动恢复与交片缺口保留；不自行缩减或close |
 
 ### Phase A（官方契约）
 - [ ] AC-A1: 固定版本与来源的已认证官方载体 new→prompt→MCP/tool→final（source470 允许在 ACP 不满足原生 L0 时选官方 Native CLI） 原始 fixture 可重跑；含正常、错误、denied、partial 和 active interruption。

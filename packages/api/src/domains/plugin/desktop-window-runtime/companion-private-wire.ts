@@ -36,6 +36,12 @@ import {
   validateCompanionCommand as validateLetterCompanionCommand,
   validateCompanionReply as validateLetterCompanionReply,
 } from '@clowder-ai/plugin-contract-beta28';
+import {
+  type CompanionCommand as AppAssistCompanionCommand,
+  type CompanionReply as AppAssistCompanionReply,
+  validateCompanionCommand as validateAppAssistCommand,
+  validateCompanionReply as validateAppAssistReply,
+} from '@clowder-ai/plugin-contract-beta29';
 import { z } from 'zod';
 import type { CompanionArchiveContract } from './published-companion-v2.js';
 
@@ -188,6 +194,7 @@ export type HostCompanionCommand =
   | Exclude<WorkCompanionCommand, { kind: `audio.${string}` }>
   | Exclude<PresentationCompanionCommand, { kind: `audio.${string}` }>
   | Exclude<LetterCompanionCommand, { kind: `audio.${string}` }>
+  | Exclude<AppAssistCompanionCommand, { kind: `audio.${string}` }>
   | z.infer<typeof offer>
   | z.infer<typeof f221ConfirmTrial>;
 export type HostCompanionReply =
@@ -197,6 +204,7 @@ export type HostCompanionReply =
   | WorkCompanionReply
   | PresentationCompanionReply
   | LetterCompanionReply
+  | AppAssistCompanionReply
   | HostCompanionState
   | z.infer<typeof answer>
   | HostF221Preview
@@ -206,23 +214,31 @@ export function validateHostCompanionCommand(
   contract: CompanionArchiveContract['contract'] = '0.1.0-beta.21',
 ): value is HostCompanionCommand {
   if (
-    !['0.1.0-beta.21', '0.1.0-beta.23', '0.1.0-beta.24', '0.1.0-beta.25', '0.1.0-beta.27', '0.1.0-beta.28'].includes(
-      contract,
-    )
+    ![
+      '0.1.0-beta.21',
+      '0.1.0-beta.23',
+      '0.1.0-beta.24',
+      '0.1.0-beta.25',
+      '0.1.0-beta.27',
+      '0.1.0-beta.28',
+      '0.1.0-beta.29',
+    ].includes(contract)
   )
     return false;
   const validatePublic =
-    contract === '0.1.0-beta.28'
-      ? validateLetterCompanionCommand
-      : contract === '0.1.0-beta.27'
-        ? validatePresentationCompanionCommand
-        : contract === '0.1.0-beta.25'
-          ? validateWorkCompanionCommand
-          : contract === '0.1.0-beta.24'
-            ? validateUnifiedCompanionCommand
-            : contract === '0.1.0-beta.23'
-              ? validateModernCompanionCommand
-              : validateCompanionCommand;
+    contract === '0.1.0-beta.29'
+      ? validateAppAssistCommand
+      : contract === '0.1.0-beta.28'
+        ? validateLetterCompanionCommand
+        : contract === '0.1.0-beta.27'
+          ? validatePresentationCompanionCommand
+          : contract === '0.1.0-beta.25'
+            ? validateWorkCompanionCommand
+            : contract === '0.1.0-beta.24'
+              ? validateUnifiedCompanionCommand
+              : contract === '0.1.0-beta.23'
+                ? validateModernCompanionCommand
+                : validateCompanionCommand;
   return (
     (validatePublic(value) && !value.kind.startsWith('audio.')) ||
     offer.safeParse(value).success ||
@@ -234,26 +250,37 @@ export function validateHostCompanionReply(
   contract: CompanionArchiveContract['contract'] = '0.1.0-beta.21',
 ): value is HostCompanionReply {
   if (
-    !['0.1.0-beta.21', '0.1.0-beta.23', '0.1.0-beta.24', '0.1.0-beta.25', '0.1.0-beta.27', '0.1.0-beta.28'].includes(
-      contract,
-    )
+    ![
+      '0.1.0-beta.21',
+      '0.1.0-beta.23',
+      '0.1.0-beta.24',
+      '0.1.0-beta.25',
+      '0.1.0-beta.27',
+      '0.1.0-beta.28',
+      '0.1.0-beta.29',
+    ].includes(contract)
   )
     return false;
   const validatePublic =
-    contract === '0.1.0-beta.28'
-      ? validateLetterCompanionReply
-      : contract === '0.1.0-beta.27'
-        ? validatePresentationCompanionReply
-        : contract === '0.1.0-beta.25'
-          ? validateWorkCompanionReply
-          : contract === '0.1.0-beta.24'
-            ? validateUnifiedCompanionReply
-            : contract === '0.1.0-beta.23'
-              ? validateModernCompanionReply
-              : validateCompanionReply;
+    contract === '0.1.0-beta.29'
+      ? validateAppAssistReply
+      : contract === '0.1.0-beta.28'
+        ? validateLetterCompanionReply
+        : contract === '0.1.0-beta.27'
+          ? validatePresentationCompanionReply
+          : contract === '0.1.0-beta.25'
+            ? validateWorkCompanionReply
+            : contract === '0.1.0-beta.24'
+              ? validateUnifiedCompanionReply
+              : contract === '0.1.0-beta.23'
+                ? validateModernCompanionReply
+                : validateCompanionReply;
   if (value && typeof value === 'object' && 'kind' in value && value.kind === 'state') {
     const parsed = hostStateExtras.safeParse(value);
     if (!parsed.success) return false;
+    // Private API state contains only the existing base. The trusted desktop
+    // session adds its own offer and validates the complete beta.29 reply there.
+    if (contract === '0.1.0-beta.29') return !('appAssist' in parsed.data) && validateLetterCompanionReply(parsed.data);
     const { behaviorEnabled: _nativePolicy, ...publicState } = parsed.data;
     return validatePublic(contract === '0.1.0-beta.21' ? publicState : parsed.data);
   }

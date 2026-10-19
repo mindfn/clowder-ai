@@ -11,6 +11,7 @@ import {
 } from '@/stores/sidebarProjectionStore';
 import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
+import { notifyHandledMentionRead } from '@/utils/mention-read-receipt';
 import { executeSidebarFieldCommand } from '@/utils/sidebar-commands';
 import {
   bootstrapSidebarThreadSnapshot,
@@ -962,7 +963,9 @@ export function ThreadSidebar({ onClose, className, routeThreadId, activeDestina
     try {
       const res = await apiFetch('/api/threads/read/mark-all', { method: 'POST' });
       if (res.ok) {
+        const receipt: unknown = await res.json().catch(() => null);
         useChatStore.getState().clearAllUnread();
+        notifyHandledMentionRead(receipt);
         await invalidateSidebarProjection();
       } else {
         for (const commandId of commandIds) useSidebarProjectionStore.getState().failSidebarCommand(commandId);

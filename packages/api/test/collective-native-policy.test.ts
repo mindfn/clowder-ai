@@ -28,7 +28,7 @@ test('public login projection preserves canonical credential refresh without cop
 });
 
 test(
-  'installed headless Codex mounts the seven bounded tools, uses current-context, blocks a forced native command and excludes private bytes',
+  'installed headless Codex mounts the nine bounded tools, uses current-context, blocks a forced native command and excludes private bytes',
   { skip: spawnSync('codex', ['--version']).status !== 0, timeout: 55000 },
   async () => {
     const probe = await probeCollectiveCodex();
@@ -38,12 +38,14 @@ test(
     const collab = tools.find((tool) => tool.name === 'mcp__cat_cafe_collab');
     assert.deepEqual(collab.tools.map((tool) => tool.name).sort(), [
       'cat_cafe_collective_accept_work',
+      'cat_cafe_collective_artifact_command',
       'cat_cafe_collective_continue_work',
       'cat_cafe_collective_current_context',
       'cat_cafe_collective_propose_work',
       'cat_cafe_collective_read_context',
       'cat_cafe_collective_reply',
       'cat_cafe_collective_set_interest',
+      'cat_cafe_collective_suggest_project_work',
     ]);
     assert.equal(probe.callbacks.length, 1);
     assert.equal(probe.callbacks[0].headers['x-invocation-id'], 'probe-invocation');
@@ -93,12 +95,14 @@ test(
       'list_mcp_resource_templates',
       'list_mcp_resources',
       'mcp__cat_cafe_collab__cat_cafe_collective_accept_work',
+      'mcp__cat_cafe_collab__cat_cafe_collective_artifact_command',
       'mcp__cat_cafe_collab__cat_cafe_collective_continue_work',
       'mcp__cat_cafe_collab__cat_cafe_collective_current_context',
       'mcp__cat_cafe_collab__cat_cafe_collective_propose_work',
       'mcp__cat_cafe_collab__cat_cafe_collective_read_context',
       'mcp__cat_cafe_collab__cat_cafe_collective_reply',
       'mcp__cat_cafe_collab__cat_cafe_collective_set_interest',
+      'mcp__cat_cafe_collab__cat_cafe_collective_suggest_project_work',
       'read_mcp_resource',
     ]);
     assert.match(

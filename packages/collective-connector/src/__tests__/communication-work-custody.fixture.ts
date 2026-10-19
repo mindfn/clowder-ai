@@ -6,7 +6,7 @@ import { CollectiveServiceStore, startCollectiveServer } from '../../../collecti
 import { CollectiveConnector } from '../connector.js';
 
 /** Production Service and Connector; OAuth and running-Cat attestations are explicit test fixtures. */
-export async function fixture() {
+export async function fixture(options: { legacyArtifactContext?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'f290-work-custody-'));
   const opened = await CollectiveServiceStore.open({
     dataDirectory: join(root, 'service'),
@@ -40,6 +40,10 @@ export async function fixture() {
   let loseAcceptResponse = false;
   let loseRevokeResponse = false;
   const fetchImpl: typeof fetch = async (input, init) => {
+    if (options.legacyArtifactContext && String(input).endsWith('/api/artifacts/agent/context'))
+      return new Response(JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Route not found' } }), {
+        status: 404,
+      });
     const response = await fetch(input, init);
     if (String(input).endsWith('/work-policy/revoke') && loseRevokeResponse) {
       loseRevokeResponse = false;

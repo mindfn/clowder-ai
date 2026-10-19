@@ -488,6 +488,10 @@ export class RedisThreadStore implements IThreadStore {
   }
 
   async listProjectCandidates(userId: string, projectPath: string, threadIds: readonly string[]): Promise<Thread[]> {
+    return (await this.listCandidates(userId, threadIds)).filter((thread) => thread.projectPath === projectPath);
+  }
+
+  async listCandidates(userId: string, threadIds: readonly string[]): Promise<Thread[]> {
     const candidates = [...new Set(threadIds)];
     const ids: string[] = [];
     // The existing user list remains the visibility authority, including
@@ -505,8 +509,7 @@ export class RedisThreadStore implements IThreadStore {
         if (id !== undefined && (reply[1] !== null || id === DEFAULT_THREAD_ID)) ids.push(id);
       }
     }
-    const threads = await this.readListedThreads(ids);
-    return threads.filter((thread) => thread.projectPath === projectPath);
+    return this.readListedThreads(ids);
   }
 
   async hasByProject(userId: string, projectPath: string): Promise<boolean> {

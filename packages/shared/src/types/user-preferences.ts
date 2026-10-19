@@ -52,6 +52,10 @@ export interface BubbleDefaultPreferences {
 }
 
 export interface UserPreferences {
+  /** Happening Now per-project presentation only; persisted without expiry. */
+  liveProjectFolds?: Record<string, boolean>;
+  waitingProjectFolds?: Record<string, boolean>;
+  deploymentWaitFolds?: Record<string, boolean>;
   /** F322: owner-private ignored work/request coordinates. No TTL or canonical lifecycle effect. */
   ignoredItems?: IgnoredItemPreferences;
   /** F321: background curation preference and its durable first-enable boundary. */

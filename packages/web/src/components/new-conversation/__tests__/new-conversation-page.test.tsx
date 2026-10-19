@@ -9,6 +9,10 @@ const mocks = vi.hoisted(() => ({
   admission: {} as Record<string, unknown>,
   openPublishedArtifact: vi.fn(),
   setWorkspaceMode: vi.fn(),
+  setCurrentThread: vi.fn(),
+  closeRightPanel: vi.fn(),
+  queueWorkDiscussion: vi.fn(),
+  currentThreadId: 'default',
   fakeArtifact: {
     type: 'image',
     name: 'work',
@@ -27,12 +31,27 @@ vi.mock('next/image', () => ({
 }));
 
 vi.mock('@/stores/chatStore', () => ({
-  useChatStore: (selector: (state: Record<string, unknown>) => unknown) =>
-    selector({
-      openPublishedArtifact: mocks.openPublishedArtifact,
-      setWorkspaceMode: mocks.setWorkspaceMode,
-    }),
+  useChatStore: Object.assign(
+    (selector: (state: Record<string, unknown>) => unknown) =>
+      selector({
+        openPublishedArtifact: mocks.openPublishedArtifact,
+        setWorkspaceMode: mocks.setWorkspaceMode,
+      }),
+    {
+      getState: () => ({
+        currentThreadId: mocks.currentThreadId,
+        setCurrentThread: mocks.setCurrentThread,
+        closeRightPanel: mocks.closeRightPanel,
+      }),
+    },
+  ),
 }));
+
+vi.mock('@/hooks/useCatData', () => ({
+  useCatData: () => ({ cats: [{ id: 'codex-sol', displayName: 'Sol', mentionPatterns: ['@codex-sol'] }] }),
+}));
+
+vi.mock('../queue-work-discussion', () => ({ queueWorkDiscussion: mocks.queueWorkDiscussion }));
 
 vi.mock('@/stores/sidebarProjectionStore', () => ({
   useSidebarProjectionStore: (selector: (state: Record<string, unknown>) => unknown) =>
@@ -93,13 +112,24 @@ vi.mock('../NewConversationComposerContext', () => ({
 }));
 
 vi.mock('../RecentWorks', () => ({
-  RecentWorks: ({ onOpen, onOpenAll }: { onOpen: (artifact: GlobalArtifactDTO) => void; onOpenAll: () => void }) => (
+  RecentWorks: ({
+    onOpen,
+    onOpenAll,
+    onDiscuss,
+  }: {
+    onOpen: (artifact: GlobalArtifactDTO) => void;
+    onOpenAll: () => void;
+    onDiscuss: (artifact: GlobalArtifactDTO) => void;
+  }) => (
     <div data-testid="works">
       <button type="button" onClick={() => onOpen(mocks.fakeArtifact)}>
         open work
       </button>
       <button type="button" onClick={onOpenAll}>
         all works
+      </button>
+      <button type="button" onClick={() => onDiscuss(mocks.fakeArtifact)}>
+        discuss work
       </button>
     </div>
   ),
@@ -148,6 +178,12 @@ describe('F322 new conversation page', () => {
     mocks.admission = baseAdmission();
     mocks.openPublishedArtifact.mockReset();
     mocks.setWorkspaceMode.mockReset();
+    mocks.currentThreadId = 'default';
+    mocks.setCurrentThread.mockReset().mockImplementation((threadId: string) => {
+      mocks.currentThreadId = threadId;
+    });
+    mocks.closeRightPanel.mockReset();
+    mocks.queueWorkDiscussion.mockReset().mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -164,6 +200,60 @@ describe('F322 new conversation page', () => {
     expect(landingArtworkForHour(6)).toBe('dusk');
     expect(landingArtworkForHour(21)).toBe('dusk');
     expect(landingArtworkForHour(22)).toBe('night');
+  });
+
+  it('reveals the original conversation after restoring its saved workspace, without sending', () => {
+    const navigate = vi.fn();
+    let closedThread: string | undefined;
+    mocks.closeRightPanel.mockImplementation(() => {
+      closedThread = mocks.currentThreadId;
+    });
+    act(() =>
+      root.render(
+        <NewConversationPage
+          sidebarOpen
+          statusPanelOpen={false}
+          hasWorkspaceActivity={false}
+          onToggleSidebar={vi.fn()}
+          onToggleStatusPanel={vi.fn()}
+          onNavigate={navigate}
+        />,
+      ),
+    );
+    act(() =>
+      [...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent === 'discuss work')
+        ?.click(),
+    );
+    expect(mocks.queueWorkDiscussion).toHaveBeenCalledWith(mocks.fakeArtifact, '@codex-sol ', expect.any(Object));
+    expect(closedThread).toBe('thread-1');
+    expect(navigate).toHaveBeenCalledWith('thread-1');
+    expect(mocks.admission.send).not.toHaveBeenCalled();
+  });
+
+  it('keeps the current workspace and route when the original draft cannot admit the discussion', () => {
+    mocks.queueWorkDiscussion.mockReturnValue(false);
+    const navigate = vi.fn();
+    act(() =>
+      root.render(
+        <NewConversationPage
+          sidebarOpen
+          statusPanelOpen={false}
+          hasWorkspaceActivity={false}
+          onToggleSidebar={vi.fn()}
+          onToggleStatusPanel={vi.fn()}
+          onNavigate={navigate}
+        />,
+      ),
+    );
+    act(() =>
+      [...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent === 'discuss work')
+        ?.click(),
+    );
+    expect(mocks.setCurrentThread).not.toHaveBeenCalled();
+    expect(mocks.closeRightPanel).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it('keeps the composer as the sole creation action and routes real work actions through existing owners', async () => {

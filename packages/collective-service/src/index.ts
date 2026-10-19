@@ -1,3 +1,4 @@
+export { artifactIdentity } from './artifact-registration.js';
 export { CollectiveServiceError } from './errors.js';
 export {
   type BeginGitHubAppManifestInput,

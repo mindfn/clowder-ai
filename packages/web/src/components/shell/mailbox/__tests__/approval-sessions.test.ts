@@ -469,6 +469,16 @@ describe('reads that must not count', () => {
 });
 
 describe('producers whose card reports its own request (meeting intake)', () => {
+  it('follows an original native card without inventing a Hub attempt or successful result', async () => {
+    const h = harness();
+    h.open();
+    h.sessions.hostReport(KEY, { phase: 'start', kind: 'producer-card' });
+    expect(h.state().kind).toBe('writing');
+    h.sessions.hostReport(KEY, { phase: 'end', kind: 'producer-card', outcome: 'http-error', status: 409 });
+    expect(h.state()).toMatchObject({ kind: 'confirming', write: { outcome: 'errored', status: 409 } });
+    await h.answer(listed(h));
+    expect(h.state().kind).toBe('still_open');
+  });
   it('follows start and end of a meeting-intake write like an attempt', async () => {
     const h = harness();
     h.open();

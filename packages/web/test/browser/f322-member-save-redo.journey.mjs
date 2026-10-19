@@ -3,6 +3,90 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { scene, screenshots } from './f322-members-fixture.mjs';
 
+for (const [width, language, dark] of [
+  [1440, 'zh', false],
+  [390, 'en', true],
+]) {
+  test(`shared member form and save styling from both hosts (${width}/${language})`, async () => {
+    const forms = [];
+    const paints = [];
+    for (const classic of [false, true]) {
+      const { context, page, state } = await scene(width, dark, classic, false, {
+        accounts: [
+          {
+            id: 'codex',
+            clientId: 'openai',
+            displayName: 'Codex',
+            authType: 'oauth',
+            builtin: true,
+            kind: 'builtin',
+            models: [],
+          },
+        ],
+      });
+      try {
+        Object.assign(state.cats[2], { accountRef: 'codex', cli: { command: 'codex' }, defaultModel: 'gpt-test' });
+        await page.reload();
+        if (dark) await page.evaluate(() => (document.documentElement.dataset.theme = 'dark'));
+        assert.equal(await page.locator('html').getAttribute('data-theme'), dark ? 'dark' : null);
+        await page.evaluate((value) => window.f322MemberFixture.writeLanguage(value), language);
+        await page.getByRole('button', { name: /测试丙.*fixture-c/ }).click();
+        await page.locator('select[aria-label="Codex Sandbox"]:enabled').waitFor();
+        const fields = page.locator('.member-editor-fields');
+        paints.push(
+          await fields
+            .locator('select[aria-label="Codex Sandbox"]')
+            .evaluate((input) => getComputedStyle(input.closest('section')).backgroundColor),
+        );
+        forms.push(
+          await fields.evaluate((node) => {
+            const form = node.cloneNode(true);
+            form.querySelector('[id$="-delete"]')?.remove();
+            return form.innerText || form.textContent;
+          }),
+        );
+        const advanced = page.locator('[id$="-advanced"] > section');
+        const deletion = page.locator('[id$="-delete"]');
+        if (!classic) {
+          const padding = await deletion.evaluate((node) => parseFloat(getComputedStyle(node).paddingLeft));
+          const referencePadding = await advanced.evaluate((node) => parseFloat(getComputedStyle(node).paddingLeft));
+          assert.ok(padding > 0, 'Delete card has readable inner spacing');
+          assert.equal(padding, referencePadding, 'Delete card aligns with the other form cards');
+        } else {
+          assert.equal(await deletion.count(), 0, 'Chat cannot invent a delete action without the host callback');
+        }
+        await page.locator('input[aria-label="Nickname"]').fill('Changed member');
+        const feedback = page.getByTestId('member-save-feedback');
+        const emphasis = feedback.locator('strong');
+        assert.equal(await emphasis.innerText(), language === 'zh' ? '1 处修改还没保存：' : '1 unsaved change: ');
+        assert.notEqual(
+          await emphasis.evaluate((node) => getComputedStyle(node).color),
+          await feedback.locator('p').evaluate((node) => getComputedStyle(node).color),
+        );
+        const button = feedback.getByRole('button', { name: language === 'zh' ? '保存' : 'Save', exact: true });
+        await (classic ? advanced : deletion).scrollIntoViewIfNeeded();
+        assert.equal(
+          await button.evaluate((node) => {
+            const r = node.getBoundingClientRect();
+            const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+            return hit === node || node.contains(hit);
+          }),
+          true,
+        );
+        if (screenshots)
+          await page.screenshot({
+            path: path.join(screenshots, `shared-form-${width}-${language}-${classic ? 'modal' : 'page'}.png`),
+          });
+        assert.equal(state.writes.length, 0);
+      } finally {
+        await context.close();
+      }
+    }
+    assert.equal(forms[1], forms[0], 'The visible member form is identical in Settings and Chat');
+    assert.equal(paints[1], paints[0], 'Classic Chat also uses the shared paper card tokens');
+  });
+}
+
 for (const [width, language, classic, dark] of [
   [1440, 'zh', false, false],
   [390, 'en', false, true],
@@ -126,7 +210,6 @@ for (const [width, language, classic] of [
             json: rejectUpload ? { error: `${kind} unavailable` } : { url: `/uploads/retried-${kind}` },
           });
         });
-        if (kind === 'audio' && classic) await page.getByRole('button', { name: /Voice Config/ }).click();
         await page.locator(`input[type="file"][accept^="${mime}"]`).setInputFiles({
           name: `sample.${kind === 'avatar' ? 'png' : 'wav'}`,
           mimeType: mime,

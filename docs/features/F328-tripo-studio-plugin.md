@@ -25,7 +25,7 @@ After：授权目标页面后，插件取得已有预览/模型，生成来源�
 
 首轮分享链接审模已可实际使用：独立 `official.tripo-studio` v0.1.5 已经 Host 准入、启用并提供五个可调用工具；源码已通过非作者封板审查并合入 PR #5645，main merge SHA `1d953f6a10ed2a24452ae3ec64588473ac41cb39`。四个用户分享链接经已安装 v0.1.4 插件生成 16 张旋转截图；v0.1.5 另完成 C1 四图真实旅程。来源矩阵与新版实采分别标记版本；16 张比较图的来源/编号/图像 SHA-256 已回读核验。四轮 NSWorkspace 前台采样与原 Chrome 窗口/活动标签前后记录均保持；这是采样证据，不声称连续监控。此前 v0.1.3 三轮前台变化与 v0.1.0 错误取证保留为失败/不充分证据，没有改写成通过。
 
-2026-10-16 operator 纠偏后，已按 F202 重新核定归属：Tripo 业务源码、独立构建与包发布属于 `clowder-ai-plugins`；Core 只消费版本化插件契约。Core PR #5658 正在完成去耦审查，移除本次 Tripo 业务源码、bundled 归档、专用 packer 与公开同步中的依赖准备/重建分支，只保留 `host-official-catalog.ts` 中 `official.tripo-studio` 的零 grant Host allow policy。它不提供发布坐标，也不凭空制造可安装版本。插件仓已准备独立源码包 v0.1.7，尚未发布 npm 或进入官方 catalog；Core 去耦不等待该包发布。
+2026-10-16 operator 纠偏后，已按 F202 重新核定归属：Tripo 业务源码、独立构建与包发布属于 `clowder-ai-plugins`；Core 只消费版本化插件契约。Core PR #5658 已合入（main `d42b3917f12e789b2796493781208aa5ef7fceef`），移除本次 Tripo 业务源码、bundled 归档、专用 packer 与公开同步中的依赖准备/重建分支，只保留 `host-official-catalog.ts` 中 `official.tripo-studio` 的零 grant Host allow policy。它不提供发布坐标，也不凭空制造可安装版本。插件仓独立源码包 v0.1.7 已提交 PR #85（`e101cc541909031ac49a3fad896d43e1aa6c6f9b`），两条 Typecheck + Conformance CI 均通过；涉及根锁文件与 CI workflow，按该仓规则等待另一方 CODEOWNER mindfn 审查。尚未发布 npm 或进入官方 catalog；Core 去耦不等待该包发布。
 
 此前 PR #5655（main `36c37aa935f62768c47cc13d8f5cf249d7a8c485`）解决冻结源码构建依赖，并生成 Core 归档 v0.1.6；这是历史修复，现已由两仓归属纠偏取代，不再继续加固 Core 打包链。当前 Host 已加载的实例仍为 v0.1.5，其实例、配置和已有产物保留；本次不卸载、升级或重启。公开同步与最终 CI 仍由 Astra / Task062 负责，不据源码迁移或局部验证声称发布完成。
 
@@ -33,7 +33,21 @@ After：授权目标页面后，插件取得已有预览/模型，生成来源�
 
 ## What
 
-单阶段独立插件，沿用 Settings 插件管理与 MCP contribution，复用 F247 framing、配对记录和 socket lease。显式授权单个 Studio 页面；只读已有候选/资源；本地检查不用 Cookie/profile 复制。不触发生成、贴图、充值、付费 API 或上传；用户保留选型。项目数据留在消费者项目。
+首轮独立插件沿用 Settings 插件管理与 MCP contribution，复用 F247 framing、配对记录和 socket lease。v0.1.5 显式授权单个 Studio 页面，只读已有候选/资源；不触发生成、贴图、充值、付费 API 或上传。后续获准的订阅工作流另设显式授权模式，不能沿用只读授权提交生成。所有路径都不复制 Cookie/profile；用户保留选型，项目数据留在消费者项目。
+
+## 网页订阅扩展（F329 消费）
+
+新增授权来源：母线程用户消息 `private-source-id`（使用网页订阅、扩展 F328，不调用另付费 API）与 `private-source-id`（先做Ragdoll、Maine Coon，形象确认后准备四视图及建模）。原 Task/owner 不变，素材线不接插件工程。
+
+插件仓 PR [#87](https://github.com/zts212653/clowder-ai-plugins/pull/87) 是堆叠在 #85 上的 v0.2.0 开发候选，exact HEAD `c11f21a97796d8b7b6b3b0b250afb7361d319148`。它新增六个 MCP 工具（共十一项），覆盖独立浏览器授权、生成参数预览、持久化单次提交与未知结果、供应商导出请求及校验后收文件。`tripo_workspace_status` 只能打开固定 Rig/Animate 页面并检查，**没有 AutoRig、应用 idle/walk 的写入口**。不能据这些工具名称宣称四足动作已经可用。
+
+包级 24 项检查、实际 Chromium 中的固定 DOM/扩展工作流、双目录归档一致性和空 consumer 十一工具调用通过；#87 exact HEAD 的 Typecheck + Conformance CI 于 2026-10-17 01:27 UTC 通过。浏览器检查使用权限响应与供应商 DOM fixture，只证明相关契约，不等于登录订阅后的生成、导出或绑骨旅程。#85/#87 涉及受保护文件，等待另一方 CODEOWNER mindfn；尚未合入、npm 发布或更新 catalog，当前运行实例仍是 v0.1.5。
+
+实际浏览器前检：匿名 Studio Smart Mesh 页面可读取 Front/Left/Right/Back、生成参数与积分显示，写入被 `TRIPO_NOT_LOGGED_IN` 拒绝；匿名 Rig 页提供从 Assets 选择或上传既有 GLB 的入口，点上传会要求登录。没有向匿名会话上传家庭模型或参考图，没有提交生成或消耗积分。
+
+素材线用户 `[thread-id]#private-source-id` 已手动生成、贴图并导出Ragdoll A/B 静态 GLB；随后 `private-source-id` 又交付 A 的真实绑定与异常 walk 导出。素材线已核到 40 关节、1 skin、约 2.6 秒四足 walk，但前爪过折、后腿间蒙皮牵连，变形质量未通过。素材线沿既有责任修整现有动作与权重，**不再等待插件 Rig 入口，不为当前 A 重复生成或 AutoRig**。这些人工供应商导出不是插件成果；非空骨架/动画也不等于动作验收。页面来源必须来自真实 Studio URL，不能用 GLB 内部 UUID 拼造作品链接。
+
+本机组件已准备 v0.2.0，但 Chrome 扩展尚未连接、没有浏览器授权；02:05 UTC 的实际回执仍为 `HELPER_DISCONNECTED`。已向 You 给出一次 Chrome 原生加载与「生成与导出」授权的具体操作，等待该动作；不重复索要插件开发许可。Alpha 加载、源码 CI 与供应商真实生成/导出分别记录，不能互相代替。
 
 ## User Journey
 
@@ -74,8 +88,8 @@ Canonical source: `clowder-ai-plugins/packages/tripo-studio/`（业务源码、�
 
 ## 验证与剩余缺口
 
-- 当前去耦候选移除 Core 的 Tripo 归档与 `pack-tripo-plugin.mjs --check` 标准 API 测试入口；独立源码包和发布验证归插件仓。已安装的 v0.1.5 保留其原交付版本和 SRI，未安装尚未发布的 v0.1.7。
-- 去耦前的 64 项检查是首轮实现的历史证据，包括 Native 权限/版本、文件边界、源码漂移、空目录 consumer、Host 生命周期及包 staging；不把已删除的 Core 打包测试描述为当前入口。去耦候选另通过 44 项受影响检查，覆盖外部 catalog 归属、零 grant Host policy、现存安装实例管理、通用包 staging 与非 Tripo bundled 重建；API TypeScript、Biome 与 diff 检查通过。
+- 已合入的去耦修正移除 Core 的 Tripo 归档与 `pack-tripo-plugin.mjs --check` 标准 API 测试入口；独立源码包和发布验证归插件仓。已安装的 v0.1.5 保留其原交付版本和 SRI，未安装尚未发布的 v0.1.7。
+- 去耦前的 64 项检查是首轮实现的历史证据，包括 Native 权限/版本、文件边界、源码漂移、空目录 consumer、Host 生命周期及包 staging；不把已删除的 Core 打包测试描述为当前入口。去耦修正另通过 44 项受影响检查，覆盖外部 catalog 归属、零 grant Host policy、现存安装实例管理、通用包 staging 与非 Tripo bundled 重建；API TypeScript、Biome 与 diff 检查通过。
 - AC-2 的分享 URL/资源/来源守护与 Native 契约已验；实际 Chrome 授权、撤销及恢复旅程尚未完成，保留未勾。
 - AC-4 当前只验匿名分享路径：四轮采样稳定；不为尚未授权的用户 Chrome 路径作承诺。
 - AC-5 文件校验/不覆盖及已验证字节竞态已测，但插件没有取得供应商正式导出的 GLB，保留未勾。母线程人工取得的 C1 GLB 不计作此插件成果。
@@ -86,4 +100,4 @@ Canonical source: `clowder-ai-plugins/packages/tripo-studio/`（业务源码、�
 
 `main=landed:1d953f6a10ed2a24452ae3ec64588473ac41cb39`；独立插件 `live=loaded:0.1.5`，通过既有 Host 的本地不可变归档安装启用、真实调用及独立复核。归档 SRI 为 `sha512-z5iHswKOQj3qmGAz8ZtdjWjudGgc2/yZm7JfV9NmETlgt9+qY2uu8Fm7J5bjjFgq9a6oz1BA523+v85girr4Xw==`。本轮没有重启运行时；新的默认官方 catalog 注册随后续正常 Host 版本加载，不以本地已安装包代替 catalog 加载声明。
 
-历史发布依赖修复 `main=landed:36c37aa935f62768c47cc13d8f5cf249d7a8c485` 曾生成 Core v0.1.6；该归档随 #5658 去耦候选删除，不再作为当前发布方案。新包需要在 `clowder-ai-plugins` 独立审查、构建与发布后，才能以真实版本/完整性坐标进入 catalog；没有 npm 发布或新实例加载回执。F329 所需订阅网页上传、生成、正式导出及四足动作仍在准备，当前 v0.1.5 不支持这些动作，也未替用户消耗生成积分。
+历史发布依赖修复 `main=landed:36c37aa935f62768c47cc13d8f5cf249d7a8c485` 曾生成 Core v0.1.6；该归档随 #5658 删除，不再作为当前发布方案。新包需要在 `clowder-ai-plugins` 独立审查、构建与发布后，才能以真实版本/完整性坐标进入 catalog；没有 npm 发布或新实例加载回执。F329 所需订阅网页上传、生成、正式导出及四足动作仍在准备，当前 v0.1.5 不支持这些动作，也未替用户消耗生成积分。

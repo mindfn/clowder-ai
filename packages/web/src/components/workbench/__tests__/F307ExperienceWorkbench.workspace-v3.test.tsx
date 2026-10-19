@@ -4,7 +4,6 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { MAILBOX_NAVIGATE_EVENT } from '@/components/shell/mailbox/mailbox-navigation';
 import { writeShellPresentation } from '@/components/shell/shell-presentation';
-import { canonicalLauncherDestination } from '@/components/workspace/WorkspaceLauncher';
 import type { OpenHomeArtifact } from '@/components/workspace-home/HomeWorksSummary';
 import type { WorkspaceToolsContentProps } from '@/components/workspace-home/WorkspaceToolsContent';
 import { useChatStore } from '@/stores/chatStore';
@@ -166,7 +165,10 @@ async function renderHost(foregroundSurfaceId: string | null = null) {
 it.each(['now', 'needs-me'] as const)('retires a selected persisted %s tab through its current entry', async (id) => {
   const legacy =
     id === 'now'
-      ? createWorkspaceDestinationSurface(canonicalLauncherDestination('host', 'now'), 'thread-a')
+      ? createWorkspaceDestinationSurface(
+          { kind: 'host', id: 'now', label: '正在发生', description: 'Persisted legacy destination', searchTerms: '' },
+          'thread-a',
+        )
       : createWorkspaceModeSurface('needs-me', 'thread-a');
   const other = createWorkspaceModeSurface('schedule', 'thread-a');
   if (!legacy) throw new Error('Missing persisted legacy destination');
@@ -317,4 +319,68 @@ it('restores the original Home card identity from a publication without requirin
     origin.artifactId,
   );
   expect(useF307ExperienceWorkbenchStore.getState().layout.surfaces.map((item) => item.id)).toEqual([surface.id]);
+});
+
+function legacyNow() {
+  const surface = createWorkspaceDestinationSurface(
+    {
+      kind: 'host',
+      id: 'now',
+      label: 'Happening now',
+      description: 'Old standalone page',
+      searchTerms: '',
+    },
+    'thread-a',
+  );
+  if (!surface) throw new Error('Expected persisted legacy destination');
+  return surface;
+}
+it('closes the selected persisted now tab and returns to Home while retaining the other tabs', async () => {
+  const old = legacyNow(),
+    other = createWorkspaceModeSurface('schedule', 'thread-a');
+  const layout = createInitialWorkbenchState([other, old]);
+  useF307ExperienceWorkbenchStore.setState({ layout: { ...layout, activeSurfaceId: old.id } });
+  await renderHost(old.id);
+  expect(container.querySelector('[data-testid="home-probe"]')).not.toBeNull();
+  expect(useF307ExperienceWorkbenchStore.getState().layout.surfaces.map((s) => s.id)).toEqual([other.id]);
+});
+it('retains an inactive old now tab until it is selected and does not offer it in recent tools', async () => {
+  const old = legacyNow(),
+    other = createWorkspaceModeSurface('schedule', 'thread-a');
+  useF307ExperienceWorkbenchStore.setState({
+    layout: {
+      ...createInitialWorkbenchState([other, old]),
+      activeSurfaceId: other.id,
+      recentSurfaceIdsByThread: { 'thread-a': [old.id, other.id] },
+    },
+  });
+  await renderHost(other.id);
+  expect(useF307ExperienceWorkbenchStore.getState().layout.surfaces.map((s) => s.id)).toContain(old.id);
+  expect(probes.recent).toEqual([other.id]);
+  await act(async () =>
+    useF307ExperienceWorkbenchStore.getState().dispatch({
+      type: 'activate-surface',
+      surfaceId: old.id,
+      entitlement: { kind: 'user', reason: 'surface-tab' },
+    }),
+  );
+  await renderHost(old.id);
+  expect(container.querySelector('[data-testid="home-probe"]')).not.toBeNull();
+  expect(useF307ExperienceWorkbenchStore.getState().layout.surfaces.map((s) => s.id)).toEqual([other.id]);
+});
+
+it('does not retire an old active-layout hint when the host has restored a different foreground', async () => {
+  const old = legacyNow(),
+    other = createWorkspaceModeSurface('schedule', 'thread-a');
+  useF307ExperienceWorkbenchStore.setState({
+    layout: {
+      ...createInitialWorkbenchState([other, old]),
+      activeSurfaceId: old.id,
+    },
+  });
+  await renderHost(other.id);
+  expect(useF307ExperienceWorkbenchStore.getState().layout.surfaces.map((surface) => surface.id)).toEqual([
+    other.id,
+    old.id,
+  ]);
 });

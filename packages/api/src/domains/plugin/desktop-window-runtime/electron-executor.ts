@@ -1,6 +1,7 @@
 import { dirname, isAbsolute } from 'node:path';
 import { z } from 'zod';
 import { NodeExternalPluginProcessAdapter } from '../external-runtime/node-process-adapter.js';
+import { createAppAssistPipe } from './app-assist-pipe.js';
 import {
   type HostCompanionReply as CompanionReply,
   hostTextSubmission,
@@ -101,6 +102,15 @@ export class ElectronDesktopWindowExecutor implements DesktopWindowExecutor {
     let ended: Error | undefined;
     let buffer = Buffer.alloc(0);
     let shutdown: Promise<void> | undefined;
+    let stopAppAssistPolicy: (() => Promise<void>) | undefined;
+    let appAssistOpened = false;
+    let appAssistPolicy: boolean | null | undefined;
+    const appAssist = createAppAssistPipe(launch.appAssist, (line) => {
+      if (!ended)
+        child.stdin.write(line, (error) => {
+          if (error) fail(new Error('desktop connection ended'));
+        });
+    });
     const bridgeRequests = new Set<string>();
     const pending = new Map<
       number,
@@ -114,6 +124,8 @@ export class ElectronDesktopWindowExecutor implements DesktopWindowExecutor {
     const finish = (error: Error, cause?: DesktopWindowFailure) => {
       if (ended) return;
       ended = error;
+      appAssist.close();
+      void stopAppAssistPolicy?.();
       launch.signal.removeEventListener('abort', onAbort);
       for (const call of pending.values()) {
         clearTimeout(call.timer);
@@ -191,6 +203,7 @@ export class ElectronDesktopWindowExecutor implements DesktopWindowExecutor {
         buffer = buffer.subarray(newline + 1);
         try {
           const value: unknown = JSON.parse(line.toString('utf8'));
+          if (appAssist.accept(value)) continue;
           const submission = z
             .object({ v: z.literal(1), type: z.literal('text_submission'), value: hostTextSubmission })
             .strict()
@@ -265,12 +278,25 @@ export class ElectronDesktopWindowExecutor implements DesktopWindowExecutor {
       return shutdown;
     };
     try {
+      if (launch.appAssist) {
+        stopAppAssistPolicy = await launch.appAssist.watch(async (allowed) => {
+          appAssistPolicy = allowed;
+          if (appAssistOpened) await request('app-assist-policy', { allowed });
+        });
+        if (ended) {
+          await stopAppAssistPolicy();
+          throw ended;
+        }
+      }
       await request('open', {
         url: launch.url,
         presentation: launch.presentation,
         ...(launch.publicCompanionV2 ? { publicCompanionV2: true } : {}),
         ...(launch.companionContract ? { companionContract: launch.companionContract } : {}),
+        ...(launch.appAssist ? { appAssist: true } : {}),
       });
+      appAssistOpened = true;
+      if (appAssistPolicy !== undefined) await request('app-assist-policy', { allowed: appAssistPolicy });
       return {
         poll: async () => {
           const state = await request('poll');

@@ -43,17 +43,28 @@ export function readChannelTarget(search?: string) {
 
 export function readChannelEntry(namespace: string) {
   const target = readChannelTarget();
+  const library =
+    typeof window !== 'undefined' && new URLSearchParams(window.location?.search).get('view') === 'artifacts';
   return {
     channelId: target ? target : readChannelPosition(namespace),
-    destination: target ? ('channel' as const) : ('home' as const),
+    destination: library ? ('library' as const) : target ? ('channel' as const) : ('home' as const),
   };
 }
 
 export function writeChannelTarget(channelId?: string) {
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
+  url.searchParams.delete('view');
   if (channelId) url.searchParams.set('channelId', channelId);
   else url.searchParams.delete('channelId');
+  window.history.replaceState(window.history.state, '', url);
+}
+
+export function writeLibraryTarget() {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete('channelId');
+  url.searchParams.set('view', 'artifacts');
   window.history.replaceState(window.history.state, '', url);
 }
 

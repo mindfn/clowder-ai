@@ -104,15 +104,6 @@ describe.each(['page', 'modal'] as const)('%s contextual operation errors', (pre
   ])('retries the same %s upload at its field without substituting member save', async (kind, url, mime, label) => {
     await render();
     await editNickname();
-    if (kind === 'audio' && presentation === 'modal') {
-      await act(async () => {
-        const expand = [...document.querySelectorAll('button')].find((value) =>
-          value.textContent?.includes('Voice Config'),
-        );
-        if (!expand) throw new Error('Missing voice section');
-        expand.click();
-      });
-    }
     failures.add(url);
     const input = document.querySelector<HTMLInputElement>(`input[type="file"][accept^="${mime}"]`);
     if (!input) throw new Error(`Missing ${kind} input`);
@@ -149,7 +140,7 @@ describe.each(['page', 'modal'] as const)('%s contextual operation errors', (pre
     };
     failures.add('/api/cats/gpt-pro');
     await render(cloud);
-    await act(async () => button(presentation === 'page' ? '恢复云端身份配置' : '恢复云端身份').click());
+    await act(async () => button('恢复云端身份配置').click());
     expect(footer()?.textContent).not.toContain('没保存上');
     expect(issue('restore')?.textContent).toContain('Operation unavailable');
     failures.delete('/api/cats/gpt-pro');

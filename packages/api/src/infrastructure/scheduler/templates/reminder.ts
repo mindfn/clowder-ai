@@ -112,7 +112,9 @@ export const reminderTemplate: TaskTemplate = {
               userId: triggerUserId,
               targetCatId: catId,
               sourceCategory: 'scheduled',
-              idempotencyKey: managedHoldWake ? `hold-ball-wake:${instanceId}` : `scheduler-wake:${instanceId}`,
+              idempotencyKey: managedHoldWake
+                ? `hold-ball-wake:${instanceId}`
+                : `scheduler-wake:${instanceId}:${ctx.occurrenceId}`,
               ...(managedHoldWake ? { priority: 'urgent' as const, source: holdSource } : {}),
               ...(ownerAuthProvenance ? { ownerAuthProvenance } : {}),
               ...(managedHoldWake ? {} : { extra: { scheduler: { hiddenTrigger: true } } }),

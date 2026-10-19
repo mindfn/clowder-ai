@@ -8,7 +8,7 @@ export function collaborationOperationReplay(
     actorScope: string;
     requestId: string;
     payload: unknown;
-    resourceKind: 'work' | 'roadmap' | 'vote' | 'binding_vote' | 'reaction';
+    resourceKind: 'work' | 'roadmap' | 'vote' | 'binding_vote' | 'reaction' | 'artifact';
   },
 ) {
   const key = collaborationOperationKey(input.collectiveId, input.actorScope, input.requestId);
@@ -31,7 +31,7 @@ export function recordCollaborationOperation(
     key: string;
     fingerprint: string;
     actorScope: string;
-    resourceKind: 'work' | 'roadmap' | 'vote' | 'binding_vote' | 'reaction';
+    resourceKind: 'work' | 'roadmap' | 'vote' | 'binding_vote' | 'reaction' | 'artifact';
     resourceId: string;
     revision: number;
     recordedAt: string;

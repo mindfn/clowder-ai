@@ -9,12 +9,14 @@ import { RuntimeInteractionService } from '../../../api/dist/domains/runtime-int
 import { InMemoryRuntimeInteractionStore } from '../../../api/dist/domains/runtime-interaction/stores/InMemoryRuntimeInteractionStore.js';
 import { runtimeInteractionRoutes } from '../../../api/dist/routes/runtime-interaction-routes.js';
 import { createInboxProposalFixture } from './f322-inbox-proposal.fixture.mjs';
+import { providerRequest } from './f322-inbox-provider-requests.fixture.mjs';
 
 /** Disposable authentic owner HTTP routes, original Message/Queue return and source validation. No provider dispatch. */
 export async function createInboxConversationFixture(language) {
   const store = new InMemoryRuntimeInteractionStore(),
     queue = new InvocationQueue();
   let service, owner, messages, thread;
+  const providers = new Map();
   const fixture = await createInboxProposalFixture({
     configureRuntime: async ({ app, owner: principal, messages: sourceMessages, threads, socketManager }) => {
       owner = principal;
@@ -59,7 +61,10 @@ export async function createInboxConversationFixture(language) {
           }
           return { records: index.records, presentations };
         },
-        async close() {},
+        async close() {
+          for (const entry of providers.values()) entry.controller.abort();
+          await Promise.all([...providers.values()].map((entry) => entry.settled));
+        },
       };
     },
   });
@@ -86,5 +91,22 @@ export async function createInboxConversationFixture(language) {
       allowTextResponse: true,
     });
   }
-  return { ...fixture, create, service, store, queue, conversationThread: thread };
+  async function createProvider(id, kind) {
+    const request = providerRequest({ id, kind, language, owner, threadId: thread.id });
+    const controller = new AbortController();
+    let terminal;
+    const settled = service.request(request, { signal: controller.signal }).then(
+      (response) => (terminal = { response }),
+      (error) => (terminal = { error: error.reasonCode ?? error.message }),
+    );
+    providers.set(id, { controller, settled });
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const pending = await store.get(request.interactionId);
+      if (pending?.status === 'pending') return { pending, settled, result: () => terminal };
+      if (terminal?.error) throw new Error(`Original provider request ${id} failed: ${terminal.error}`);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error(`Original provider request ${id} did not publish`);
+  }
+  return { ...fixture, create, createProvider, service, store, queue, conversationThread: thread };
 }

@@ -7,6 +7,8 @@ export interface StartCollectiveServerOptions {
   readonly store: CollectiveServiceStore;
   readonly host?: string;
   readonly port?: number;
+  /** Canonical browser-facing origin when TLS or host routing terminates before this Node server. */
+  readonly publicUrl?: string;
   readonly allowedHostOrigins?: readonly string[];
   readonly bootstrapLinkPath?: string;
   readonly githubAppSetup?: GitHubAppManifestSetup;
@@ -30,6 +32,7 @@ export async function startCollectiveServer(options: StartCollectiveServerOption
   }
   const handler = createCollectiveHttpHandler({
     store: options.store,
+    ...(options.publicUrl ? { serviceOrigin: new URL(options.publicUrl).origin } : {}),
     allowedHostOrigins: options.allowedHostOrigins ?? [],
     bootstrapLinkPath: options.bootstrapLinkPath,
     githubAppSetup: options.githubAppSetup,
@@ -48,12 +51,16 @@ export async function startCollectiveServer(options: StartCollectiveServerOption
     throw new Error('Collective Service did not bind a TCP address');
   }
   const url = `http://${host}:${address.port}`;
+  options.store.startArtifactOwnerRelay();
   return {
     host,
     port: address.port,
     url,
     server,
-    close: () => closeServer(server),
+    close: () => {
+      options.store.stopArtifactOwnerRelay();
+      return closeServer(server);
+    },
   };
 }
 

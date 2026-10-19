@@ -1,12 +1,14 @@
 import type { CollectiveConnector, CollectiveWorkAcceptanceInput } from '@cat-cafe/collective-connector';
+import type { CollectiveArtifactCommand } from '@cat-cafe/shared';
 import type { InvocationRecord } from '../../cats/services/agents/invocation/InvocationRegistry.js';
 import type { IMessageStore } from '../../cats/services/stores/ports/MessageStore.js';
 import type { PreparedArtifactReader } from '../../growing/EntrustedWorkOwnerReadService.js';
+import { executeCollectiveArtifactCommand } from './collective-artifact-command.js';
 import { collectiveContextError, opaqueRef, verifyRef } from './collective-context-refs.js';
 import { requireCollectiveInvocationSource } from './collective-invocation-binding.js';
 import type { CollectiveInvocationSource } from './collective-participation-source.js';
 import { resolveCollectiveParticipationSource } from './collective-participation-source.js';
-import { readCollectivePreparedResultArtifact } from './collective-prepared-result.js';
+import { readCollectivePreparedResultPublication } from './collective-prepared-result.js';
 import { readAcceptedPublicReply } from './collective-public-reply-read.js';
 import { assertReconsiderationInput, ownerWakeDecision } from './collective-work/collective-reconsideration-source.js';
 import {
@@ -17,8 +19,10 @@ import type { CollectiveWorkAuthority } from './collective-work/collective-work-
 import { publishCollectiveProgress } from './collective-work/collective-work-progress.js';
 import {
   type CollectiveContinueWorkInput,
+  type CollectiveSuggestProjectWorkInput,
   continueWorkFromSource,
   currentWorkSourceContext,
+  suggestProjectWorkFromSource,
 } from './collective-work/collective-work-source-context.js';
 
 export { collectiveContextError } from './collective-context-refs.js';
@@ -104,6 +108,7 @@ export class CollectiveCurrentContext {
       location: binding.source.location,
       participant: binding.displayName,
       request: binding.context.source,
+      artifactRequests: await connector.readArtifactContext(binding.source),
       contextRef: opaqueRef(auth, 'context', binding.refScope),
       returnRef: opaqueRef(auth, 'return', binding.refScope),
       replyOperationRef: opaqueRef(auth, `reply:${operation.outboxId}`, binding.refScope),
@@ -129,6 +134,16 @@ export class CollectiveCurrentContext {
     if (fresh.refScope !== binding.refScope)
       throw collectiveContextError('WORK_EXECUTION_NOT_CURRENT', 'Current Work changed during context read');
     return { ...context, ...(previousResultArtifact ? { previousResultArtifact } : {}) };
+  }
+
+  artifactCommand(auth: InvocationRecord, contextRef: string, command: CollectiveArtifactCommand) {
+    return executeCollectiveArtifactCommand({
+      auth,
+      contextRef,
+      command,
+      connector: this.requireConnector(),
+      resolveSource: () => this.requireInvocationSource(auth),
+    });
   }
 
   async setInterest(auth: InvocationRecord, contextRef: string, state: 'listen' | 'withdraw') {
@@ -171,6 +186,15 @@ export class CollectiveCurrentContext {
       },
       input,
     );
+  }
+
+  async suggestProjectWork(auth: InvocationRecord, contextRef: string, input: CollectiveSuggestProjectWorkInput) {
+    const binding = await this.requireInvocationSource(auth);
+    if (binding.authority !== 'public_participation') {
+      throw collectiveContextError('WORK_AUTHORITY_REQUIRED', 'Private Work cannot create another Project suggestion');
+    }
+    verifyRef(auth, contextRef, 'context', binding.refScope);
+    return suggestProjectWorkFromSource(this.requireConnector(), auth, binding, input);
   }
 
   async acceptWork(auth: InvocationRecord, contextRef: string, input: CollectiveWorkAcceptanceInput) {
@@ -231,9 +255,9 @@ export class CollectiveCurrentContext {
     );
     verifyRef(auth, returnRef, 'return', binding.refScope);
     verifyRef(auth, replyOperationRef, `reply:${operation.outboxId}`, binding.refScope);
-    const artifactSnapshot =
+    const artifactPublication =
       'work' in binding
-        ? await readCollectivePreparedResultArtifact(
+        ? await readCollectivePreparedResultPublication(
             binding,
             auth,
             this.options.artifactReader,
@@ -255,11 +279,12 @@ export class CollectiveCurrentContext {
         displayName: binding.displayName,
         sessionRef: auth.invocationId,
       },
-      artifactSnapshot,
+      artifactPublication?.snapshot,
       'work' in binding ? binding.work.resultRevision : undefined,
       'work' in binding
         ? { revision: binding.work.executionRevision, assignmentEventId: binding.work.assignmentEventId }
         : undefined,
+      artifactPublication?.file,
     );
     await connector.sync(binding.source.connectionId);
     return this.current(auth);

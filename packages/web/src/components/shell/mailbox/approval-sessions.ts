@@ -60,7 +60,7 @@ export interface SessionsDeps {
 }
 
 export interface ApprovalSessions {
-  /** Current owner-matching row only (hosts without this additive reader stay read-only); a newer read, ambiguity or unavailable source closes original card writes. */
+  /** Current owner-matching row only; hosts without this additive reader stay read-only. */
   currentItem?(ownerUserId: string, decisionRef: string): UnifiedAttentionItemV1 | null;
   /** Start (or find) the session for an approval. Idempotent: an existing session keeps its progress and its snapshot. */
   open(seed: SessionSeed): ApprovalSession;
@@ -92,8 +92,9 @@ export function sessionKey(ownerUserId: string, address: ApprovalAddress): strin
 
 const REFUSAL_NOTICE = '这件事刚刚有变化，这次没有提交。已重新读取，请确认后再处理。';
 
-/** The card that reports its own request for the kinds that leave no store attempt. */
-const SELF_REPORTED_KIND = 'meeting-intake';
+/** Original producer cards report their request when they do not create a Hub store attempt. */
+const isSelfReportedKind = (kind: ApprovalRequestEvent['kind']) =>
+  kind === 'meeting-intake' || kind === 'producer-card' || kind === 'person-memory-undo';
 
 const isHttpStatus = (value: unknown): value is number =>
   Number.isInteger(value) && (value as number) >= 100 && (value as number) <= 599;
@@ -212,6 +213,7 @@ export function createApprovalSessions(deps: SessionsDeps): ApprovalSessions {
       result.kind === 'ok' &&
       deps.storeAvailable?.() !== false &&
       generation !== null &&
+      generation === deps.readsStarted() &&
       result.read.sources.approvals.status === 'available' &&
       result.read.identity.ownerUserId === session.ownerUserId &&
       listedCopiesAligned(result.read, session.address, deps.storeItems(), deps.now());
@@ -279,7 +281,7 @@ export function createApprovalSessions(deps: SessionsDeps): ApprovalSessions {
     },
 
     hostReport(key, event) {
-      if (event.kind !== SELF_REPORTED_KIND) return;
+      if (!isSelfReportedKind(event.kind)) return;
       const session = sessions.get(key);
       if (!session) return;
       const readGeneration = deps.readsStarted();

@@ -49,7 +49,7 @@ export function MailboxButton() {
   const view = useUnifiedAttention();
   // Decisions made on an approval's original card are followed here, not in the panel: the panel closes, the decision goes on.
   const sessions = useApprovalSessions(view);
-  const state = deriveMailboxState(view.result);
+  const state = deriveMailboxState(view.badgeResult ?? view.result);
   const setWorkspaceMode = useChatStore((s) => s.setWorkspaceMode);
   const [open, setOpen] = useState(false);
   const [section, setSection] = useState<MailboxSection>('pending');
@@ -97,7 +97,8 @@ export function MailboxButton() {
     (place: OriginalPlace) => {
       setOpen(false);
       if (place.kind === 'exact') {
-        openExactPlace(place.actionRef, pathname);
+        if (place.host === 'workspace') openInChat(() => openExactPlace(place.actionRef, pathname));
+        else openExactPlace(place.actionRef, pathname);
         return;
       }
       if (place.destination === 'approval') {

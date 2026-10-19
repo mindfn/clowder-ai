@@ -37,7 +37,7 @@ test('actual registered MCP Work surface equals the existing API permission set 
     const expected = CANONICAL_TOOL_REGISTRY.filter((tool) => COLLECTIVE_WORK_TOOLS.has(tool.name))
       .map((tool) => tool.name)
       .sort();
-    assert.equal(expected.length, 12, 'two native credential callbacks are not MCP declarations');
+    assert.equal(expected.length, 13, 'two native credential callbacks are not MCP declarations');
     assert.deepEqual(names, expected, 'server and API permission definitions cannot drift');
     for (const name of [
       'cat_cafe_shell_exec',

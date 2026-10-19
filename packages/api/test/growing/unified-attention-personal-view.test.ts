@@ -346,7 +346,7 @@ test('the owner route reads preferences only for an explicit unified personal vi
     request.sessionUserId = 'owner';
   });
   app.get('/api/approval-hub/pending', async () => ({
-    items: [approval('route-a'), approval('route-b')],
+    items: [approval('route-a', 'F139'), approval('route-b', 'F139')],
     coverage: { state: 'complete' },
   }));
   app.get('/api/entrusted-work/needs-me', async () => ({ ownerReads: [], coverage: { state: 'complete' } }));

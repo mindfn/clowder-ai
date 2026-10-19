@@ -9,8 +9,8 @@ import { apiFetch } from '@/utils/api-client';
 
 const ACTIVE_EXECUTION_REFRESH_MS = 4_000;
 
-function activeExecutionResource(projectPath: string): string {
-  return `/api/executions/active?projectPath=${encodeURIComponent(projectPath)}`;
+function activeExecutionResource(): string {
+  return '/api/executions/active?scope=all';
 }
 
 async function postLiveExecutionCancel(target: {
@@ -36,13 +36,13 @@ async function requireCancelConvergence(response: Response): Promise<void> {
 
 export async function refreshActiveExecutionProjection(
   anchorThreadId: string,
-  projectPath: string,
+  projectPath: string | null,
   signal?: AbortSignal,
 ): Promise<void> {
   const store = useActiveExecutionStore.getState();
   const requestVersion = store.beginHydration(anchorThreadId, projectPath);
   try {
-    const response = await apiFetch(activeExecutionResource(projectPath), {
+    const response = await apiFetch(activeExecutionResource(), {
       signal,
     });
     if (!response.ok) throw new Error(`Execution hydration failed (${response.status})`);
@@ -69,7 +69,7 @@ export async function cancelProjectedExecution(execution: ActiveExecutionProject
     await requireCancelConvergence(response);
     useActiveExecutionStore.getState().settleCancellation(execution);
     const { anchorThreadId, projectPath } = useActiveExecutionStore.getState();
-    if (anchorThreadId && projectPath) await refreshActiveExecutionProjection(anchorThreadId, projectPath);
+    if (anchorThreadId) await refreshActiveExecutionProjection(anchorThreadId, projectPath);
   } catch (error) {
     useActiveExecutionStore.getState().releaseCancellation(execution);
     throw error;
@@ -85,7 +85,6 @@ export async function cancelUnverifiedLegacyExecution(target: {
   const response = await postLiveExecutionCancel(target);
   await requireCancelConvergence(response);
   const projectPath = useActiveExecutionStore.getState().projectPath;
-  if (!projectPath) return;
   await refreshActiveExecutionProjection(target.threadId, projectPath);
   const replacement = Object.values(useActiveExecutionStore.getState().executionsByKey).find(
     (execution) =>
@@ -98,7 +97,7 @@ export async function cancelUnverifiedLegacyExecution(target: {
 }
 
 /**
- * Hydrate project-wide execution truth on first mount/navigation/reconnect, then
+ * Hydrate all readable projects through one execution resource on first mount/navigation/reconnect, then
  * poll narrowly so a background start that emitted no local socket event is
  * still discovered. The store retains the last good snapshot on transient error.
  */
@@ -109,13 +108,9 @@ export function useActiveExecutionProjection(anchorThreadId: string, socketConne
   const compatibilityProjectPath = useChatStore(
     (state) => state.threads.find((thread) => thread.id === anchorThreadId)?.projectPath,
   );
-  const projectPath = canonicalProjectPath ?? compatibilityProjectPath;
+  const projectPath = canonicalProjectPath ?? compatibilityProjectPath ?? null;
 
   useLayoutEffect(() => {
-    if (!projectPath) {
-      useActiveExecutionStore.getState().beginHydration(anchorThreadId, null);
-      return;
-    }
     const controller = new AbortController();
     const refresh = () => void refreshActiveExecutionProjection(anchorThreadId, projectPath, controller.signal);
     refresh();
@@ -134,7 +129,7 @@ export function useActiveExecutionProjection(anchorThreadId: string, socketConne
   }, [anchorThreadId, projectPath]);
 
   useEffect(() => {
-    if (socketConnected !== true || !projectPath) return;
+    if (socketConnected !== true) return;
     const controller = new AbortController();
     void refreshActiveExecutionProjection(anchorThreadId, projectPath, controller.signal);
     return () => controller.abort();

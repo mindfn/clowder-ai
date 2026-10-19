@@ -47,7 +47,7 @@ async function readThreadProposal(proposalId: string, signal: AbortSignal): Prom
   }
 }
 
-function readableProposedFields(value: Record<string, unknown>): boolean {
+export function readableProposedFields(value: Record<string, unknown>): boolean {
   const required = ['sourceThreadId', 'reason', 'projectPath', 'parentThreadId', 'title'];
   if (required.some((field) => typeof value[field] !== 'string' || !(value[field] as string).trim())) return false;
   if (

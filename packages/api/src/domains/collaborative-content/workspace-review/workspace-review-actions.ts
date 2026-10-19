@@ -32,7 +32,11 @@ function addVisualMarks(
   input: Parameters<typeof applyWorkspaceReviewAction>[0],
   marks: Extract<WorkspaceContentReviewAction, { kind: 'add_visual_marks' }>['marks'],
 ): WorkspaceContentReview {
-  if (input.source.kind === 'text' || input.source.kind === 'video-project')
+  if (
+    input.source.kind === 'text' ||
+    input.source.kind === 'video-project' ||
+    input.source.kind === 'collective-artifact'
+  )
     throw new WorkspaceContentReviewError('unsupported_content');
   const existing = new Set((input.review.visualMarks ?? []).map((mark) => mark.drawing.id));
   const requested = new Set<string>();

@@ -3,6 +3,7 @@ import type {
   MessageMediaPublicationSource,
   WorkspaceMediaSnapshotSource,
 } from '@cat-cafe/shared';
+import type { CollectiveContentOperationContextV1, CollectiveContentScopeV1 } from './collective-scope.js';
 
 export type ContentActorV1 =
   | { readonly kind: 'human'; readonly actorId: string }
@@ -36,7 +37,7 @@ export interface VideoProjectMediaScopeV1 {
 }
 
 /** Optional domain request provenance lives on the existing owner receipt, not a second operation journal. */
-export interface ContentOperationContextV1 {
+export interface VideoContentOperationContextV1 {
   readonly kind:
     | 'video-project:create'
     | 'video-project:save'
@@ -46,6 +47,7 @@ export interface ContentOperationContextV1 {
     | 'video-project:self-review';
   readonly requestDigest: `sha256:${string}`;
 }
+export type ContentOperationContextV1 = VideoContentOperationContextV1 | CollectiveContentOperationContextV1;
 
 /** Immutable authority coordinates established by an explicit prepared-publication import. */
 export interface TaskContentPublicationScopeV1 {
@@ -124,6 +126,7 @@ export interface ContentSettlementReceiptV1 {
 }
 
 export interface LoadedProjectContentV1 {
+  readonly collectiveScope?: CollectiveContentScopeV1;
   readonly byteLength: number;
   readonly contentRef: string;
   readonly ownerRevision: number;
@@ -138,6 +141,8 @@ export interface LoadedProjectContentV1 {
 }
 
 export interface ImportProjectContentInputV1 {
+  readonly collectiveScope?: CollectiveContentScopeV1;
+  readonly authorizeEffect?: () => Promise<void>;
   readonly contentRef: string;
   readonly bytes: Uint8Array;
   readonly mediaType: string;
@@ -151,6 +156,7 @@ export interface ImportProjectContentInputV1 {
 }
 
 export interface SettleProjectContentInputV1 {
+  readonly authorizeEffect?: () => Promise<void>;
   readonly contentRef: string;
   readonly expectedOwnerRevision: number;
   readonly bytes: Uint8Array;

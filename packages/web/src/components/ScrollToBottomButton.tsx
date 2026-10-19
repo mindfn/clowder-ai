@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AppTooltip } from './AppTooltip';
 
 const CHAT_LAYOUT_CHANGED_EVENT = 'catcafe:chat-layout-changed';
 
@@ -25,8 +26,8 @@ export function ScrollToBottomButton({
   recomputeSignal?: unknown;
   /** Changes when the scroll container / end sentinel is replaced (e.g. thread switch). */
   observerKey?: unknown;
-  /** v2 reserves a row outside the reading viewport; classic keeps its overlay. */
-  placement?: 'overlay' | 'flow';
+  /** v2 shares the navigation rail with the message piano; classic keeps its overlay. */
+  placement?: 'overlay' | 'rail';
 }) {
   const [visible, setVisible] = useState(false);
   // The visibility last handed to React. While a reply streams, `recomputeSignal` changes on nearly every commit; a
@@ -103,18 +104,40 @@ export function ScrollToBottomButton({
 
   const classes = useMemo(
     () =>
-      (placement === 'flow' ? 'shrink-0 self-end mr-8 mt-2 mb-3 ' : 'absolute bottom-3 right-8 z-20 ') +
-      'rounded-full border border-cafe bg-cafe-surface/90 shadow-sm ' +
-      'px-3 py-1.5 text-xs text-cafe-secondary ' +
-      'hover:bg-cafe-surface hover:border-cafe transition-colors',
+      (placement === 'rail'
+        ? 'absolute bottom-3 right-8 z-20 flex h-7 w-7 items-center justify-center p-0 '
+        : 'absolute bottom-3 right-8 z-20 px-3 py-1.5 text-xs ') +
+      'rounded-full border border-cafe bg-cafe-surface/90 text-cafe-secondary shadow-sm ' +
+      'transition-colors hover:border-cafe hover:bg-cafe-surface ' +
+      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cafe-accent',
     [placement],
   );
 
   if (!visible) return null;
 
-  return (
-    <button type="button" aria-label="到最新" className={classes} onClick={handleClick} title="跳到对话底部">
-      ↓ 到最新
+  const button = (
+    <button
+      type="button"
+      aria-label="到最新"
+      className={classes}
+      onClick={handleClick}
+      title={placement === 'rail' ? undefined : '跳到对话底部'}
+    >
+      {placement === 'rail' ? (
+        <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none">
+          <path d="M10 3v10m0 0 4-4m-4 4-4-4M4 17h12" stroke="currentColor" strokeLinecap="round" />
+        </svg>
+      ) : (
+        '↓ 到最新'
+      )}
     </button>
+  );
+
+  return placement === 'rail' ? (
+    <AppTooltip label="到最新" side="top">
+      {button}
+    </AppTooltip>
+  ) : (
+    button
   );
 }

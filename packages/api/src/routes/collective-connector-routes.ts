@@ -13,6 +13,7 @@ import {
   requireCallbackAuth,
 } from './callback-auth-prehandler.js';
 import { registerCollectiveEntryRoutes } from './collective-entry-routes.js';
+import { type CollectiveMediaRouteOptions, registerCollectiveMediaRoutes } from './collective-media-routes.js';
 import { pluginAccessError, requirePluginOwnerLocalAccess } from './plugin-access-guards.js';
 
 const agentMessageBodySchema = collectiveAgentMessageRequestSchema.innerType().omit({
@@ -22,6 +23,7 @@ const agentMessageBodySchema = collectiveAgentMessageRequestSchema.innerType().o
   agent: true,
   participationRevision: true,
   workResultIntent: true,
+  workResultFile: true,
   workProgressIntent: true,
 });
 
@@ -50,7 +52,7 @@ const hostRouteBodySchema = z
   })
   .strict();
 
-interface CollectiveConnectorRouteOptions {
+interface CollectiveConnectorRouteOptions extends CollectiveMediaRouteOptions {
   readonly supportsParticipation?: (catId: string) => boolean;
   readonly runtime: Pick<CollectiveConnectorBuiltinRuntime, 'connector'>;
   readonly localService: Pick<LocalCollectiveServiceManager, 'status' | 'provision'>;
@@ -127,6 +129,7 @@ export function registerCollectiveConnectorRoutes(
   options: CollectiveConnectorRouteOptions,
 ): void {
   registerCollectiveEntryRoutes(app, { connector: () => options.runtime.connector(), cats: options.cats });
+  registerCollectiveMediaRoutes(app, options);
   app.get('/api/plugins/collective-connector', async (request, reply) => {
     if (!requireAccess(request, reply, 'read')) return;
     const localService = await options.localService.status();

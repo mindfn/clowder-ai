@@ -1,8 +1,9 @@
+import { requireNoArtifactCustody } from './artifact-revocation-guard.js';
 import { CollectiveServiceError } from './errors.js';
 import { requireHumanAuthBinding, resolveSession } from './identity-store.js';
 import type { PersistentServiceState } from './persistence.js';
 import type { MembershipRecord } from './service-records.js';
-import { membershipKey } from './state.js';
+import { type MutableServiceState, membershipKey, type ServiceState } from './state.js';
 
 export async function leaveCollectiveMembership(
   persistence: PersistentServiceState,
@@ -27,6 +28,7 @@ export async function leaveCollectiveMembership(
         409,
       );
     }
+    requireNoMemberArtifactCustody(state, input.collectiveId, human.humanId);
     const ownsOpenWork = Object.values(state.works).some(
       (work) =>
         work.collectiveId === input.collectiveId &&
@@ -58,17 +60,32 @@ export async function leaveCollectiveMembership(
       role: membership.role,
       reason: 'self_left',
     });
-    for (const connection of Object.values(state.connections)) {
-      if (
-        connection.collectiveId === input.collectiveId &&
-        connection.authorizedHumanId === human.humanId &&
-        connection.status === 'connected'
-      ) {
-        connection.status = 'revoked';
-        connection.revokedAt = leftAt;
-        connection.revocationReason = 'membership_left';
-      }
-    }
+    revokeMembershipConnections(state, input.collectiveId, human.humanId, leftAt);
     return structuredClone(membership);
   });
+}
+
+function revokeMembershipConnections(
+  state: MutableServiceState,
+  collectiveId: string,
+  humanId: string,
+  leftAt: string,
+): void {
+  for (const connection of Object.values(state.connections)) {
+    if (
+      connection.collectiveId === collectiveId &&
+      connection.authorizedHumanId === humanId &&
+      connection.status === 'connected'
+    ) {
+      connection.status = 'revoked';
+      connection.revokedAt = leftAt;
+      connection.revocationReason = 'membership_left';
+    }
+  }
+}
+
+function requireNoMemberArtifactCustody(state: ServiceState, collectiveId: string, humanId: string) {
+  for (const connection of Object.values(state.connections))
+    if (connection.collectiveId === collectiveId && connection.authorizedHumanId === humanId)
+      requireNoArtifactCustody(state, connection.connectionId);
 }

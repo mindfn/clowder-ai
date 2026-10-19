@@ -80,6 +80,32 @@
   container-name: member-editor;
   padding-bottom: 0;
 }
+.member-editor-embedded {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.member-editor-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 28px 20px;
+}
+.member-editor-embedded .member-editor-layout {
+  margin-top: 0;
+  flex-direction: column;
+  gap: 16px;
+}
+.member-editor-embedded .member-editor-layout > nav {
+  position: static;
+  flex: auto;
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+.member-delete-card {
+  padding: 18px;
+}
 .member-detail-summary {
   flex: 1 1 340px;
   min-width: 0;
@@ -164,6 +190,10 @@
   color: inherit;
   font-size: var(--console-font-sm);
   overflow-wrap: anywhere;
+}
+.member-unsaved-count {
+  color: var(--conn-amber-text);
+  font-weight: 600;
 }
 .member-save-actions {
   display: flex;

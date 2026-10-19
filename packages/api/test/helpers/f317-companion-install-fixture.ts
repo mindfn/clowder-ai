@@ -97,7 +97,9 @@ export async function modernCompanionInstallFixture(
   }));
   let needsMeAvailable = true;
   app.get('/api/approval-hub/pending', async () => ({
-    items: [{ ...approval('composition'), ownerUserId: owner }],
+    // This complete-count fixture has an unanchored canonical F128 proposal.
+    // F221 needs a live original-card proof and would honestly withhold exact counts here.
+    items: [{ ...approval('composition', 'F128'), ownerUserId: owner }],
     coverage: { state: 'complete' },
   }));
   app.get('/api/entrusted-work/needs-me', async (_request, reply) =>

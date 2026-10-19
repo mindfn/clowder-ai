@@ -43,7 +43,7 @@ function EvidenceInput({
     return (
       <div data-conversation-input-evidence="read" data-read-at={input.readAt}>
         {rendered}
-        <div className="flex justify-end px-3 pt-0.5 text-[10px] text-cafe-muted">
+        <div className="flex justify-end px-3 pt-0.5 text-[length:var(--console-font-micro)] text-cafe-muted">
           <AppTooltip label={label} intent="content" side="top" showOnClick>
             <button
               type="button"
@@ -126,7 +126,7 @@ export function SingleCatConversationTimeline(_props: {
             data-invocation-id={block.invocationId}
             className="space-y-1.5"
           >
-            <div className="flex items-center gap-2 px-3 text-[11px] text-cafe-muted">
+            <div className="flex items-center gap-2 px-3 text-[length:var(--console-font-label)] text-cafe-muted">
               <span aria-hidden="true" className="h-px flex-1 bg-cafe-border" />
               <span className="sr-only">{copy.executionStarted(executionTime)}</span>
               <time
@@ -156,7 +156,10 @@ export function SingleCatConversationTimeline(_props: {
 
 function EvidenceDivider({ label }: { label: string }) {
   return (
-    <div data-conversation-unconfirmed-divider className="flex items-center gap-2 px-3 text-[11px] text-cafe-muted">
+    <div
+      data-conversation-unconfirmed-divider
+      className="flex items-center gap-2 px-3 text-[length:var(--console-font-label)] text-cafe-muted"
+    >
       <span aria-hidden="true" className="h-px flex-1 border-t border-dashed border-cafe" />
       <span>{label}</span>
       <span aria-hidden="true" className="h-px flex-1 border-t border-dashed border-cafe" />

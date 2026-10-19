@@ -13,7 +13,7 @@
 import type { GitHubWaitOutcomeV1, TaskItem } from '@cat-cafe/shared';
 import { parsePrSubjectKey } from '@cat-cafe/shared';
 import type { ITaskStore } from '../../domains/cats/services/stores/ports/TaskStore.js';
-import { gitHubAdmissionCanContinue } from '../github/admission-budget.js';
+import { gitHubAdmissionCanContinue, gitHubObjectSignal } from '../github/admission-budget.js';
 import { GitHubRateLimitError } from '../github/request-budget.js';
 import type { ExecuteContext, TaskSpec_P1 } from '../scheduler/types.js';
 import type { AutoResolveResult, ConflictAutoExecutor } from './ConflictAutoExecutor.js';
@@ -95,8 +95,8 @@ export function createConflictCheckTaskSpec(opts: ConflictCheckTaskSpecOptions):
     trigger: { type: 'interval', ms: opts.pollIntervalMs ?? 5 * 60 * 1000 },
     admission: {
       async gate(ctx) {
-        const signal = ctx?.signal;
-        signal?.throwIfAborted();
+        const gateSignal = ctx?.signal;
+        gateSignal?.throwIfAborted();
         // #320: Read from unified TaskStore — exclude done tasks (PR merged/closed)
         const tasks = (await opts.taskStore.listByKind('pr_tracking')).filter((t) => t.status !== 'done');
         if (tasks.length === 0) {
@@ -106,8 +106,9 @@ export function createConflictCheckTaskSpec(opts: ConflictCheckTaskSpecOptions):
         const workItems: { signal: ConflictWorkItem; subjectKey: string }[] = [];
         const startIndex = nextTaskIndex % tasks.length;
         for (let step = 0; step < tasks.length; step++) {
-          signal?.throwIfAborted();
+          gateSignal?.throwIfAborted();
           if (step > 0 && !gitHubAdmissionCanContinue(ctx)) break;
+          const signal = gitHubObjectSignal(ctx);
           const index = (startIndex + step) % tasks.length;
           const task = tasks[index]!;
           nextTaskIndex = (index + 1) % tasks.length;
@@ -126,7 +127,7 @@ export function createConflictCheckTaskSpec(opts: ConflictCheckTaskSpecOptions):
               subjectKey: task.subjectKey!,
             });
           } catch (err) {
-            signal?.throwIfAborted();
+            gateSignal?.throwIfAborted();
             if (err instanceof GitHubRateLimitError) continue;
             opts.log.warn(
               { err, taskId: task.id, subjectKey: task.subjectKey },
@@ -135,7 +136,7 @@ export function createConflictCheckTaskSpec(opts: ConflictCheckTaskSpecOptions):
           }
         }
 
-        signal?.throwIfAborted();
+        gateSignal?.throwIfAborted();
         if (workItems.length === 0) {
           return { run: false, reason: 'no tracked PRs with checkable state' };
         }

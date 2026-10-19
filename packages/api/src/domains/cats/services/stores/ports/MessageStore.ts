@@ -7,6 +7,7 @@ import {
   readCompanionDraftSubmissions,
   type StoredCompanionDeliveryReceipt,
 } from '../companion-submission-state.js';
+import { type MessageEvidenceProjection, projectMessageEvidence } from '../message-evidence-projection.js';
 /**
  * Message Store
  * 内存消息存储，供 MCP 回传工具 get_thread_context / get_pending_mentions 使用
@@ -64,6 +65,11 @@ import {
   type LifecycleAppendRecoveryResult,
   prepareLifecycleAppendRecovery,
 } from '../lifecycle-append-recovery.js';
+import {
+  type LifecycleWakeCoverageInput,
+  type LifecycleWakeCoverageResult,
+  prepareLifecycleWakeCoverage,
+} from '../lifecycle-wake-coverage.js';
 import type { MessageDeliveryBoundary } from '../message-delivery-boundary.js';
 import { messageFrom } from '../message-from.js';
 import { notifyMessageTimelineChange } from '../notify-message-timeline-change.js';
@@ -77,6 +83,7 @@ import {
   resolveDeliveryTimelineScore,
   resolveThreadMessageVisibility,
 } from '../visibility.js';
+import { ThreadMessageTimelineIndex } from './ThreadMessageTimelineIndex.js';
 // Single source of truth: ThreadStore.ts owns DEFAULT_THREAD_ID
 import { DEFAULT_THREAD_ID } from './ThreadStore.js';
 import type { TurnExecutionMessageProjection } from './TurnExecutionStore.js';
@@ -113,6 +120,8 @@ export interface MessageIdScanPage {
 export const COORDINATION_TERMINAL_SCAN_PAGE_SIZE = 100;
 
 export interface ThreadMessageReadOptions {
+  /** Artifact reads need publication/visibility/receipt fields, never conversation text or tool traces. */
+  artifactProjection?: boolean;
   /** Include queued cat-authored speech that is already published to the timeline. */
   includeQueuedCatMessages?: boolean;
   /** Include durable queued owner work (user or Host connector ingress) in the browser timeline only. */
@@ -311,6 +320,11 @@ export interface StoredMessage {
       parentInvocationId: string;
       isFailureReport: boolean;
     };
+    /** Additional callers actually covered by this same response, with admission provenance. */
+    coveredA2AFailureReturns?: Omit<
+      NonNullable<NonNullable<StoredMessage['extra']>['a2aFailureReturn']>,
+      'parentInvocationId'
+    >[];
     /** Immutable Live ingress receipt, not executable media or an ownership record. */
     liveAdmission?: { sessionId: string; targetId: string };
     /** HTTP conversation request provenance; prose expansion is derived, explicit selection is identity. */
@@ -2247,6 +2261,10 @@ export interface IMessageStore {
     input: LifecycleAppendRecoveryInput,
     ledgerStore: QueueLedgerStore,
   ): LifecycleAppendRecoveryResult | Promise<LifecycleAppendRecoveryResult>;
+  commitLifecycleWakeCoverage(
+    input: LifecycleWakeCoverageInput,
+    ledgerStore: QueueLedgerStore,
+  ): LifecycleWakeCoverageResult | Promise<LifecycleWakeCoverageResult>;
   /**
    * F098-D: CAS transition queued → delivered at an admitted timestamp.
    * `deliveryTransitioned` is true only when this call won; false on a state no-op.
@@ -2440,6 +2458,7 @@ export function prepareLifecycleResponseTerminalMessage(
 
 export class MessageStore {
   private readonly userMentionIndex = new UserMentionIndex();
+  private readonly threadTimeline = new ThreadMessageTimelineIndex();
   private mentionCutover: number | undefined;
 
   getLastUserMentionHandling(userId: string) {
@@ -2568,6 +2587,7 @@ export class MessageStore {
 
   private pruneIdempotencyIndexForMessageIds(messageIds: readonly string[]): void {
     if (messageIds.length === 0) return;
+    for (const id of messageIds) this.threadTimeline.remove(id);
     const removedIds = new Set(messageIds);
     for (const [key, value] of this.idempotencyIndex.entries()) {
       if (removedIds.has(value)) {
@@ -2578,6 +2598,7 @@ export class MessageStore {
 
   /** Publish a bodyless processing placeholder only when its final body is durable. */
   private publishLifecycleResponse(message: StoredMessage): void {
+    this.threadTimeline.upsert(message);
     if (!this.visibilitySeq.has(message.id)) {
       this.visibilitySeqCounter = Math.max(this.visibilitySeqCounter + 1, Date.now());
       this.visibilitySeq.set(message.id, this.visibilitySeqCounter);
@@ -2716,6 +2737,7 @@ export class MessageStore {
     }
     message.lifecycle = structuredClone(lifecycle);
     if (!preservesPublishedAgent) message.deliveryStatus = 'queued';
+    this.threadTimeline.upsert(message);
     return { outcome: 'enqueued', message: { ...message }, entries: admitted.entries, deduped: false };
   }
 
@@ -2802,6 +2824,7 @@ export class MessageStore {
       threadId,
     };
     this.messages.push(stored);
+    this.threadTimeline.upsert(stored);
     if (idempotencyIndexKey) {
       this.idempotencyIndex.set(idempotencyIndexKey, stored.id);
     }
@@ -3267,6 +3290,10 @@ export class MessageStore {
     return matches.reverse();
   }
 
+  getThreadEvidenceProjection(threadId: string, limit?: number, userId?: string): MessageEvidenceProjection[] {
+    return projectMessageEvidence(this.getByThread(threadId, limit, userId));
+  }
+
   getByThreadIncludingQueued(threadId: string, limit?: number, userId?: string): StoredMessage[] {
     const n = limit ?? DEFAULT_LIMIT;
     const matches: StoredMessage[] = [];
@@ -3499,6 +3526,18 @@ export class MessageStore {
     options?: ThreadMessageReadOptions,
   ): BoundedThreadMessagePage {
     const rawLimit = Math.max(0, Math.floor(scanLimit));
+    const isVisible = resolveThreadMessageVisibility(options, userId);
+    const visible = (message: StoredMessage) =>
+      !message.deletedAt &&
+      isVisible(message) &&
+      (!userId || message.userId === userId || isSystemUserMessage(message));
+    if (options?.artifactProjection) {
+      const page = this.threadTimeline.readBefore(threadId, timestamp, beforeId, rawLimit);
+      return { ...page, messages: page.messages.filter(visible) };
+    }
+
+    // F148 keyword ranking consumes the bounded global memory window once.
+    // Account for every raw row, including other threads and rows past the cursor.
     const rawCandidates = rawLimit === 0 ? [] : this.messages.slice(-rawLimit);
     const candidates = rawCandidates
       .filter((message) => message.threadId === threadId)
@@ -3509,26 +3548,20 @@ export class MessageStore {
       })
       .filter((message) => {
         const effectiveTimestamp = getTimelineOrderTime(message);
-        if (effectiveTimestamp < timestamp) return true;
-        return effectiveTimestamp === timestamp && beforeId !== undefined && message.id < beforeId;
+        return (
+          effectiveTimestamp < timestamp ||
+          (effectiveTimestamp === timestamp && beforeId !== undefined && message.id < beforeId)
+        );
       });
-
-    const isVisible = resolveThreadMessageVisibility(options, userId);
-    const messages = candidates.filter((message) => {
-      if (message.deletedAt || !isVisible(message)) return false;
-      return !userId || message.userId === userId || isSystemUserMessage(message);
-    });
     const oldestCandidate = candidates.at(-1);
-    const nextCursor = oldestCandidate
-      ? { timestamp: getTimelineOrderTime(oldestCandidate), id: oldestCandidate.id }
-      : undefined;
-
     return {
-      messages: messages.reverse(),
+      messages: candidates.filter(visible).reverse(),
       scannedCount: rawCandidates.length,
       storageRoundTrips: 0,
       exhausted: rawCandidates.length >= this.messages.length,
-      ...(nextCursor ? { nextCursor } : {}),
+      ...(oldestCandidate
+        ? { nextCursor: { timestamp: getTimelineOrderTime(oldestCandidate), id: oldestCandidate.id } }
+        : {}),
     };
   }
 
@@ -3873,6 +3906,7 @@ export class MessageStore {
       source.timelineOrderAt = input.failedAt;
       source.deliveredAt = input.failedAt;
       source.deliveryStatus = 'delivered';
+      this.threadTimeline.update(source);
       if (!this.visibilitySeq.has(source.id)) {
         this.visibilitySeqCounter = Math.max(this.visibilitySeqCounter + 1, Date.now());
         this.visibilitySeq.set(source.id, this.visibilitySeqCounter);
@@ -3940,6 +3974,44 @@ export class MessageStore {
     return { kind: 'applied', messages: [structuredClone(source), structuredClone(response)], entry: prepared.entry };
   }
 
+  commitLifecycleWakeCoverage(
+    input: LifecycleWakeCoverageInput,
+    ledgerStore: QueueLedgerStore,
+  ): LifecycleWakeCoverageResult {
+    if (!(ledgerStore instanceof InMemoryQueueLedgerStore))
+      throw new Error('Wake coverage requires the matching memory Queue ledger');
+    const sources = input.entries.map((entry) => this.messages.find((message) => message.id === entry.messageId));
+    const response = this.messages.find((message) => message.id === input.responseMessageId);
+    if (!response || sources.some((source) => !source)) return { kind: 'not_found' };
+    const entries = input.entries.map((entry) => ledgerStore.getNow(input.threadId, entry.entryId));
+    const prepared = prepareLifecycleWakeCoverage(sources as StoredMessage[], response, entries, input);
+    if (prepared.kind !== 'prepared') return prepared;
+    if (!prepared.replayed) {
+      ledgerStore.commitWakeCoverageNow(
+        input.threadId,
+        input.entries.map((entry) => entry.entryId),
+        entries,
+        prepared.entries,
+      );
+      for (const message of prepared.messages) {
+        const current = this.messages.find((candidate) => candidate.id === message.id)!;
+        current.lifecycle = structuredClone(message.lifecycle);
+        if (message.id === response.id) current.extra = structuredClone(message.extra);
+        else if (current.deliveryStatus === 'queued' && message.deliveryStatus === 'delivered') {
+          current.deliveryStatus = message.deliveryStatus;
+          current.deliveredAt = message.deliveredAt;
+          current.timelineOrderAt = message.timelineOrderAt;
+          this.threadTimeline.upsert(current);
+        }
+      }
+    }
+    return {
+      kind: prepared.replayed ? 'replayed' : 'applied',
+      messages: structuredClone(prepared.messages),
+      entries: prepared.entries,
+    };
+  }
+
   /**
    * F098-D: Mark a queued message as delivered (set deliveredAt timestamp).
    */
@@ -3951,6 +4023,7 @@ export class MessageStore {
     msg.timelineOrderAt = resolveDeliveryTimelineScore(msg, deliveredAt);
     msg.deliveredAt = deliveredAt;
     msg.deliveryStatus = 'delivered';
+    this.threadTimeline.upsert(msg);
     // #1269: Preserve existing visibility position for already-published speech.
     // Timeline-published queued cat speech gets visibilitySeq at append — delivery
     // must NOT reallocate or it would move the message after later arrivals and
@@ -3972,6 +4045,7 @@ export class MessageStore {
     if (msg.deliveryStatus === 'queued') return { kind: 'existing', message: { ...msg } };
     if (msg.deliveryStatus !== undefined) return { kind: 'conflict' };
     msg.deliveryStatus = 'queued';
+    this.threadTimeline.upsert(msg);
     return { kind: 'prepared', message: { ...msg } };
   }
 

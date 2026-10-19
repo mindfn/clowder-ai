@@ -234,6 +234,32 @@ export class PublishedMediaService {
     });
   }
 
+  /** Local Human picker; discovery never substitutes for the original read and source visibility checks. */
+  async listRetained(principal: MediaReviewPrincipal, after?: string) {
+    if (principal.actor.kind !== 'human' || principal.actor.actorId !== principal.userId)
+      throw new MediaOwnerError('access_denied');
+    const page = await this.deps.owner.listRetainedMedia(principal.userId, after);
+    const items: { contentRef: string; ownerRevision: number; label: string; mediaType: 'image/png' | 'video/mp4' }[] =
+      [];
+    for (const candidate of page.items) {
+      try {
+        const asset = await this.read(candidate.contentRef, candidate.ownerRevision, principal);
+        if (asset.mediaType !== 'image/png' && asset.mediaType !== 'video/mp4') continue;
+        const label =
+          asset.sourcePublication.artifactRef.split('/').at(-1) || (asset.mediaType === 'image/png' ? '图片' : '视频');
+        items.push({ ...candidate, label, mediaType: asset.mediaType });
+      } catch (error) {
+        if (
+          error instanceof MediaOwnerError &&
+          ['access_denied', 'not_found', 'publication_changed'].includes(error.code)
+        )
+          continue;
+        throw error;
+      }
+    }
+    return { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+  }
+
   async describe(contentRef: string, ownerRevision: number | undefined, principal: MediaReviewPrincipal) {
     const currentOwnerRevision = await this.currentRevision(contentRef, principal);
     const asset = await this.read(contentRef, ownerRevision ?? currentOwnerRevision, principal);
@@ -276,10 +302,10 @@ export class PublishedMediaService {
     await this.assertVisible(asset, scope, principal);
   }
 
-  async openAsset(asset: ReviewedMediaAsset, principal: MediaReviewPrincipal) {
+  async openAsset(asset: ReviewedMediaAsset, principal: MediaReviewPrincipal, localFile = false) {
     const actual = await this.deps.owner.describe(asset.contentRef, asset.ownerRevision);
     if (!actual.publicationScope) throw new MediaOwnerError('access_denied');
-    return this.open(asset, actual.publicationScope, principal);
+    return this.open(asset, actual.publicationScope, principal, localFile);
   }
 
   async origin(contentRef: string, principal: MediaReviewPrincipal) {
@@ -301,7 +327,12 @@ export class PublishedMediaService {
     return content.bytes;
   }
 
-  async open(asset: ReviewedMediaAsset, scope: ContentPublicationScopeV1, principal: MediaReviewPrincipal) {
+  async open(
+    asset: ReviewedMediaAsset,
+    scope: ContentPublicationScopeV1,
+    principal: MediaReviewPrincipal,
+    localFile = false,
+  ) {
     await this.assertVisible(asset, scope, principal);
     const content = await this.deps.owner.open(asset.contentRef, asset.ownerRevision);
     try {
@@ -309,7 +340,25 @@ export class PublishedMediaService {
         throw new MediaOwnerError('access_denied');
       }
       await this.assertVisible(asset, scope, principal);
-      return content;
+      const originalPath = localFile
+        ? await this.deps.sources.localOriginalFile(content.sourcePublication, content.blobDigest)
+        : null;
+      const publication =
+        localFile && 'kind' in scope && scope.kind === 'message'
+          ? await this.deps.sources.messageIdentity(scope.source, principal)
+          : null;
+      if (localFile) await this.assertVisible(asset, scope, principal);
+      return {
+        ...content,
+        path: originalPath ?? content.path,
+        fileAuthor:
+          publication?.publisherCatId ??
+          (content.committedBy?.kind === 'cat' ? content.committedBy.actorId : undefined),
+        fileCreatedAt:
+          publication && 'kind' in scope && scope.kind === 'message'
+            ? new Date(Number(scope.source.messageRevision)).toISOString()
+            : content.committedAt,
+      };
     } catch (error) {
       await content.handle.close();
       throw error;

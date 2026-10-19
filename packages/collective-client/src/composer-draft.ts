@@ -1,6 +1,14 @@
 import { collectiveRecipientSchema } from '@cat-cafe/shared';
 import type { CollectiveEventEnvelope, CollectiveParticipant, CollectiveRecipient } from './client-types.js';
 import { mentionSelectionForEvent } from './participant-identity.js';
+import {
+  readSharedArtifactDraftSelections,
+  type SharedArtifactDraftReply,
+  type SharedArtifactDraftRework,
+  type SharedArtifactDraftSelection,
+  sharedArtifactDraftReplySchema,
+  sharedArtifactDraftReworkSchema,
+} from './shared-artifact-draft.js';
 
 export interface ComposerDraft {
   readonly body: string;
@@ -10,6 +18,9 @@ export interface ComposerDraft {
   readonly recipientLabel: string;
   readonly replyToEventId?: string;
   readonly replyNeedsSelection?: boolean;
+  readonly artifactSelections?: readonly SharedArtifactDraftSelection[];
+  readonly artifactRework?: SharedArtifactDraftRework;
+  readonly artifactReply?: SharedArtifactDraftReply;
 }
 export interface ReplySelection {
   readonly eventId: string;
@@ -21,6 +32,7 @@ export const emptyDraft: ComposerDraft = { body: '', recipient: { kind: 'channel
 export function selectReply(draft: ComposerDraft, reply: ReplySelection): ComposerDraft {
   return {
     ...draft,
+    artifactReply: undefined,
     recipient: reply.selection?.recipient ?? { kind: 'channel' },
     recipientLabel: reply.selection?.label ?? '',
     replyToEventId: reply.eventId,
@@ -36,6 +48,14 @@ export function readDraft(key: string): ComposerDraft {
     const recipient = parsed.success ? parsed.data : { kind: 'channel' as const };
     return {
       body: data.body,
+      artifactReply: sharedArtifactDraftReplySchema.safeParse('artifactReply' in data ? data.artifactReply : undefined)
+        .data,
+      artifactRework: sharedArtifactDraftReworkSchema.safeParse(
+        'artifactRework' in data ? data.artifactRework : undefined,
+      ).data,
+      artifactSelections: readSharedArtifactDraftSelections(
+        'artifactSelections' in data ? data.artifactSelections : undefined,
+      ),
       entrust: 'entrust' in data && data.entrust === true,
       responseRequested: recipient.kind === 'channel' && 'responseRequested' in data && data.responseRequested === true,
       recipient,
@@ -63,4 +83,20 @@ export function replyDraftError(
   const event = events?.find((item) => item.eventId === draft.replyToEventId);
   if (!event) return '正在回复的消息当前不可用，请重新选择回复消息；草稿已保留。';
   if (draft.replyNeedsSelection) return mentionSelectionForEvent(event, participants, channelId).error ?? reselect;
+}
+
+/** An older send acknowledgement cannot erase a newer draft or attachment in the same Topic. */
+export function clearConfirmedComposerDraft(current: ComposerDraft, draft: ComposerDraft): ComposerDraft {
+  if (
+    current.body !== draft.body ||
+    current.recipient !== draft.recipient ||
+    current.replyToEventId !== draft.replyToEventId ||
+    (current.artifactReply && current.artifactReply !== draft.artifactReply) ||
+    (current.artifactRework && current.artifactRework !== draft.artifactRework) ||
+    (current.artifactSelections && current.artifactSelections !== draft.artifactSelections)
+  )
+    return current;
+  return current.replyToEventId
+    ? { ...current, body: '', artifactSelections: undefined, artifactRework: undefined, artifactReply: undefined }
+    : emptyDraft;
 }

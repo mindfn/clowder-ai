@@ -36,7 +36,7 @@ const historicalIdentity = createCompanionIdentitySnapshot({
 function authorDisplayName(catId: string): string {
   const cat = catRegistry.tryGet(catId);
   assert.ok(cat, `fixture cat ${catId} must exist`);
-  return cat.config.displayName;
+  return cat.config.nickname?.trim() || cat.config.displayName;
 }
 
 async function fixture() {

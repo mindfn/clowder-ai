@@ -43,6 +43,8 @@ export function withBallCustodyTaskEvents(
 }
 
 class BallCustodyTaskStore implements ITaskStore {
+  readonly listByThreadPage?: NonNullable<ITaskStore['listByThreadPage']>;
+
   findDevelopmentWork(userId: string, scope: DevelopmentScopeV1) {
     return this.inner.findDevelopmentWork(userId, scope);
   }
@@ -57,7 +59,9 @@ class BallCustodyTaskStore implements ITaskStore {
     private readonly ballCustody: IBallCustodyIngest,
     private readonly logger?: WarnLogger,
     private readonly actionLifecycle?: TaskActionSuccessorLifecycle,
-  ) {}
+  ) {
+    if (inner.listByThreadPage) this.listByThreadPage = inner.listByThreadPage.bind(inner);
+  }
 
   create(input: CreateTaskInput): MaybePromise<TaskItem> {
     return this.inner.create(input);

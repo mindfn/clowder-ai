@@ -223,3 +223,14 @@ for (const language of ['zh', 'en'])
         ),
       );
     });
+
+for (const language of ['zh', 'en'])
+  for (const width of [1440, 390])
+    test(
+      `F322 original provider approval/question/elicitation ${language} ${width}`,
+      { timeout: 240000 },
+      async (t) => {
+        const { verifyProviderCards } = await import('./f322-inbox-provider.journey.mjs');
+        await verifyProviderCards({ t, language, width, root });
+      },
+    );

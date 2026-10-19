@@ -229,6 +229,69 @@ test('living companion bubble is passive and the pending panel stays interactive
   assert.equal(f.ignores.at(-1), false, 'the pending panel remains clickable');
 });
 
+test('split call layout returns a passive bubble without making the interactive controls click-through', (t) => {
+  const f = fixture();
+  t.after(() => f.host.close());
+  const reply = f.host.request({
+    kind: 'view.layout',
+    panel: 'actions',
+    width: 412,
+    height: 116,
+    call: { presentation: 'controls', bubble: { width: 320, height: 62 } },
+  });
+  assert.equal(reply.kind, 'layout');
+  assert.ok(reply.bubble);
+  const native = f.bounds();
+  for (const rect of [reply.panel, reply.bubble]) {
+    assert.ok(rect.x >= 0 && rect.y >= 0);
+    assert.ok(rect.x + rect.width <= native.width && rect.y + rect.height <= native.height);
+  }
+
+  f.cursor({ x: native.x + reply.bubble.x + 3, y: native.y + reply.bubble.y + 3 });
+  f.host.tick();
+  assert.equal(f.ignores.at(-1), true, 'speech remains passive over the foreground application');
+  f.cursor({ x: native.x + reply.panel.x + 3, y: native.y + reply.panel.y + 3 });
+  f.host.tick();
+  assert.equal(f.ignores.at(-1), false, 'call controls remain interactive');
+});
+
+test('application assistance uses the ordinary bounded interactive panel lane', (t) => {
+  const f = fixture();
+  t.after(() => f.host.close());
+  const reply = f.host.request({ kind: 'view.layout', panel: 'app-assist', width: 320, height: 92 });
+  assert.equal(reply.kind, 'layout');
+  f.cursor({ x: f.bounds().x - 4, y: f.bounds().y - 4 });
+  f.host.tick();
+  assert.equal(f.ignores.at(-1), true);
+  f.cursor({ x: f.bounds().x + reply.panel.x + 3, y: f.bounds().y + reply.panel.y + 3 });
+  f.host.tick();
+  assert.equal(f.ignores.at(-1), false);
+});
+
+test('native split-call validation rejects authority-shaped or unbounded layout additions', (t) => {
+  const f = fixture();
+  t.after(() => f.host.close());
+  const invalid = [
+    { kind: 'view.layout', panel: 'menu', width: 320, height: 92, call: { presentation: 'lite' } },
+    { kind: 'view.layout', panel: 'actions', width: 320, height: 92, call: { presentation: 'expanded' } },
+    {
+      kind: 'view.layout',
+      panel: 'actions',
+      width: 320,
+      height: 92,
+      call: { presentation: 'controls', bubble: { width: 421, height: 62 } },
+    },
+    {
+      kind: 'view.layout',
+      panel: 'actions',
+      width: 320,
+      height: 92,
+      call: { presentation: 'controls', bubble: { width: 320, height: 62 }, activated: true },
+    },
+  ];
+  for (const command of invalid) assert.deepEqual(f.host.request(command), { kind: 'error', code: 'invalid_request' });
+});
+
 test('drag keeps the native window aligned with ambient history and reopened controls', (t) => {
   for (const panel of ['bubble', 'actions', 'chat', 'menu', 'decisions']) {
     const f = fixture();

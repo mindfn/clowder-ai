@@ -13,6 +13,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeTeamWorkspaceSubject } from '@/components/routing-context/team-navigation';
+import { openExactPlace } from '@/components/shell/mailbox/open-exact-place';
 import { writeShellLanguage } from '@/components/shell/shell-language';
 import { writeShellPresentation } from '@/components/shell/shell-presentation';
 import type { WorkspaceSurfaceDescriptor } from '@/components/workbench/workbench-contract';
@@ -433,6 +434,50 @@ describe('F307 zero-surface canonical Home invariant', () => {
     } finally {
       clearExecutionDetailRequest();
       useChatStore.setState(previousChat);
+    }
+  });
+
+  it.each([false, true])('reveals the exact Inbox review from Home, with an existing tab = %s', async (existing) => {
+    writeShellPresentation('v2');
+    const reviewId = `review-${'a'.repeat(64)}`;
+    const review = createArtifactReviewSurface(reviewId, 'thread-a');
+    const previousChat = useChatStore.getState();
+    useChatStore.setState({ currentThreadId: 'thread-a', workspaceForegroundSurfaceId: null });
+    useF307ExperienceWorkbenchStore.setState({
+      layout: createInitialWorkbenchState(existing ? [review] : []),
+    });
+    function ForegroundHost() {
+      const foregroundSurfaceId = useChatStore((state) => state.workspaceForegroundSurfaceId);
+      return (
+        <F307ExperienceWorkbench
+          threadId="thread-a"
+          foregroundSurfaceId={foregroundSurfaceId}
+          visible
+          artifactWorkHostAvailable
+          onSelectDevSurface={() => undefined}
+          worktreeId="worktree-a"
+          openFilePath={null}
+          preview={{ path: '/' }}
+          onOpenAppRoute={mocks.openAppRoute}
+        />
+      );
+    }
+    try {
+      // The mailbox can open Workspace before its automatic foreground binding mounts.
+      await act(async () => openExactPlace(`workspace:content-review:thread-a:${reviewId}`, '/thread/thread-a'));
+      await act(async () => root.render(<ForegroundHost />));
+      expect(container.querySelector('[data-workbench-focus="surface"]')).not.toBeNull();
+      expect(
+        container.querySelector(`[data-owner-surface-id="${review.id}"]`)?.getAttribute('data-surface-visible'),
+      ).toBe('true');
+      expect(useChatStore.getState().workspaceForegroundSurfaceId).toBe(review.id);
+      expect(useChatStore.getState().threadStates['thread-a'].workspaceForegroundSurfaceId).toBe(review.id);
+    } finally {
+      useChatStore.setState({
+        currentThreadId: previousChat.currentThreadId,
+        workspaceForegroundSurfaceId: previousChat.workspaceForegroundSurfaceId,
+        threadStates: previousChat.threadStates,
+      });
     }
   });
 

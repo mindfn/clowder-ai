@@ -1,5 +1,30 @@
 [
   {
+    "id": "feature-f322-work-discussion",
+    "kind": "feature",
+    "sourceRef": {
+      "path": "docs/features/F322-everyday-work-experience.md",
+      "anchor": "### Phase B: 整理日常主屏"
+    },
+    "structureSource": {
+      "path": "packages/web/src/components/new-conversation/RecentWorks.tsx",
+      "anchor": "RecentWorks"
+    },
+    "bodySource": {
+      "path": "DESIGN.md",
+      "anchor": "往下滚看更多、一键去找做它的猫"
+    },
+    "contexts": ["concierge_open"],
+    "audience": ["cvo"],
+    "body": "想接着聊某件作品？在新对话页往下翻「最近的作品」，点卡片右下「去聊」，会回到交出它的原消息，并把引用和负责猫的 @ 接到原草稿后面。检查后再决定发送；点卡片其它地方仍是打开作品。",
+    "action": {
+      "type": "open_concierge_draft",
+      "label": "了解怎样继续聊作品",
+      "draftPrompt": "请带我从新对话页的最近作品回到它的原消息继续讨论，说明引用和负责猫怎样进入未发送草稿，并保留我原来写的内容。"
+    },
+    "owner": "codex61-sol"
+  },
+  {
     "id": "feature-f328-tripo-background-review",
     "kind": "feature",
     "sourceRef": {

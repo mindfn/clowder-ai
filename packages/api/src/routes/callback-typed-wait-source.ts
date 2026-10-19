@@ -4,6 +4,60 @@ import type { InvocationTracker } from '../domains/cats/services/agents/invocati
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { isOwnerVisibleManagedHoldConnector } from '../domains/cats/services/stores/visibility.js';
 
+interface WaitSourceDeps {
+  readonly messageStore: Pick<IMessageStore, 'getById'>;
+  readonly invocationTracker?: Pick<InvocationTracker, 'getActiveSlots'>;
+}
+
+function captureActiveInputIds(auth: InvocationRecord, deps: WaitSourceDeps): readonly string[] | undefined {
+  const activeRun = deps.invocationTracker
+    ?.getActiveSlots(auth.threadId)
+    .find((slot) => slot.catId === auth.catId && slot.activeRun?.invocationId === auth.invocationId)?.activeRun;
+  if (!activeRun || activeRun.threadId !== auth.threadId || activeRun.targetId !== auth.catId) return undefined;
+  return [...activeRun.inputMessageIds];
+}
+
+/**
+ * Deployment waits belong to the original work Task. Bind their continuation
+ * to this invocation's primary input, independently of adopted command wakes.
+ * A managed primary grants authority only over its own exact hold/source pair.
+ */
+export async function captureDeploymentWaitSource(
+  auth: InvocationRecord,
+  deps: WaitSourceDeps,
+): Promise<TypedWaitSource | undefined> {
+  try {
+    const inputMessageIds = captureActiveInputIds(auth, deps);
+    const sourceMessageId = auth.originTriggerMessageId;
+    if (!sourceMessageId || !inputMessageIds?.includes(sourceMessageId)) return undefined;
+    const origin = await deps.messageStore.getById(sourceMessageId);
+    if (
+      !origin ||
+      origin.threadId !== auth.threadId ||
+      origin.userId !== auth.userId ||
+      origin.deletedAt !== undefined ||
+      origin._tombstone
+    ) {
+      return undefined;
+    }
+    if (origin.source?.connector === 'hold-ball') {
+      const holdTaskId = origin.source.meta?.taskId;
+      if (
+        !isOwnerVisibleManagedHoldConnector(origin, auth.userId) ||
+        origin.source.meta?.catId !== auth.catId ||
+        typeof holdTaskId !== 'string' ||
+        holdTaskId.length === 0
+      ) {
+        return undefined;
+      }
+      return { kind: 'primary', sourceMessageId, holdTaskId };
+    }
+    return { kind: 'primary', sourceMessageId };
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Snapshot the exact lifecycle inputs at callback entry. Later queue adoption
  * must not retrospectively grant a wait registration authority over a source
@@ -11,17 +65,11 @@ import { isOwnerVisibleManagedHoldConnector } from '../domains/cats/services/sto
  */
 export async function captureTypedWaitSource(
   auth: InvocationRecord,
-  deps: {
-    readonly messageStore: Pick<IMessageStore, 'getById'>;
-    readonly invocationTracker?: Pick<InvocationTracker, 'getActiveSlots'>;
-  },
+  deps: WaitSourceDeps,
 ): Promise<TypedWaitSource | undefined> {
   try {
-    const activeRun = deps.invocationTracker
-      ?.getActiveSlots(auth.threadId)
-      .find((slot) => slot.catId === auth.catId && slot.activeRun?.invocationId === auth.invocationId)?.activeRun;
-    if (!activeRun || activeRun.threadId !== auth.threadId || activeRun.targetId !== auth.catId) return undefined;
-    const inputMessageIds = [...activeRun.inputMessageIds];
+    const inputMessageIds = captureActiveInputIds(auth, deps);
+    if (!inputMessageIds) return undefined;
     const managedHoldSources: Extract<TypedWaitSource, { holdTaskId?: string }>[] = [];
     for (const sourceMessageId of inputMessageIds) {
       const source = await deps.messageStore.getById(sourceMessageId);

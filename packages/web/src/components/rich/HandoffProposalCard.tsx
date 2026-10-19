@@ -1,9 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useApprovalHost, useGuardedWrite, useWriteBlocked } from '@/components/ApprovalHost';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import type { RichCardBlock } from '@/stores/chat-types';
 import { apiFetch } from '@/utils/api-client';
+import { originalApprovalCopy } from '../shell/mailbox/original-approval.shell-copy';
+import { useShellCopy } from '../shell/shell-copy';
+import { useShellPresentation } from '../shell/shell-presentation';
+import { HandoffCardContent } from './HandoffCardContent';
 
 type Status = 'pending' | 'approving' | 'approved' | 'rejected' | 'expired';
 
@@ -109,9 +114,18 @@ const VERB_OUTCOME = {
  * without this the card renders but the buttons are inert (fell through to generic CardBlock — 砚砚 P1-2).
  */
 export function HandoffProposalCard({ block }: { block: RichCardBlock; messageId?: string }) {
+  const host = useApprovalHost();
+  const shell = useShellPresentation();
+  const compact = host.presentation === 'mailbox' || shell === 'v2';
+  const copy = useShellCopy(originalApprovalCopy);
+  const guardedWrite = useGuardedWrite();
   const proposalId = useMemo(() => extractProposalId(block), [block]);
   const [status, setStatus] = useState<Status>('pending');
   const [loading, setLoading] = useState(false);
+  const [statusKnown, setStatusKnown] = useState(false);
+  const writeBlocked = useWriteBlocked(
+    loading || status === 'approving' || (host.presentation === 'mailbox' && !statusKnown),
+  );
   const [error, setError] = useState<string | null>(null);
 
   // Mount: fetch durable status so a reloaded / multi-tab card (that missed the socket event)
@@ -124,9 +138,13 @@ export function HandoffProposalCard({ block }: { block: RichCardBlock; messageId
       try {
         const res = await apiFetch(`/api/session-handoff/${proposalId}`);
         if (!res.ok || cancelled) return;
-        const data = (await res.json()) as { proposal?: { status?: Status } };
+        const data = (await res.json()) as { proposal?: { proposalId?: string; status?: Status } };
         const fetched = data.proposal?.status;
-        if (fetched && !cancelled) {
+        const verified =
+          ['pending', 'approving', 'approved', 'rejected', 'expired'].includes(String(fetched)) &&
+          data.proposal?.proposalId === proposalId;
+        if (fetched && !cancelled && (host.presentation !== 'mailbox' || verified)) {
+          setStatusKnown(true);
           // Monotonic hydration (砚砚 re-review P2): a late GET (e.g. a stale 'pending') must NOT
           // overwrite a status the user already settled by clicking approve/reject before it resolved.
           setStatus((prev) => (isSettled(prev) && !isSettled(fetched) ? prev : fetched));
@@ -138,7 +156,7 @@ export function HandoffProposalCard({ block }: { block: RichCardBlock; messageId
     return () => {
       cancelled = true;
     };
-  }, [proposalId]);
+  }, [proposalId, host.presentation]);
 
   // Reflect async / other-tab approve via the same socket event ProposalCard listens to.
   useEffect(() => {
@@ -159,11 +177,17 @@ export function HandoffProposalCard({ block }: { block: RichCardBlock; messageId
       setLoading(true);
       setError(null);
       try {
-        const res = await apiFetch(`/api/session-handoff/${proposalId}/${verb}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
+        const attempt = await guardedWrite('producer-card', async (reportEvidence) => {
+          const response = await apiFetch(`/api/session-handoff/${proposalId}/${verb}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          });
+          reportEvidence({ outcome: response.ok ? 'settled' : 'http-error', status: response.status });
+          return response;
         });
+        if (!attempt.sent) return;
+        const res = attempt.value;
         const data = (await res.json().catch(() => ({}))) as { status?: Status; error?: string };
         // Converge to a SETTLED server status whenever the server reports one — REGARDLESS of res.ok.
         // Covers success, reject-after-expire dedup ({status:'expired'}), AND a 409 on an already-
@@ -182,7 +206,7 @@ export function HandoffProposalCard({ block }: { block: RichCardBlock; messageId
         setLoading(false);
       }
     },
-    [proposalId],
+    [proposalId, guardedWrite],
   );
 
   const { metadataFields, contentFields } = useMemo(() => {
@@ -193,7 +217,13 @@ export function HandoffProposalCard({ block }: { block: RichCardBlock; messageId
     }
     return { metadataFields: metadata, contentFields: content };
   }, [block.fields]);
-  const title = useMemo(() => displayHandoffTitle(block.title), [block.title]);
+  const originalTitle = displayHandoffTitle(block.title);
+  const title =
+    compact && originalTitle === '提议 session 接力（封印当前 → 续接 fresh 自己）' ? copy.handoffTitle : originalTitle;
+  const body =
+    compact && block.bodyMarkdown?.endsWith(' 想在干净断点封印当前 session，把这份亲手写的交接带给续接的自己。')
+      ? copy.handoffReason
+      : block.bodyMarkdown;
   const settled = isSettled(status);
   const presentation = statusPresentation(status);
 
@@ -214,67 +244,95 @@ export function HandoffProposalCard({ block }: { block: RichCardBlock; messageId
           <HandoffCardIcon />
           <div className="min-w-0">
             <div className="font-semibold text-sm text-[var(--cafe-text)] leading-snug">{title}</div>
-            {block.bodyMarkdown && (
+            {body && (
               <div className="mt-1 text-xs text-cafe-secondary leading-relaxed [&_p]:mb-1 [&_p:last-child]:mb-0">
-                <MarkdownContent content={block.bodyMarkdown} className="!text-xs" disableCommandPrefix />
+                <MarkdownContent content={body} className="!text-xs" disableCommandPrefix />
               </div>
             )}
           </div>
         </div>
-        <span
-          title="F225 session handoff"
-          className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium ${presentation.badge}`}
-        >
-          F225
-        </span>
+        {!compact ? (
+          <span
+            title="F225 session handoff"
+            className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium ${presentation.badge}`}
+          >
+            F225
+          </span>
+        ) : null}
       </div>
-      {metadataFields.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {metadataFields.map((field) => (
-            <div
-              key={field.label}
-              className="flex min-w-0 items-center gap-1 rounded-full border border-[var(--console-border-soft)] bg-cafe-surface px-2 py-0.5 text-xs font-mono text-cafe-muted"
-            >
-              <span>{field.label}:</span>
-              <span className="max-w-[12rem] truncate font-semibold text-cafe-secondary">{field.value}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {contentFields.length > 0 && (
-        <div className="mt-3 space-y-2.5">
-          {contentFields.map((field) => (
-            <section
-              key={field.label}
-              className="relative rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface p-3"
-            >
-              <div className="absolute left-0 top-3 bottom-3 w-0.5 rounded-full bg-conn-blue-ring" />
-              <div className="pl-2">
-                <div className="mb-1 text-xs font-semibold uppercase text-conn-blue-text">{field.label}</div>
-                <div className="text-xs leading-relaxed text-cafe-secondary [&_code]:text-xs [&_ol]:list-decimal [&_ol]:pl-4 [&_p]:mb-1 [&_p:last-child]:mb-0 [&_ul]:list-disc [&_ul]:pl-4">
-                  <MarkdownContent content={field.value} className="!text-xs" disableCommandPrefix />
+      {compact ? (
+        <HandoffCardContent fields={block.fields ?? []} />
+      ) : (
+        <>
+          {metadataFields.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {metadataFields.map((field) => (
+                <div
+                  key={field.label}
+                  className="flex min-w-0 items-center gap-1 rounded-full border border-[var(--console-border-soft)] bg-cafe-surface px-2 py-0.5 text-xs font-mono text-cafe-muted"
+                >
+                  <span>{field.label}:</span>
+                  <span className="max-w-[12rem] truncate font-semibold text-cafe-secondary">{field.value}</span>
                 </div>
-              </div>
-            </section>
-          ))}
-        </div>
+              ))}
+            </div>
+          )}
+          {contentFields.length > 0 && (
+            <div className="mt-3 space-y-2.5">
+              {contentFields.map((field) => (
+                <section
+                  key={field.label}
+                  className="relative rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface p-3"
+                >
+                  <div className="absolute left-0 top-3 bottom-3 w-0.5 rounded-full bg-conn-blue-ring" />
+                  <div className="pl-2">
+                    <div className="mb-1 text-xs font-semibold uppercase text-conn-blue-text">{field.label}</div>
+                    <div className="text-xs leading-relaxed text-cafe-secondary [&_code]:text-xs [&_ol]:list-decimal [&_ol]:pl-4 [&_p]:mb-1 [&_p:last-child]:mb-0 [&_ul]:list-disc [&_ul]:pl-4">
+                      <MarkdownContent content={field.value} className="!text-xs" disableCommandPrefix />
+                    </div>
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
+        </>
       )}
       {settled ? (
         <div className="mt-4 border-t border-[var(--console-border-soft)] pt-3">
-          <div className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs ${presentation.badge}`}>
-            {presentation.label}
+          <div
+            data-testid="original-approval-terminal"
+            className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs ${presentation.badge}`}
+          >
+            {compact
+              ? status === 'approved'
+                ? copy.handoffApproved
+                : status === 'rejected'
+                  ? copy.handoffRejected
+                  : copy.expired
+              : presentation.label}
           </div>
         </div>
       ) : (
         <div className="mt-4 flex flex-wrap gap-2.5 border-t border-[var(--console-border-soft)] pt-3">
-          <button type="button" disabled={loading} onClick={() => act('approve')} className={btnPrimary}>
-            {loading ? '处理中...' : '批准并接力'}
+          <button
+            type="button"
+            disabled={writeBlocked}
+            onClick={() => act('approve')}
+            className={
+              compact ? 'shell-focusable rounded-lg px-4 py-1.5 text-xs font-semibold disabled:opacity-50' : btnPrimary
+            }
+            style={compact ? { background: 'var(--shell-primary)', color: 'var(--shell-primary-on)' } : undefined}
+          >
+            {loading ? (compact ? copy.processing : '处理中...') : compact ? copy.approveHandoff : '批准并接力'}
           </button>
-          <button type="button" disabled={loading} onClick={() => act('reject')} className={btnDanger}>
-            驳回
+          <button type="button" disabled={writeBlocked} onClick={() => act('reject')} className={btnDanger}>
+            {compact ? copy.reject : '驳回'}
           </button>
         </div>
       )}
+      {host.originalPlaceAction ? (
+        <div className="mt-3 flex flex-wrap justify-end gap-2">{host.originalPlaceAction}</div>
+      ) : null}
       {error && <div className="mt-2 text-xs text-conn-red-text">{error}</div>}
     </div>
   );

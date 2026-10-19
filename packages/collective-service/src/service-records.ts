@@ -1,4 +1,6 @@
 import type {
+  CollectiveArtifactPublication,
+  CollectiveArtifactRecord,
   CollectiveBindingVoteRecord,
   CollectiveDecisionRecord,
   CollectiveEventEnvelope,
@@ -75,6 +77,7 @@ export interface ConnectionRecord {
   readonly endpointId: string;
   readonly endpointLabel: string;
   readonly credentialDigest: string;
+  readonly custodyRecoveryDigest?: string;
   readonly authorizedHumanId?: string;
   readonly status: 'connected' | 'revoked';
   readonly revocationReason?: 'owner_revoked' | 'self_revoked' | 'identity_rebind_required' | 'membership_left';
@@ -87,7 +90,7 @@ export interface ConnectionRecord {
 export interface CollaborationOperationReceipt {
   readonly actorScope: string;
   readonly fingerprint: string;
-  readonly resourceKind: 'work' | 'roadmap' | 'vote' | 'binding_vote' | 'reaction';
+  readonly resourceKind: 'work' | 'roadmap' | 'vote' | 'binding_vote' | 'reaction' | 'artifact';
   readonly resourceId: string;
   readonly revision: number;
   readonly recordedAt: string;
@@ -110,6 +113,26 @@ export interface ReactionRecord {
     readonly active: boolean;
     readonly at: string;
   }[];
+}
+
+export interface WorkResultFileRecord {
+  readonly v: 1;
+  readonly fileId: string;
+  readonly collectiveId: string;
+  readonly workId: string;
+  readonly resultEventId: string;
+  readonly resultRevision: number;
+  readonly assignmentEventId: string;
+  readonly connectionId: string;
+  readonly humanId: string;
+  readonly catId: string;
+  readonly sourceHref: string;
+  readonly fileName: string;
+  readonly mediaType: 'text/markdown' | 'text/plain';
+  readonly contentDigest: string;
+  readonly byteLength: number;
+  readonly contentBase64: string;
+  readonly createdAt: string;
 }
 
 export interface ServiceState {
@@ -135,11 +158,14 @@ export interface ServiceState {
   readonly events: Record<string, CollectiveEventEnvelope[]>;
   readonly participations: Record<string, ParticipationRecord>;
   readonly works: Record<string, CollectiveWorkRecord>;
+  readonly artifacts: Record<string, CollectiveArtifactRecord>;
+  readonly artifactPublications: Record<string, CollectiveArtifactPublication>;
   readonly roadmaps: Record<string, CollectiveRoadmapRecord>;
   readonly votes: Record<string, CollectiveVoteRecord>;
   readonly bindingVotes: Record<string, CollectiveBindingVoteRecord>;
   readonly decisions: Record<string, CollectiveDecisionRecord>;
   readonly reactions: Record<string, ReactionRecord>;
+  readonly workResultFiles: Record<string, WorkResultFileRecord>;
   readonly collaborationOperations: Record<string, CollaborationOperationReceipt>;
   readonly legacyEvents: Record<string, unknown[]>;
   readonly clientEventIndex: Record<string, string>;

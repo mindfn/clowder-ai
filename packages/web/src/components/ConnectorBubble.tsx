@@ -1,13 +1,15 @@
 'use client';
 
 import { type ConnectorSource, decideHoldCancelEntry, readHoldCardCancelability } from '@cat-cafe/shared';
+import type { ReactNode } from 'react';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { tintedLight } from '@/lib/color-utils';
 import { connectorThemeToken } from '@/lib/connector-theme-token';
 import { resolveMessageSender } from '@/lib/resolve-sender';
 import type { ChatMessage as ChatMessageType } from '@/stores/chatStore';
-import { compareMessageTimelineOrder } from '@/stores/message-timeline';
+import { compareMessageTimelineCursor, compareMessageTimelineOrder } from '@/stores/message-timeline';
 import { ContentBlocks } from './ContentBlocks';
+import { isAbsorbedManagedJobMessage, isHiddenChatRow } from './chat-row-surface';
 import { HOST_CONTENT_REVIEW_CONNECTOR, hostReturnHeadline } from './content-review/host-return-headline';
 import { DevelopmentReturnBody } from './development-return/DevelopmentReturnBody';
 import { HoldBallCancelButton } from './HoldBallCancelButton';
@@ -60,7 +62,12 @@ function collectHoldCards(
 }
 
 function getHoldStatusRefreshKey(cards: readonly ChatMessageType[], message: ChatMessageType): string {
-  const latest = cards.at(-1) ?? message;
+  // Arrival updates status even when the stable presentation clock places the
+  // source earlier in history. Card ordering is not a freshness watermark.
+  const latest = cards.reduce(
+    (current, candidate) => (compareMessageTimelineCursor(current, candidate) < 0 ? candidate : current),
+    message,
+  );
   return `${latest.id}:${latest.timestamp}:${latest.content}:${JSON.stringify(latest.source?.meta ?? {})}`;
 }
 
@@ -68,13 +75,14 @@ interface ConnectorBubbleProps {
   message: ChatMessageType;
   threadId?: string;
   timelineMessages?: readonly ChatMessageType[];
+  footer?: ReactNode;
 }
 
 /**
  * F97: Connector message bubble for external information sources (GitHub Review, etc.)
  * Uses MessageBubble for shared layout; adds connector-specific avatar, header, and actions.
  */
-export function ConnectorBubble({ message, threadId, timelineMessages }: ConnectorBubbleProps) {
+export function ConnectorBubble({ message, threadId, timelineMessages, footer }: ConnectorBubbleProps) {
   const coCreator = useCoCreatorConfig();
   const source: ConnectorSource = message.source ?? { connector: '', label: '', icon: '' };
   const t = useShellCopy(frustrationHistoryCopy);
@@ -84,24 +92,19 @@ export function ConnectorBubble({ message, threadId, timelineMessages }: Connect
   const retiredOnly = feedbackOnly && visibility.every((entry) => entry.visibility === 'retired');
   const unknownFeedback = visibility.some((entry) => entry.visibility === 'unknown');
   const withdrawnFeedback = visibility.some((entry) => entry.visibility !== 'allowed');
-  if (retiredOnly && !message.contentBlocks?.length)
-    return <div data-message-id={message.id} aria-hidden="true" className="h-0" />;
-  if (message.extra?.scheduler?.hiddenTrigger) return null;
+  if (isHiddenChatRow(message)) return null;
   const jobId = source.connector === 'hold-ball' && typeof source.meta?.jobId === 'string' ? source.meta.jobId : null;
   const taskId = typeof source.meta?.taskId === 'string' ? source.meta.taskId : null;
-  if (
-    jobId &&
-    taskId &&
-    source.meta?.managedJobCard !== true &&
-    timelineMessages?.some(
-      (candidate) =>
-        candidate.id !== message.id &&
-        candidate.source?.connector === 'hold-ball' &&
-        candidate.source.meta?.jobId === jobId &&
-        candidate.source.meta.managedJobCard === true,
-    )
-  ) {
+  if (isAbsorbedManagedJobMessage(message, timelineMessages ?? [])) {
     return <div data-message-id={message.id} aria-hidden="true" className="h-0" />;
+  }
+  if (retiredOnly && !message.contentBlocks?.length) {
+    // Retirement withdraws the detection body, not its still-valid input receipt.
+    return footer ? (
+      <div data-message-id={message.id}>{footer}</div>
+    ) : (
+      <div data-message-id={message.id} aria-hidden="true" className="h-0" />
+    );
   }
 
   const connId = source.connector;
@@ -174,6 +177,7 @@ export function ConnectorBubble({ message, threadId, timelineMessages }: Connect
       messageId={message.id}
       avatar={avatar}
       header={header}
+      footer={footer}
       bubbleStyle={{
         backgroundColor: `var(--color-${themeToken}-surface, var(--cafe-surface))`,
         color: 'var(--cat-msg-text, var(--cafe-text))',

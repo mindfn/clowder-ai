@@ -16,6 +16,7 @@ export function MessageActionBar({
   onMention,
   onStartVote,
   onProposeWork,
+  onPublishArtifact,
 }: {
   readonly eventLabel: string;
   readonly activeReactions: ReadonlySet<CollectiveReactionEmoji>;
@@ -27,6 +28,7 @@ export function MessageActionBar({
   readonly onMention?: () => void;
   readonly onStartVote?: () => void;
   readonly onProposeWork?: () => void;
+  readonly onPublishArtifact?: () => void;
 }) {
   const [open, setOpen] = useState<OpenPanel>();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -35,7 +37,7 @@ export function MessageActionBar({
   const menuId = useId();
   const reactionId = useId();
   const canReact = Boolean(onSetReaction);
-  const hasMenu = canReact || Boolean(onReply || onMention || onStartVote || onProposeWork);
+  const hasMenu = canReact || Boolean(onReply || onMention || onStartVote || onProposeWork || onPublishArtifact);
 
   useEffect(() => {
     if (!open) return;
@@ -186,7 +188,12 @@ export function MessageActionBar({
           )}
           {onProposeWork && (
             <button type="button" role="menuitem" onClick={() => run(onProposeWork)}>
-              整理为工作
+              建成任务
+            </button>
+          )}
+          {onPublishArtifact && (
+            <button type="button" role="menuitem" onClick={() => run(onPublishArtifact)}>
+              分享作品…
             </button>
           )}
         </div>

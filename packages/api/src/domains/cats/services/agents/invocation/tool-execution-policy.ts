@@ -153,9 +153,11 @@ export function toolExecutionPolicyDenial(
 const COLLECTIVE_PARTICIPATION_TOOLS = new Set([
   'cat_cafe_collective_current_context',
   'cat_cafe_collective_read_context',
+  'cat_cafe_collective_artifact_command',
   'cat_cafe_collective_reply',
   'cat_cafe_collective_set_interest',
   'cat_cafe_collective_propose_work',
+  'cat_cafe_collective_suggest_project_work',
   'cat_cafe_collective_accept_work',
   'cat_cafe_collective_continue_work',
 ]);
@@ -172,6 +174,7 @@ export const COLLECTIVE_WORK_TOOL_NAMES = [
   'cat_cafe_get_rich_block_rules',
   'cat_cafe_collective_current_context',
   'cat_cafe_collective_read_context',
+  'cat_cafe_collective_artifact_command',
   'cat_cafe_collective_reply',
   'cat_cafe_collective_progress',
   'cat_cafe_native_turn_admission',

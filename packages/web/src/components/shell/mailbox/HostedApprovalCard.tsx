@@ -11,9 +11,11 @@ import {
 import { ApprovalItemCard } from '@/components/ApprovalItemCard';
 import { useApprovalHubStore } from '@/stores/approvalHubStore';
 import { useShellCopy } from '../shell-copy';
+import { useShellLanguage } from '../shell-language';
 import { ApprovalResultLink } from './ApprovalResultLink';
 import { type HostedApprovalMatch, matchHostedApproval } from './approval-match';
 import { describeReconcile } from './approval-reconcile';
+import { approvalReconcileCopy } from './approval-reconcile.shell-copy';
 import { type ApprovalSessions, sessionKey } from './approval-sessions';
 import { mailboxEntryCopy } from './mailbox-entry.shell-copy';
 import type { OriginalPlace } from './original-place';
@@ -21,9 +23,6 @@ import { PlaceAction } from './PlaceAction';
 import { ThreadProposalDecision } from './ThreadProposalDecision';
 
 const MUTED = { color: 'var(--shell-muted)' } as const;
-
-/** Editing retention belongs to a later slice; the reporter is one stable function so the original card keeps its identity. */
-const noteEditing = () => undefined;
 
 /**
  * F322 S3-2b-1c: the original approval card, hosted in the 待办 panel.
@@ -100,6 +99,7 @@ function SessionStatus({
   canReread: boolean;
   onReread: () => void;
 }) {
+  const t = useShellCopy(approvalReconcileCopy);
   return (
     <>
       {line ? (
@@ -120,7 +120,7 @@ function SessionStatus({
             onClick={onReread}
             className="shell-nav-row shell-focusable rounded-lg px-2 py-1 text-xs"
           >
-            重新读取
+            {t.reread}
           </button>
         </div>
       ) : null}
@@ -148,6 +148,16 @@ function Hosted({
   secondaryAction?: ReactNode;
 }) {
   const t = useShellCopy(mailboxEntryCopy);
+  const [editors, setEditors] = useState<ReadonlySet<string>>(() => new Set());
+  const reportEditing = useCallback((source: string, editing: boolean) => {
+    setEditors((current) => {
+      if (current.has(source) === editing) return current;
+      const next = new Set(current);
+      if (editing) next.add(source);
+      else next.delete(source);
+      return next;
+    });
+  }, []);
   const key = sessionKey(ownerUserId, { sourceFeatureId: approval.sourceFeatureId, proposalId: approval.proposalId });
 
   useEffect(() => {
@@ -159,14 +169,15 @@ function Hosted({
 
   const match = matchHostedApproval({ read: approval, readOwnerUserId: ownerUserId, storeItems, now: Date.now() });
   const state = session?.model.state ?? { kind: 'idle' as const };
-  const reconcile = describeReconcile(state);
+  const language = useShellLanguage();
+  const reconcile = describeReconcile(state, { language, ownerUserId });
 
   const lastMatched = useRef<ApprovalHubItem | null>(null);
   if (match.kind === 'matched') lastMatched.current = match.item;
   const shown =
     match.kind === 'matched'
       ? match.item
-      : state.kind !== 'idle'
+      : state.kind !== 'idle' || editors.size > 0
         ? (lastMatched.current ?? (session ? { ...session.approval, ownerUserId } : null))
         : null;
   const showCard = shown !== null && reconcile.actions !== 'gone';
@@ -180,10 +191,13 @@ function Hosted({
   const reportRequest = useCallback((event: ApprovalRequestEvent) => sessions.hostReport(key, event), [sessions, key]);
   const originalPlaceAction = useMemo(
     () => (
-      <span className="flex flex-wrap items-center justify-end gap-2">
+      <div
+        className="ml-auto flex flex-wrap items-center justify-end gap-2"
+        data-testid="mailbox-row-secondary-actions"
+      >
         {secondaryAction}
         <PlaceAction quiet place={place} onOpen={onOpen} />
-      </span>
+      </div>
     ),
     [place, onOpen, secondaryAction],
   );
@@ -194,10 +208,10 @@ function Hosted({
       originalPlaceAction,
       writesLocked,
       authorizeWrite,
-      reportEditing: noteEditing,
+      reportEditing,
       reportRequest,
     }),
-    [originalPlaceAction, writesLocked, authorizeWrite, reportRequest, t],
+    [originalPlaceAction, writesLocked, authorizeWrite, reportEditing, reportRequest, t],
   );
 
   return (
@@ -235,7 +249,9 @@ function Hosted({
         onReread={() => sessions.reread(key)}
       />
       <ApprovalResultLink state={state} />
-      {showCard && shown?.decisionMode !== 'claim-select' && shown?.sourceFeatureId !== 'F292'
+      {showCard &&
+      (shown?.sourceFeatureId === 'F276' ||
+        (shown?.decisionMode !== 'claim-select' && shown?.sourceFeatureId !== 'F292'))
         ? null
         : originalPlaceAction}
     </div>
@@ -264,6 +280,7 @@ export function HostedApprovalCard({
   if (!approval) return null;
   return (
     <Hosted
+      key={sessionKey(ownerUserId, approval)}
       item={item}
       approval={approval}
       ownerUserId={ownerUserId}

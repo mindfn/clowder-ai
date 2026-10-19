@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { isConfirmedNativeAuthFailure } from '../dist/domains/cats/services/agents/invocation/native-auth-continuation.js';
 import { AgyNativeAgentService } from '../dist/domains/cats/services/agents/providers/agy-native/AgyNativeAgentService.js';
 import {
   projectAgyNativeTurn,
@@ -32,18 +33,38 @@ function fixture(t) {
     root,
     async run(spawnCliOverride, signal) {
       const messages = [];
+      const promptWrites = [];
+      let settleCalls = 0;
       for await (const message of service.invokeWithContinuityPreflight(
-        { settle: async () => assert.fail('startup failure must not settle or submit a model prompt') },
-        { workingDirectory: workspace, invocationId, spawnCliOverride, ...(signal ? { signal } : {}) },
+        {
+          settle: async () => {
+            settleCalls++;
+            return { prompt: 'startup must not submit this prompt', promptGenerationId: 'startup-generation' };
+          },
+        },
+        {
+          workingDirectory: workspace,
+          invocationId,
+          spawnCliOverride: (launch) => spawnCliOverride(launch, (value) => promptWrites.push(value)),
+          ...(signal ? { signal } : {}),
+        },
       ))
         messages.push(message);
+      // The service catches provider errors; an assertion inside settle alone can be swallowed.
+      assert.deepEqual(
+        { settleCalls, promptWrites },
+        { settleCalls: 0, promptWrites: [] },
+        'no generation may settle or write a prompt after an unverified startup result',
+      );
       assert.equal(messages.filter((m) => m.type === 'error').length, 1);
       assert.equal(messages.filter((m) => m.type === 'done').length, 1);
       assert.equal(
         messages.some((m) => m.type === 'session_init' || m.type === 'text'),
         false,
       );
-      return messages.find((m) => m.type === 'error');
+      const failure = messages.find((m) => m.type === 'error');
+      assert.equal(isConfirmedNativeAuthFailure(failure), false, 'startup diagnostics never authorize continuation');
+      return failure;
     },
   };
 }
@@ -72,6 +93,60 @@ test('a result-only startup rejection retains the provider reason without invent
   assert.equal(failure.metadata.cliDiagnostics?.reasonCode, 'model_not_found');
   assert.equal(failure.metadata.cliDiagnostics.debugRef.invocationId, invocationId);
   assert.equal(failure.metadata.cliDiagnostics.debugRef.exitCode, undefined);
+});
+
+for (const [error, reasonCode] of [
+  ['401 UNAUTHENTICATED', 'auth_failed'],
+  ['connect ECONNREFUSED', 'network_error'],
+]) {
+  test(`pre-init ${reasonCode} stays diagnostic-only even with a claimed conversation and exit 3`, async (t) => {
+    const failure = await fixture(t).run(async function* () {
+      yield { event: 'result', result: { conversation_id: 'unverified-session', status: 'ERROR', error } };
+      yield { __cliError: true, command: 'agy', message: 'CLI exit 3', exitCode: 3, signal: null };
+    });
+    assert.equal(failure.metadata.cliDiagnostics?.reasonCode, reasonCode);
+    assert.equal(failure.metadata.cliDiagnostics.debugRef.exitCode, 3);
+    assert.equal(failure.metadata.sessionId, undefined);
+    assert.equal(failure.metadata.diagnostics?.agyNative?.toolResultsConfirmed, undefined);
+  });
+}
+
+test('a result-only SUCCESS cannot establish a session or deliver its response', async (t) => {
+  const failure = await fixture(t).run(async function* () {
+    yield { event: 'result', result: { conversation_id: 'unverified-session', status: 'SUCCESS', response: 'done' } };
+  });
+  assert.equal(failure.errorCode, 'AGY_NATIVE_PREFLIGHT');
+  assert.equal(failure.metadata.cliDiagnostics, undefined);
+});
+
+for (const status of ['ERROR', 'SUCCESS']) {
+  test(`init after a pre-init ${status} result cannot settle or submit a prompt`, async (t) => {
+    await fixture(t).run(async function* (launch, recordPrompt) {
+      launch.onStdinReady(recordPrompt);
+      yield { event: 'result', result: { conversation_id: 'late-session', status, error: rejection } };
+      yield {
+        event: 'init',
+        conversation_id: 'late-session',
+        init: {
+          agent: launch.args[launch.args.indexOf('--agent') + 1],
+          cwd: launch.cwd,
+          model,
+          permission_mode: 'always-proceed',
+        },
+      };
+      yield { event: 'result', result: { conversation_id: 'late-session', status: 'SUCCESS', response: 'done' } };
+    });
+  });
+}
+
+test('cancellation still wins over a pre-init provider rejection', async (t) => {
+  const controller = new AbortController();
+  const failure = await fixture(t).run(async function* () {
+    yield result;
+    controller.abort();
+  }, controller.signal);
+  assert.equal(failure.errorCode, 'AGY_CANCELLED');
+  assert.equal(failure.metadata.cliDiagnostics, undefined);
 });
 
 test('pre-init timeout retains causal diagnostics and cancellation still wins', async (t) => {

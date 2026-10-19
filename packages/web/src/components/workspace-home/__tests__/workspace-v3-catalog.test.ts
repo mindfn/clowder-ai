@@ -5,10 +5,6 @@ describe('one v3 tool catalogue', () => {
   it('contains all accepted activity/code/other destinations once', () => {
     expect(HOME_ROWS.map((row) => row.copyKey).sort()).toEqual(
       [
-        'capability-evolution',
-        'community',
-        'eval',
-        'schedule',
         'status',
         'trajectory',
         'theater',

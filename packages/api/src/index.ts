@@ -151,7 +151,6 @@ import {
 import { clearL0Cache, clearL0CacheOwner, warmL0Cache } from './domains/cats/services/agents/providers/l0-compiler.js';
 import { AgentRegistry } from './domains/cats/services/agents/registry/AgentRegistry.js';
 import { createPostCompactContextProjector } from './domains/cats/services/agents/routing/post-compact-context-projector.js';
-import { createProviderNativeFreshnessFactory } from './domains/cats/services/freshness/createProviderNativeFreshnessFactory.js';
 import { FreshnessAttentionEventLog } from './domains/cats/services/freshness/FreshnessAttentionEventLog.js';
 import { FreshnessInvocationStateStore } from './domains/cats/services/freshness/FreshnessInvocationStateStore.js';
 import { FreshnessOutputCommitCoordinator } from './domains/cats/services/freshness/glass-box/FreshnessOutputCommitCoordinator.js';
@@ -444,7 +443,6 @@ import { evalRepairApprovalRoutes } from './routes/eval-repair-approval-routes.j
 import { evalRepairOutcomeRoutes } from './routes/eval-repair-outcome-routes.js';
 import { registerEventMemoryCorrectionDecisionRoutes } from './routes/event-memory-correction-decision-routes.js';
 import { readEventMemorySource } from './routes/event-memory-source.js';
-import { gameRoutes } from './routes/games.js';
 import { harnessHistoryRoutes } from './routes/harness-history-routes.js';
 import { registerHumanDispositionFeedbackRoutes } from './routes/human-disposition-feedback-routes.js';
 import {
@@ -1130,6 +1128,9 @@ async function main(): Promise<void> {
   let taskActionSuccessorLifecycle:
     | import('./domains/ball-custody/TaskActionSuccessorLifecycle.js').TaskActionSuccessorLifecycle
     | undefined;
+  let taskActionSuccessorOrphanRecovery:
+    | import('./domains/ball-custody/TaskActionSuccessorOrphanRecovery.js').TaskActionSuccessorOrphanRecovery
+    | undefined;
   // F168 Phase D D3/D4: reconciliation finding store (Redis-backed, no TTL)
   let communityFindingStore:
     | import('./domains/community/reconciliation/CommunityReconciliationFindingStore.js').CommunityReconciliationFindingStore
@@ -1162,6 +1163,8 @@ async function main(): Promise<void> {
       actionProjectionRetirementMod,
       taskActionLifecycleMod,
       proposalDelegateMod,
+      orphanAtomicStoreMod,
+      orphanRecoveryMod,
     ] = await Promise.all([
       import('./domains/ball-custody/RedisActionSuccessorLeaseStore.js'),
       import('./domains/ball-custody/ActionSubjectTruthResolver.js'),
@@ -1170,6 +1173,8 @@ async function main(): Promise<void> {
       import('./domains/ball-custody/ActionSuccessorProjectionRetirementService.js'),
       import('./domains/ball-custody/TaskActionSuccessorLifecycle.js'),
       import('./domains/ball-custody/ProposalStoreDelegateProvider.js'),
+      import('./domains/ball-custody/RedisActionSuccessorOrphanCarrierAtomicStore.js'),
+      import('./domains/ball-custody/TaskActionSuccessorOrphanRecovery.js'),
     ]);
     actionSuccessorLeaseStore = new actionStoreMod.RedisActionSuccessorLeaseStore(redis);
     taskApprovedDelegateProvider = proposalDelegateMod.createTaskApprovedDelegateProvider(proposalStore, threadStore);
@@ -1244,6 +1249,15 @@ async function main(): Promise<void> {
     taskActionSuccessorLifecycle = new taskActionLifecycleMod.TaskActionSuccessorLifecycle({
       leaseStore: actionSuccessorLeaseStore,
       completionService: actionSuccessorCompletionService,
+    });
+    taskActionSuccessorOrphanRecovery = new orphanRecoveryMod.TaskActionSuccessorOrphanRecovery({
+      tasks: taskStore,
+      messages: messageStore,
+      queue: invocationQueue,
+      invocationRecords: invocationRecordStore,
+      turnExecutions: turnExecutionStore,
+      delegates: taskApprovedDelegateProvider,
+      atomicStore: new orphanAtomicStoreMod.RedisActionSuccessorOrphanCarrierAtomicStore(redis),
     });
     const [dispatchApprovalMod, redisDispatchApprovalMod] = await Promise.all([
       import('./domains/approval-hub/DispatchActionApprovalService.js'),
@@ -1449,30 +1463,8 @@ async function main(): Promise<void> {
     embed: { embedMode: resolvedEmbedMode },
     privateUserId,
     // Phase E-2: message passage indexing — provide a callback that reads thread messages
-    messageListFn: async (threadId: string, limit?: number) => {
-      const messages = await messageStore.getByThread(threadId, limit ?? 2000, privateUserId);
-      return messages
-        .filter((m: { origin?: string }) => m.origin !== 'briefing') // F148 Phase E (AC-E2): exclude briefing from evidence index
-        .map(
-          (m: {
-            id: string;
-            content: string;
-            catId?: string | null;
-            threadId: string;
-            timestamp: number;
-            contentBlocks?: readonly unknown[];
-            extra?: { rich?: { blocks?: readonly unknown[] } };
-          }) => ({
-            id: m.id,
-            content: m.content,
-            catId: m.catId ?? undefined,
-            threadId: m.threadId,
-            timestamp: m.timestamp,
-            contentBlocks: m.contentBlocks,
-            richBlocks: m.extra?.rich?.blocks,
-          }),
-        );
-    },
+    messageListFn: (threadId: string, limit?: number) =>
+      messageStore.getThreadEvidenceProjection(threadId, limit ?? 2000, privateUserId),
     // Phase E-1: thread summary indexing — provide a callback that lists all threads
     threadListFn: async () => {
       const threads = await threadStore.list('default-user');
@@ -2072,30 +2064,6 @@ async function main(): Promise<void> {
     notifyLifecycle: schedulerLifecycleToast,
   });
 
-  // ── F233 Phase A: 值班简报（BriefingConfigStore + route + daily cron）──
-  const { RedisBriefingConfigStore, MemoryBriefingConfigStore } = await import(
-    './domains/cats/services/duty-briefing/BriefingConfigStore.js'
-  );
-  const { getOwnerUserId: getDutyBriefingOwnerUserId } = await import('./config/cat-config-loader.js');
-  const briefingConfigStore = redis ? new RedisBriefingConfigStore(redis) : new MemoryBriefingConfigStore();
-  // f167SnapshotProvider Phase A 未接 → voidPasses 暂空（F167 锚点降级，Phase B 接）
-  const dutyBriefingCollectDeps = {
-    taskStore,
-    invocationRecordStore,
-    dynamicTaskStore,
-    threadStore,
-    messageStore,
-    userId: getDutyBriefingOwnerUserId(),
-    ...(ballCustodyProjectionStore ? { ballCustodyProjectionStore } : {}),
-  };
-  const { dutyBriefingRoutes } = await import('./routes/duty-briefing.js');
-  await app.register(dutyBriefingRoutes, {
-    configStore: briefingConfigStore,
-    messageStore,
-    threadStore,
-    collectDeps: dutyBriefingCollectDeps,
-  });
-
   // ── F149 Phase C: ACP process pool registry (variantId → AcpProcessPool) ──
   const acpPoolRegistry: AcpPoolRegistry = new Map();
   // F254: Codex app-server warm hosts are profile-scoped and survive catalog refreshes.
@@ -2518,18 +2486,7 @@ async function main(): Promise<void> {
       sourceCategory?: string;
     }>;
   } | null = null;
-  // F254 Phase C/D2: keep provider-native freshness bound to the canonical
-  // Queue projection after the F117 ledger cutover.
   const freshnessStateStore = redis ? new FreshnessInvocationStateStore(redis) : undefined;
-  const providerNativeFreshnessFactory = redis
-    ? createProviderNativeFreshnessFactory({
-        redis,
-        cursorStore: deliveryCursorStore,
-        messageStore,
-        threadStore,
-        getQueue: () => invocationQueueRef,
-      })
-    : undefined;
 
   // F254 Phase D (AC-D4): Freshness event log for stream output audit trail.
   const freshnessEventLog = redis ? new FreshnessAttentionEventLog(redis) : undefined;
@@ -2579,15 +2536,6 @@ async function main(): Promise<void> {
       },
     },
   });
-  const previousAppendListener = appendListener;
-  appendListener = (message) => {
-    previousAppendListener?.(message);
-    liveCompanionSessions.signalInbox(message.userId, message.threadId);
-  };
-  const stopQueueInboxWake = invocationQueue.onSourceChanged((threadId, userId) => {
-    liveCompanionSessions.signalInbox(userId, threadId);
-  });
-  app.addHook('onClose', async () => stopQueueInboxWake());
   const proactiveCandidateRegistryResolver = personMemoryStore
     ? new ProactiveCandidateRegistryResolver({
         entityRegistry: new EntityRegistryStore(memoryServices.store.getDb()),
@@ -2732,7 +2680,6 @@ async function main(): Promise<void> {
     cloudReturnGrantStore,
     turnExecutionStore,
     ...(freshnessStateStore ? { freshnessStateStore } : {}),
-    ...(providerNativeFreshnessFactory ? { providerNativeFreshnessFactory } : {}),
     runtimeInteractionPort: runtimeInteractionRuntime.service,
     ...(freshnessEventLog ? { freshnessEventLog } : {}),
     ...(freshnessOutputCommitCoordinator ? { freshnessOutputCommitCoordinator } : {}),
@@ -3166,50 +3113,6 @@ async function main(): Promise<void> {
   });
   socketManager.setQueueProcessor(queueProcessor);
 
-  // F101: Game engine store (created early so messages route can intercept /game commands)
-  const { RedisGameStore } = await import('./domains/cats/services/stores/redis/RedisGameStore.js');
-  const f101GameStore = redis ? new RedisGameStore(redis) : undefined;
-
-  // F101 Phase I: Shared ActionNotifier + game driver (narrator or legacy).
-  // Created early so both messagesRoutes and gameRoutes use the same driver instance.
-  const { EventEmitterActionNotifier } = await import('./domains/cats/services/game/EventEmitterActionNotifier.js');
-  const sharedActionNotifier = new EventEmitterActionNotifier();
-  let f101SharedDriver: import('./domains/cats/services/game/GameDriver.js').GameDriver | undefined;
-  if (f101GameStore) {
-    const gameNarratorEnabled = process.env.GAME_NARRATOR_ENABLED === 'true';
-    const { GameOrchestrator } = await import('./domains/cats/services/game/GameOrchestrator.js');
-    const sharedOrchestrator = new GameOrchestrator({ gameStore: f101GameStore, socketManager, messageStore });
-    const { createGameDriver } = await import('./domains/cats/services/game/createGameDriver.js');
-    if (gameNarratorEnabled) {
-      const { createWakeCatFn } = await import('./domains/cats/services/game/wakeCatImpl.js');
-      const wakeCat = createWakeCatFn({
-        threadStore,
-        invocationQueue,
-        queueProcessor,
-        log: app.log,
-      });
-      f101SharedDriver = createGameDriver({
-        gameNarratorEnabled: true,
-        legacyDeps: { gameStore: f101GameStore, orchestrator: sharedOrchestrator, messageStore },
-        narratorDeps: {
-          gameStore: f101GameStore,
-          wakeCat,
-          actionNotifier: sharedActionNotifier,
-          orchestrator: sharedOrchestrator,
-          messageStore,
-          socketManager,
-        },
-      });
-      app.log.info('[api] F101 game driver: GameNarratorDriver (agent-driven)');
-    } else {
-      f101SharedDriver = createGameDriver({
-        gameNarratorEnabled: false,
-        legacyDeps: { gameStore: f101GameStore, orchestrator: sharedOrchestrator, messageStore },
-      });
-      app.log.info('[api] F101 game driver: LegacyAutoDriver');
-    }
-  }
-
   // Register routes (socketManager injected, no circular import)
   const messagesOpts = {
     onStoredProjectMessage: async (
@@ -3227,8 +3130,6 @@ async function main(): Promise<void> {
     draftStore,
     invocationQueue,
     sessionContinuationCoordinator,
-    ...(f101GameStore ? { gameStore: f101GameStore } : {}),
-    ...(f101SharedDriver ? { autoPlayer: f101SharedDriver } : {}),
     holdBallCancelDeps: { dynamicTaskStore, taskRunner: taskRunnerV2, messageStore, socketManager },
     // F192 Phase G AC-G12 / F227 归一: magic word → Event Memory (single truth
     // source) + a lightweight episode ref for F192's a2 projection.
@@ -4342,6 +4243,7 @@ async function main(): Promise<void> {
     messageStore,
     threadStore,
     runtimeInteractionStore: runtimeInteractionRuntime.store,
+    collectiveConnector: () => pluginRuntime.collectiveConnectorRuntime?.connector(),
     readIgnoredItemPreferences: (ownerUserId) =>
       readIgnoredItemPreferences(ignoredItemPreferenceProjectRoot, ownerUserId),
     onResolved: (ownerUserId) =>
@@ -4460,7 +4362,6 @@ async function main(): Promise<void> {
         approvals: { listSettled: (...args) => approvalProducerRegistry.listSettled(...args) },
         epochs: contextEpochStore,
       },
-      progressOwnedCarrier: (entry, targetCatId) => queueProcessor.progressOwnedCarrier(entry, targetCatId),
       mcpDistDir: join(findMonorepoRoot(), 'packages/mcp-server/dist'),
       // Keep native meeting exposure off until this package's Host/MCP/native lifecycle cut is verified together.
       meetingToolsEnabled: false,
@@ -4558,34 +4459,6 @@ async function main(): Promise<void> {
   await app.register(distillationOpportunityRoutes, { opportunityStore: distillationOpportunityStore });
 
   await app.register(brakeRoutes, { activityTracker });
-
-  // F101: Game routes (store created earlier for /game command interception)
-  if (f101GameStore) {
-    await app.register(gameRoutes, {
-      gameStore: f101GameStore,
-      socketManager,
-      threadStore,
-      messageStore,
-      ...(f101SharedDriver ? { autoPlayer: f101SharedDriver } : {}),
-    });
-
-    const { gameActionRoutes, clearGameNonces } = await import('./routes/game-actions.js');
-    const { GameOrchestrator } = await import('./domains/cats/services/game/GameOrchestrator.js');
-    const actionOrchestrator = new GameOrchestrator({
-      gameStore: f101GameStore,
-      socketManager,
-      messageStore,
-      onGameEnd: (gameId) => clearGameNonces(gameId),
-    });
-    await app.register(gameActionRoutes, {
-      gameStore: f101GameStore,
-      orchestrator: actionOrchestrator,
-      threadStore,
-      actionNotifier: sharedActionNotifier,
-    });
-
-    app.log.info('[api] F101 game routes registered');
-  }
 
   // Phase D (AC-D1): validate the repository through the same REST credential path
   // as PR/issue validation. Only a verified 404 is represented as false.
@@ -5213,6 +5086,9 @@ async function main(): Promise<void> {
         }
       : {}),
     ...(liveCompanionSessions ? { companionRuntimeInteractionStore: runtimeInteractionRuntime.store } : {}),
+    ...(liveCompanionSessions
+      ? { companionCollectiveConnector: () => pluginRuntime.collectiveConnectorRuntime?.connector() }
+      : {}),
     runtimeInteractionService: runtimeInteractionRuntime.service,
     ...(liveCompanionSessions
       ? { withLiveCarrierOperation: liveCompanionSessions.withCarrierOperation.bind(liveCompanionSessions) }
@@ -5324,6 +5200,7 @@ async function main(): Promise<void> {
     ...(ballCustodyIngest ? { ballCustody: ballCustodyIngest } : {}),
     ...(actionSuccessorAdmissionService ? { actionSuccessorAdmissionService } : {}),
     ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
+    ...(taskActionSuccessorOrphanRecovery ? { taskActionSuccessorOrphanRecovery } : {}),
     indexBuilder: memoryServices.indexBuilder as
       | { markThreadDirty(threadId: string): void; flushDirtyThreads?(): number | Promise<number> }
       | undefined,
@@ -5563,6 +5440,9 @@ async function main(): Promise<void> {
   const { CollectiveWorkRevisionReconciler } = await import(
     './domains/plugin/builtin-runtime/collective-work-revision-reconciler.js'
   );
+  const { CollectiveWorkWakeReconciler } = await import(
+    './domains/plugin/builtin-runtime/collective-work-wake-reconciler.js'
+  );
   const { CollectiveWorkDispatcher } = await import('./domains/plugin/builtin-runtime/collective-work-dispatcher.js');
   const { resolveCollectiveStandingGrant } = await import(
     './domains/plugin/builtin-runtime/collective-standing-grant.js'
@@ -5603,11 +5483,26 @@ async function main(): Promise<void> {
     tasks: taskStore,
     dispatcher: collectiveWorkDispatcher,
   });
+  const collectiveWorkWakeReconciler = new CollectiveWorkWakeReconciler({
+    messages: messageStore,
+    tasks: taskStore,
+    dispatcher: collectiveWorkDispatcher,
+  });
+  const { CollectiveAcceptedWorkResultFileReconciler } = await import(
+    './domains/plugin/builtin-runtime/collective-work/collective-accepted-result-file-reconciler.js'
+  );
+  const collectiveAcceptedWorkResultFileReconciler = new CollectiveAcceptedWorkResultFileReconciler({
+    authority: collectiveWorkAuthority,
+    tasks: taskStore,
+    messages: messageStore,
+    artifactUploadDir: getDefaultUploadDir(process.env.UPLOAD_DIR),
+  });
   const { DesktopWindowComponent } = await import('./domains/plugin/desktop-window-runtime/desktop-component.js');
   const { ElectronDesktopWindowExecutor } = await import(
     './domains/plugin/desktop-window-runtime/electron-executor.js'
   );
   const { CompanionHostBridge } = await import('./domains/concierge/live/CompanionHostBridge.js');
+  const { CompanionAppAssistOwner } = await import('./domains/concierge/live/host/companion-app-assist-owner.js');
   const { CompanionWorkOverview } = await import('./domains/concierge/live/work/companion-work-overview.js');
   const { resolveCompanionWorkPublication } = await import(
     './domains/concierge/live/host/home/companion-work-publication.js'
@@ -5729,6 +5624,16 @@ async function main(): Promise<void> {
           }
         : undefined;
       return new CompanionHostBridge({
+        ...(companionContract === '0.1.0-beta.29'
+          ? {
+              appAssist: new CompanionAppAssistOwner({
+                store: redis ? conciergeConfigStoreShared : undefined,
+                ownerUserId: privateUserId,
+                timeZone: () => getCoCreatorConfig().timeZone,
+                assertCurrent: assertWorkCurrent,
+              }),
+            }
+          : {}),
         messages: messageStore,
         verifyConversationThread: (threadId) => conciergeThreadServiceShared.isCurrent(privateUserId, threadId),
         observeVoice: (observation) => liveCompanionSessions.observeVoice(privateUserId, observation),
@@ -5756,6 +5661,8 @@ async function main(): Promise<void> {
         resolveCatDisplayName: (catId) => resolveCollectiveAgentIdentity(catId)?.displayName,
         readTurnExecution: (invocationId) => turnExecutionStore.get(invocationId),
       }),
+      reconcileAcceptedWorkResultFiles: (connector, connectionId) =>
+        collectiveAcceptedWorkResultFileReconciler.reconcileConnection(connector, connectionId),
       createIngressDispatcher: (connector) =>
         new CollectiveIngressDispatcher({
           connector,
@@ -5800,6 +5707,36 @@ async function main(): Promise<void> {
               },
             );
             await collectiveWorkRevisionReconciler.dispatchPrepared(prepared);
+          },
+          resumeWorkWake: async (source, event) => {
+            const notice = event.workWakeNotice;
+            const recipient = event.recipient;
+            if (!notice || recipient?.kind !== 'agent' || event.actor.kind !== 'human') {
+              throw Object.assign(new Error('Collective Work wake notice is invalid'), {
+                code: 'COLLECTIVE_WORK_WAKE_NOT_CURRENT',
+              });
+            }
+            const prepared = await connector.withAssignedWorkAuthority(
+              recipient.connectionId,
+              notice.workId,
+              async (scope) => {
+                if (
+                  scope.hostRoute?.localOwnerUserId !== source.userId ||
+                  scope.connection.authorizedHumanId !== scope.work.assignment?.humanId
+                ) {
+                  throw Object.assign(new Error('Collective Work wake belongs to another owner'), {
+                    code: 'CONNECTOR_OWNER_MISMATCH',
+                  });
+                }
+                return collectiveWorkWakeReconciler.prepare({
+                  ownerUserId: source.userId,
+                  event,
+                  inbox: scope.inbox,
+                  work: scope.work,
+                });
+              },
+            );
+            await collectiveWorkWakeReconciler.dispatchPrepared(prepared);
           },
         }),
     },
@@ -6019,6 +5956,14 @@ async function main(): Promise<void> {
   if (!pluginRuntime.collectiveConnectorRuntime) {
     throw new Error('Collective Connector builtin runtime was not composed');
   }
+  const { createCollectiveArtifactOwner } = await import(
+    './domains/collaborative-content/collective-artifact/owner-router.js'
+  );
+  let collectivePublishedMediaOwner: ReturnType<typeof createCollectiveArtifactOwner>['publishedMedia'] | undefined;
+  app.addHook('onClose', async () => {
+    pluginRuntime.collectiveConnectorRuntime?.setArtifactOwner(undefined);
+    await pluginRuntime.collectiveConnectorRuntime?.connector()?.stopMediaReads();
+  });
   const { LocalCollectiveServiceManager } = await import(
     './domains/plugin/builtin-runtime/local-collective-service-manager.js'
   );
@@ -6221,6 +6166,7 @@ async function main(): Promise<void> {
     );
   registerCollectiveConnectorRoutes(app, {
     runtime: pluginRuntime.collectiveConnectorRuntime,
+    retainedMedia: () => collectivePublishedMediaOwner,
     localService: localCollectiveService,
     callbackRegistry: registry,
     resolveAgentIdentity: resolveCollectiveAgentIdentity,
@@ -6397,6 +6343,21 @@ async function main(): Promise<void> {
     emit: (userId, event, data) => socketManager?.emitToUser(userId, event, data),
     onError: (error) => app.log.warn({ err: error }, '[artifact-review] recovery remains pending'),
   });
+  const collectiveArtifactOwner = createCollectiveArtifactOwner({
+    owner: collaborativeContent.owner,
+    media: artifactReview.media,
+    reviews: workspaceContentReviews.store,
+    modifications: artifactReview.store,
+    ownerUserId: privateUserId,
+    custodyDataDir: process.env.CAT_CAFE_DATA_DIR ?? join(resolveActiveProjectRoot(), '.cat-cafe'),
+    onError: (error) =>
+      app.log.debug(
+        { errorName: error instanceof Error ? error.name : 'unknown' },
+        'Collective owner operation refused',
+      ),
+  });
+  collectivePublishedMediaOwner = collectiveArtifactOwner.publishedMedia;
+  pluginRuntime.collectiveConnectorRuntime.setArtifactOwner(collectiveArtifactOwner.port);
   artifactWorkLineageHolder.current = artifactReview.globalArtifactWorkLineage;
   if (artifactReview.projectMessages) {
     const { createProjectMessageProducer } = await import(
@@ -7051,7 +7012,7 @@ async function main(): Promise<void> {
   if (communityNarratorThreadId) {
     const { NarratorDriver } = await import('./domains/community/narrator/NarratorDriver.js');
     const { createRoleResolver, DEFAULT_COMMUNITY_ROLE_BINDINGS } = await import('./domains/community/RoleResolver.js');
-    const { createWakeCatFn } = await import('./domains/cats/services/game/wakeCatImpl.js');
+    const { createWakeCatFn } = await import('./domains/cats/services/agents/invocation/wake-cat.js');
     // D0.2: persistent narrator dedup store (Redis-backed)
     const { RedisNarratorDedupStore, InMemoryNarratorDedupStore } = await import(
       './domains/community/narrator/RedisNarratorDedupStore.js'
@@ -7951,13 +7912,6 @@ async function main(): Promise<void> {
     codexAppServerPoolRegistry.clear();
   });
 
-  // F101: register onClose hook BEFORE listen (Fastify forbids addHook after listen).
-  // The actual recovery player is assigned post-listen; stopAllLoops is a no-op if null.
-  let f101RecoveryPlayer: { stopAllLoops(): void } | null = null;
-  app.addHook('onClose', async () => {
-    f101RecoveryPlayer?.stopAllLoops();
-  });
-
   app.addHook('onClose', async () => {
     await agentKeySidecarRenewalLoop?.stop();
   });
@@ -8239,19 +8193,6 @@ async function main(): Promise<void> {
     app.log.info(`[api] clowder-ai#340 accounts: ${startupResult.accountCount} account(s) loaded`);
     for (const diagnostic of startupResult.unavailableAccounts) {
       app.log.warn({ ...diagnostic }, '[api] account unavailable; other accounts remain usable');
-    }
-  }
-
-  // F101 Phase G: Recover auto-play loops for active games after restart.
-  if (f101GameStore && socketManager && f101SharedDriver) {
-    f101RecoveryPlayer = f101SharedDriver;
-    try {
-      const recovered = await f101SharedDriver.recoverActiveGames();
-      if (recovered > 0) {
-        app.log.info(`[api] F101 auto-play recovery: restored ${recovered} active game loop(s)`);
-      }
-    } catch (err) {
-      app.log.warn(`[api] F101 auto-play recovery failed (best-effort): ${String(err)}`);
     }
   }
 
@@ -9336,29 +9277,6 @@ async function main(): Promise<void> {
 
   // F304: the failed F233 Phase C collector is retired. Historical trajectory
   // stores and read routes remain available for Story compatibility.
-
-  // F233 Phase A: builtin daily 值班简报 cron（07:00 PT；INV-4 幂等 — 同 id 重复注册静默）
-  try {
-    const { createDutyBriefingDailySpec } = await import(
-      './domains/cats/services/duty-briefing/duty-briefing-cron-spec.js'
-    );
-    taskRunnerV2.register(
-      createDutyBriefingDailySpec({
-        collectDeps: dutyBriefingCollectDeps,
-        configStore: briefingConfigStore,
-        threadStore,
-        messageStore,
-        log: app.log,
-      }),
-    );
-    app.log.info('[api] F233: duty-briefing daily cron registered');
-  } catch (err) {
-    if (String((err as Error)?.message ?? '').includes('duplicate')) {
-      app.log.info('[api] F233: duty-briefing cron already registered (idempotent)');
-    } else {
-      throw err;
-    }
-  }
 
   // F139: Start unified scheduler (all registered specs)
   taskRunnerV2.start();

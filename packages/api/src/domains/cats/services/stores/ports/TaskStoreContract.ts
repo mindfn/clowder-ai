@@ -164,6 +164,8 @@ export function assertEntrustedWorkGenericUpsertAllowed(task: TaskItem): void {
 }
 
 /** Common server-side contract for in-memory and Redis task stores. */
+export class TaskPageCursorExpiredError extends Error {}
+
 export interface ITaskStore {
   hasDevelopmentSource(query: DevelopmentSourceQuery): boolean | Promise<boolean>;
   findDevelopmentWork(userId: string, scope: DevelopmentScopeV1): TaskItem[] | Promise<TaskItem[]>;
@@ -181,6 +183,14 @@ export interface ITaskStore {
     input: UpdateTaskInput,
   ): TaskItem | null | Promise<TaskItem | null>;
   listByThread(threadId: string): TaskItem[] | Promise<TaskItem[]>;
+  /** Bounded raw task-index page; cursor belongs to this thread and is revalidated on every read. */
+  listByThreadPage?(
+    threadId: string,
+    limit: number,
+    afterId?: string,
+  ):
+    | { tasks: TaskItem[]; scannedCount?: number; nextCursor?: string }
+    | Promise<{ tasks: TaskItem[]; scannedCount?: number; nextCursor?: string }>;
   delete(taskId: string): boolean | Promise<boolean>;
   deleteByThread(threadId: string): number | Promise<number>;
   getBySubject(subjectKey: string): TaskItem | null | Promise<TaskItem | null>;

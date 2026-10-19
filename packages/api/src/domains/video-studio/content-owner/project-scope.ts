@@ -1,3 +1,8 @@
+import {
+  type CollectiveContentScopeV1,
+  collectiveContentOperationContextSchema,
+  collectiveContentScopeRef,
+} from './collective-scope.js';
 import type { ContentOperationContextV1, ContentPublicationScopeV1, VideoProjectScopeV1 } from './types.js';
 
 export const videoProjectMediaType = 'application/vnd.cat-cafe.video-project+json';
@@ -5,7 +10,14 @@ export const videoProjectMediaType = 'application/vnd.cat-cafe.video-project+jso
 export function validateContentOperationContext(
   context: ContentOperationContextV1 | undefined,
   scope?: VideoProjectScopeV1,
+  collectiveScope?: CollectiveContentScopeV1,
 ) {
+  if (collectiveScope) {
+    const parsed = collectiveContentOperationContextSchema.safeParse(context);
+    if (!parsed.success || parsed.data.scopeRef !== collectiveContentScopeRef(collectiveScope) || scope)
+      throw new TypeError('Invalid Collective owner operation context');
+    return;
+  }
   if (context === undefined) return;
   if (
     !scope ||

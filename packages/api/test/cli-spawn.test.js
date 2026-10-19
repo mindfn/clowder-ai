@@ -963,7 +963,7 @@ test(
     assert.equal(childEnv.PATH?.split(':')[0], join(REPO_ROOT, 'scripts', 'guarded-bin'));
     assert.equal(childEnv.CAT_CAFE_VERDICT_GH_GUARD_ROOT, REPO_ROOT);
     assert.equal(childEnv.CAT_CAFE_VERDICT_REPO_FULL_NAME, 'example/cat-cafe');
-    assert.equal(childEnv.ZDOTDIR, join(REPO_ROOT, 'scripts', 'guarded-zsh'));
+    assert.equal(childEnv.ZDOTDIR, join(REPO_ROOT, '.cat-cafe', 'tmp', 'guarded-zsh'));
 
     const loginShell = spawnSync('/bin/zsh', ['-lc', 'command -v gh'], {
       encoding: 'utf8',
@@ -1028,6 +1028,39 @@ test(
       else process.env.HISTFILE = previousHistfile;
       if (previousOriginalZdotdir === undefined) delete process.env.CAT_CAFE_ORIGINAL_ZDOTDIR;
       else process.env.CAT_CAFE_ORIGINAL_ZDOTDIR = previousOriginalZdotdir;
+    }
+  },
+);
+
+test(
+  'buildChildEnv keeps shell installer writes out of tracked startup files',
+  { skip: !existsSync('/bin/zsh') && 'zsh is not installed' },
+  async () => {
+    const originalZdotdir = await mkdtemp(join(tmpdir(), 'cat-cafe-installer-zdotdir-'));
+    const template = join(REPO_ROOT, 'scripts', 'guarded-zsh', '.zshrc');
+    const original = await readFile(template, 'utf8');
+    let childEnv;
+    try {
+      childEnv = buildChildEnv({ HOME: originalZdotdir, ZDOTDIR: originalZdotdir });
+      const installer = spawnSync(
+        '/bin/zsh',
+        ['-ic', 'printf "\\n# installer configuration\\n" >> "$ZDOTDIR/.zshrc"; : > "$ZDOTDIR/.zcompdump"'],
+        { encoding: 'utf8', env: childEnv },
+      );
+      assert.equal(installer.status, 0, installer.stderr);
+      assert.equal(await readFile(template, 'utf8'), original, 'installer must not dirty the runtime source tree');
+      assert.equal(existsSync(join(REPO_ROOT, 'scripts', 'guarded-zsh', '.zcompdump')), false);
+      assert.match(await readFile(join(childEnv.ZDOTDIR, '.zshrc'), 'utf8'), /installer configuration/);
+
+      const nestedEnv = buildChildEnv(childEnv);
+      assert.equal(nestedEnv.CAT_CAFE_ORIGINAL_ZDOTDIR, originalZdotdir);
+      assert.equal(nestedEnv.HISTFILE, join(originalZdotdir, '.zsh_history'));
+      assert.equal(await readFile(join(nestedEnv.ZDOTDIR, '.zshrc'), 'utf8'), original);
+    } finally {
+      // Also restore the source on RED, when the old implementation points ZDOTDIR at templates.
+      await writeFile(template, original);
+      if (childEnv) await rm(join(childEnv.ZDOTDIR, '.zcompdump'), { force: true });
+      await rm(originalZdotdir, { recursive: true, force: true });
     }
   },
 );

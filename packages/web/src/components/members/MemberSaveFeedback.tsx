@@ -23,22 +23,24 @@ export function MemberSaveFeedback({
     e.savedAt === null
       ? copy.unknownTime
       : new Date(e.savedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  const text = e.saving
-    ? copy.saving
-    : reason
-      ? copy.failed(reason)
-      : changed
-        ? copy.dirty(
-            e.changes.length,
-            e.changes.map((change) => change.label),
-          )
-        : e.saveNotice === 'unchanged'
-          ? copy.noChangesToSave
-          : e.saveNotice === 'saved'
-            ? `${copy.saved} · ${time} · ${e.savedConnection ? copy.nextWork : copy.updated}`
-            : creating
-              ? copy.createHint
-              : `${copy.noChanges} · ${copy.lastSave} ${time}`;
+  const text = e.saving ? (
+    copy.saving
+  ) : reason ? (
+    copy.failed(reason)
+  ) : changed ? (
+    <>
+      <strong className="member-unsaved-count">{copy.dirtyPrefix(e.changes.length)}</strong>
+      {copy.dirtyFields(e.changes.map((change) => change.label))}
+    </>
+  ) : e.saveNotice === 'unchanged' ? (
+    copy.noChangesToSave
+  ) : e.saveNotice === 'saved' ? (
+    `${copy.saved} · ${time} · ${e.savedConnection ? copy.nextWork : copy.updated}`
+  ) : creating ? (
+    copy.createHint
+  ) : (
+    `${copy.noChanges} · ${copy.lastSave} ${time}`
+  );
   return (
     <div className="member-save-feedback" data-testid="member-save-feedback">
       <p

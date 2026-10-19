@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createCatId } from '@cat-cafe/shared';
 import Fastify from 'fastify';
 import Redis from 'ioredis';
@@ -12,8 +13,11 @@ import { RedisAuthInvocationBackend } from '../../src/domains/cats/services/agen
 import { CodexAgentService } from '../../src/domains/cats/services/agents/providers/CodexAgentService.ts';
 import { AgentRegistry } from '../../src/domains/cats/services/agents/registry/AgentRegistry.ts';
 import { AgentRouter } from '../../src/domains/cats/services/agents/routing/AgentRouter.ts';
+import { SessionSealer } from '../../src/domains/cats/services/session/SessionSealer.ts';
+import { TranscriptWriter } from '../../src/domains/cats/services/session/TranscriptWriter.ts';
 import { RedisInvocationRecordStore } from '../../src/domains/cats/services/stores/redis/RedisInvocationRecordStore.ts';
 import { RedisMessageStore } from '../../src/domains/cats/services/stores/redis/RedisMessageStore.ts';
+import { RedisSessionChainStore } from '../../src/domains/cats/services/stores/redis/RedisSessionChainStore.ts';
 import { RedisTaskStore } from '../../src/domains/cats/services/stores/redis/RedisTaskStore.ts';
 import { RedisThreadStore } from '../../src/domains/cats/services/stores/redis/RedisThreadStore.ts';
 import { RedisTurnExecutionStore } from '../../src/domains/cats/services/stores/redis/RedisTurnExecutionStore.ts';
@@ -49,6 +53,9 @@ export async function createModelHost(world, cafe, db, config, evidence) {
   const threads = new RedisThreadStore(redis, { ttlSeconds: 0 });
   const tasks = new RedisTaskStore(redis, { ttlSeconds: 0 });
   const turns = new RedisTurnExecutionStore(redis);
+  const sessionChainStore = new RedisSessionChainStore(redis);
+  const transcriptWriter = new TranscriptWriter({ dataDir: join(evidence.dataRoot, `transcripts-${cafe.label}`) });
+  const sessionSealer = new SessionSealer(sessionChainStore, transcriptWriter);
   const parents = new RedisInvocationRecordStore(redis);
   world.attachTurns(cafe.label, turns);
   const catId = createCatId(world.catId);
@@ -148,6 +155,9 @@ export async function createModelHost(world, cafe, db, config, evidence) {
     threadStore: threads,
     taskStore: tasks,
     turnExecutionStore: turns,
+    sessionChainStore,
+    transcriptWriter,
+    sessionSealer,
     collectiveContext: () => context,
   });
   let callbackUrl = '';
@@ -300,6 +310,7 @@ export async function createModelHost(world, cafe, db, config, evidence) {
         tasks: taskRows,
         messages: messageRows.map(visibleMessageEvidence),
         turns: await Promise.all(invocationIds.map((id) => turns.get(id))),
+        sessions: (await Promise.all(threadIds.map((id) => sessionChainStore.getChainByThread(id)))).flat(),
       };
     },
     async abort() {
@@ -310,6 +321,7 @@ export async function createModelHost(world, cafe, db, config, evidence) {
       await host.abort();
       await sleep(100);
       await app.close();
+      await transcriptWriter.drainPendingWrites();
       await redis.quit();
     },
   };

@@ -90,6 +90,14 @@ export type PairingIntentResult = CollectivePairingIntent;
 
 export type ClientPhase = 'loading' | 'entry' | 'bind-identity' | 'create-collective' | 'ready' | 'unavailable';
 
+/** Recovery coordinates, never membership or permission authority. */
+export interface RestrictedCollectiveScope {
+  readonly serviceInstanceId: string;
+  readonly collectiveId: string;
+  readonly humanId: string;
+  readonly reason: 'checking' | 'membership_lost' | 'unavailable' | 'session_expired';
+}
+
 export type DeliveryState =
   | { readonly kind: 'idle' }
   | { readonly kind: 'requesting'; readonly label: string }
@@ -110,6 +118,7 @@ export interface ClientSnapshot {
   readonly delivery: DeliveryState;
   readonly notice?: string;
   readonly error?: string;
+  readonly restrictedScope?: RestrictedCollectiveScope;
 }
 
 export type {

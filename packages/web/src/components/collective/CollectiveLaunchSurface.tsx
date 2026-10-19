@@ -11,6 +11,8 @@ import {
   CollectiveLaunchNotice,
   CollectiveServiceSetup,
 } from './CollectiveLaunchChrome';
+import { CollectiveMediaShare } from './CollectiveMediaShare';
+import { CollectiveMediaSurface } from './CollectiveMediaSurface';
 import { hasActiveCollectiveConnection } from './collective-connection-selection';
 import { parseCollectiveWorkActionRef } from './collective-work-action';
 import { parseCollectiveWorldTarget } from './collective-world-directory';
@@ -20,6 +22,8 @@ import { useCollectiveAppearanceBridge } from './use-collective-appearance-bridg
 import { useCollectiveConnectorLaunch } from './use-collective-connector-launch';
 import { useCollectiveContextBridge } from './use-collective-context-bridge';
 import { useCollectiveEntryPairing } from './use-collective-entry-pairing';
+import { useCollectiveMediaRpc } from './use-collective-media-rpc';
+import { useCollectiveMediaShare } from './use-collective-media-share';
 import { useCollectivePairingBridge } from './use-collective-pairing-bridge';
 import { useCollectiveWorkPolicyBridge } from './use-collective-work-policy-bridge';
 import { useCollectiveWorldNavigation } from './use-collective-world-navigation';
@@ -73,6 +77,8 @@ export function CollectiveLaunchSurface({
     pair: entry.receive,
   });
   const contextBridge = useCollectiveContextBridge(iframeRef, connection, workResult.reconcile, workTarget);
+  const mediaRpc = useCollectiveMediaRpc(iframeRef, connection, contextBridge.context, contextBridge.mediaRef);
+  const mediaShare = useCollectiveMediaShare(iframeRef, connection, contextBridge.context);
   const policyBridge = useCollectiveWorkPolicyBridge(iframeRef, connection, contextBridge.context);
   useCollectiveAppearanceBridge({ iframeRef, frameGeneration: world.frameGeneration });
   const frameUrl = world.frameUrl;
@@ -82,7 +88,7 @@ export function CollectiveLaunchSurface({
 
   return (
     <div
-      className="relative h-full min-h-0 overflow-hidden bg-[var(--cafe-surface-canvas)]"
+      className="cafe-presentation relative h-full min-h-0 overflow-hidden bg-[var(--cafe-surface-canvas)]"
       data-testid="collective-launch-surface"
       style={{ containerType: 'inline-size', containerName: 'collective-host' }}
     >
@@ -91,6 +97,9 @@ export function CollectiveLaunchSurface({
           ref={iframeRef}
           src={frameUrl}
           title="Collective"
+          aria-hidden={Boolean(contextBridge.mediaRef || mediaShare.reference)}
+          tabIndex={contextBridge.mediaRef || mediaShare.reference ? -1 : undefined}
+          style={contextBridge.mediaRef || mediaShare.reference ? { visibility: 'hidden' } : undefined}
           sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
           onLoad={() => {
             pairingBridge.handleFrameLoad();
@@ -125,6 +134,7 @@ export function CollectiveLaunchSurface({
       <CollectiveLaunchNotice
         connectorError={error}
         worldError={world.error}
+        sessionRequired={world.sessionRequired}
         workError={workResult.error}
         pairingError={pairingBridge.error}
         entryError={entry.error}
@@ -140,6 +150,7 @@ export function CollectiveLaunchSurface({
           key={`${connection.connectionId}:${contextBridge.context.contextId}:${contextBridge.context.channelId}`}
           connection={connection}
           context={contextBridge.context}
+          iframeRef={iframeRef}
           policyBridge={policyBridge}
           onParticipationReady={({ revision, catCount }) => {
             const activeContext = contextBridge.context;
@@ -159,6 +170,7 @@ export function CollectiveLaunchSurface({
           busy={busy}
           pairingState={pairingBridge.state}
           onClose={contextBridge.close}
+          onOpenMembers={contextBridge.openMembers}
           onPair={pairingBridge.requestPairing}
           onMutate={(operation) => void mutateConnection(operation, connection.connectionId)}
           connections={status.connections}
@@ -183,6 +195,21 @@ export function CollectiveLaunchSurface({
           onConfirm={(selection) => void entry.confirm(selection)}
           onClose={entry.clear}
           onRetry={entry.clearError}
+        />
+      )}
+      {contextBridge.mediaRef && (
+        <CollectiveMediaSurface
+          key={JSON.stringify(contextBridge.mediaRef)}
+          reference={contextBridge.mediaRef}
+          rpc={mediaRpc}
+          onBack={contextBridge.closeMedia}
+        />
+      )}
+      {mediaShare.reference && (
+        <CollectiveMediaShare
+          key={JSON.stringify(mediaShare.reference)}
+          reference={mediaShare.reference}
+          onDone={mediaShare.finish}
         />
       )}
     </div>

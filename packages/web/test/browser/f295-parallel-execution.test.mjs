@@ -12,6 +12,7 @@ import { trajectoryFixture } from './f295-trajectory-fixture.mjs';
 import { runWorkGroupsJourney } from './f295-work-groups.journey.mjs';
 import { ensureWorkspaceOpen } from './f307-workspace-open.mjs';
 import { runF322BExecutionLocationJourney } from './f322-b-execution-location.journey.mjs';
+import { runHappeningProjectsJourney } from './happening-projects.journey.mjs';
 
 const WEB_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const NEXT_BIN = path.resolve(WEB_ROOT, '../../node_modules/next/dist/bin/next');
@@ -328,3 +329,22 @@ for (const viewport of [
       }
     },
   );
+
+for (const [width, language] of [
+  [1440, 'zh'],
+  [390, 'en'],
+]) {
+  test(
+    `Happening Now projects fold, persist, navigate and stop exactly (${width}px ${language})`,
+    { timeout: 120_000 },
+    () =>
+      runHappeningProjectsJourney({
+        browser,
+        baseUrl,
+        threadId: THREAD_ID,
+        fixtureForApi,
+        viewport: { width, height: 1000 },
+        language,
+      }),
+  );
+}

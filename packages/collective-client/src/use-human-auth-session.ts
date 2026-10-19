@@ -8,6 +8,7 @@ import type {
   HumanAuthProviderStatus,
   SessionResult,
 } from './client-types.js';
+import { closeCollectiveScope, currentCollectiveScope, missingMembershipScope } from './collective-scope-recovery.js';
 import {
   entryModeFromHash,
   HUMAN_AUTH_WINDOW_NAME,
@@ -105,6 +106,7 @@ async function initializeHumanSession(context: AuthBootContext): Promise<void> {
     meta,
     me,
     collective: selectedCollective(me),
+    restrictedScope: me ? missingMembershipScope(meta.serviceInstanceId, me) : undefined,
     phase: me ? phaseForHuman(me) : 'entry',
     events: [],
     collaboration: undefined,
@@ -146,7 +148,32 @@ export function useHumanAuthSession(snapshot: ClientSnapshot, setSnapshot: Dispa
     return payload;
   }, []);
 
-  const loadMe = useCallback(async () => request<CollectiveMe>('/api/me'), [request]);
+  const loadMe = useCallback(async () => {
+    const credential = token.current;
+    try {
+      return await request<CollectiveMe>('/api/me');
+    } catch (error) {
+      if (error instanceof CollectiveClientRequestError && error.status === 401 && credential === token.current) {
+        token.current = null;
+        sessionStorage.removeItem(`${SESSION_KEY}:${location.origin}`);
+        setSnapshot((current) => {
+          const scope = currentCollectiveScope(current);
+          const closed = scope ? closeCollectiveScope(current, scope, 'session_expired') : current;
+          return {
+            ...closed,
+            phase: 'entry',
+            me: undefined,
+            collective: undefined,
+            events: [],
+            collaboration: undefined,
+            participants: undefined,
+            members: undefined,
+          };
+        });
+      }
+      throw error;
+    }
+  }, [request, setSnapshot]);
 
   const enterSession = useCallback(
     async (sessionToken: string) => {
@@ -163,6 +190,7 @@ export function useHumanAuthSession(snapshot: ClientSnapshot, setSnapshot: Dispa
         phase: phaseForHuman(me),
         me,
         collective: selectedCollective(me),
+        restrictedScope: current.meta ? missingMembershipScope(current.meta.serviceInstanceId, me) : undefined,
         events: [],
         collaboration: undefined,
         participants: undefined,
@@ -182,8 +210,6 @@ export function useHumanAuthSession(snapshot: ClientSnapshot, setSnapshot: Dispa
       return await loadMe();
     } catch (error) {
       if (!(error instanceof CollectiveClientRequestError) || error.status !== 401) throw error;
-      sessionStorage.removeItem(`${SESSION_KEY}:${location.origin}`);
-      token.current = null;
       return undefined;
     }
   }, [loadMe]);

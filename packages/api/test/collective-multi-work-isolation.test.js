@@ -25,6 +25,9 @@ function fixture() {
   const accepted = [];
 
   const connector = {
+    async readArtifactContext() {
+      return { status: 'available', requests: [] };
+    },
     async readParticipationContext(actual) {
       const entry = sources.get(actual.eventId);
       assert.ok(entry, `unknown source event ${actual.eventId}`);

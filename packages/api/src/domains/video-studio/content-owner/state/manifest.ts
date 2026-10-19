@@ -1,3 +1,4 @@
+import { type CollectiveContentScopeV1, validateCollectiveContentScope } from '../collective-scope.js';
 import { validateVideoProjectMediaScope } from '../project-media-scope.js';
 import { validateContentOperationContext, validateVideoProjectScope } from '../project-scope.js';
 import { validateContentPublication } from '../publication.js';
@@ -15,6 +16,7 @@ interface StoredOperationV1 {
 }
 
 export interface ProjectContentStateV1 {
+  readonly collectiveScope?: CollectiveContentScopeV1;
   readonly schemaVersion: 1;
   readonly contentRef: string;
   readonly mediaType: string;
@@ -42,6 +44,7 @@ export function parseProjectContentState(raw: string, expectedContentRef: string
     throw corruptState(expectedContentRef);
   }
   const state = parsed as unknown as ProjectContentStateV1;
+  validateCollectiveContentScope(state.collectiveScope, state);
   validateVideoProjectScope(state.projectScope, state.contentRef, state.mediaType, state.publicationScope);
   validateVideoProjectMediaScope(state.projectMediaScope, state);
   if (state.projectMediaScope && state.currentOwnerRevision !== 1) throw corruptState(expectedContentRef);
@@ -116,7 +119,7 @@ function validateReceipt(
   ) {
     throw corruptState(state.contentRef);
   }
-  validateContentOperationContext(value.operationContext, state.projectScope);
+  validateContentOperationContext(value.operationContext, state.projectScope, state.collectiveScope);
   return value as unknown as ContentSettlementReceiptV1;
 }
 

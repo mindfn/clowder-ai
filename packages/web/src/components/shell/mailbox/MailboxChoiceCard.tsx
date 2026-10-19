@@ -1,4 +1,5 @@
 import type { UnifiedAttentionChoiceRequest } from '@cat-cafe/shared';
+import type { ReactNode } from 'react';
 import { RuntimeInteractionCard } from '../../rich/RuntimeInteractionCard';
 import { useShellCopy } from '../shell-copy';
 import { mailboxRuntimeCopy } from './mailbox-runtime.shell-copy';
@@ -8,10 +9,12 @@ export function MailboxChoiceCard({
   choice,
   ownerUserId,
   readCurrent,
+  secondaryActions,
 }: {
   choice: UnifiedAttentionChoiceRequest;
   ownerUserId: string;
   readCurrent: boolean;
+  secondaryActions?: ReactNode;
 }) {
   const copy = useShellCopy(mailboxRuntimeCopy);
   return (
@@ -26,6 +29,8 @@ export function MailboxChoiceCard({
       }}
       host={{ ownerUserId, revision: choice.revision, cardRef: choice.cardRef, readCurrent }}
       copy={copy}
+      presentation="mailbox"
+      secondaryActions={secondaryActions}
     />
   );
 }

@@ -711,6 +711,8 @@ export interface IThreadStore {
   get(threadId: string, options?: StoreReadOptions): Thread | null | Promise<Thread | null>;
   list(userId: string, options?: StoreReadOptions): Thread[] | Promise<Thread[]>;
   listByProject(userId: string, projectPath: string): Thread[] | Promise<Thread[]>;
+  /** Read only candidate threads admitted by the durable user visibility index. */
+  listCandidates?(userId: string, threadIds: readonly string[]): Thread[] | Promise<Thread[]>;
   listProjectCandidates?(
     userId: string,
     projectPath: string,
@@ -1097,6 +1099,11 @@ export class ThreadStore implements IThreadStore {
     // Sort by lastActiveAt descending (most recent first)
     result.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
     return result;
+  }
+
+  listCandidates(userId: string, threadIds: readonly string[]): Thread[] {
+    const candidates = new Set(threadIds);
+    return this.list(userId).filter((thread) => candidates.has(thread.id));
   }
 
   listByProject(userId: string, projectPath: string): Thread[] {

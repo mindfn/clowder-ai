@@ -22,6 +22,8 @@ export type ApprovalWriteKind =
   | 'person-memory-approve'
   | 'person-memory-defer'
   | 'person-memory-withdraw'
+  | 'person-memory-undo'
+  | 'producer-card'
   | 'meeting-intake';
 
 export type ApprovalRequestEvent =

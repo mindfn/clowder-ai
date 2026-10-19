@@ -1,5 +1,5 @@
 import type { RuntimeInteractionRequest, RuntimeInteractionResponse } from '@cat-cafe/shared';
-import { useId, useMemo, useState } from 'react';
+import { type ReactNode, useId, useMemo, useState } from 'react';
 import { CLASSIC_RUNTIME_INTERACTION_COPY, type RuntimeInteractionCopy } from './RuntimeInteractionCopy';
 
 type QuestionRequest = Extract<RuntimeInteractionRequest, { kind: 'question' }>;
@@ -11,9 +11,13 @@ export function RuntimeInteractionQuestionForm({
   onSubmit,
   onReject,
   copy = CLASSIC_RUNTIME_INTERACTION_COPY.form,
+  presentation,
+  secondaryActions,
 }: {
   request: QuestionRequest;
   copy?: RuntimeInteractionCopy['form'];
+  presentation?: 'mailbox';
+  secondaryActions?: ReactNode;
   disabled: boolean;
   onSubmit: (response: RuntimeInteractionResponse) => void;
   onReject: () => void;
@@ -62,7 +66,11 @@ export function RuntimeInteractionQuestionForm({
           }}
         />
       ))}
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <div
+        className={
+          presentation === 'mailbox' ? 'flex flex-wrap items-center gap-2' : 'grid grid-cols-1 gap-2 sm:grid-cols-2'
+        }
+      >
         <button
           type="button"
           disabled={disabled}
@@ -75,9 +83,15 @@ export function RuntimeInteractionQuestionForm({
           type="submit"
           disabled={!complete || disabled}
           className="min-h-10 rounded-xl bg-[var(--semantic-success)] px-3 py-2 text-sm font-medium text-[var(--cafe-accent-foreground)] disabled:cursor-not-allowed disabled:opacity-50"
+          style={
+            presentation === 'mailbox'
+              ? { background: 'var(--shell-primary)', color: 'var(--shell-primary-on)' }
+              : undefined
+          }
         >
           {copy.submit}
         </button>
+        {secondaryActions}
       </div>
     </form>
   );

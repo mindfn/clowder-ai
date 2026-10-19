@@ -12,6 +12,7 @@ import { useSendMessage } from '@/hooks/useSendMessage';
 import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
 import type { ChatMessage, QueueEntry } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
+import { readChatScrollState, resolveChatReadingAnchor } from '@/utils/chat-scroll-memory';
 import { computeCliDiagnosticsDedup } from '@/utils/cli-diagnostics-dedup';
 import { computeScrollRecomputeSignal } from '@/utils/scrollRecomputeSignal';
 import { ChatInput } from '../ChatInput';
@@ -37,6 +38,7 @@ import { useShellPresentation } from '../shell/shell-presentation';
 import { ThreadComposerContext } from '../ThreadComposerContext';
 import { TransferTargetPicker } from '../TransferTargetPicker';
 import { VoteActiveBar } from '../VoteActiveBar';
+import { MessageNavigationProvider } from './MessageNavigationContext';
 import { SingleCatConversationTimeline } from './SingleCatConversationTimeline';
 import {
   projectSingleCatConversation,
@@ -203,6 +205,16 @@ export function ThreadChatSurface({
     () => (singleCatProjection ? flattenConversationProjection(singleCatProjection) : messages),
     [messages, singleCatProjection],
   );
+  // Read the history owner's existing anchor. Its row must exist on the first
+  // paint of a returning thread, before an observer can mount deferred content.
+  const savedReading = readChatScrollState(threadId);
+  const readingAnchor =
+    savedReading?.anchor === 'offset' && savedReading.messageAnchor
+      ? resolveChatReadingAnchor(savedReading.messageAnchor, visibleMessages)
+      : undefined;
+  const readingAnchorIndex = readingAnchor
+    ? visibleMessages.findIndex((message) => message.id === readingAnchor.messageId)
+    : -1;
   const conversationViewKey = singleCatProjection
     ? `cat:${conversationViewController?.snapshot.effective.mode === 'cat' ? conversationViewController.snapshot.effective.catId : ''}`
     : 'group';
@@ -218,7 +230,7 @@ export function ThreadChatSurface({
 
   const renderTimelineMessage = (message: ChatMessage, index: number, total: number) => {
     const dedupInfo = cliDedupMap.get(message.id);
-    const mountPolicy = messageMountPolicy(index, total);
+    const mountPolicy = messageMountPolicy(index, total, readingAnchorIndex);
     const selected = selection.selectedMessageIds.has(message.id);
     const selectionEligible =
       isMessageSelectableForBundle(message) &&
@@ -271,7 +283,7 @@ export function ThreadChatSurface({
     return () => window.removeEventListener('cat-cafe:interactive-send', handleInteractiveSend);
   }, [acceptUnscopedInteractiveSend, handleSend, interactiveSendContext, threadId]);
 
-  return (
+  const surface = (
     <section
       className="flex min-h-0 flex-1 flex-col"
       data-thread-chat-surface
@@ -285,6 +297,7 @@ export function ThreadChatSurface({
         aria-hidden={composerOnly || undefined}
         data-thread-chat-history
       >
+        {/* The v2 right rail fits the 28px latest control beside the message piano with clear reading separation. */}
         <main
           ref={scrollContainerRef}
           onScroll={handleScroll}
@@ -292,8 +305,8 @@ export function ThreadChatSurface({
           className={
             composerPresentation === 'v2'
               ? compact
-                ? 'min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] pl-3 pr-[42px] py-3'
-                : 'min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] p-4 pr-10'
+                ? 'min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] py-3 pl-3 pr-[4.5rem]'
+                : 'min-h-0 flex-1 overflow-y-auto [overflow-anchor:none] p-4 pr-[4.5rem]'
               : compact
                 ? 'h-full overflow-y-auto [overflow-anchor:none] px-3 py-3'
                 : 'h-full overflow-y-auto [overflow-anchor:none] p-4'
@@ -451,4 +464,5 @@ export function ThreadChatSurface({
       />
     </section>
   );
+  return <MessageNavigationProvider value={jumpToMessage}>{surface}</MessageNavigationProvider>;
 }

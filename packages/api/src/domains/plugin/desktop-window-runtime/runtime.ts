@@ -201,6 +201,7 @@ export class DesktopWindowPluginRuntime implements BuiltinPluginRuntime {
             initiator: 'executor',
           }),
         ...(run.bridge ? { request: (input: unknown) => run.bridge!.request(input) } : {}),
+        ...(run.bridge?.appAssist ? { appAssist: run.bridge.appAssist } : {}),
         ...(run.bridge?.observeVoice
           ? {
               onVoiceObservation: async (observation) => {
@@ -335,6 +336,9 @@ export class DesktopWindowPluginRuntime implements BuiltinPluginRuntime {
   }
 
   private async closeRun(run: ActiveWindow, reason: string): Promise<void> {
+    // Stop application observation before awaiting the durable broker fence.
+    // Physical child cleanup below still owns the final stop proof if IPC fails.
+    void run.bridge?.appAssist?.revoke?.().catch(() => {});
     try {
       await run.connection.close(reason); // Attempt the durable fence before child cleanup.
     } finally {

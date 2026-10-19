@@ -45,7 +45,7 @@ import {
   classifyIssueComment,
   type IssueCommentClassification,
 } from '../../../domains/community/issue-analysis/issue-comment-classifier.js';
-import { gitHubAdmissionCanContinue } from '../../github/admission-budget.js';
+import { gitHubAdmissionCanContinue, gitHubObjectSignal } from '../../github/admission-budget.js';
 import { GitHubRateLimitError } from '../../github/request-budget.js';
 import type { GateResult, TaskSpec_P1 } from '../../scheduler/types.js';
 
@@ -190,19 +190,20 @@ export function repoCommentPollTaskSpec(opts: RepoCommentPollTaskSpecOptions): T
     trigger: { type: 'interval', ms: opts.pollIntervalMs ?? 60_000 },
     admission: {
       async gate(ctx): Promise<GateResult> {
-        const signal = ctx?.signal;
-        signal?.throwIfAborted();
+        const gateSignal = ctx?.signal;
+        gateSignal?.throwIfAborted();
         const startIndex = nextRepoIndex % Math.max(1, opts.repoAllowlist.length);
         for (let step = 0; step < opts.repoAllowlist.length; step++) {
-          signal?.throwIfAborted();
+          gateSignal?.throwIfAborted();
           if (step > 0 && !gitHubAdmissionCanContinue(ctx)) break;
           const index = (startIndex + step) % opts.repoAllowlist.length;
           const repo = opts.repoAllowlist[index]!;
           nextRepoIndex = (index + 1) % opts.repoAllowlist.length;
           try {
-            await pollSingleRepo(opts, repo, signal);
+            // Complete all pages for this repository before committing its cursor.
+            await pollSingleRepo(opts, repo, gitHubObjectSignal(ctx, 30_000));
           } catch (e) {
-            signal?.throwIfAborted();
+            gateSignal?.throwIfAborted();
             if (e instanceof GitHubRateLimitError) continue;
             // fail-open: one repo's fetch/append failure must not block the others.
             // The cursor is not advanced for this repo, so the next poll retries.
@@ -213,7 +214,7 @@ export function repoCommentPollTaskSpec(opts: RepoCommentPollTaskSpecOptions): T
         // Collection-only: all work (append + project) happened above. There is no
         // delivery signal to execute — un-routed issues have no owner thread, and
         // delivery is the downstream router's responsibility.
-        signal?.throwIfAborted();
+        gateSignal?.throwIfAborted();
         return { run: false, reason: 'repo-comment poll: collection-only' };
       },
     },

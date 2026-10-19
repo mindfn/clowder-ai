@@ -1,4 +1,4 @@
-import { catRegistry, companionIdentitySnapshotV1Schema } from '@cat-cafe/shared';
+import { companionIdentitySnapshotV1Schema } from '@cat-cafe/shared';
 import type {
   CompanionConversationBodyV2,
   CompanionConversationPageV2,
@@ -11,6 +11,7 @@ import {
 import type { StoredMessage } from '../../../cats/services/stores/ports/MessageStore.js';
 import { getTimelineOrderTime } from '../../../cats/services/stores/visibility.js';
 import { CompanionBridgeError } from '../companion-owner-client.js';
+import { companionAuthorName } from './companion-author-name.js';
 import { CompanionHistoryReferences, type HistoryReference } from './companion-history-references.js';
 import {
   type CompanionHistoryOptions,
@@ -96,7 +97,7 @@ export class CompanionConversationHistory {
       messages.unshift({
         id: row.id,
         role: row.catId ? 'assistant' : 'user',
-        name: row.catId ? (catRegistry.tryGet(row.catId)?.config.displayName ?? row.catId).slice(0, 256) : '你',
+        name: companionAuthorName(row.catId),
         text,
         ...response,
         ...(delivery.success && companionDeliveryMatches(current, delivery.data)

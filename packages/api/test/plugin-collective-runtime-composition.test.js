@@ -123,6 +123,10 @@ test('runtime composition registers the official Connector as a Host builtin and
 
 test('builtin runtime dispatches persisted Collective inbox after connection sync', async () => {
   const order = [];
+  let finishMediaStop;
+  const mediaStopped = new Promise((resolve) => {
+    finishMediaStop = resolve;
+  });
   let resolveDispatch;
   const dispatched = new Promise((resolve) => {
     resolveDispatch = resolve;
@@ -134,6 +138,14 @@ test('builtin runtime dispatches persisted Collective inbox after connection syn
     },
     async sync(connectionId) {
       order.push(`sync:${connectionId}`);
+    },
+    setArtifactOwner(owner) {
+      assert.equal(owner, undefined);
+      order.push('detach-owner');
+    },
+    async stopMediaReads() {
+      order.push('stop-media');
+      await mediaStopped;
     },
   };
   const runtime = new CollectiveConnectorBuiltinRuntime({
@@ -147,6 +159,9 @@ test('builtin runtime dispatches persisted Collective inbox after connection syn
         resolveDispatch();
       },
     }),
+    async reconcileAcceptedWorkResultFiles(_connector, connectionId) {
+      order.push(`reconcile-result-files:${connectionId}`);
+    },
   });
 
   await runtime.start('instance_collective_runtime_dispatch');
@@ -154,6 +169,20 @@ test('builtin runtime dispatches persisted Collective inbox after connection syn
     dispatched,
     new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out waiting for ingress dispatch')), 1_000)),
   ]);
-  assert.deepEqual(order, ['list', 'sync:conn_runtime_dispatch', 'dispatch:conn_runtime_dispatch']);
-  await runtime.stop('instance_collective_runtime_dispatch', 'test complete');
+  assert.deepEqual(order, [
+    'list',
+    'sync:conn_runtime_dispatch',
+    'reconcile-result-files:conn_runtime_dispatch',
+    'dispatch:conn_runtime_dispatch',
+  ]);
+  let stopped = false;
+  const stopping = runtime.stop('instance_collective_runtime_dispatch', 'test complete').then(() => {
+    stopped = true;
+  });
+  await Promise.resolve();
+  assert.equal(runtime.connector(), undefined, 'A stopping runtime must immediately stop admitting new reads');
+  assert.equal(stopped, false, 'Runtime stop must await the binary streams it already admitted');
+  finishMediaStop();
+  await stopping;
+  assert.deepEqual(order.slice(-2), ['detach-owner', 'stop-media']);
 });

@@ -1,16 +1,12 @@
 'use client';
-import { BUILTIN_GPT_PRO_CANONICAL_MENTION, supportsCodexFastModel } from '@cat-cafe/shared';
+import { supportsCodexFastModel } from '@cat-cafe/shared';
 import { createPortal } from 'react-dom';
-import {
-  AccountSection,
-  IdentitySection,
-  ProtectedCloudIdentitySection,
-  RoutingSection,
-} from './hub-cat-editor.sections';
+import { AccountSection, IdentitySection, RoutingSection } from './hub-cat-editor.sections';
 import type { HubCatEditorProps } from './hub-cat-editor.types';
 import { AdvancedRuntimeSection } from './hub-cat-editor-advanced';
 import { MemberCopyProvider, MemberFieldErrors } from './members/editor-presentation';
 import { MemberChanges } from './members/MemberChangeMark';
+import { MemberEditorModal } from './members/MemberEditorModal';
 import { MemberEditorPage } from './members/MemberEditorPage';
 import { MemberOperations } from './members/MemberOperationFeedback';
 import { MemberSaveFeedback } from './members/MemberSaveFeedback';
@@ -34,7 +30,6 @@ function HubCatEditorBody(props: HubCatEditorProps) {
     uploadingAvatar,
     strategyError,
     codexSettingsError,
-    restoringCloudIdentity,
     fieldErrors,
     form,
     strategyForm,
@@ -61,15 +56,22 @@ function HubCatEditorBody(props: HubCatEditorProps) {
     requestClose,
     handleAvatarUpload,
     handleRefAudioUpload,
-    handleRestoreBuiltinCloudIdentity,
     handleSave,
   } = editor;
   if (!open) return null;
-  if (props.presentation === 'page')
+  if (props.presentation === 'page' || cat)
     return (
       <MemberOperations.Provider value={editor.operationIssues}>
         <MemberChanges.Provider value={editor.changes}>
-          <MemberEditorPage editor={editor} {...props} />
+          {props.presentation === 'page' ? (
+            <MemberEditorPage editor={editor} {...props} />
+          ) : (
+            cat && (
+              <MemberEditorModal cat={cat} saving={editor.saving} onClose={requestClose}>
+                <MemberEditorPage editor={editor} {...props} embedded />
+              </MemberEditorModal>
+            )
+          )}
         </MemberChanges.Provider>
       </MemberOperations.Provider>
     );
@@ -94,7 +96,7 @@ function HubCatEditorBody(props: HubCatEditorProps) {
           >
             <div className="flex shrink-0 items-start justify-between px-7 py-5">
               <p id="member-editor-title" className="text-compact font-extrabold text-[var(--console-modal-title)]">
-                {cat ? cat.displayName || cat.name || cat.id : '添加成员'}
+                添加成员
               </p>
               <button
                 type="button"
@@ -109,12 +111,10 @@ function HubCatEditorBody(props: HubCatEditorProps) {
 
             <div className="min-h-0 flex-1 overflow-y-auto">
               <fieldset disabled={editor.saving} className="min-w-0 space-y-4 border-0 px-7 py-5">
-                {!cat ? (
-                  <p className="rounded-[14px] bg-[var(--console-field-bg)] px-4 py-3 text-xs font-semibold text-cafe-secondary">
-                    首次安装默认只启用一个品种；可在成员管理继续添加其他成员。
-                  </p>
-                ) : null}
-                {!cat && templates.length > 0 && (
+                <p className="rounded-[14px] bg-[var(--console-field-bg)] px-4 py-3 text-xs font-semibold text-cafe-secondary">
+                  首次安装默认只启用一个品种；可在成员管理继续添加其他成员。
+                </p>
+                {templates.length > 0 && (
                   <section
                     data-guide-id="add-member.template-picker"
                     className="space-y-3 rounded-[18px] bg-[var(--console-card-bg)] p-[18px] shadow-[0_8px_22px_rgba(43,33,26,0.04)]"
@@ -162,22 +162,14 @@ function HubCatEditorBody(props: HubCatEditorProps) {
                   onAvatarUpload={handleAvatarUpload}
                   onRefAudioUpload={handleRefAudioUpload}
                 />
-                {cat && protectedCloudIdentity ? (
-                  <ProtectedCloudIdentitySection
-                    protection={protectedCloudIdentity}
-                    restoring={restoringCloudIdentity}
-                    onRestore={() => handleRestoreBuiltinCloudIdentity(cat.id)}
-                  />
-                ) : (
-                  <AccountSection
-                    form={form}
-                    hasError={fieldErrors.account}
-                    modelOptions={modelOptions}
-                    availableProfiles={availableProfiles}
-                    loadingProfiles={hasEmptyCreatableAccounts ? true : loadingProfiles}
-                    onChange={patchForm}
-                  />
-                )}
+                <AccountSection
+                  form={form}
+                  hasError={fieldErrors.account}
+                  modelOptions={modelOptions}
+                  availableProfiles={availableProfiles}
+                  loadingProfiles={hasEmptyCreatableAccounts ? true : loadingProfiles}
+                  onChange={patchForm}
+                />
                 {hasEmptyCreatableAccounts ? (
                   <section
                     aria-label="认证账号空状态"
@@ -199,7 +191,6 @@ function HubCatEditorBody(props: HubCatEditorProps) {
                   form={form}
                   hasError={fieldErrors.routing}
                   reservedPatterns={reservedPatterns}
-                  fixedPatterns={protectedCloudIdentity ? [BUILTIN_GPT_PRO_CANONICAL_MENTION] : undefined}
                   onChange={patchForm}
                 />
                 {!protectedCloudIdentity ? (
@@ -215,10 +206,7 @@ function HubCatEditorBody(props: HubCatEditorProps) {
                     codexSettingsEditable={codexSettingsEditable}
                     showCodexSettings={showCodexSettings}
                     codexSpeedVisible={
-                      form.clientId === 'openai' &&
-                      selectedProfile?.authType === 'oauth' &&
-                      form.carrier !== 'acp' &&
-                      (cat ? cat.cli != null : true)
+                      form.clientId === 'openai' && selectedProfile?.authType === 'oauth' && form.carrier !== 'acp'
                     }
                     codexFastSupported={supportsCodexFastModel(form.defaultModel)}
                     onChange={patchForm}

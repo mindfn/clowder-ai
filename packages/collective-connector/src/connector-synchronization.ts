@@ -273,6 +273,19 @@ export class ConnectorSynchronization {
       });
     } catch (error) {
       if (
+        error instanceof ConnectorTransportError &&
+        error.statusCode === 409 &&
+        error.causeCode === 'ARTIFACT_CUSTODY_HANDOFF_REQUIRED'
+      ) {
+        await this.persistence.transaction((state) => {
+          const connection = requireConnection(state.connections[connectionId]);
+          connection.authorityStatus = 'connected';
+          connection.lastError = error.message;
+          connection.lastErrorCode = error.causeCode;
+        });
+        throw error;
+      }
+      if (
         !(error instanceof ConnectorTransportError) ||
         error.statusCode !== 401 ||
         !error.message.toLowerCase().includes('revoked')

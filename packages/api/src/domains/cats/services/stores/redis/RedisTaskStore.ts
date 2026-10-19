@@ -60,7 +60,7 @@ import { buildTaskWaitReplacement } from '../ports/TaskWaitReplacement.js';
 import { TaskKeys } from '../redis-keys/task-keys.js';
 import { DEPLOYMENT_WAIT_INDEX, listDeploymentWaitProjectionCandidates } from './deployment-wait-index.js';
 import { hydrateTask, hydrateWaitRegistration, serializeTask } from './RedisTaskCodec.js';
-import { fetchRedisTasksByIds } from './RedisTaskCollectionReader.js';
+import { fetchRedisTasksByIds, readRedisTaskThreadPage } from './RedisTaskCollectionReader.js';
 import { RedisTaskDevelopmentWorkStore } from './RedisTaskDevelopmentWorkStore.js';
 import { RedisTaskEntrustedWorkMutationStore } from './RedisTaskEntrustedWorkMutationStore.js';
 import { deleteGenericTasks } from './RedisTaskGenericDeletion.js';
@@ -526,6 +526,10 @@ export class RedisTaskStore implements ITaskStore {
     const ids = await this.redis.zrange(TaskKeys.thread(threadId), 0, -1);
     if (ids.length === 0) return [];
     return fetchRedisTasksByIds(this.redis, ids, { cleanupKey: TaskKeys.thread(threadId) });
+  }
+
+  listByThreadPage(threadId: string, limit: number, afterId?: string) {
+    return readRedisTaskThreadPage(this.redis, threadId, limit, afterId);
   }
 
   async delete(taskId: string): Promise<boolean> {

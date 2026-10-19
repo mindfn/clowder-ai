@@ -62,7 +62,17 @@ describe('F322 new-shell Workspace home · 正在发生', () => {
     mocks.hydration = 'idle';
     mocks.retry.mockReset();
     mocks.apiFetch.mockReset();
-    mocks.apiFetch.mockResolvedValue({ ok: false });
+    const storedFolds: Record<string, boolean> = {};
+    mocks.apiFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === '/api/config/live-projects') {
+        if (init?.method === 'PUT') {
+          const { projectPath, collapsed } = JSON.parse(String(init.body));
+          storedFolds[projectPath] = collapsed;
+        }
+        return Response.json({ collapsed: { ...storedFolds } });
+      }
+      return { ok: false };
+    });
     mocks.setWorkspaceMode.mockReset();
     mocks.openTeamSubject.mockReset();
     onSelectDestination.mockReset();
@@ -89,6 +99,36 @@ describe('F322 new-shell Workspace home · 正在发生', () => {
   const qa = (selector: string) => Array.from(container.querySelectorAll<HTMLElement>(selector));
 
   describe('正在发生', () => {
+    it('keeps every project visible and folds only the selected project without losing exact work', async () => {
+      seed([
+        { ...live('codex-sol', 'thread-here', 'Current cafe work', 'cafe-1'), projectPath: '/work/cat-cafe' },
+        { ...live('codex-sol', 'planet-a', 'F329 Tripo work', 'planet-1'), projectPath: '/work/cat-planet' },
+        { ...live('opus', 'planet-b', 'F329 sandbox work', 'planet-2'), projectPath: '/work/cat-planet' },
+      ]);
+      await renderHome();
+      const projects = qa('[data-testid="home-live-project"]');
+      expect(projects).toHaveLength(2);
+      const planet = projects.find((group) => group.textContent?.includes('cat-planet'))!;
+      const toggle = planet.querySelector<HTMLButtonElement>('button[aria-expanded]')!;
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      expect(planet.querySelectorAll('[data-testid="workspace-running-object"]')).toHaveLength(2);
+      await act(async () => toggle.click());
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      expect(Object.keys(useActiveExecutionStore.getState().executionsByKey)).toHaveLength(3);
+      expect(q('[data-execution-id="cafe-1"]')).not.toBeNull();
+      await act(async () => root.render(null));
+      await renderHome();
+      const restoredPlanet = qa('[data-testid="home-live-project"]').find((group) =>
+        group.textContent?.includes('cat-planet'),
+      )!;
+      const restoredToggle = restoredPlanet.querySelector<HTMLButtonElement>('button[aria-expanded]')!;
+      expect(restoredToggle.getAttribute('aria-expanded')).toBe('false');
+      await act(async () => restoredToggle.click());
+      expect(restoredPlanet.querySelector('[data-execution-id="planet-1"] a')?.getAttribute('href')).toBe(
+        '/thread/planet-a',
+      );
+    });
+
     it('writes one row per cat and conversation and makes both current and other conversation text reachable', async () => {
       seed([live('codex-sol', 'thread-here', '改窄屏设计稿', 'e1'), live('opus', 'thread-other', 'F322 第1段', 'e2')]);
       await renderHome();
@@ -166,16 +206,14 @@ describe('F322 new-shell Workspace home · 正在发生', () => {
     it('says what it cannot verify instead of staying silent', async () => {
       useActiveExecutionStore.getState().beginHydration('thread-here', '/project');
       await renderHome();
-      expect(q('[data-testid="workspace-developing-status"]')?.textContent).toBe('正在同步项目里的运行状态…');
+      expect(q('[data-testid="workspace-developing-status"]')?.textContent).toBe('正在同步所有对话的运行状态…');
 
       await act(async () => {
         useActiveExecutionStore.getState().reset();
         const store = useActiveExecutionStore.getState();
         store.failHydration('thread-here', store.beginHydration('thread-here', '/project'), new Error('offline'));
       });
-      expect(q('[data-testid="workspace-developing-status"]')?.textContent).toBe(
-        '当前无法验证项目里的运行状态，请稍后重试。',
-      );
+      expect(q('[data-testid="workspace-developing-status"]')?.textContent).toBe('当前无法验证运行状态，请稍后重试。');
     });
 
     it('keeps the last verified rows and says the refresh failed', async () => {

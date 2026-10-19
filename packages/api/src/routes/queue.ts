@@ -494,6 +494,9 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     if (!messageStore || !opts.invocationRecordStore) {
       throw new Error('durable execution failure stores are unavailable');
     }
+    const hasReplacementProducer = () =>
+      queueProcessor.hasProcessingSlotReservation(input.threadId, input.catId) &&
+      !queueProcessor.hasProcessingSlotReservation(input.threadId, input.catId, input.executionId);
     const failedAt = Date.now();
     const failureReason = input.reason ?? 'control_plane_unavailable';
     const childExecutions = opts.turnExecutionStore
@@ -553,7 +556,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     }
 
     const inflight = invocationQueue.findProcessingByCat(input.threadId, input.catId);
-    if (!responseTerminalized && inflight) {
+    if (!responseTerminalized && inflight && !hasReplacementProducer()) {
       if (queueEntryOwnerId(inflight) !== input.userId) throw new Error('pre-start execution owner changed');
       const outcome = await queueProcessor.failPrestartProcessingGroup(
         input.threadId,
@@ -587,13 +590,17 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       if (!updated) throw new Error('control-plane failure parent terminalization lost its running fence');
     }
 
-    releaseAgentSessionLocks(
-      { threadId: input.threadId, userId: input.userId, catId: input.catId },
-      input.request,
-      'cancel',
-    );
-    if (queueProcessor.canReleaseSlotForUser(input.threadId, input.catId, input.userId)) {
-      queueProcessor.releaseSlot(input.threadId, input.catId);
+    // Durable repair may await while another invocation owns this cat's local
+    // settlement. Never retire that producer's locks or reservation for this orphan.
+    if (!hasReplacementProducer()) {
+      releaseAgentSessionLocks(
+        { threadId: input.threadId, userId: input.userId, catId: input.catId },
+        input.request,
+        'cancel',
+      );
+      if (queueProcessor.canReleaseSlotForUser(input.threadId, input.catId, input.userId)) {
+        queueProcessor.releaseSlot(input.threadId, input.catId);
+      }
     }
     for (const message of buildCancelMessages({
       cancelled: true,
@@ -859,6 +866,11 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     const runningRecords = await opts.invocationRecordStore.listRunningByThread(threadId, userId);
     for (const record of runningRecords) {
       if (Date.now() - record.updatedAt <= DEFAULT_PRESTART_RESERVATION_TTL_MS) continue;
+      // Provider/tracker ownership can end before Queue commits the aggregate
+      // terminal (outbound delivery and cursor acknowledgement still await).
+      // The exact local producer owns that whole parent, including sibling cats.
+      if (record.targetCats.some((catId) => queueProcessor.hasProcessingSlotReservation(threadId, catId, record.id)))
+        continue;
       const repairTargets = (record.targetCats as string[]).filter((catId) => {
         const canceled = invocationTracker.getCanceledSlotIdentity?.(threadId, catId);
         const exactCanceledOwner = canceled?.executionId === record.id && canceled.userId === userId;

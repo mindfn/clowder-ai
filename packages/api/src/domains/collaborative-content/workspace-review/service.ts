@@ -326,7 +326,8 @@ export class WorkspaceContentReviewService {
     assertWorkspaceReviewHuman(principal);
     const review = this.options.store.get(reviewId);
     if (!review) throw new WorkspaceContentReviewError('not_found');
-    if (review.ownerUserId !== principal.userId) throw new WorkspaceContentReviewError('access_denied');
+    if (review.collaborationScope || review.ownerUserId !== principal.userId)
+      throw new WorkspaceContentReviewError('access_denied');
     return review;
   }
 }

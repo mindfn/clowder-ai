@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { type BigIntStats, constants, type Dirent } from 'node:fs';
 import { type FileHandle, link, mkdir, open, opendir, readFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { CollectiveContentCustodyFence } from './collective-custody-fence.js';
+import { commitInitialOwnerState } from './state/initial-commit.js';
 import { type ProjectContentStateV1, parseProjectContentState } from './state/manifest.js';
 import type { VideoProjectScopeV1 } from './types.js';
 
@@ -22,12 +24,14 @@ export interface SourcePublicationMatch {
 }
 
 export class ProjectContentOwnerStore {
+  readonly collectiveFence: CollectiveContentCustodyFence;
   private readonly rootDir: string;
   private readonly locks = new Map<string, Promise<void>>();
   private readonly verifiedBlobs = new Map<string, { identity: string; ready: Promise<void> }>();
 
   constructor(dataDir: string) {
     this.rootDir = join(dataDir, 'projects', 'content-owner-v1');
+    this.collectiveFence = new CollectiveContentCustodyFence(this.rootDir, this);
   }
 
   async withContentLock<T>(contentRef: string, operation: () => Promise<T>): Promise<T> {
@@ -107,7 +111,45 @@ export class ProjectContentOwnerStore {
     return matches.sort((a, b) => a.contentRef.localeCompare(b.contentRef));
   }
 
-  async writeState(contentRef: string, state: ProjectContentStateV1): Promise<void> {
+  /** Bounded manifest discovery only; callers must reauthorize every resulting publication. */
+  async listRetainedMedia(ownerUserId: string, after = '', limit = 30) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 30) throw new TypeError('Invalid media page');
+    const items: { contentRef: string; ownerRevision: number }[] = [];
+    const directory = await openOwnerManifestDirectory(this.rootDir);
+    if (directory)
+      for await (const entry of directory) {
+        const state = await readOwnerManifest(this.rootDir, entry);
+        if (
+          state?.publicationScope?.ownerUserId !== ownerUserId ||
+          state.contentRef.localeCompare(after) <= 0 ||
+          !['image/png', 'video/mp4'].includes(state.mediaType)
+        )
+          continue;
+        items.push({ contentRef: state.contentRef, ownerRevision: state.currentOwnerRevision });
+        items.sort((a, b) => a.contentRef.localeCompare(b.contentRef));
+        if (items.length > limit + 1) items.pop();
+      }
+    return {
+      items: items.slice(0, limit),
+      ...(items.length > limit ? { nextCursor: items[limit - 1]?.contentRef } : {}),
+    };
+  }
+
+  async commitInitialState(state: ProjectContentStateV1, bytes: Uint8Array, authorizeEffect: () => Promise<void>) {
+    await commitInitialOwnerState({
+      root: this.rootDir,
+      target: this.contentRoot(state.contentRef),
+      state,
+      bytes,
+      authorizeEffect,
+    });
+  }
+
+  async writeState(
+    contentRef: string,
+    state: ProjectContentStateV1,
+    authorizeEffect?: () => Promise<void>,
+  ): Promise<void> {
     const directory = this.contentRoot(contentRef);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const target = this.statePath(contentRef);
@@ -120,6 +162,7 @@ export class ProjectContentOwnerStore {
       await handle.close();
     }
     try {
+      await authorizeEffect?.();
       await rename(temporary, target);
     } catch (error: unknown) {
       await unlink(temporary).catch(() => undefined);
@@ -158,7 +201,10 @@ export class ProjectContentOwnerStore {
   }
 
   /** Verify an immutable file once per inode/change identity, then let callers stream their requested range. */
-  async openBlob(contentRef: string, digest: `sha256:${string}`): Promise<{ handle: FileHandle; byteLength: number }> {
+  async openBlob(
+    contentRef: string,
+    digest: `sha256:${string}`,
+  ): Promise<{ handle: FileHandle; byteLength: number; path: string }> {
     if (!/^sha256:[a-f0-9]{64}$/.test(digest)) throw new Error('Invalid content blob digest');
     const path = join(this.contentRoot(contentRef), 'blobs', digest.slice('sha256:'.length));
     const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -184,7 +230,7 @@ export class ProjectContentOwnerStore {
         if (this.verifiedBlobs.get(path) === verification) this.verifiedBlobs.delete(path);
         throw error;
       }
-      return { handle, byteLength: Number(stat.size) };
+      return { handle, byteLength: Number(stat.size), path };
     } catch (error) {
       await handle.close();
       throw error;

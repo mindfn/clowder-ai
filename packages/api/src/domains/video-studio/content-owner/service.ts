@@ -1,3 +1,16 @@
+import { CollectiveContentCustody } from './collective-snapshot.js';
+import { ContentOwnerConflictError, ContentOwnerIdempotencyError, ContentOwnerNotFoundError } from './errors.js';
+
+export { ContentOwnerConflictError, ContentOwnerIdempotencyError, ContentOwnerNotFoundError } from './errors.js';
+
+import {
+  type CollectiveContentScopeV1,
+  collectiveContentScopeRef,
+  requireCollectiveContentCapacity,
+  validateCollectiveContentScope,
+  validateCollectiveContentWrite,
+} from './collective-scope.js';
+import { validateActor, validateIdentity, validateRevision } from './input-validation.js';
 import { createReceiptId, operationFingerprint } from './operation-identity.js';
 import { validateVideoProjectMediaScope } from './project-media-scope.js';
 import { validateContentOperationContext, validateVideoProjectScope } from './project-scope.js';
@@ -17,53 +30,19 @@ import type {
   VideoProjectScopeV1,
 } from './types.js';
 
-export class ContentOwnerConflictError extends Error {
-  readonly code = 'OWNER_REVISION_CONFLICT';
-
-  constructor(
-    readonly contentRef: string,
-    readonly expectedOwnerRevision: number,
-    readonly actualOwnerRevision: number,
-  ) {
-    super(
-      `Content owner revision conflict for ${contentRef}: expected ${expectedOwnerRevision}, actual ${actualOwnerRevision}`,
-    );
-    this.name = 'ContentOwnerConflictError';
-  }
-}
-
-export class ContentOwnerIdempotencyError extends Error {
-  readonly code = 'OPERATION_ID_REUSED';
-
-  constructor(
-    readonly contentRef: string,
-    readonly operationId: string,
-  ) {
-    super(`Operation ${operationId} was reused with different content-owner inputs for ${contentRef}`);
-    this.name = 'ContentOwnerIdempotencyError';
-  }
-}
-
-export class ContentOwnerNotFoundError extends Error {
-  readonly code = 'CONTENT_NOT_FOUND';
-
-  constructor(readonly contentRef: string) {
-    super(`Content not found: ${contentRef}`);
-    this.name = 'ContentOwnerNotFoundError';
-  }
-}
-
 export interface ProjectContentOwnerServiceOptions {
   readonly dataDir: string;
   readonly now?: () => string;
 }
 
 export class ProjectContentOwnerService {
+  readonly collectiveCustody: CollectiveContentCustody;
   private readonly store: ProjectContentOwnerStore;
   private readonly now: () => string;
 
   constructor(options: ProjectContentOwnerServiceOptions) {
     this.store = new ProjectContentOwnerStore(options.dataDir);
+    this.collectiveCustody = new CollectiveContentCustody(this.store);
     this.now = options.now ?? (() => new Date().toISOString());
   }
 
@@ -74,9 +53,18 @@ export class ProjectContentOwnerService {
     validateActor(input.actor);
     validateContentPublication(input.publicationScope, input.sourcePublication);
     validateVideoProjectScope(input.projectScope, input.contentRef, input.mediaType, input.publicationScope);
-    validateContentOperationContext(input.operationContext, input.projectScope);
+    validateCollectiveContentScope(input.collectiveScope, input);
+    validateContentOperationContext(input.operationContext, input.projectScope, input.collectiveScope);
     validateVideoProjectMediaScope(input.projectMediaScope, input);
     const bytes = Buffer.from(input.bytes);
+    validateCollectiveContentWrite({
+      scope: input.collectiveScope,
+      context: input.operationContext,
+      actor: input.actor,
+      kind: 'collective-artifact:publish',
+      bytes,
+      authorizeEffect: input.authorizeEffect,
+    });
     const blobDigest = digestBytes(bytes);
     const fingerprint = operationFingerprint({
       contentRef: input.contentRef,
@@ -89,9 +77,16 @@ export class ProjectContentOwnerService {
       projectMediaScope: input.projectMediaScope,
       operationContext: input.operationContext,
       sourcePublication: input.sourcePublication,
+      collectiveScope: input.collectiveScope,
     });
 
     return this.store.withContentLock(input.contentRef, async () => {
+      await this.store.collectiveFence.authorizeEffect(
+        input.contentRef,
+        input.collectiveScope,
+        input.operationContext,
+        input.authorizeEffect,
+      );
       const state = await this.store.readState(input.contentRef);
       const replay = resolveReplay(state, input.operationId, fingerprint);
       if (replay) return replay;
@@ -110,6 +105,8 @@ export class ProjectContentOwnerService {
         projectMediaScope: input.projectMediaScope,
         operationContext: input.operationContext,
         sourcePublication: input.sourcePublication,
+        collectiveScope: input.collectiveScope,
+        authorizeEffect: input.collectiveScope ? input.authorizeEffect : undefined,
       });
     });
   }
@@ -121,6 +118,7 @@ export class ProjectContentOwnerService {
     validateActor(input.actor);
     if ('projectMediaScope' in input) throw new TypeError('Project media scope cannot change');
     if ('projectScope' in input) throw new TypeError('Project scope cannot change during settlement');
+    if ('collectiveScope' in input) throw new TypeError('Collective scope cannot change during settlement');
     const bytes = Buffer.from(input.bytes);
     const blobDigest = digestBytes(bytes);
 
@@ -129,7 +127,21 @@ export class ProjectContentOwnerService {
       if (!state) throw new ContentOwnerNotFoundError(input.contentRef);
       if (state.projectMediaScope) throw new TypeError('Project screening media is immutable');
       validateContentPublication(state.publicationScope, input.sourcePublication);
-      validateContentOperationContext(input.operationContext, state.projectScope);
+      validateContentOperationContext(input.operationContext, state.projectScope, state.collectiveScope);
+      validateCollectiveContentWrite({
+        scope: state.collectiveScope,
+        context: input.operationContext,
+        actor: input.actor,
+        kind: 'collective-artifact:apply',
+        bytes,
+        authorizeEffect: input.authorizeEffect,
+      });
+      await this.store.collectiveFence.authorizeEffect(
+        input.contentRef,
+        state.collectiveScope,
+        input.operationContext,
+        input.authorizeEffect,
+      );
       const fingerprint = operationFingerprint({
         contentRef: input.contentRef,
         expectedOwnerRevision: input.expectedOwnerRevision,
@@ -140,6 +152,7 @@ export class ProjectContentOwnerService {
         projectScope: state.projectScope,
         operationContext: input.operationContext,
         sourcePublication: input.sourcePublication,
+        collectiveScope: state.collectiveScope,
       });
       const replay = resolveReplay(state, input.operationId, fingerprint);
       if (replay) return replay;
@@ -159,6 +172,8 @@ export class ProjectContentOwnerService {
         projectScope: state.projectScope,
         operationContext: input.operationContext,
         sourcePublication: input.sourcePublication,
+        collectiveScope: state.collectiveScope,
+        authorizeEffect: state.collectiveScope ? input.authorizeEffect : undefined,
       });
     });
   }
@@ -170,7 +185,14 @@ export class ProjectContentOwnerService {
 
   async open(contentRef: string, ownerRevision: number) {
     const metadata = await this.describe(contentRef, ownerRevision);
-    return { ...metadata, ...(await this.store.openBlob(contentRef, metadata.blobDigest)) };
+    const state = await this.store.readState(contentRef);
+    const revision = state?.revisions.find((item) => item.ownerRevision === ownerRevision);
+    return {
+      ...metadata,
+      ...(await this.store.openBlob(contentRef, metadata.blobDigest)),
+      committedBy: revision?.committedBy,
+      committedAt: revision?.committedAt,
+    };
   }
 
   async describe(contentRef: string, ownerRevision?: number): Promise<Omit<LoadedProjectContentV1, 'bytes'>> {
@@ -192,6 +214,7 @@ export class ProjectContentOwnerService {
       byteLength: current.byteLength,
       mediaType: current.mediaType,
       currentOwnerRevision: state.currentOwnerRevision,
+      ...(state.collectiveScope ? { collectiveScope: structuredClone(state.collectiveScope) } : {}),
       ...(state.publicationScope ? { publicationScope: { ...state.publicationScope } } : {}),
       ...(state.projectScope ? { projectScope: { ...state.projectScope } } : {}),
       ...(state.projectMediaScope ? { projectMediaScope: structuredClone(state.projectMediaScope) } : {}),
@@ -206,6 +229,23 @@ export class ProjectContentOwnerService {
     return state.receipts.map((receipt) => ({ ...receipt, actor: { ...receipt.actor } }));
   }
 
+  /** Internal recovery barrier: receipt absence is meaningful only while queued effects cannot commit. */
+  async reconcileCollectiveOperation<T>(
+    input: { contentRef: string; scopeRef: string; operationId: string; allowMissingInitialPublication?: boolean },
+    consume: (receipt: ContentSettlementReceiptV1 | undefined) => T,
+  ): Promise<T> {
+    validateIdentity(input.contentRef, 'contentRef');
+    validateIdentity(input.operationId, 'operationId');
+    return this.store.withContentLock(input.contentRef, async () => {
+      const state = await this.store.readState(input.contentRef);
+      if (!state && input.allowMissingInitialPublication) return consume(undefined);
+      if (!state?.collectiveScope || collectiveContentScopeRef(state.collectiveScope) !== input.scopeRef)
+        throw new TypeError('Collective recovery requires the exact canonical scope');
+      const receipt = state.receipts.find((item) => item.operationId === input.operationId);
+      return consume(receipt ? structuredClone(receipt) : undefined);
+    });
+  }
+
   /** Internal owner lookup; callers must reauthorize each resulting publication before exposing it. */
   findSourcePublications(input: Parameters<ProjectContentOwnerStore['findSourcePublications']>[0]) {
     return this.store.findSourcePublications(input);
@@ -215,6 +255,11 @@ export class ProjectContentOwnerService {
   listVideoProjects(ownerUserId: string) {
     validateIdentity(ownerUserId, 'ownerUserId');
     return this.store.listVideoProjects(ownerUserId);
+  }
+
+  listRetainedMedia(ownerUserId: string, after?: string) {
+    validateIdentity(ownerUserId, 'ownerUserId');
+    return this.store.listRetainedMedia(ownerUserId, after);
   }
 
   /** Internal batch lookup; read projections must freshly authorize each resulting coordinate. */
@@ -236,9 +281,12 @@ export class ProjectContentOwnerService {
     readonly projectMediaScope?: VideoProjectMediaScopeV1;
     readonly operationContext: ContentOperationContextV1 | undefined;
     readonly sourcePublication: ContentSourcePublicationV1 | undefined;
+    readonly collectiveScope?: CollectiveContentScopeV1;
+    readonly authorizeEffect?: () => Promise<void>;
   }): Promise<ContentSettlementReceiptV1> {
     const previousOwnerRevision = input.previousState?.currentOwnerRevision ?? 0;
     const ownerRevision = previousOwnerRevision + 1;
+    requireCollectiveContentCapacity(input.collectiveScope, ownerRevision);
     const outboxSequence = (input.previousState?.receipts.length ?? 0) + 1;
     const revision: ProjectContentRevisionV1 = {
       contentRef: input.contentRef,
@@ -277,10 +325,15 @@ export class ProjectContentOwnerService {
       ...(input.publicationScope ? { publicationScope: { ...input.publicationScope } } : {}),
       ...(input.projectScope ? { projectScope: { ...input.projectScope } } : {}),
       ...(input.projectMediaScope ? { projectMediaScope: structuredClone(input.projectMediaScope) } : {}),
+      ...(input.collectiveScope ? { collectiveScope: structuredClone(input.collectiveScope) } : {}),
     };
 
-    await this.store.writeBlob(input.contentRef, input.blobDigest, input.bytes);
-    await this.store.writeState(input.contentRef, state);
+    if (!input.previousState && input.collectiveScope && input.authorizeEffect) {
+      await this.store.commitInitialState(state, input.bytes, input.authorizeEffect);
+    } else {
+      await this.store.writeBlob(input.contentRef, input.blobDigest, input.bytes);
+      await this.store.writeState(input.contentRef, state, input.authorizeEffect);
+    }
     return receipt;
   }
 }
@@ -299,21 +352,4 @@ function resolveReplay(
   const receipt = state.receipts.find((candidate) => candidate.receiptId === existing.receiptId);
   if (!receipt) throw new Error(`Receipt ${existing.receiptId} is missing for operation ${operationId}`);
   return receipt;
-}
-
-function validateIdentity(value: string, field: string): void {
-  if (value.length === 0 || value.length > 512 || value.trim() !== value || value.includes('\0')) {
-    throw new TypeError(`${field} is invalid`);
-  }
-}
-
-function validateActor(actor: ContentActorV1): void {
-  validateIdentity(actor.actorId, 'actorId');
-  if (actor.kind !== 'human' && actor.kind !== 'cat') throw new TypeError('actor kind is invalid');
-}
-
-function validateRevision(value: number): void {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new TypeError('expectedOwnerRevision must be a non-negative integer');
-  }
 }

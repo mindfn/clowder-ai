@@ -3,11 +3,14 @@
 import type { ActiveExecutionProjection } from '@cat-cafe/shared';
 import { useMemo } from 'react';
 import { useShellCopy } from '@/components/shell/shell-copy';
-import { groupRunningWork } from '@/components/workspace/workspace-running-work';
 import { useCatData } from '@/hooks/useCatData';
+import { useLiveProjectFolds } from '@/hooks/useLiveProjectFolds';
 import { resolveCatNameplateName } from '@/lib/cat-display-name';
 import { activeExecutionKey, useActiveExecutionStore } from '@/stores/activeExecutionStore';
 import { HomeExecutionRow } from './HomeExecutionRow';
+import { HomeLiveProject } from './HomeLiveProject';
+import { groupLiveProjects } from './live-project-groups';
+import './home-live-projects.css';
 import { ManagedExecutionDetail } from './ManagedExecutionDetail';
 import { useHomeClock } from './use-home-clock';
 import { homeCopy } from './workspace-home.shell-copy';
@@ -25,15 +28,17 @@ function HomeLiveContent({
   const { getCatById } = useCatData();
   const executionsByKey = useActiveExecutionStore((state) => state.executionsByKey);
   const hydration = useActiveExecutionStore((state) => state.hydration);
-  const running = useMemo(
-    () =>
-      groupRunningWork(Object.values(executionsByKey)).flatMap((work) =>
-        work.executions.map((execution) => ({ ...work, key: activeExecutionKey(execution), executions: [execution] })),
-      ),
-    [executionsByKey],
+  const currentProject = useActiveExecutionStore((state) => state.projectPath);
+  const unavailable = useActiveExecutionStore((state) => state.unavailableProjectPaths);
+  const folds = useLiveProjectFolds();
+  const projects = useMemo(
+    () => groupLiveProjects(Object.values(executionsByKey), currentProject, unavailable),
+    [executionsByKey, currentProject, unavailable],
   );
+  const running = projects.flatMap((project) => project.executions);
+  const showProjects = projects.length > 1 || (projects.length === 1 && projects[0].path !== currentProject);
   const nicknameOwners = new Map<string, Set<string>>();
-  for (const catId of new Set(running.map((work) => work.catId))) {
+  for (const catId of new Set(running.map((execution) => execution.catId))) {
     const cat = getCatById(catId);
     const nickname = cat?.nickname?.trim() || cat?.displayName || catId;
     const owners = nicknameOwners.get(nickname) ?? new Set<string>();
@@ -55,26 +60,50 @@ function HomeLiveContent({
         <h2 id="home-live-title" className="home-card-title text-sm">
           {t.live.title}
         </h2>
-        <span className="home-card-scope text-xs">{t.live.scope(running.length)}</span>
+        <span className="home-card-scope text-xs">
+          {unavailable.length ? t.live.partialScope(running.length) : t.live.scope(running.length)}
+        </span>
       </header>
-      {running.length === 0 && (
+      {running.length === 0 && unavailable.length === 0 && (
         <output data-testid="workspace-developing-status" className="text-xs text-cafe-muted">
           {hydration === 'loading' ? t.live.loading : hydration === 'error' ? t.live.unverified : v3.empty}
         </output>
       )}
       <div className="home-rows">
-        {running.map((work) => (
-          <HomeExecutionRow
-            key={work.key}
-            execution={work.executions[0]}
-            threadTitle={work.threadTitle ?? work.threadId}
-            catName={rowName(work.catId)}
-            here={threadId !== undefined && work.threadId === threadId}
-            now={now}
-            onSelectExecution={onSelectExecution}
-          />
-        ))}
+        {projects.map((project) => {
+          const rows = project.executions.map((execution) => (
+            <HomeExecutionRow
+              key={activeExecutionKey(execution)}
+              execution={execution}
+              threadTitle={execution.threadTitle ?? execution.threadId}
+              catName={rowName(execution.catId)}
+              here={threadId !== undefined && execution.threadId === threadId}
+              now={now}
+              onSelectExecution={onSelectExecution}
+            />
+          ));
+          return showProjects || project.unavailable ? (
+            <HomeLiveProject
+              key={project.path}
+              group={project}
+              current={project.path === currentProject}
+              collapsed={folds.collapsed[project.path] === true}
+              busy={folds.loading || folds.saving}
+              toggle={() => void folds.toggle(project.path)}
+              now={now}
+            >
+              {rows}
+            </HomeLiveProject>
+          ) : (
+            rows
+          );
+        })}
       </div>
+      {folds.error && showProjects && (
+        <p className="home-card-foot text-xs" data-tone="warn" role="status">
+          {t.live.foldFailed}
+        </p>
+      )}
       {hydration === 'error' && (
         <p className="home-card-foot text-xs" data-tone="warn">
           {t.live.stale}

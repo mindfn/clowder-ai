@@ -1,5 +1,7 @@
 import {
   type CollectiveEventEnvelope,
+  collectiveArtifactPublicationRecordSchema,
+  collectiveArtifactRecordSchema,
   collectiveBindingVoteRecordSchema,
   collectiveDecisionRecordSchema,
   collectiveEventEnvelopeSchema,
@@ -8,6 +10,8 @@ import {
   collectiveVoteRecordSchema,
   collectiveWorkPolicySchema,
   collectiveWorkRecordSchema,
+  collectiveWorkResultFileSchema,
+  collectiveWorkResultMediaTypeForFileName,
 } from '@cat-cafe/shared';
 import { z } from 'zod';
 
@@ -81,6 +85,10 @@ const connectionSchema = z
     endpointId: z.string(),
     endpointLabel: z.string(),
     credentialDigest: z.string(),
+    custodyRecoveryDigest: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     authorizedHumanId: z.string().optional(),
     status: z.enum(['connected', 'revoked']),
     revocationReason: z
@@ -122,12 +130,30 @@ const collaborationOperationReceiptSchema = z
   .object({
     actorScope: z.string().min(1).max(320),
     fingerprint: z.string().min(1).max(64_000),
-    resourceKind: z.enum(['work', 'roadmap', 'vote', 'binding_vote', 'reaction']),
+    resourceKind: z.enum(['work', 'roadmap', 'vote', 'binding_vote', 'reaction', 'artifact']),
     resourceId: z.string().min(1).max(160),
     revision: z.number().int().positive(),
     recordedAt: z.string().datetime(),
   })
   .strict();
+
+const workResultFileRecordSchema = z
+  .object({
+    ...collectiveWorkResultFileSchema.shape,
+    collectiveId: z.string(),
+    workId: z.string().startsWith('work_'),
+    resultEventId: z.string().startsWith('evt_'),
+    resultRevision: z.number().int().positive(),
+    assignmentEventId: z.string().startsWith('evt_'),
+    connectionId: z.string().startsWith('con_'),
+    humanId: z.string().startsWith('human_'),
+    catId: z.string().trim().min(1).max(120),
+    createdAt: z.string().datetime(),
+  })
+  .strict()
+  .refine((record) => record.mediaType === collectiveWorkResultMediaTypeForFileName(record.fileName), {
+    message: 'Work result file name and media type do not match',
+  });
 
 const serviceStateV2Schema = z
   .object({
@@ -157,11 +183,14 @@ const serviceStateV2Schema = z
       )
       .default({}),
     works: z.record(z.string(), collectiveWorkRecordSchema).default({}),
+    artifacts: z.record(z.string(), collectiveArtifactRecordSchema).default({}),
+    artifactPublications: z.record(z.string(), collectiveArtifactPublicationRecordSchema).default({}),
     roadmaps: z.record(z.string(), collectiveRoadmapRecordSchema).default({}),
     votes: z.record(z.string(), collectiveVoteRecordSchema).default({}),
     bindingVotes: z.record(z.string(), collectiveBindingVoteRecordSchema).default({}),
     decisions: z.record(z.string(), collectiveDecisionRecordSchema).default({}),
     reactions: z.record(z.string(), reactionRecordSchema).default({}),
+    workResultFiles: z.record(z.string(), workResultFileRecordSchema).default({}),
     collaborationOperations: z.record(z.string(), collaborationOperationReceiptSchema).default({}),
     legacyEvents: z.record(z.string(), z.array(z.unknown())),
     clientEventIndex: z.record(z.string(), z.string()),
@@ -256,11 +285,14 @@ export function migrateServiceState(value: unknown): { readonly state: ServiceSt
     events: migratedEvents,
     participations: {},
     works: {},
+    artifacts: {},
+    artifactPublications: {},
     roadmaps: {},
     votes: {},
     bindingVotes: {},
     decisions: {},
     reactions: {},
+    workResultFiles: {},
     collaborationOperations: {},
     legacyEvents: {},
     clientEventIndex: rebuildClientEventIndex(migratedEvents),

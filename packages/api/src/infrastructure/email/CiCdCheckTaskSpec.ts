@@ -10,7 +10,7 @@
 import type { TaskItem } from '@cat-cafe/shared';
 import { parsePrSubjectKey } from '@cat-cafe/shared';
 import type { ITaskStore } from '../../domains/cats/services/stores/ports/TaskStore.js';
-import type { ExecuteContext, TaskSpec_P1 } from '../scheduler/types.js';
+import type { ExecuteContext, GateCtx, TaskSpec_P1 } from '../scheduler/types.js';
 import type { CiCdRouter, CiPollResult, CiRouteResult } from './CiCdRouter.js';
 import { isStaleCiSnapshot } from './ci-cd-contract.js';
 import { ciStatusTargetKey, createCiCollectionReaders, type PrCiStatusTarget } from './ci-status-batch-fetcher.js';
@@ -37,6 +37,7 @@ export interface CiCdCheckTaskSpecOptions {
   readonly fetchPrStatuses?: (
     targets: readonly PrCiStatusTarget[],
     signal?: AbortSignal,
+    gateCtx?: GateCtx,
   ) => Promise<ReadonlyMap<string, CiPollResult | null>>;
   readonly enrichFailureDetails?: (poll: CiPollResult, signal: AbortSignal) => Promise<CiPollResult>;
   readonly log: {
@@ -175,8 +176,8 @@ export function createCiCdCheckTaskSpec(opts: CiCdCheckTaskSpecOptions): TaskSpe
           return { run: false, reason: 'no parseable PR tasks' };
         }
 
-        // At most three 20-PR requests, each with a five-second queue+I/O
-        // deadline, fit inside admission's 30 seconds. Rotate window membership
+        // At most three 20-PR requests share admission's whole-gate deadline;
+        // each reader also bounds its queue+I/O wait. Rotate window membership
         // and batch position separately: a repeated cohort must not keep the
         // same subjects in the failed first batch. Advance both before I/O.
         const start =
@@ -199,7 +200,7 @@ export function createCiCdCheckTaskSpec(opts: CiCdCheckTaskSpecOptions): TaskSpe
             repoFullName: signal.repoFullName,
             prNumber: signal.prNumber,
           }));
-          const results = await fetchPrStatuses(targets, gateSignal);
+          const results = await fetchPrStatuses(targets, gateSignal, ctx);
           gateSignal?.throwIfAborted();
           for (const workItem of workItems) {
             workItem.signal.pollResult =

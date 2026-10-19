@@ -8,6 +8,7 @@ import type { GlobalArtifactDTO, GlobalArtifactsResponse } from '@cat-cafe/share
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '../utils/api-client';
+import { usePagedGlobalWorks } from './usePagedGlobalWorks';
 import { useWorksSourceRefresh } from './useThreadArtifacts';
 
 type WorkLineage = GlobalArtifactsResponse['workLineage'];
@@ -50,12 +51,15 @@ interface UseGlobalArtifactsResult {
   complete: boolean;
   loading: boolean;
   error: boolean;
+  loadingMore?: boolean;
   refetch: () => void;
 }
 
 export type GlobalArtifactsQuery = { view: 'recent-works'; limit: number } | { view: 'works' };
 
 export function useGlobalArtifacts(enabled: boolean, query?: GlobalArtifactsQuery): UseGlobalArtifactsResult {
+  const worksView = query?.view === 'works';
+  const paged = usePagedGlobalWorks(enabled && worksView);
   const [artifacts, setArtifacts] = useState<GlobalArtifactDTO[]>([]);
   const [workLineage, setWorkLineage] = useState<WorkLineage>('unavailable');
   const [complete, setComplete] = useState(true);
@@ -66,7 +70,6 @@ export function useGlobalArtifacts(enabled: boolean, query?: GlobalArtifactsQuer
   const hostThreadId = useChatStore((state) => state.currentThreadId);
 
   const requireComplete = query !== undefined;
-  const worksView = query?.view === 'works';
   const requestPath = query
     ? `/api/artifacts?view=${encodeURIComponent(query.view)}${'limit' in query ? `&limit=${encodeURIComponent(String(query.limit))}` : ''}`
     : '/api/artifacts';
@@ -99,7 +102,7 @@ export function useGlobalArtifacts(enabled: boolean, query?: GlobalArtifactsQuer
 
   useEffect(() => {
     enabledRef.current = enabled;
-    if (enabled) {
+    if (enabled && !worksView) {
       refetch();
     } else {
       setArtifacts([]);
@@ -109,9 +112,11 @@ export function useGlobalArtifacts(enabled: boolean, query?: GlobalArtifactsQuer
       setError(false);
     }
     return () => abortRef.current?.abort();
-  }, [enabled, refetch]);
+  }, [enabled, refetch, worksView]);
 
-  useWorksSourceRefresh(hostThreadId, enabled && worksView, refetch);
+  useWorksSourceRefresh(hostThreadId, enabled && worksView, paged.restart);
 
-  return { artifacts, workLineage, complete, loading: enabled && (loading || !enabledRef.current), error, refetch };
+  return worksView
+    ? paged
+    : { artifacts, workLineage, complete, loading: enabled && (loading || !enabledRef.current), error, refetch };
 }

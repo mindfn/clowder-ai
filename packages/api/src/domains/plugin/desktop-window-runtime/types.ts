@@ -1,4 +1,5 @@
 import type { DesktopWindowContribution } from '@clowder-ai/plugin-contract';
+import type { DesktopAppAssistOwner } from '../../concierge/live/host/companion-app-assist-owner.js';
 import type { StaticSurfaceServer } from '../external-runtime/static-surface-server.js';
 import type { VerifiedPluginPackage, VerifiedPluginPackageLocator } from '../external-runtime/types.js';
 import type { BuiltinBrokerConnection } from '../host-broker/builtin-loopback.js';
@@ -14,6 +15,7 @@ import type { DesktopWindowObserver } from './observer.js';
 import type { CompanionArchiveContract } from './published-companion-v2.js';
 
 export interface DesktopCompanionBridge {
+  readonly appAssist?: DesktopAppAssistOwner;
   request(input: unknown): Promise<CompanionReply>;
   close(): Promise<void>;
   observeVoice?(observation: HostVoiceObservation): Promise<void>;
@@ -53,6 +55,7 @@ export interface DesktopWindowFailure {
   readonly lastStage?: string | null;
 }
 export interface DesktopWindowLaunch {
+  readonly appAssist?: DesktopAppAssistOwner;
   readonly url: string;
   readonly presentation: DesktopWindowContribution['presentation'];
   /** Present only for the exact verified public archive that carries the new contract. */

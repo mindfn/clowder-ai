@@ -14,7 +14,7 @@ import type {
   ConnectorDeliveryInput,
   ConnectorDeliveryResult,
 } from '../../email/deliver-connector-message.js';
-import { gitHubAdmissionCanContinue } from '../../github/admission-budget.js';
+import { gitHubAdmissionCanContinue, gitHubObjectSignal } from '../../github/admission-budget.js';
 import { GitHubRateLimitError } from '../../github/request-budget.js';
 import type { ExecuteContext, GateCtx, TaskSpec_P1, WorkItem } from '../../scheduler/types.js';
 import type { IConnectorThreadBindingStore } from '../ConnectorThreadBindingStore.js';
@@ -95,6 +95,9 @@ function formatReconciliationMessage(signal: RepoInboxSignal): string {
 }
 
 export function createRepoScanTaskSpec(opts: RepoScanTaskSpecOptions): TaskSpec_P1<RepoInboxSignal> {
+  // Current snapshots need five queue-bound pages (up to 15s each). Allow that
+  // complete request cohort plus cleanup inside this five-minute poll interval.
+  const scanTimeoutMs = 90_000;
   const maxWorkItemsPerRun = Math.max(1, opts.maxWorkItemsPerRun ?? DEFAULT_MAX_WORK_ITEMS_PER_RUN);
   const skipHistoricalOnFirstRun = opts.skipHistoricalOnFirstRun ?? true;
   let nextWorkItemOffset = 0;
@@ -120,9 +123,10 @@ export function createRepoScanTaskSpec(opts: RepoScanTaskSpecOptions): TaskSpec_
     profile: 'poller',
     trigger: { type: 'interval', ms: opts.pollIntervalMs ?? 300_000 },
     admission: {
+      timeoutMs: scanTimeoutMs,
       async gate(ctx: GateCtx) {
-        const signal = ctx?.signal;
-        signal?.throwIfAborted();
+        const gateSignal = ctx?.signal;
+        gateSignal?.throwIfAborted();
         if (opts.repoAllowlist.length === 0) {
           return { run: false, reason: 'no repos in allowlist' };
         }
@@ -133,8 +137,11 @@ export function createRepoScanTaskSpec(opts: RepoScanTaskSpecOptions): TaskSpec_
 
         const startIndex = nextRepoIndex % opts.repoAllowlist.length;
         for (let step = 0; step < opts.repoAllowlist.length; step++) {
-          signal?.throwIfAborted();
+          gateSignal?.throwIfAborted();
           if (step > 0 && !gitHubAdmissionCanContinue(ctx)) break;
+          // A repository snapshot includes every PR/issue page. Let it use the
+          // remaining admission budget, while still reserving time to return.
+          const signal = gitHubObjectSignal(ctx, scanTimeoutMs);
           const index = (startIndex + step) % opts.repoAllowlist.length;
           const repo = opts.repoAllowlist[index]!;
           nextRepoIndex = (index + 1) % opts.repoAllowlist.length;
@@ -223,6 +230,9 @@ export function createRepoScanTaskSpec(opts: RepoScanTaskSpecOptions): TaskSpec_
             }
 
             signal?.throwIfAborted();
+            opts.log.info(
+              `[repo-scan] Scanned ${repo}: ${prs.length} PRs, ${issues.length} issues, ${repoWorkItems.length} candidates`,
+            );
             if (!baselineEstablished) {
               await Promise.all(
                 repoWorkItems.map((item) =>
@@ -241,13 +251,13 @@ export function createRepoScanTaskSpec(opts: RepoScanTaskSpecOptions): TaskSpec_
 
             workItems.push(...repoWorkItems);
           } catch (error) {
-            signal?.throwIfAborted();
+            gateSignal?.throwIfAborted();
             if (error instanceof GitHubRateLimitError) continue;
             opts.log.warn(`[repo-scan] Failed to scan ${repo}, skipping`);
           }
         }
 
-        signal?.throwIfAborted();
+        gateSignal?.throwIfAborted();
         if (workItems.length === 0) {
           if (baselinedRepoCount > 0) {
             return {

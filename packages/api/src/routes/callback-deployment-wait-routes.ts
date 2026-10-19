@@ -19,7 +19,7 @@ import { deploymentWaitGeneration } from '../domains/cats/services/stores/ports/
 import type { ITaskStore } from '../domains/cats/services/stores/ports/TaskStore.js';
 import type { DeploymentWaitLifecycleService } from '../domains/runtime-deployment/DeploymentWaitLifecycleService.js';
 import { requireCallbackAuth } from './callback-auth-prehandler.js';
-import { captureTypedWaitSource } from './callback-typed-wait-source.js';
+import { captureDeploymentWaitSource } from './callback-typed-wait-source.js';
 
 const deploymentIdSchema = z.string().regex(/^[a-z][a-z0-9._-]{0,63}$/);
 
@@ -183,7 +183,7 @@ async function performRegistration(
   const observation = await observe();
   if (!observation) return result(503, { error: 'Deployment baseline is unavailable; no wait was registered' });
 
-  const source = await captureTypedWaitSource(auth, {
+  const source = await captureDeploymentWaitSource(auth, {
     messageStore: deps.messageStore,
     ...(deps.invocationTracker ? { invocationTracker: deps.invocationTracker } : {}),
   });

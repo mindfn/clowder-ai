@@ -45,6 +45,8 @@ export interface SettledLookupInput {
   ownerUserId: string;
   sourceFeatureId: string;
   proposalId: string;
+  /** An original Chat card additionally binds the result to its canonical publication. */
+  approvalCardRef?: { threadId: string; messageId: string };
   signal?: AbortSignal;
 }
 
@@ -73,6 +75,16 @@ export async function lookupSettled(input: SettledLookupInput): Promise<SettledL
     .sort((a, b) => decidedAtOf(b) - decidedAtOf(a));
 
   if (matching.length > 0) {
+    if (input.approvalCardRef) {
+      const navigation = matching[0].navigation;
+      const ref = isRecord(navigation) && navigation.state === 'anchored' ? navigation.approvalCardRef : null;
+      if (
+        !isRecord(ref) ||
+        ref.threadId !== input.approvalCardRef.threadId ||
+        ref.messageId !== input.approvalCardRef.messageId
+      )
+        return unavailable;
+    }
     // The newest row for this exact proposal; one that does not say a terminal resolution is not a decision we can state.
     const terminal = terminalOf(matching[0]);
     if (!terminal) return unavailable;
