@@ -276,6 +276,7 @@ export interface ConnectorSourceData {
   connector: string;
   label: string;
   icon: string;
+  themeColor?: string;
   url?: string;
   /** F098-C2: Connector-specific metadata (e.g. targets for multi-mention) */
   meta?: Record<string, unknown>;

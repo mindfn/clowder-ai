@@ -284,7 +284,7 @@ export interface RouteOptions {
   humanDispositionInvocationOrigin?: HumanDispositionInvocationOrigin;
   /** Canonical Queue source class for admission/retry policy. */
   routingQueueSource?: 'user' | 'connector' | 'agent' | 'system';
-  /** Immutable Host domain scope forwarded to children; it limits execution, never grants authority. */
+  /** Retained legacy record discriminator. The retired Host executor is rejected; current plugins use public invocation. */
   executionScope?: 'collective-participation' | 'collective-work';
   /** F167 Phase T: exact protocol wake carrier for this route, never inferred from response prose. */
   turnCustodyWake?: import('../../../../ball-custody/TurnCustodyProjectionService.js').TurnCustodyWakeProvenance;

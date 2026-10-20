@@ -773,7 +773,7 @@ describe('delivery owns Append admission, without model-read state', () => {
 
 describe('existing ingress chains use common send admission and wake', () => {
   for (const policy of ['next_work', 'continue_current']) {
-    for (const ingress of ['im', 'scheduler', 'notification', 'agent']) {
+    for (const ingress of ['plugin', 'scheduler', 'notification', 'agent']) {
       it(`${ingress} ingress snapshots ${policy} and signals the common drain`, async (t) => {
         const projectRoot = await mkdtemp(join(tmpdir(), 'f117-ingress-policy-'));
         t.after(() => rm(projectRoot, { recursive: true, force: true }));
@@ -786,20 +786,17 @@ describe('existing ingress chains use common send admission and wake', () => {
           queue: harness.queue,
           progress: (entry, target) => harness.processor.progressOwnedCarrier(entry, target),
         });
-        if (ingress === 'im') {
-          const { ConnectorRouter } = await import('../dist/infrastructure/connectors/ConnectorRouter.js');
-          const router = new ConnectorRouter({
-            bindingStore: { getByExternal: async () => ({ threadId: 'thread-1', userId: 'user-1' }) },
-            dedup: { isDuplicate: () => false },
-            messageStore: harness.messageStore,
-            persistedQueueDelivery: delivery,
-            threadStore: { get: async () => ({ id: 'thread-1', projectPath: projectRoot }) },
-            socketManager: { broadcastToRoom() {} },
-            defaultUserId: 'user-1',
-            defaultCatId: 'codex',
-            log: { info() {}, warn() {}, error() {} },
+        if (ingress === 'plugin') {
+          const { sendPluginInput } = await import('./helpers/plugin-ingress-fixture.js');
+          await sendPluginInput({
+            messages: harness.messageStore,
+            queue: harness.queue,
+            threads: { get: async () => ({ id: 'thread-1', createdBy: 'user-1', participants: ['opus'] }) },
+            threadId: 'thread-1',
+            owner: 'user-1',
+            catId: 'opus',
+            content: 'same message body',
           });
-          await router.route('feishu', 'chat', 'same message body', `ingress-${ingress}-${policy}`);
         } else if (ingress === 'scheduler') {
           const { createDeliverFn } = await import('../dist/infrastructure/scheduler/delivery.js');
           await createDeliverFn({
@@ -849,7 +846,7 @@ describe('existing ingress chains use common send admission and wake', () => {
         }
         assert.equal(harness.admissionNotifications.length, 1);
         const [admission] = harness.admissionNotifications[0];
-        assert.deepEqual(admission.targets, ['opus'], 'IM own fallback must not override the common send target');
+        assert.deepEqual(admission.targets, ['opus'], 'ingress must preserve the admitted target');
         assert.equal(admission.delivery.authorIntentByTarget.opus.requested, policy);
         if (policy === 'continue_current') {
           await waitFor(() => harness.queue.getEntrySnapshot('thread-1', 'user-1', admission.id) === null);
