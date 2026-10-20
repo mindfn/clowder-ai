@@ -15,7 +15,7 @@ import {
 import { composeManagedSettingsDocument } from './claude-compaction-launch-plan.js';
 import { resolveClaudeMcpConfig } from './claude-mcp-config.js';
 import { appendLocalImagePathHints, collectImageAccessDirectories } from './image-cli-bridge.js';
-import { extractImagePaths } from './image-paths.js';
+import { extractTrustedImagePaths } from './image-paths.js';
 import { compileL0ViaSubprocess } from './l0-compiler.js';
 
 function effortValue(effort: string): EffortLevel {
@@ -87,7 +87,11 @@ export async function prepareClaudeSdkLaunch(input: {
   // Alternate spawn transports cannot silently be ignored by this carrier.
   if (options?.spawnCliOverride) throw new Error('claude_sdk_spawn_override_unsupported');
   const readOnly = options?.toolExecutionPolicy?.mode === 'read_only';
-  const imagePaths = extractImagePaths(options?.contentBlocks, options?.uploadDir);
+  const imagePaths = await extractTrustedImagePaths(
+    options?.contentBlocks,
+    options?.uploadDir,
+    options?.resolveTrustedImagePath,
+  );
   const prompt = appendLocalImagePathHints(input.prompt, imagePaths);
   const { effectiveModel, useEnvModelOverride } = resolveClaudeModelSelection(options?.callbackEnv, input.model);
   const effort = effortValue(resolveClaudeEffortLevel(catId, effectiveModel, options?.reasoningEffortOverride));
@@ -129,6 +133,9 @@ export async function prepareClaudeSdkLaunch(input: {
     for (const key of SUBSCRIPTION_MODE_DENY_KEYS) overrides[key] = null;
   applyClaudeTokenAccountEnv(overrides, options?.claudeTokenAccount);
   const env = buildChildEnv(overrides, { workingDirectory: options?.workingDirectory });
+  // SDK 0.3.285 otherwise hides session_state_changed as sdk_host_only. Native
+  // idle is the drain receipt for background agents AND their report turns.
+  env.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = '1';
   if (readOnly) env.CAT_CAFE_READONLY = 'true';
   const request: PreparedProviderRequestV1 = Object.freeze({
     v: 1,

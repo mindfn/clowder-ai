@@ -38,7 +38,7 @@ describe('F322 设置与管理 information architecture', () => {
     expect(team.destination.items[0]).toEqual({ kind: 'section', sectionId: 'members' });
   });
 
-  it('keeps every one of the 14 old sections, each under exactly one first-level item', () => {
+  it('keeps each current v2 section under exactly one owner with no retired entries', () => {
     const classicDestinationSections = new Set<string>(CLASSIC_DESTINATION_SECTION_IDS);
     const originalSections = SETTINGS_SECTIONS.filter((section) => !classicDestinationSections.has(section.id));
     for (const section of originalSections) {
@@ -50,7 +50,14 @@ describe('F322 设置与管理 information architecture', () => {
       expect(owners, `section ${section.id} must have exactly one owner`).toHaveLength(1);
       expect(entryForSection(section.id)).toBe(owners[0]);
     }
-    expect(originalSections).toHaveLength(14);
+    expect(originalSections).toHaveLength(13);
+    const declared = SETTINGS_IA.flatMap((entry) =>
+      entry.destination.kind === 'sections'
+        ? entry.destination.items.flatMap((item) => (item.kind === 'section' ? [item.sectionId] : []))
+        : [],
+    );
+    expect(declared.sort()).toEqual(originalSections.map((section) => section.id).sort());
+    expect(declared).not.toContain('im');
   });
 
   it('places account login immediately after members under 猫猫团队', () => {
@@ -77,6 +84,11 @@ describe('F322 pins above the mailbox', () => {
   it('old pins (bare settings section ids) keep resolving so nobody loses a pin', () => {
     const pin = resolvePin('notify');
     expect(pin).toMatchObject({ kind: 'section', id: 'notify', label: '通知' });
+  });
+
+  it('resolves a retired im pin to the current plugin destination', () => {
+    expect(resolvePin('im')).toEqual(resolvePin('plugins'));
+    expect(resolvePin('im')).toMatchObject({ kind: 'section', id: 'plugins' });
   });
 
   it('new pins are namespaced so a first-level "系统" can never collide with the old "系统配置" section id', () => {

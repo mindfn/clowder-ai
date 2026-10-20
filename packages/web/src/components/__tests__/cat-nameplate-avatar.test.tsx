@@ -9,7 +9,7 @@ Object.assign(globalThis as Record<string, unknown>, { React });
 
 const registry = vi.hoisted(() => ({ cats: [] as Array<{ id: string }> }));
 
-// The real CatAvatar reads the same registry; a stub would hide the size and the ring the plate must ask it for.
+// Use the real member avatar and registry so placement cannot hide a duplicate frame.
 vi.mock('@/hooks/useCatData', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useCatData')>();
   return {
@@ -34,15 +34,7 @@ const OPUS = {
   defaultModel: 'claude',
 } as unknown as CatData;
 
-/**
- * F322 B — the cat's nameplate with a 32px face (DESIGN.md「对话」, north-star §1.16 "名牌上的头像", You chose B on 2026-10-05):
- * the plate stays 26px high with the name at 13/600; the avatar grows from 16px to 32px and sits over the plate's left end,
- * its bottom edge 2px below the plate and its top above it, with a 2px ring in the work-surface colour that separates it
- * from the plate. The face carries no cat-coloured ring (the plate already is the cat's colour). The plate leaves 40px on
- * the left for the face and 10px on the right.
- *
- * Static markup, so the raw `style` strings are visible.
- */
+/** Nameplate placement must not duplicate the shared member avatar body. */
 const render = (props: Partial<React.ComponentProps<typeof CatNameplate>> = {}) => {
   registry.cats = [OPUS];
   return renderToStaticMarkup(<CatNameplate catId="opus" name="宪宪" {...props} />);
@@ -65,10 +57,10 @@ describe('the nameplate carries a 32px face laid over its left end', () => {
       expect(plate.height).toBe('26px');
       expect(plate.paddingLeft).toBe('40px');
       expect(plate.paddingRight).toBe('10px');
-      expect(face.width).toBe('32px');
-      expect(face.height).toBe('32px');
+      expect(face.width).not.toBe('32px');
+      expect(face.height).not.toBe('32px');
       expect(face.bottom).toBe('-2px');
-      expect(face.boxShadow).toBe('0 0 0 2px var(--shell-work)');
+      expect(face.boxShadow).not.toContain('0 0 0 2px');
       expect(name.fontSize).toBe('13px');
       expect(name.fontWeight).toBe('600');
       expect(name.textOverflow).toBe('ellipsis');
@@ -84,12 +76,17 @@ describe('the nameplate carries a 32px face laid over its left end', () => {
     );
   });
 
-  it('asks the avatar for 32px and for no cat-coloured ring', () => {
+  it('delegates the full-size image and identity ring to the shared member body', () => {
     const html = render();
-    // CatAvatar's own box is `size` square; without a ring it adds no ring-2 class
-    expect(html).toMatch(/class="relative flex-shrink-0" style="width:32px;height:32px"/);
-    expect(html).not.toContain('ring-2');
-    expect(html).not.toMatch(/width:16px;height:16px/);
+    const wrapper = attrsOf(html, 'cat-nameplate-avatar');
+    expect(wrapper).not.toContain('box-shadow');
+    expect(wrapper).not.toContain('rounded-full');
+    const body = /<[^>]*data-sender-avatar="message"[^>]*>/.exec(html)?.[0] ?? '';
+    expect(body).toContain('w-8 h-8');
+    expect(body).not.toContain('box-shadow');
+    expect(html).toContain('data-member-avatar-ring');
+    expect(html).toContain('box-shadow:inset 0 0 0 1px #9B7EBD');
+    expect(html).toContain('w-full h-full object-cover');
   });
 
   it('keeps the full name keyboard-accessible for the shared tooltip and consumes the cat name role', () => {

@@ -37,6 +37,8 @@ export class MemoryAuthInvocationBackend implements IAuthInvocationBackend {
   }
 
   async create(input: AuthInvocationInput): Promise<void> {
+    if (Object.hasOwn(input, 'pluginTaskBinding') || Object.hasOwn(input, 'publicInvocationBinding'))
+      throw new Error('Unsupported invocation principal');
     this.cleanupTerminalTombstones();
     if (this.records.size >= this.maxRecords) throw new AuthInvocationAdmissionError();
 
@@ -83,12 +85,14 @@ export class MemoryAuthInvocationBackend implements IAuthInvocationBackend {
 
   async getRecord(invocationId: string): Promise<InvocationRecord | null> {
     this.cleanupTerminalTombstones();
-    return this.records.get(invocationId) ?? null;
+    const record = this.records.get(invocationId);
+    return record ?? null;
   }
 
   async peekRecord(invocationId: string): Promise<InvocationRecord | null> {
     this.cleanupTerminalTombstones();
-    return this.records.get(invocationId) ?? null;
+    const record = this.records.get(invocationId);
+    return record ?? null;
   }
 
   async listActiveRecords(): Promise<InvocationRecord[]> {

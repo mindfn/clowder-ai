@@ -52,6 +52,27 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @cat-cafe/shared build
       - run: pnpm --filter @cat-cafe/api build
+      - name: Native PR and Issue tracking source fence (original candidate bytes)
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_dir=$(mktemp -d "$RUNNER_TEMP/native-tracking.XXXXXX")
+          curl --fail --location --retry 3 --max-time 180 \
+            https://github.com/mindfn/clowder-ai-plugins/releases/download/f202-c1-candidate-2b4f0418c1dd/f202-c1-candidate-2b4f0418c1dd.tgz \
+            --output "$candidate_dir/bundle.tgz"
+          echo "542a7e00439fc1ecbe180f7185d2eb4ca66281a3c3785f9b7348941884c6efe3  $candidate_dir/bundle.tgz" | sha256sum --check
+          tar -xzf "$candidate_dir/bundle.tgz" -C "$candidate_dir"
+          export F202_CANDIDATE_MATRIX="$candidate_dir/f202-c1-candidate-2b4f0418c1dd/candidate-matrix.json"
+          pnpm --filter @cat-cafe/api test:native-tracking-artifact
+      - name: Console member identity and persistent send strategy regressions
+        run: >-
+          pnpm --filter @cat-cafe/web exec node scripts/run-with-node-env-test.mjs pnpm exec vitest run
+          src/components/__tests__/1398-sender-identity.test.tsx
+          src/components/__tests__/MessageBundleCard-contract.test.tsx
+          src/components/__tests__/chat-input-message-disposition.test.ts
+          src/components/__tests__/chat-input-add-menu.test.tsx
+          src/components/__tests__/classic-a2a-parity.test.tsx
+          src/hooks/__tests__/useMessageDispositionPreference-settlement.test.tsx
       - run: pnpm --filter @cat-cafe/web build
 
   public-test-prepare:

@@ -10,10 +10,6 @@
     "merge:clowder": "node scripts/clowder-merge-execution.mjs",
     "guards:install": "bash ./scripts/install-git-guards.sh",
     "start": "node ./scripts/start-entry.mjs start",
-    "collective:start": "pnpm --filter @cat-cafe/collective-service start",
-    "collective:dev": "pnpm --filter @cat-cafe/collective-service dev",
-    "test:f290-runtime-journey": "pnpm --filter @cat-cafe/collective-service build && pnpm --filter @cat-cafe/web build && node --test packages/web/test/browser/f290-collective-runtime-journey.test.mjs",
-    "test:f290-shared-artifacts": "node packages/web/scripts/ensure-browser-test-artifacts.cjs && bash packages/api/scripts/with-test-home.sh node packages/web/scripts/run-with-node-env-test.mjs node --import tsx --test --test-concurrency=1 packages/web/test/browser/f290-shared-artifacts.test.mjs packages/web/test/browser/f290-shared-artifact-management.test.mjs packages/web/test/browser/f290-retained-media.test.mjs",
     "stop": "./scripts/start-dev.sh --stop",
     "dev:stop": "./scripts/start-dev.sh --stop",
     "runtime:stop": "./scripts/runtime-worktree.sh stop",
@@ -78,7 +74,7 @@
     "check:no-provider-canary-residue": "node scripts/check-no-provider-canary-residue.mjs",
     "check:paw-feel-disposition-boundaries": "node --test scripts/check-paw-feel-disposition-boundaries.test.mjs && node scripts/check-paw-feel-disposition-boundaries.mjs",
     "check:paw-feel-disposition-capacity": "pnpm --filter @cat-cafe/shared build && pnpm --filter @cat-cafe/api build && node --test packages/api/test/harness-eval/paw-feel-disposition-capacity.test.js",
-    "check:f212-reconciliation-eval": "node --test scripts/eval-f212-reconciliation/reconciliation-baseline.test.mjs scripts/eval-f212-reconciliation/reconciliation-window.test.mjs scripts/eval-f212-reconciliation/reconciliation-matcher.test.mjs scripts/eval-f212-reconciliation/reconciliation-sequence.test.mjs scripts/eval-f212-reconciliation/reconciliation-malformed.test.mjs",
+    "check:f212-reconciliation-eval": "node --test scripts/eval-f212-reconciliation/reconciliation-baseline.test.mjs scripts/eval-f212-reconciliation/reconciliation-window.test.mjs scripts/eval-f212-reconciliation/reconciliation-matcher.test.mjs scripts/eval-f212-reconciliation/reconciliation-sequence.test.mjs scripts/eval-f212-reconciliation/reconciliation-malformed.test.mjs scripts/eval-f212-reconciliation/reconciliation-compression.test.mjs",
     "eval:f212-reconciliation": "node scripts/eval-f212-abnormal-exit-reconciliation.mjs",
     "eval:f168-external-case-closure": "node scripts/run-f168-external-case-eval.mjs",
     "video:new": "node scripts/video-forge/new-project.mjs",
@@ -171,5 +167,10 @@
     "autoFixAllowlist": [
       "biome"
     ]
+  },
+  "pnpm": {
+    "overrides": {
+      "@clowder-ai/plugin-sdk@0.2.0-beta.21>@clowder-ai/plugin-contract": "file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.37-c1-785543498768.tgz"
+    }
   }
 }

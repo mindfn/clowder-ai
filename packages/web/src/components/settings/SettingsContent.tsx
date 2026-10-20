@@ -5,13 +5,11 @@ import { refreshCatsNow, useCatData } from '@/hooks/useCatData';
 import { catDossierCoversStrengths, useDossierProfiles } from '@/hooks/useDossierProfiles';
 import { apiFetch } from '@/utils/api-client';
 import { accountsCopy } from '../accounts/accounts.shell-copy';
-import { ConnectorPluginInstallButton } from '../ConnectorPluginInstallButton';
 import { CatOverviewTab, type ConfigData } from '../config-viewer-tabs';
 import { DesktopUpdateSettingsPanel } from '../DesktopUpdateSettingsPanel';
 import { HubAccountsTab } from '../HubAccountsTab';
 import { HubCatEditor } from '../HubCatEditor';
 import { HubCoCreatorEditor } from '../HubCoCreatorEditor';
-import { HubConnectorConfigTab } from '../HubConnectorConfigTab';
 import { HubEnvFilesTab } from '../HubEnvFilesTab';
 import { MemberCopyProvider } from '../members/editor-presentation';
 import { type MemberDeleteCopy, MemberEditorHost } from '../members/MemberEditorHost';
@@ -71,7 +69,6 @@ export function SettingsContent({ section, initialEditCatId, initialReferrerThre
   const [createDraft, setCreateDraft] = useState<Parameters<typeof HubCatEditor>[0]['draft']>(null);
   const [togglingCatId, setTogglingCatId] = useState<string | null>(null);
   const [coCreatorEditorOpen, setCoCreatorEditorOpen] = useState(false);
-  const [imRefreshKey, setImRefreshKey] = useState(0);
   const confirm = useConfirm();
 
   // F208 OQ-9: per-field check — badge only when dossier l0RosterSummary covers teamStrengths (KD-14)
@@ -218,6 +215,18 @@ export function SettingsContent({ section, initialEditCatId, initialReferrerThre
 
   const meta = SETTINGS_SECTIONS.find((item) => item.id === section) ?? SETTINGS_SECTIONS[0];
 
+  const pageHeader = {
+    title: section === 'accounts' ? accountsText.title : (sectionText(section)?.title ?? meta.label),
+    subtitle:
+      section === 'accounts'
+        ? isV2
+          ? undefined
+          : accountsText.subtitle
+        : isV2
+          ? (sectionText(section)?.description ?? meta.description)
+          : meta.description,
+  };
+
   const content = (() => {
     switch (meta.id) {
       case 'members':
@@ -291,8 +300,6 @@ export function SettingsContent({ section, initialEditCatId, initialReferrerThre
         );
       case 'accounts':
         return <HubAccountsTab />;
-      case 'im':
-        return <HubConnectorConfigTab refreshKey={imRefreshKey} />;
       case 'voice':
         return (
           <div className="space-y-6">
@@ -336,7 +343,7 @@ export function SettingsContent({ section, initialEditCatId, initialReferrerThre
       case 'mcp':
         return <McpManageContent />;
       case 'plugins':
-        return <PluginsContent />;
+        return <PluginsContent pageHeader={pageHeader} />;
       case 'concierge':
         return <ConciergeSettingsContent />;
       default:
@@ -361,22 +368,7 @@ export function SettingsContent({ section, initialEditCatId, initialReferrerThre
 
   return (
     <>
-      {!(isV2 && section === 'members') && (
-        <SettingsPageHeader
-          title={section === 'accounts' ? accountsText.title : (sectionText(section)?.title ?? meta.label)}
-          subtitle={
-            section === 'accounts'
-              ? isV2
-                ? undefined
-                : accountsText.subtitle
-              : isV2
-                ? (sectionText(section)?.description ?? meta.description)
-                : meta.description
-          }
-        >
-          {section === 'im' && <ConnectorPluginInstallButton onInstalled={() => setImRefreshKey((k) => k + 1)} />}
-        </SettingsPageHeader>
-      )}
+      {section !== 'plugins' && !(isV2 && section === 'members') && <SettingsPageHeader {...pageHeader} />}
       {isV2 && section === 'members' ? (
         <MemberCopyProvider>
           {content}

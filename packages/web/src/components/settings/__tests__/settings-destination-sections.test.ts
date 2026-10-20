@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SETTINGS_SECTIONS } from '../settings-nav-config';
 
 describe('F190 Settings destination sections', () => {
-  it('keeps the operator-defined secondary section order', () => {
+  it('keeps the operator-defined relative order after upstream retires the separate IM section', () => {
     const ids = SETTINGS_SECTIONS.map((section) => section.id);
 
     expect(ids).not.toContain('destinations');
@@ -13,7 +13,6 @@ describe('F190 Settings destination sections', () => {
       'members',
       'profiles',
       'accounts',
-      'im',
       'skills',
       'mcp',
       'plugins',

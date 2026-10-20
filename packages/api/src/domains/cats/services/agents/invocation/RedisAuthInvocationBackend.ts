@@ -30,6 +30,11 @@ const KEY_LATEST = AuthInvocationKeys.latest;
 const KEY_REFRESH_COOLDOWN = (id: string) => `auth:refresh-cooldown:${id}`;
 const DEFAULT_TOMBSTONE_GC_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_CLIENT_MESSAGE_IDS = 1000;
+function principalKind(input: AuthInvocationInput): string {
+  if (input.managedWorkBinding) return 'managed_work';
+  return 'ordinary';
+}
+
 export class RedisAuthInvocationBackend implements IAuthInvocationBackend {
   private readonly tombstoneGcTtlMs: number;
 
@@ -41,7 +46,13 @@ export class RedisAuthInvocationBackend implements IAuthInvocationBackend {
   }
 
   async create(input: AuthInvocationInput): Promise<void> {
+    if (Object.hasOwn(input, 'pluginTaskBinding') || Object.hasOwn(input, 'publicInvocationBinding'))
+      throw new Error('Unsupported invocation principal');
     const fields: string[] = [
+      'recordSchemaVersion',
+      '1',
+      'principalKind',
+      principalKind(input),
       'invocationId',
       input.invocationId,
       'callbackToken',
@@ -67,8 +78,6 @@ export class RedisAuthInvocationBackend implements IAuthInvocationBackend {
     if (input.a2aTriggerMessageId) fields.push('a2aTriggerMessageId', input.a2aTriggerMessageId);
     if (input.originTriggerMessageId) fields.push('originTriggerMessageId', input.originTriggerMessageId);
     if (input.toolExecutionPolicy) fields.push('toolExecutionPolicy', JSON.stringify(input.toolExecutionPolicy));
-    if (input.executionGrant) fields.push('executionGrant', JSON.stringify(input.executionGrant));
-    if (input.collectiveWorkBinding) fields.push('collectiveWorkBinding', JSON.stringify(input.collectiveWorkBinding));
 
     const latestKey = KEY_LATEST(input.threadId, input.catId as string);
     for (let attempt = 0; attempt < 8; attempt += 1) {

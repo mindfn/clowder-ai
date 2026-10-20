@@ -1,4 +1,4 @@
-import { type CatId, collectiveExecutionGrantSchema, collectiveWorkBindingSchema } from '@cat-cafe/shared';
+import type { CatId } from '@cat-cafe/shared';
 import {
   AUTH_TERMINAL_DISPOSITIONS,
   type AuthInvocationState,
@@ -35,10 +35,6 @@ function applyOptionalFields(record: InvocationRecord, fields: Record<string, st
   if (fields.a2aTriggerMessageId) record.a2aTriggerMessageId = fields.a2aTriggerMessageId;
   if (fields.originTriggerMessageId) record.originTriggerMessageId = fields.originTriggerMessageId;
   if (fields.toolExecutionPolicy) record.toolExecutionPolicy = parseToolExecutionPolicy(fields.toolExecutionPolicy);
-  if (fields.executionGrant)
-    record.executionGrant = collectiveExecutionGrantSchema.parse(JSON.parse(fields.executionGrant));
-  if (fields.collectiveWorkBinding)
-    record.collectiveWorkBinding = collectiveWorkBindingSchema.parse(JSON.parse(fields.collectiveWorkBinding));
   if (fields.endedAt) record.endedAt = Number(fields.endedAt);
   if (fields.endReason) record.endReason = fields.endReason;
   if (fields.terminalRef) record.terminalRef = fields.terminalRef;
@@ -52,8 +48,32 @@ function applyOptionalFields(record: InvocationRecord, fields: Record<string, st
   }
 }
 
+/**
+ * Every newly written record carries an independent envelope, so losing a whole
+ * binding payload cannot silently turn a scoped principal into an ordinary one.
+ * Unversioned ordinary/managed records retain their historical decoder;
+ * unversioned Task principals never shipped and are rejected, not backfilled.
+ * This is a corruption check, not protection against arbitrary Redis rewrites.
+ */
+function hasValidPrincipalEnvelope(fields: Record<string, string>): boolean {
+  const task = Object.hasOwn(fields, 'pluginTaskBinding') || Object.hasOwn(fields, 'pluginTaskBindingVersion');
+  const publicPlugin = Object.hasOwn(fields, 'publicInvocationBinding');
+  const managed = Object.hasOwn(fields, 'managedWorkId') || Object.hasOwn(fields, 'managedWorkAttemptId');
+  if (!Object.hasOwn(fields, 'recordSchemaVersion') && !Object.hasOwn(fields, 'principalKind'))
+    return !task && !publicPlugin;
+  if (fields.recordSchemaVersion !== '1') return false;
+  switch (fields.principalKind) {
+    case 'ordinary':
+      return !task && !publicPlugin && !managed;
+    case 'managed_work':
+      return Boolean(fields.managedWorkId && fields.managedWorkAttemptId) && !task && !publicPlugin;
+    default:
+      return false;
+  }
+}
+
 export function authRecordFromRedisHash(fields: Record<string, string>, msgs: Set<string>): InvocationRecord | null {
-  if (!fields.invocationId || !fields.callbackToken) return null;
+  if (!fields.invocationId || !fields.callbackToken || !hasValidPrincipalEnvelope(fields)) return null;
   if (Boolean(fields.managedWorkId) !== Boolean(fields.managedWorkAttemptId)) return null;
   const state = parseAuthState(fields.state);
   if (!state) return null;
@@ -77,34 +97,5 @@ export function authRecordFromRedisHash(fields: Record<string, string>, msgs: Se
   } catch {
     return null;
   }
-  if (record.toolExecutionPolicy?.mode === 'collective_participation' && !record.executionGrant) return null;
-  if (
-    record.executionGrant &&
-    (record.toolExecutionPolicy?.mode !== 'collective_participation' ||
-      record.ownerAuthProvenance !== 'unknown' ||
-      record.managedWorkBinding ||
-      record.collectiveWorkBinding ||
-      record.executionGrant.source.catId !== record.catId ||
-      record.executionGrant.originTriggerMessageId !== record.originTriggerMessageId)
-  )
-    return null;
-  if (
-    record.collectiveWorkBinding &&
-    (!record.originTriggerMessageId || record.executionGrant || record.managedWorkBinding)
-  )
-    return null;
-  // A persisted admission proves this Work, not a live strictly authenticated owner session.
-  // Downgrade pre-separation records as well, so restart cannot restore owner control-plane access.
-  if (record.collectiveWorkBinding) record.ownerAuthProvenance = 'unknown';
-  if (
-    record.toolExecutionPolicy?.mode === 'collective_work' &&
-    (!record.collectiveWorkBinding ||
-      record.toolExecutionPolicy.taskId !== record.collectiveWorkBinding.taskId ||
-      record.toolExecutionPolicy.threadId !== record.threadId ||
-      record.toolExecutionPolicy.executionRevision !== (record.collectiveWorkBinding.executionRevision ?? 1) ||
-      record.toolExecutionPolicy.executionRef !==
-        (record.collectiveWorkBinding.executionRef ?? record.collectiveWorkBinding.authorityRef))
-  )
-    return null;
   return record;
 }

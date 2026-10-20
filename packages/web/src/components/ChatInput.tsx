@@ -29,6 +29,7 @@ import { useMessageDispositionPreference } from '@/hooks/useMessageDispositionPr
 import { usePathCompletion } from '@/hooks/usePathCompletion';
 import type { UploadStatus, WhisperOptions } from '@/hooks/useSendMessage';
 import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
+import { formatCatDisplayName } from '@/lib/cat-display-name';
 import { useChatStore } from '@/stores/chatStore';
 import { useInputHistoryStore } from '@/stores/inputHistoryStore';
 import { useToastStore } from '@/stores/toastStore';
@@ -318,11 +319,16 @@ export function ChatInput({
     return ![...whisperTargets].some((catId) => activeCatIds.has(catId));
   }, [whisperMode, whisperTargets, activeCatIds]);
   const messageDisposition = useMessageDispositionPreference(effectiveThreadId, Boolean(effectiveThreadId));
+  const guideReplyNames = cats
+    .filter((cat) => activeCatIds.has(cat.id) && cat.messageDeliveryCapabilities?.guideReply === true)
+    .map(formatCatDisplayName);
+  const guideReplyHint =
+    guideReplyNames.length > 0 ? `想调整方向？可直接给${guideReplyNames.join('/')}发消息，引导回复。` : undefined;
   const textareaPlaceholder = whisperMode
     ? shellV2
       ? v2Copy.whisperPlaceholder
       : '悄悄话...'
-    : (placeholder ?? (shellV2 ? v2Copy.placeholder : '输入消息... (@ 召唤猫猫 · /thread 引用对话)'));
+    : (guideReplyHint ?? placeholder ?? (shellV2 ? v2Copy.placeholder : '输入消息... (@ 召唤猫猫 · /thread 引用对话)'));
 
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [contextPickerMode, setContextPickerMode] = useState<ContextPickerMode | null>(null);
@@ -497,17 +503,8 @@ export function ChatInput({
       const settleAdmission = beginComposerDraftAdmission(draftSnapshot);
       let admission: ReturnType<ChatInputProps['onSend']>;
       try {
-        admission = messageDisposition.oneShot
-          ? onSend(
-              trimmed,
-              images.length > 0 ? images : undefined,
-              whisper,
-              replyToMessage?.id,
-              sendContexts.length > 0 ? sendContexts : undefined,
-              undefined,
-              messageDisposition.oneShot,
-            )
-          : sendContexts.length > 0
+        admission =
+          sendContexts.length > 0
             ? onSend(trimmed, images.length > 0 ? images : undefined, whisper, replyToMessage?.id, sendContexts)
             : onSend(trimmed, images.length > 0 ? images : undefined, whisper, replyToMessage?.id);
       } catch {
@@ -517,7 +514,6 @@ export function ChatInput({
       void Promise.resolve(admission).then(
         (accepted) => {
           settleAdmission(accepted === false ? false : undefined);
-          if (accepted !== false) messageDisposition.clearOneShot();
         },
         () => settleAdmission(false),
       );
@@ -550,7 +546,6 @@ export function ChatInput({
     markComposerDraftOptimisticallyCleared,
     setInput,
     effectiveThreadId,
-    messageDisposition,
   ]);
 
   const handleSend = useCallback(() => doSend(), [doSend]);
@@ -1051,7 +1046,6 @@ export function ChatInput({
           onWhisperToggle={handleWhisperToggle}
           onClose={() => setAddMenuOpen(false)}
           messageDisposition={messageDisposition}
-          hasActiveInvocation={hasActiveInvocation && !prospectiveThread}
           triggerRef={addButtonRef}
           disabled={disabled}
           sendDisabled={sendTemporarilyDisabled}

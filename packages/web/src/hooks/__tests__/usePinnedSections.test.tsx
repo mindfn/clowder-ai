@@ -201,4 +201,47 @@ describe('usePinnedSections', () => {
     expect(state.pinned).toEqual(['members', 'accounts']);
     expect(JSON.parse(localStorage.getItem(SEEDED_DEFAULTS_KEY) ?? 'null')).toEqual(['members', 'accounts']);
   });
+
+  it('normalizes old im pins for both rails, deduplicates and preserves unpin', () => {
+    localStorage.setItem(SEEDED_DEFAULTS_KEY, JSON.stringify(['members', 'accounts']));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(['notify', 'im', 'plugins', 'skills']));
+    const state = renderHook();
+    expect(state.pinned).toEqual(['notify', 'plugins', 'skills']);
+    expect(state.isPinned('plugins')).toBe(true);
+    React.act(() => state.unpin('plugins'));
+    expect(latest?.pinned).toEqual(['notify', 'skills']);
+    expect(localStorage.getItem(STORAGE_KEY)).toBe(JSON.stringify(['notify', 'skills']));
+  });
+
+  it('normalizes old pins arriving from another tab without rewriting storage on read', () => {
+    renderHook();
+    const raw = JSON.stringify(['im']);
+    localStorage.setItem(STORAGE_KEY, raw);
+    React.act(() => window.dispatchEvent(new StorageEvent('storage', { key: STORAGE_KEY })));
+    expect(latest?.pinned).toEqual(['plugins']);
+    expect(localStorage.getItem(STORAGE_KEY)).toBe(raw);
+  });
+
+  it('combines retired-pin normalization with capacity retry without reviving cancelled defaults', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(['im', 'plugins', 'skills', 'mcp', 'marketplace', 'concierge', 'voice', 'system']),
+    );
+    const customPins = ['plugins', 'skills', 'mcp', 'marketplace', 'concierge', 'voice', 'system'];
+
+    let state = renderHook();
+    expect(state.pinned).toEqual([...customPins, 'members']);
+    expect(state.pinned).not.toContain('im');
+
+    React.act(() => state.unpin('members'));
+    React.act(() => root.render(null));
+    state = renderHook();
+    expect(state.pinned).toEqual([...customPins, 'accounts']);
+
+    React.act(() => state.unpin('accounts'));
+    React.act(() => root.render(null));
+    state = renderHook();
+    expect(state.pinned).toEqual(customPins);
+    expect(JSON.parse(localStorage.getItem(SEEDED_DEFAULTS_KEY) ?? 'null')).toEqual(['members', 'accounts']);
+  });
 });
