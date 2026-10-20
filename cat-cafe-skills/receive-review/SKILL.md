@@ -1,6 +1,6 @@
 ---
 name: receive-review
-tips_exempt: "Renewed 2026-10-13: evidence reuse, measured validation cost and browser checks selected by real UX risk refine the existing review workflow; no new end-user Hub operation."
+tips_exempt: "Renewed 2026-10-20: the retained fork guidance adds data-flow and truth-source checks to the existing review workflow; it creates no end-user Hub operation or separately discoverable capability."
 description: "处理 reviewer 反馈：Red→Green 修复 + 按 engagement mode 收口。Use when: 收到 review 结果或 P1/P2。Not for: 发 review 请求、自检。Output: 按 iterative / one-shot 契约闭环。"
 triggers:
   - "review 结果"

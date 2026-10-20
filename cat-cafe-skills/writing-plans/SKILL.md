@@ -1,6 +1,6 @@
 ---
 name: writing-plans
-tips_exempt: "Renewed 2026-10-02: clarify whether an accepted goal is implementable and whether the plan preserves its intended result; internal planning guidance adds no end-user capability."
+tips_exempt: "Renewed 2026-10-20: the retained fork guidance makes truth-source ownership explicit inside the existing planning workflow; it adds no end-user action or discoverable product capability."
 description: >
   把已接受的愿景与需求转成接手者可实施、可验收的计划。
   Use when: 跨组件、状态对象、依赖或实施顺序需要先理清，且没有足够的现成计划。
