@@ -37,7 +37,8 @@ import {
 
 /** Pluggable config I/O — separates orchestration logic from storage. */
 export interface McpConfigIO {
-  readConfig: () => Promise<CapabilitiesConfig | null>;
+  /** Mutation reads require the authoritative Host registry; projections may observe an uninitialized one. */
+  readConfig: (purpose?: 'mutation') => Promise<CapabilitiesConfig | null>;
   /** Write config AND regenerate CLI config files. */
   writeAndRegenCli: (config: CapabilitiesConfig) => Promise<void>;
   withLock: <T>(fn: () => Promise<T>) => Promise<T>;
@@ -52,7 +53,7 @@ export function fileBasedMcpIO(projectRoot: string, cliConfigPaths?: CliConfigPa
     antigravity: join(homedir(), '.gemini', 'antigravity', 'mcp_config.json'),
   };
   return {
-    readConfig: () => readMcpSyncConfig(projectRoot, 'project'),
+    readConfig: (purpose) => readMcpSyncConfig(projectRoot, purpose === 'mutation' ? 'global' : 'project'),
     writeAndRegenCli: async (config) => {
       await writeCapabilitiesConfig(projectRoot, config);
       await reconcileMcpRuntimeConfig(config, paths, projectRoot);
@@ -97,7 +98,7 @@ export async function installMcpCapability(
   opts?: McpServiceOpts,
 ): Promise<{ before: CapabilityEntry | null; after: CapabilityEntry }> {
   return io.withLock(async () => {
-    let config: CapabilitiesConfig = (await io.readConfig()) ?? { version: 1, capabilities: [] };
+    let config: CapabilitiesConfig = (await io.readConfig('mutation')) ?? { version: 1, capabilities: [] };
     const snapshot = structuredClone(config);
 
     if (opts?.catCafeRepoRoot) {
@@ -187,7 +188,7 @@ export async function removeMcpCapability(
   opts?: McpRemoveOpts,
 ): Promise<{ before: CapabilityEntry | null }> {
   return io.withLock(async () => {
-    const config = await io.readConfig();
+    const config = await io.readConfig('mutation');
     if (!config) return { before: null };
 
     let nextConfig = structuredClone(config);

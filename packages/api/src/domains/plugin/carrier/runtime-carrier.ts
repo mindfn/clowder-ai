@@ -5,6 +5,7 @@ import {
   type PluginDeliveryReceipt,
 } from '@clowder-ai/plugin-contract';
 import type { ToolExecutionPolicy } from '../../cats/services/types.js';
+import { activateDeclaredMcp } from '../declared/declared-mcp-resources.js';
 import {
   type DeclaredPluginTool,
   type DeclaredPluginWebhook,
@@ -170,8 +171,21 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   }
 
   async configRefresh(pluginInstanceId: string): Promise<void> {
-    const carrier = this.#selectAdmission(await this.#admission(pluginInstanceId));
+    const generation = this.nativeActions.generation(pluginInstanceId);
+    const admission = await this.#admission(pluginInstanceId);
+    const carrier = this.#selectAdmission(admission);
+    this.#nativeMcpLaunches.deactivate(pluginInstanceId);
     await carrier.configRefresh?.(pluginInstanceId);
+    // Configuration saves also change declared MCP env. Reuse the mutation
+    // pipeline so project copies refresh without rotating the live action token.
+    const launches = await activateDeclaredMcp(
+      admission,
+      this.resources && {
+        ...this.resources,
+        nativeActionEnvironment: (contributionId) => this.nativeActions.environment(pluginInstanceId, contributionId),
+      },
+    );
+    this.#nativeMcpLaunches.activate(admission, generation, launches);
   }
 
   async stopAll(reason = 'host_shutdown'): Promise<void> {

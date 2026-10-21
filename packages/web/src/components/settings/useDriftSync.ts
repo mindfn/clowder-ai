@@ -69,8 +69,8 @@ export function useDriftSync({
         body: JSON.stringify({ type, projectPath: projectPath ?? undefined }),
       });
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `${type} 异常检测失败 (${res.status})`);
+        const body = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+        throw new Error(body.message ?? body.error ?? `${type} 异常检测失败 (${res.status})`);
       }
       const payload = (await res.json()) as { result?: DriftCheckResult };
       return payload.result ?? { issues: [], driftHash: '' };
@@ -149,8 +149,8 @@ export function useDriftSync({
         body: JSON.stringify({ type, action, projectPath: projectPath ?? undefined }),
       });
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `Sync failed (${res.status})`);
+        const body = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+        throw new Error(body.message ?? body.error ?? `Sync failed (${res.status})`);
       }
     },
     [type],
