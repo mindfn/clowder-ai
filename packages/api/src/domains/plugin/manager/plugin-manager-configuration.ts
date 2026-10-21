@@ -3,6 +3,11 @@ import {
   type PluginManagerConfigField,
   type PluginManagerConfigureRequest,
 } from '@cat-cafe/shared';
+import {
+  declaresConfigurationVariants,
+  effectiveConfiguration,
+  effectiveConfigurationIsValid,
+} from '../configuration-variant-consumption.js';
 import { type ExternalPluginLifecycleService, PluginLifecycleError } from '../external-plugin-lifecycle.js';
 import type { PluginInventoryStore, PluginInventoryTransaction } from '../host-inventory/ports.js';
 import type { PluginInstanceRecord, PluginPackageRecord } from '../host-inventory/types.js';
@@ -21,6 +26,7 @@ import {
   type ContractOperationField,
   configFieldProjection,
   operationFieldProjection,
+  projectConfigurationVariants,
 } from './plugin-manager-field-projection.js';
 import { type PluginManagerConfigurationPort, PluginManagerServiceError } from './plugin-manager-service.js';
 
@@ -116,6 +122,22 @@ function requiredFieldsReady(
   });
 }
 
+/**
+ * Readiness for one installed package (design §3.2). Variant-declared
+ * manifests (configurationVariants present) are ready exactly when the
+ * contract selects a branch AND the effective configuration passes the
+ * contract-compiled validation schema; the legacy requiredness walk stays
+ * byte-identical for every older manifest.
+ */
+function manifestConfigurationReady(record: PluginPackageRecord, stored: Readonly<Record<string, string>>): boolean {
+  const manifest = record.manifest;
+  if (manifest && declaresConfigurationVariants(manifest)) {
+    const { resolution, effectiveValues } = effectiveConfiguration(manifest, stored);
+    return resolution.status === 'selected' && effectiveConfigurationIsValid(manifest, effectiveValues);
+  }
+  return requiredFieldsReady(manifestConfiguration(record), stored);
+}
+
 function requireConfigurationTarget(
   transaction: PluginInventoryTransaction,
   pluginId: string,
@@ -207,7 +229,7 @@ function configureTransaction(input: {
   );
   input.transaction.instances.put({
     ...current.instance,
-    configReadiness: requiredFieldsReady(fields, next) ? 'ready' : 'incomplete',
+    configReadiness: manifestConfigurationReady(current.packageRecord, next) ? 'ready' : 'incomplete',
     lifecycleRevision: current.instance.lifecycleRevision + 1,
     updatedAt: input.now,
   });
@@ -233,6 +255,7 @@ export class HostPluginConfigurationService implements PluginManagerConfiguratio
     if (packageRecord.manifest === null) return [];
     const stored = readPluginConfig(this.options.projectRoot, pluginId);
     const fields = manifestConfiguration(packageRecord);
+    const configurationVariants = projectConfigurationVariants(packageRecord.manifest);
     const hostSetup = chromeSetupPolicy(packageRecord);
     return [
       ...(hostSetup ? [operationFieldProjection(hostSetup, undefined, [], {})] : []),
@@ -244,7 +267,7 @@ export class HostPluginConfigurationService implements PluginManagerConfiguratio
               fields,
               stored,
             )
-          : configFieldProjection(field, fields, stored),
+          : configFieldProjection(field, fields, stored, configurationVariants),
       ),
     ];
   }
@@ -357,7 +380,7 @@ export class HostPluginConfigurationService implements PluginManagerConfiguratio
         return;
       const fields = manifestConfiguration(current.packageRecord);
       const stored = readPluginConfig(this.options.projectRoot, pluginId);
-      const configReadiness = requiredFieldsReady(fields, stored) ? 'ready' : 'incomplete';
+      const configReadiness = manifestConfigurationReady(current.packageRecord, stored) ? 'ready' : 'incomplete';
       if (configReadiness === current.instance.configReadiness) return;
       transaction.instances.put({
         ...current.instance,
