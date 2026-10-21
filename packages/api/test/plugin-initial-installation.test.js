@@ -20,6 +20,18 @@ async function fixture() {
     version: '0.1.0-alpha.1',
     packageDigest: `sha512-${Buffer.alloc(64, id.length).toString('base64')}`,
   }));
+  const install = async (id, release) => {
+    const e = entries.find((entry) => entry.catalogId === id);
+    assert.deepEqual(release, { version: e.version, packageDigest: e.packageDigest });
+    installed.push(id);
+    return control.installPackage({
+      manifest: manifest({ pluginId: e.pluginId, signals: undefined }),
+      computedPackageDigest: e.packageDigest,
+      expectedPackageDigest: e.packageDigest,
+      packagePluginId: e.pluginId,
+      effectiveGrants: ['messaging.send'],
+    });
+  };
   const options = {
     statePath: join(await mkdtemp(join(tmpdir(), 'c1-initial-install-')), 'initial.json'),
     inventory,
@@ -29,17 +41,10 @@ async function fixture() {
       plugins: entries.map((e) => ({ pluginId: e.pluginId, enabled: true })),
     }),
     installer: {
-      install: async (id, release) => {
-        const e = entries.find((e) => e.catalogId === id);
-        assert.deepEqual(release, { version: e.version, packageDigest: e.packageDigest });
-        installed.push(id);
-        return control.installPackage({
-          manifest: manifest({ pluginId: e.pluginId, signals: undefined }),
-          computedPackageDigest: e.packageDigest,
-          expectedPackageDigest: e.packageDigest,
-          packagePluginId: e.pluginId,
-          effectiveGrants: ['messaging.send'],
-        });
+      install,
+      installFromSnapshot: async (snapshot, id, release) => {
+        assert.ok(snapshot.entries.some((entry) => entry.catalogId === id));
+        return install(id, release);
       },
     },
     activate: async (id, instance) => {
@@ -65,16 +70,46 @@ test('first start installs the explicit selection at exact releases, activation 
 test('partial installation retries only the failed package after restart', async () => {
   const f = await fixture();
   const install = f.options.installer.install;
+  const installFromSnapshot = f.options.installer.installFromSnapshot;
   let fail = true;
   f.options.installer.install = async (id, release) => {
     if (id === 'second' && fail) throw Error('offline');
     return install(id, release);
+  };
+  f.options.installer.installFromSnapshot = async (snapshot, id, release) => {
+    if (id === 'second' && fail) throw Error('offline');
+    return installFromSnapshot(snapshot, id, release);
   };
   await (await prepareInitialPluginInstallation(f.options)).activate();
   assert.equal(f.errors.length, 1);
   assert.deepEqual(f.installed, ['first']);
   fail = false;
   await (await prepareInitialPluginInstallation(f.options)).activate();
+  assert.deepEqual(f.installed, ['first', 'second']);
+  assert.equal(f.activated.length, 2);
+});
+
+test('first start installs the release captured by its catalog snapshot when discovery advances', async () => {
+  const f = await fixture();
+  const install = f.options.installer.install;
+  let ordinaryInstalls = 0;
+  f.options.installer = {
+    install: async () => {
+      ordinaryInstalls += 1;
+      throw new Error('the live catalog advanced');
+    },
+    installFromSnapshot: async (snapshot, catalogId, release) => {
+      const entry = snapshot.entries.find((candidate) => candidate.catalogId === catalogId);
+      assert.ok(entry);
+      assert.equal(entry.version, release.version);
+      assert.equal(entry.packageDigest, release.packageDigest);
+      return install(entry.catalogId, release);
+    },
+  };
+
+  await (await prepareInitialPluginInstallation(f.options)).activate();
+
+  assert.equal(ordinaryInstalls, 0);
   assert.deepEqual(f.installed, ['first', 'second']);
   assert.equal(f.activated.length, 2);
 });
