@@ -236,7 +236,10 @@ const GITHUB = [
   'secret.read',
   'plugin.state.get',
   'plugin.state.set',
+  'task.read',
+  'task.write',
   'thread.listMetadata',
+  'thread.readContent',
   'thread.write',
   'messaging.send',
 ];
@@ -259,9 +262,12 @@ test('GitHub operations receives only its requested shipped capabilities without
 });
 
 test('installed GitHub operations cannot widen its Host grants through its manifest', async () => {
-  const host = await installed(manifest('official.github-operations', [...GITHUB, 'task.read']));
+  // The policy allows task.read, but this version does not ask for it. streams.read is
+  // requested beyond the policy: neither should be available to the installed package.
+  const requested = GITHUB.filter((grant) => grant !== 'task.read');
+  const host = await installed(manifest('official.github-operations', [...requested, 'streams.read']));
   try {
-    assert.deepEqual(sorted(host.grants.effectiveGrants), sorted(GITHUB));
+    assert.deepEqual(sorted(host.grants.effectiveGrants), sorted(requested));
     await host.enable();
     await assert.rejects(
       host.runtime.supervisor.invoke(host.pluginInstanceId, 'probe.read-task', {}),

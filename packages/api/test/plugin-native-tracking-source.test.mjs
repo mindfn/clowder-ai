@@ -9,6 +9,8 @@ import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadSt
 import { createModuleHostInvocation } from '../dist/domains/plugin/builtin-runtime/carriers/module-host-invocation.js';
 import { NativePluginActions } from '../dist/domains/plugin/declared/native-plugin-actions.js';
 import { createPluginTaskHost } from '../dist/domains/plugin/host-surface/task/plugin-task-host.js';
+import { resolveLocalPluginEffectiveGrants } from '../dist/domains/plugin/manager/machine-catalog-provider.js';
+import { OFFICIAL_PLUGIN_HOST_POLICIES } from '../dist/domains/plugin/manager/official-plugin-host-policies.js';
 import { pluginNativeActionRoutes } from '../dist/routes/plugin-native-action-routes.js';
 import { loadTrackingPackage } from './helpers/github-tracking-package.js';
 
@@ -34,7 +36,7 @@ async function fixture(t, pkg) {
   const inputs = [origin.id];
   let onRead = async () => {},
     onProvider = async () => {};
-  const grants = [...new Set(pkg.manifest.features.flatMap((feature) => feature.capabilities))];
+  const grants = resolveLocalPluginEffectiveGrants(OFFICIAL_PLUGIN_HOST_POLICIES, pkg.manifest);
   const tasks = createPluginTaskHost({
     pluginId: pkg.manifest.pluginId,
     pluginInstanceId: instanceId,
