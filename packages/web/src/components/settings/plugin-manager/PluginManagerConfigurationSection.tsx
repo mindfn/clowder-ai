@@ -311,12 +311,19 @@ export function PluginManagerConfigurationSection({
       if (typed === undefined || typed === null) return '';
       return typeof typed === 'string' ? typed : JSON.stringify(typed);
     };
+    // Existence is not comparability: a stored secret the operator has not
+    // edited is configured even though its mask is not a value. An empty
+    // draft is an explicit deletion and re-judges from scratch.
+    const hasConfiguredValue = (field: ConfigurationField): boolean => {
+      if (validationValueOf(field).trim().length > 0) return true;
+      return field.kind === 'secret' && fieldValues[field.key] === undefined && field.currentValue !== null;
+    };
     const errors = Object.fromEntries(
       configurableFields
         .filter((field) => variantActiveKeys === undefined || variantActiveKeys.has(field.key))
         .flatMap((field) => {
           const value = validationValueOf(field);
-          if (fieldRequired(field) && value.trim().length === 0) {
+          if (fieldRequired(field) && !hasConfiguredValue(field)) {
             const label = presentation === 'v2' ? pluginFieldLabel(plugin.id, field) : field.label;
             return [[field.key, `请填写 ${label}`]];
           }
