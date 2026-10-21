@@ -99,13 +99,17 @@ function variantDraftValues(
     const draft = drafts[field.key];
     if (draft !== undefined) {
       // An empty draft is an explicit deletion, matching configurationUpdates:
-      // a cleared field contributes no value to branch resolution or
+      // the stored value contributes nothing to branch resolution or
       // requiredness. Falling back to currentValue here would keep stale
-      // conditions alive after the operator cleared them.
-      if (draft.length > 0) values[field.key] = draft;
-      continue;
-    }
-    if (field.currentValue !== null) {
+      // conditions alive after the operator cleared them. The declared
+      // default still applies afterwards — the contract re-fills it — so
+      // a cleared conditional falls back to its default semantics, not to
+      // "no value".
+      if (draft.length > 0) {
+        values[field.key] = draft;
+        continue;
+      }
+    } else if (field.currentValue !== null) {
       if (field.kind !== 'secret') values[field.key] = field.currentValue;
       continue;
     }
@@ -295,11 +299,23 @@ export function PluginManagerConfigurationSection({
   };
 
   const validateConfiguration = useCallback(() => {
+    // Variant mode validates against the same normalized projection that
+    // drives requiredness and branch resolution — never the legacy
+    // implicit-first-option path.
+    const normalized = variantProjection
+      ? variantDraftValues(fields, fieldValues, variantProjection.manifest)
+      : undefined;
+    const validationValueOf = (field: ConfigurationField): string => {
+      if (normalized === undefined) return effectiveFieldValue(field, fieldValues);
+      const typed = normalized[field.key];
+      if (typed === undefined || typed === null) return '';
+      return typeof typed === 'string' ? typed : JSON.stringify(typed);
+    };
     const errors = Object.fromEntries(
       configurableFields
         .filter((field) => variantActiveKeys === undefined || variantActiveKeys.has(field.key))
         .flatMap((field) => {
-          const value = effectiveFieldValue(field, fieldValues);
+          const value = validationValueOf(field);
           if (fieldRequired(field) && value.trim().length === 0) {
             const label = presentation === 'v2' ? pluginFieldLabel(plugin.id, field) : field.label;
             return [[field.key, `请填写 ${label}`]];
