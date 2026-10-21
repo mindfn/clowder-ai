@@ -97,8 +97,12 @@ function variantDraftValues(
   for (const field of fields) {
     if (field.kind === 'operation') continue;
     const draft = drafts[field.key];
-    if (draft !== undefined && draft.length > 0) {
-      values[field.key] = draft;
+    if (draft !== undefined) {
+      // An empty draft is an explicit deletion, matching configurationUpdates:
+      // a cleared field contributes no value to branch resolution or
+      // requiredness. Falling back to currentValue here would keep stale
+      // conditions alive after the operator cleared them.
+      if (draft.length > 0) values[field.key] = draft;
       continue;
     }
     if (field.currentValue !== null) {
@@ -191,6 +195,7 @@ function renderField(field: ConfigurationField): PlatformFieldStatus {
             : 'input',
     ...(field.kind === 'number' || field.kind === 'url' ? { inputType: field.kind } : {}),
     ...(field.options === undefined ? {} : { options: field.options.map(({ value, label }) => ({ value, label })) }),
+    ...(field.configurationVariants === undefined ? {} : { configurationVariants: true }),
     currentValue: field.currentValue,
   };
 }
