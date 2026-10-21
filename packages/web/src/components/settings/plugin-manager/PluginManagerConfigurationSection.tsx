@@ -1,6 +1,6 @@
 'use client';
 
-import { isPluginConfigurationFieldRequired } from '@cat-cafe/shared';
+import { isPluginConfigurationFieldConditionMet, isPluginConfigurationFieldRequired } from '@cat-cafe/shared';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { type PlatformFieldStatus, StepBadge } from '../../HubConfigIcons';
 import { ConfigFieldRenderer } from '../primitives/ConfigFieldRenderer';
@@ -43,6 +43,29 @@ function fieldIsRequired(
     return field.requiredNow ?? false;
   }
   return isPluginConfigurationFieldRequired(field, (key) => {
+    const referencedField = fields.find((candidate) => candidate.key === key);
+    const value = referencedField ? effectiveFieldValue(referencedField, drafts) : undefined;
+    return value && value.length > 0 ? value : undefined;
+  });
+}
+
+/**
+ * A conditional field belongs to the UI only while its condition holds (see
+ * isPluginConfigurationFieldConditionMet). The Host cannot expose a stored secret selector's
+ * value, so for conditions referenced through such a field we reuse the server's evaluation,
+ * mirroring fieldIsRequired above.
+ */
+function fieldIsApplicable(
+  field: ConfigurationField,
+  fields: readonly ConfigurationField[],
+  drafts: Readonly<Record<string, string>>,
+): boolean {
+  if (!field.requiredWhen) return true;
+  const referenced = fields.find((candidate) => candidate.key === field.requiredWhen?.key);
+  if (referenced?.kind === 'secret' && drafts[referenced.key] === undefined && referenced.currentValue !== null) {
+    return field.requiredNow ?? true;
+  }
+  return isPluginConfigurationFieldConditionMet(field, (key) => {
     const referencedField = fields.find((candidate) => candidate.key === key);
     const value = referencedField ? effectiveFieldValue(referencedField, drafts) : undefined;
     return value && value.length > 0 ? value : undefined;
@@ -126,7 +149,9 @@ export function PluginManagerConfigurationSection({
     field.actions?.some((action) => action.resultRender === 'rows')
       ? `${field.key}:${plugin.intent}:${plugin.live}`
       : field.key;
-  const configurableFields = fields.filter((field) => field.kind !== 'operation' && field.hidden !== true);
+  const configurableFields = fields.filter(
+    (field) => field.kind !== 'operation' && field.hidden !== true && fieldIsApplicable(field, fields, fieldValues),
+  );
   const declaredSteps = (plugin.steps ?? plugin.setupSteps ?? []).map((step) =>
     typeof step === 'string' ? { text: step } : step,
   );
@@ -136,8 +161,10 @@ export function PluginManagerConfigurationSection({
   );
   const selectedMode = modeField ? effectiveFieldValue(modeField, fieldValues) : undefined;
   const steps = declaredSteps.filter((step) => !step.mode || step.mode === selectedMode).map((step) => step.text);
-  const updates = configurationUpdates(fields, fieldValues);
-  const displayedFields = fields.filter((field) => field.hidden !== true);
+  const updates = configurationUpdates(configurableFields, fieldValues);
+  const displayedFields = fields.filter(
+    (field) => field.hidden !== true && (field.kind === 'operation' || fieldIsApplicable(field, fields, fieldValues)),
+  );
   const [operationRevision, setOperationRevision] = useState(0);
   const handleOperationChange = () => {
     setOperationRevision((value) => value + 1);

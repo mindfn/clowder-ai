@@ -446,3 +446,185 @@ describe('Plugin Manager operation fields', () => {
     expect(onSaveConfig).not.toHaveBeenCalled();
   });
 });
+
+describe('Plugin Manager conditional field visibility', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  const conditionalPlugin = {
+    ...PLUGIN_MANAGER_DESIGN_FIXTURES[0],
+    id: 'dev.clowder.conditional-visibility',
+    config: 'incomplete' as const,
+    setupSteps: undefined,
+    configFields: [
+      {
+        key: 'mode',
+        label: 'Mode',
+        kind: 'select' as const,
+        required: false,
+        default: 'websocket',
+        options: [
+          { value: 'websocket', label: 'WebSocket' },
+          { value: 'webhook', label: 'Webhook' },
+        ],
+        currentValue: null,
+        sensitive: false,
+      },
+      {
+        key: 'token',
+        label: 'Token',
+        kind: 'string' as const,
+        required: false,
+        requiredWhen: { key: 'mode', value: 'webhook' },
+        currentValue: null,
+        sensitive: false,
+      },
+    ],
+  };
+
+  beforeAll(() => {
+    (globalThis as { React?: typeof React }).React = React;
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  });
+
+  afterAll(() => {
+    delete (globalThis as { React?: typeof React }).React;
+    delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  });
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  async function renderSection(onSaveConfig = vi.fn()) {
+    await act(async () =>
+      root.render(
+        <PluginManagerConfigurationSection
+          plugin={conditionalPlugin}
+          busy={false}
+          validationRequest={0}
+          saved={false}
+          onSaveConfig={onSaveConfig}
+        />,
+      ),
+    );
+    return onSaveConfig;
+  }
+
+  function modeSelect() {
+    return container.querySelector('[data-testid="field-mode"]') as HTMLSelectElement;
+  }
+
+  async function selectMode(value: string) {
+    const mode = modeSelect();
+    await act(async () => {
+      mode.value = value;
+      mode.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
+  it('hides the conditional field while the requirement is unmet and reveals it on match', async () => {
+    await renderSection();
+    expect(container.querySelector('[data-testid="field-token"]')).toBeNull();
+    await selectMode('webhook');
+    expect(container.querySelector('[data-testid="field-token"]')).not.toBeNull();
+  });
+
+  it('never submits a hidden conditional field, even with a pending draft', async () => {
+    const onSaveConfig = await renderSection();
+    await selectMode('webhook');
+    const token = container.querySelector('[data-testid="field-token"]') as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(token, 'draft-secret');
+      token.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await selectMode('websocket');
+    expect(container.querySelector('[data-testid="field-token"]')).toBeNull();
+    const save = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === '保存配置');
+    await act(async () => save?.click());
+    expect(onSaveConfig).toHaveBeenCalledWith([{ key: 'mode', value: 'websocket' }]);
+  });
+
+  it('uses the Host condition result for a masked stored secret selector', async () => {
+    const onSaveConfig = vi.fn();
+    await act(async () =>
+      root.render(
+        <PluginManagerConfigurationSection
+          plugin={{
+            ...conditionalPlugin,
+            configFields: [
+              {
+                key: 'selector',
+                label: 'Selector',
+                kind: 'secret' as const,
+                required: false,
+                currentValue: '••••••',
+                sensitive: true,
+              },
+              {
+                key: 'detail',
+                label: 'Detail',
+                kind: 'string' as const,
+                required: false,
+                requiredWhen: { key: 'selector', value: 'enable' },
+                requiredNow: false,
+                currentValue: null,
+                sensitive: false,
+              },
+            ],
+          }}
+          busy={false}
+          validationRequest={0}
+          saved={false}
+          onSaveConfig={onSaveConfig}
+        />,
+      ),
+    );
+    expect(container.querySelector('[data-testid="field-detail"]')).toBeNull();
+  });
+
+  it('falls back to visible when the Host condition result is absent', async () => {
+    const onSaveConfig = vi.fn();
+    await act(async () =>
+      root.render(
+        <PluginManagerConfigurationSection
+          plugin={{
+            ...conditionalPlugin,
+            configFields: [
+              {
+                key: 'selector',
+                label: 'Selector',
+                kind: 'secret' as const,
+                required: false,
+                currentValue: '••••••',
+                sensitive: true,
+              },
+              {
+                key: 'detail',
+                label: 'Detail',
+                kind: 'string' as const,
+                required: false,
+                requiredWhen: { key: 'selector', value: 'enable' },
+                currentValue: null,
+                sensitive: false,
+              },
+            ],
+          }}
+          busy={false}
+          validationRequest={0}
+          saved={false}
+          onSaveConfig={onSaveConfig}
+        />,
+      ),
+    );
+    expect(container.querySelector('[data-testid="field-detail"]')).not.toBeNull();
+  });
+});
