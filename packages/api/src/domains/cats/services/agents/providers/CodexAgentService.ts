@@ -1050,10 +1050,14 @@ async function buildCatCafeMcpArgs(
         }
         if (!cmd) continue;
         if (envEntries) {
+          // Pooled replacement hosts rebind session paths through server.env.
+          // A frozen wrapper copy would override the newly bound credential file.
+          const wrapperEnv = { ...envEntries };
+          for (const key of MCP_SESSION_ENV_KEYS) delete wrapperEnv[key];
           const wrapped = writeCodexMcpEnvWrapper({
             command: cmd,
             args: cmdArgs ?? [],
-            env: envEntries,
+            env: wrapperEnv,
             ...(workingDir ? { cwd: workingDir } : {}),
           });
           cmd = wrapped.command;
@@ -1070,6 +1074,10 @@ async function buildCatCafeMcpArgs(
           '--config',
           `mcp_servers.${tomlName}.enabled=true`,
         );
+        for (const key of MCP_SESSION_ENV_KEYS) {
+          const value = envEntries?.[key];
+          if (value) args.push('--config', `mcp_servers.${tomlName}.env.${key}=${toTomlString(value)}`);
+        }
         if (isCatCafe) {
           args.push('--config', `mcp_servers.${tomlName}.default_tools_approval_mode="approve"`);
           args.push(

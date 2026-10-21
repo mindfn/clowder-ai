@@ -22,11 +22,12 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { CapabilitiesConfig, CapabilityEntry } from '@cat-cafe/shared';
+import { readMcpSyncConfig } from '../../mcp/mcp-config-state.js';
+import { syncMcpAll } from '../../mcp/mcp-sync-all.js';
 import { appendAuditEntry } from './capability-audit.js';
 import {
   type CliConfigPaths,
   healCatCafeMcpTopology,
-  readCapabilitiesConfig,
   reconcileMcpRuntimeConfig,
   withCapabilityLock,
   writeCapabilitiesConfig,
@@ -40,6 +41,8 @@ export interface McpConfigIO {
   /** Write config AND regenerate CLI config files. */
   writeAndRegenCli: (config: CapabilitiesConfig) => Promise<void>;
   withLock: <T>(fn: () => Promise<T>) => Promise<T>;
+  /** Cascade committed registry changes; custom in-memory adapters may omit it. */
+  syncProjects?: () => Promise<void>;
 }
 
 /** Default file-based I/O adapter — reads/writes capabilities.json + CLI configs. */
@@ -49,12 +52,15 @@ export function fileBasedMcpIO(projectRoot: string, cliConfigPaths?: CliConfigPa
     antigravity: join(homedir(), '.gemini', 'antigravity', 'mcp_config.json'),
   };
   return {
-    readConfig: () => readCapabilitiesConfig(projectRoot),
+    readConfig: () => readMcpSyncConfig(projectRoot, 'project'),
     writeAndRegenCli: async (config) => {
       await writeCapabilitiesConfig(projectRoot, config);
       await reconcileMcpRuntimeConfig(config, paths, projectRoot);
     },
     withLock: (fn) => withCapabilityLock(projectRoot, fn),
+    syncProjects: async () => {
+      await syncMcpAll(projectRoot);
+    },
   };
 }
 
@@ -138,10 +144,12 @@ export async function installMcpCapability(
 
     try {
       await io.writeAndRegenCli(config);
+      await io.syncProjects?.();
     } catch (err) {
       // Rollback to pre-mutation state on write/CLI failure
       try {
         await io.writeAndRegenCli(snapshot);
+        await io.syncProjects?.();
       } catch {
         /* best-effort rollback */
       }
@@ -217,9 +225,11 @@ export async function removeMcpCapability(
       }
 
       await io.writeAndRegenCli(nextConfig);
+      await io.syncProjects?.();
     } catch (err) {
       try {
         await io.writeAndRegenCli(snapshot);
+        await io.syncProjects?.();
       } catch {
         /* best-effort rollback */
       }
