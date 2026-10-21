@@ -81,7 +81,7 @@ export const OFFICIAL_PLUGIN_HOST_POLICIES: readonly MachineCatalogHostPolicy[] 
   { pluginId: 'official.connector.xiaoyi', effectiveGrants: connectorGrants('streams.read') },
   {
     pluginId: 'official.github-operations',
-    // Declared tracking Tasks, thread source reads, schedules and owner-bound notifications.
+    // Declared tracking Tasks, schedules and owner-bound notifications.
     // Native MCP credentials require every capability of the owning feature; the Host task
     // and thread ports still enforce instance, owner and authenticated invocation boundaries.
     effectiveGrants: [
@@ -93,7 +93,6 @@ export const OFFICIAL_PLUGIN_HOST_POLICIES: readonly MachineCatalogHostPolicy[] 
       'task.read',
       'task.write',
       'thread.listMetadata',
-      'thread.readContent',
       'thread.write',
       'messaging.send',
     ],

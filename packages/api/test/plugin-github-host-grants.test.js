@@ -8,7 +8,7 @@ import { resolveLocalPluginEffectiveGrants } from '../dist/domains/plugin/manage
 import { reconcileOfficialPluginGrants } from '../dist/domains/plugin/manager/official-plugin-grants.js';
 import { OFFICIAL_PLUGIN_HOST_POLICIES } from '../dist/domains/plugin/manager/official-plugin-host-policies.js';
 
-// github-operations alpha.16/17 declare this one feature. Native action credentials require
+// The narrowed GitHub package requests this one feature. Native action credentials require
 // the whole feature, so an installation can appear healthy while exposing unusable MCP tools.
 const requested = [
   'schedule.register',
@@ -19,15 +19,14 @@ const requested = [
   'task.read',
   'task.write',
   'thread.listMetadata',
-  'thread.readContent',
   'thread.write',
   'messaging.send',
 ];
-const previous = requested.filter((grant) => !['task.read', 'task.write', 'thread.readContent'].includes(grant));
+const previous = requested.filter((grant) => !['task.read', 'task.write'].includes(grant));
 const manifest = (capabilities = requested) => ({
   pluginId: 'official.github-operations',
   name: 'GitHub tracking policy fixture',
-  version: '0.1.0-alpha.17',
+  version: '0.1.0-alpha.18',
   contractVersion: '0.1.0',
   features: [
     {
@@ -113,7 +112,7 @@ test('startup repairs an existing eight-grant GitHub install without reinstallin
     {
       pluginId: 'official.github-operations',
       pluginInstanceId: 'github-instance',
-      added: ['task.read', 'task.write', 'thread.readContent'],
+      added: ['task.read', 'task.write'],
       removed: [],
     },
   ]);
@@ -136,7 +135,7 @@ test('GitHub policy does not grant undeclared access or allow packages to widen 
   ]);
   const grants = resolveLocalPluginEffectiveGrants(
     OFFICIAL_PLUGIN_HOST_POLICIES,
-    manifest([...requested, 'task.admitEntrusted', 'streams.read']),
+    manifest([...requested, 'task.admitEntrusted', 'streams.read', 'thread.readContent']),
   );
   assert.deepEqual([...grants].sort(), [...requested].sort());
   assert.deepEqual(
