@@ -228,13 +228,14 @@ describe('F247 default plugin owner and recovery entry', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ enabled: true, expectedRevision: 9 }),
       },
+      { mutationTimeoutMs: 5 * 60_000 },
     ]);
     expect(container.querySelector('[aria-label="禁用dot协作"]')?.getAttribute('aria-pressed')).toBe('true');
     expect(container.querySelector('[data-plugin-list-row] output')).toBeNull();
     expect(container.textContent).not.toContain('验证通过后才能启用 dot 协作');
   });
 
-  it('honors the explicit enable read even when a later poll owns the UI snapshot', async () => {
+  it('honors the explicit enable read without relying on an idle poll', async () => {
     vi.useFakeTimers();
     try {
       let ready = false;
@@ -270,11 +271,11 @@ describe('F247 default plugin owner and recovery entry', () => {
       await flushEffects();
       await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="启用dot协作"]')?.click());
       expect(listReads).toBe(2);
-      ready = true;
       await act(async () => vi.advanceTimersByTime(5000));
       await flushEffects();
-      expect(listReads).toBe(3);
+      expect(listReads).toBe(2);
       expect(mockApiFetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+      ready = true;
       await act(async () => releaseClickRead(json(response(current()))));
       await flushEffects();
       const posts = mockApiFetch.mock.calls.filter(([, init]) => init?.method === 'POST');

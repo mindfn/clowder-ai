@@ -428,7 +428,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ enabled: true, expectedRevision: 7 }),
       },
-      undefined,
+      { mutationTimeoutMs: 5 * 60_000 },
     );
     expect(listReads).toBeGreaterThanOrEqual(2);
     expect(container.textContent).toContain('插件状态已变化，已刷新最新状态');
@@ -878,7 +878,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ enabled: true, expectedRevision: 8 }),
       },
-      undefined,
+      { mutationTimeoutMs: 5 * 60_000 },
     );
   });
 

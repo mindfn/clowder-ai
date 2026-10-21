@@ -38,6 +38,14 @@ async function flushEffects() {
   });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
 describe('Plugin Manager operation refresh', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -142,5 +150,76 @@ describe('Plugin Manager operation refresh', () => {
     expect(mockApiFetch).toHaveBeenCalledWith('/api/plugin-manager/plugins/dev.clowder.fixture', undefined, {
       afterCurrentGet: true,
     });
+  });
+
+  it('keeps a slow enable operation attached until success and renders its terminal state', async () => {
+    const lifecycle = deferred<Response>();
+    let terminal = false;
+    mockApiFetch.mockImplementation(async (url, init, options) => {
+      if (url === '/api/plugin-manager/plugins') {
+        return json({
+          plugins: [terminal ? { ...plugin, intent: 'disabled', live: 'stopped', lifecycleRevision: 2 } : plugin],
+          catalog: { status: 'fresh', refreshedAt: 1 },
+        });
+      }
+      if (url === '/api/plugin-manager/plugins/dev.clowder.fixture/set-enabled' && init?.method === 'POST') {
+        if (options?.mutationTimeoutMs !== 5 * 60_000) throw new Error('client deadline elapsed');
+        return lifecycle.promise;
+      }
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginManagerLiveContent />));
+    await flushEffects();
+    const toggle = container.querySelector('button[aria-label="禁用Fixture"]') as HTMLButtonElement | null;
+    await act(async () => toggle?.click());
+    await flushEffects();
+
+    terminal = true;
+    lifecycle.resolve(json({ pluginId: plugin.pluginId, pluginInstanceId: plugin.pluginInstanceId }));
+    await flushEffects();
+
+    expect(container.querySelector('button[aria-label="启用Fixture"]')).not.toBeNull();
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      '/api/plugin-manager/plugins/dev.clowder.fixture/set-enabled',
+      expect.objectContaining({ method: 'POST' }),
+      { mutationTimeoutMs: 5 * 60_000 },
+    );
+  });
+
+  it('keeps a slow enable operation attached until failure and renders its terminal state', async () => {
+    const lifecycle = deferred<Response>();
+    let terminal = false;
+    mockApiFetch.mockImplementation(async (url, init, options) => {
+      if (url === '/api/plugin-manager/plugins') {
+        return json({
+          plugins: [terminal ? { ...plugin, intent: 'disabled', live: 'crashed', lifecycleRevision: 2 } : plugin],
+          catalog: { status: 'fresh', refreshedAt: 1 },
+        });
+      }
+      if (url === '/api/plugin-manager/plugins/dev.clowder.fixture/set-enabled' && init?.method === 'POST') {
+        if (options?.mutationTimeoutMs !== 5 * 60_000) throw new Error('client deadline elapsed');
+        return lifecycle.promise;
+      }
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginManagerLiveContent />));
+    await flushEffects();
+    const toggle = container.querySelector('button[aria-label="禁用Fixture"]') as HTMLButtonElement | null;
+    await act(async () => toggle?.click());
+    await flushEffects();
+
+    terminal = true;
+    lifecycle.resolve(json({ error: 'Plugin activation failed.' }, 500));
+    await flushEffects();
+
+    expect(container.querySelector('button[aria-label="启用Fixture"]')).not.toBeNull();
+    expect(container.textContent).toContain('Plugin activation failed.');
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      '/api/plugin-manager/plugins/dev.clowder.fixture/set-enabled',
+      expect.objectContaining({ method: 'POST' }),
+      { mutationTimeoutMs: 5 * 60_000 },
+    );
   });
 });

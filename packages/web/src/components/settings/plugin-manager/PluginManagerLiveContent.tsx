@@ -23,7 +23,15 @@ import {
 const EMPTY_COMPATIBILITY: readonly PluginManagerDesignFixture[] = [];
 // Dependency preparation alone may take five minutes; allow checkout and package admission as well.
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
+// External plugin activation may spend up to four minutes in pre-active work before returning its terminal state.
+const SET_ENABLED_TIMEOUT_MS = 5 * 60_000;
 const INSTALL_UNCONFIRMED = '安装结果尚未确认，后台可能仍在处理。请查看插件列表确认状态，避免重复安装。';
+
+function mutationRequestOptions(path: string): { mutationTimeoutMs: number } | undefined {
+  if (path.endsWith('/install') || path.endsWith('/update')) return { mutationTimeoutMs: INSTALL_TIMEOUT_MS };
+  if (path.endsWith('/set-enabled')) return { mutationTimeoutMs: SET_ENABLED_TIMEOUT_MS };
+  return undefined;
+}
 
 export function PluginManagerLiveContent({
   presentation = 'v1',
@@ -189,7 +197,7 @@ export function PluginManagerLiveContent({
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(body),
           },
-          path.endsWith('/install') || path.endsWith('/update') ? { mutationTimeoutMs: INSTALL_TIMEOUT_MS } : undefined,
+          mutationRequestOptions(path),
         );
         if (!response.ok) {
           const failure = await responseError(response, `插件操作失败 (${response.status})`);
