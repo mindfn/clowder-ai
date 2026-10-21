@@ -24,12 +24,15 @@ export const PREVIOUS_PLUGIN_MANIFEST_CONTRACT_VERSIONS = [
   '0.1.0-beta.24',
   '0.1.0-beta.25',
 ] as const;
+/** Manifest compatibility line of the vendored 0.2.0 contract package (configurationVariants). */
+export const PLUGIN_CONTRACT_V2_VERSION = '0.2.0' as const;
 /** Exact manifest contract versions admitted during the beta-to-stable migration. */
 export const PLUGIN_MANIFEST_CONTRACT_VERSIONS = [
   PLUGIN_CONTRACT_VERSION,
   PUBLISHED_PLUGIN_MANIFEST_CONTRACT_VERSION,
   ...PREVIOUS_PLUGIN_MANIFEST_CONTRACT_VERSIONS,
   PLUGIN_CONTRACT_PACKAGE_VERSION,
+  PLUGIN_CONTRACT_V2_VERSION,
 ] as const;
 
 export const DEFAULT_PLUGIN_CONTRACT_RUNTIME = {

@@ -1306,6 +1306,7 @@ export type {
   PluginManagerConfigFieldKind,
   PluginManagerConfigOption,
   PluginManagerConfigState,
+  PluginManagerConfigurationVariants,
   PluginManagerConfigureRequest,
   PluginManagerContribution,
   PluginManagerContributionTool,
