@@ -31,6 +31,12 @@ import { registerPluginManagerRoutes } from '../dist/routes/plugin-manager-route
 const roots = [];
 const execFileAsync = promisify(execFile);
 
+test('file-based MCP projection can read an uninitialized registry without creating it', async () => {
+  const root = await tempRoot('plugin-mcp-uninitialized-projection-');
+  assert.deepEqual(await fileBasedMcpIO(root).readConfig(), { version: 2, capabilities: [] });
+  await assert.rejects(readFile(join(root, '.cat-cafe/capabilities.json')), { code: 'ENOENT' });
+});
+
 for (const state of ['absent', 'corrupt']) {
   test(`file-based MCP mutations refuse ${state} host registries before writing CLI or project config`, async () => {
     const root = await tempRoot('plugin-mcp-invalid-home-');
