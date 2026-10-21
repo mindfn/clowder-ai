@@ -133,6 +133,35 @@ it('uses the declared default after deleting a stored conditional value', async 
     },
   );
 });
+it('allows saving another field while a required secret is already stored', async () => {
+  await withForm(
+    [mode('hook'), field('token', { kind: 'secret', sensitive: true, required: true, currentValue: '••••••' })],
+    async (container, onSave) => {
+      await save(container);
+      expect(onSave).toHaveBeenCalledOnce();
+      expect(onSave.mock.calls[0]?.[0]).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ key: 'token' })]),
+      );
+    },
+  );
+});
+it('saves an edited stored secret as a new value', async () => {
+  await withForm(
+    [mode('hook'), field('token', { kind: 'secret', sensitive: true, required: true, currentValue: '••••••' })],
+    async (container, onSave) => {
+      const token = container.querySelector('[data-testid="field-token"]') as HTMLInputElement;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(token, 'fresh-token');
+        token.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await save(container);
+      expect(onSave).toHaveBeenCalledOnce();
+      expect(onSave.mock.calls[0]?.[0]).toEqual(
+        expect.arrayContaining([expect.objectContaining({ key: 'token', value: 'fresh-token' })]),
+      );
+    },
+  );
+});
 it('enforces boolean requiredWhen on string-valued form projection', async () => {
   await withForm(
     [
