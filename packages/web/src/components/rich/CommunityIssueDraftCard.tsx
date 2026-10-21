@@ -182,8 +182,27 @@ export function CommunityIssueDraftCard({ block, messageId }: CommunityIssueDraf
     }
   };
 
-  const handleCancel = () => {
-    setState('cancelled');
+  const handleCancel = async () => {
+    if (!draftId) {
+      setState('cancelled');
+      return;
+    }
+    setState('cancelling');
+    setError(null);
+    try {
+      const response = await apiFetch(
+        `/api/plugins/official.github-operations/github/community-issue-drafts/by-id/${encodeURIComponent(draftId)}/cancel`,
+        { method: 'POST' },
+      );
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error ?? `Cancel failed (${response.status})`);
+      }
+      setState('cancelled');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Cancel failed');
+      setState('editing');
+    }
   };
 
   // A previously saved plugin draft is hydrated by the same owner preview; never create

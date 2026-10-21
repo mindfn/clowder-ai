@@ -198,3 +198,49 @@ it('a saved native draft opens the existing preview without creating another dra
     container.remove();
   }
 });
+
+for (const cancelled of [true, false])
+  it(`persisted draft cancellation after a publication refusal (cancel succeeds=${cancelled})`, async () => {
+    vi.mocked(apiFetch).mockReset();
+    vi.mocked(apiFetch)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ defaultRepo: 'org/repo', repos: ['org/repo'] }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ draft: { draftId: 'saved/after-refusal' } }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        json: async () => ({ error: 'Publication refused' }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: cancelled,
+        status: cancelled ? 200 : 503,
+        json: async () => (cancelled ? { draft: { status: 'cancelled' } } : { error: 'Cancellation unavailable' }),
+      } as Response);
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<CommunityIssueDraftCard block={draftBlock} messageId="message-cancel" />));
+      await act(async () => container.querySelector('button')!.click());
+      expect(container.textContent).toContain('Publication refused');
+      const cancel = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Cancel');
+      await act(async () => cancel!.click());
+      expect(apiFetch).toHaveBeenLastCalledWith(
+        '/api/plugins/official.github-operations/github/community-issue-drafts/by-id/saved%2Fafter-refusal/cancel',
+        expect.objectContaining({ method: 'POST' }),
+      );
+      if (cancelled) expect(container.textContent).toContain('Publish cancelled');
+      else {
+        expect(container.textContent).not.toContain('Publish cancelled');
+        expect(container.textContent).toContain('Cancellation unavailable');
+      }
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
