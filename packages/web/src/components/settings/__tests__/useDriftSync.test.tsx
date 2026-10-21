@@ -76,3 +76,39 @@ it('keeps healthy project reports when the global status request fails', async (
     await act(async () => root.unmount());
   }
 });
+
+it('shows Fastify registry details for check, single sync and all-project sync failures', async () => {
+  const message = 'Cannot synchronize global capabilities at /host/.cat-cafe/capabilities.json: parse_error';
+  const resolved: string[] = [];
+  const failure = () =>
+    new Response(JSON.stringify({ statusCode: 500, error: 'Internal Server Error', message }), { status: 500 });
+  vi.mocked(apiFetch).mockImplementation(async (url, init) => {
+    const { projectPath } = JSON.parse(String(init?.body));
+    if (url === '/api/drift/resolve') {
+      resolved.push(projectPath);
+      return projectPath === '/projects/broken' ? failure() : new Response('{}');
+    }
+    if (!projectPath) return failure();
+    return new Response(JSON.stringify({ result: { issues: [], driftHash: 'healthy' } }));
+  });
+  let current!: ReturnType<typeof useDriftSync>;
+  function Host() {
+    current = useDriftSync({ type: 'mcp', projectPaths: ['/projects/broken', '/projects/healthy'] });
+    return <div role="alert">{current.syncAllError}</div>;
+  }
+  const container = document.createElement('div');
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<Host />));
+    expect(current.scopeDrift.global.issues[0].message).toContain(message);
+    await act(async () => current.handleSyncScope('/projects/broken'));
+    expect(container.textContent).toBe(message);
+    resolved.length = 0;
+    await act(async () => current.handleSyncAllScopes());
+    expect(resolved).toEqual(['/projects/broken', '/projects/healthy']);
+    expect(container.textContent).toBe(`/projects/broken: ${message}`);
+    expect(current.scopeDrift['/projects/healthy'].driftHash).toBe('healthy');
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
