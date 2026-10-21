@@ -747,14 +747,18 @@ describe('F202 live Plugin Manager Console wiring', () => {
     await act(async () => save?.click());
     await flushEffects();
 
-    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugin-manager/plugins/telegram/contributions/configuration', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        expectedRevision: plugin.lifecycleRevision,
-        updates: [{ key: 'TELEGRAM_BOT_TOKEN', value: '123456:secret' }],
-      }),
-    });
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      '/api/plugin-manager/plugins/telegram/contributions/configuration',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          expectedRevision: plugin.lifecycleRevision,
+          updates: [{ key: 'TELEGRAM_BOT_TOKEN', value: '123456:secret' }],
+        }),
+      },
+      { mutationTimeoutMs: 5 * 60_000 },
+    );
   });
 
   it('refreshes saved configuration and revision when reconnect fails, without toggling intent', async () => {
@@ -864,6 +868,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
           ],
         }),
       },
+      { mutationTimeoutMs: 5 * 60_000 },
     );
     expect(container.textContent).toContain('配置已保存');
 
@@ -908,7 +913,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ expectedRevision: 7 }),
       },
-      undefined,
+      { mutationTimeoutMs: 5 * 60_000 },
     );
     nativeConfirm.mockRestore();
   });
