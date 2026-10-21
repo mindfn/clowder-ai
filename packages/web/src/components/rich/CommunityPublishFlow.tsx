@@ -1,16 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
+import { CommunityIssuePreviewCard } from './CommunityIssuePreviewCard';
 
 type CommunityPublishStatus = 'confirmed' | 'creating_draft' | 'draft_created';
-interface DraftResult {
-  id: string;
-  repo: string;
-  title: string;
-  bodyMarkdown: string;
-  status: string;
-}
 interface CommunityPublishFlowProps {
   issueId: string;
   title: string;
@@ -28,8 +22,9 @@ export function CommunityPublishFlow({
   status,
   onStatusChange,
 }: CommunityPublishFlowProps) {
-  const [draft, setDraft] = useState<DraftResult | null>(null);
+  const [draftId, setDraftId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const requestId = useRef(`feedback:${issueId}`);
   const createDraft = async () => {
     onStatusChange('creating_draft');
     setError(null);
@@ -41,12 +36,12 @@ export function CommunityPublishFlow({
       const response = await apiFetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId: `feedback:${issueId}`, repo: config.defaultRepo, title, bodyMarkdown }),
+        body: JSON.stringify({ requestId: requestId.current, repo: config.defaultRepo, title, bodyMarkdown }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? `创建草稿失败 (${response.status})`);
       if (!result.data?.id || !result.data.title) throw new Error('插件未返回草稿。');
-      setDraft(result.data);
+      setDraftId(result.data.id);
       onStatusChange('draft_created');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '创建草稿失败');
@@ -54,16 +49,16 @@ export function CommunityPublishFlow({
     }
   };
   if (status === 'creating_draft') return <div className="mt-2 text-xs text-cafe-muted">正在创建草稿…</div>;
-  if (draft)
+  if (draftId)
     return (
-      <div className="mt-2 rounded border border-cafe/20 p-3 text-xs">
-        <p className="font-medium">{draft.title}</p>
-        <p className="whitespace-pre-wrap">{draft.bodyMarkdown}</p>
-        <p className="mt-2 text-cafe-muted">
-          {draft.repo} · {draft.id}
-        </p>
-        <p className="text-cafe-muted">草稿已保存在 GitHub 插件中，尚未发布。</p>
-      </div>
+      <CommunityIssuePreviewCard
+        inlineDraftId={draftId}
+        onDraftCancelled={() => {
+          requestId.current = `feedback:${issueId}:${crypto.randomUUID()}`;
+          setDraftId(null);
+          onStatusChange('confirmed');
+        }}
+      />
     );
   return (
     <div className="mt-2 flex items-center gap-2">

@@ -11,7 +11,7 @@
  * Matches wireframe: docs/designs/F235-publish-to-community.html
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import type { RichCardBlock } from '@/stores/chat-types';
 import { apiFetch } from '@/utils/api-client';
 
@@ -53,6 +53,7 @@ function extractDraftId(block: RichCardBlock): string | null {
 
 export function CommunityIssuePreviewCard({ block, inlineDraftId, onDraftCancelled }: CommunityIssuePreviewCardProps) {
   const draftId = inlineDraftId ?? (block ? extractDraftId(block) : null);
+  const fieldId = useId();
   const [state, setState] = useState<PreviewState>('loading');
   const [draft, setDraft] = useState<DraftData | null>(null);
   const [editTitle, setEditTitle] = useState('');
@@ -113,7 +114,11 @@ export function CommunityIssuePreviewCard({ block, inlineDraftId, onDraftCancell
       }
       const data = await res.json();
       setDraft(data.draft);
-      setState('published');
+      if (data.draft?.status === 'published') setState('published');
+      else {
+        setError(data.warning ?? '发布结果待确认，请查询原发布结果。');
+        setState('editing');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Publish failed');
       setState('editing');
@@ -189,12 +194,18 @@ export function CommunityIssuePreviewCard({ block, inlineDraftId, onDraftCancell
           <span className="text-cafe-muted">Publish cancelled</span>
           <span className="rounded bg-cafe-muted/20 px-2 py-0.5 text-xs text-cafe-muted">cancelled</span>
         </div>
+        {onDraftCancelled && (
+          <button type="button" onClick={onDraftCancelled} className="mt-2 text-xs underline">
+            重新创建草稿
+          </button>
+        )}
       </div>
     );
   }
 
   // ── Editing / Publishing / Error ────────────────────────────
   const isActionInProgress = state === 'publishing' || state === 'cancelling';
+  const publicationStarted = draft?.status === 'publishing';
 
   return (
     <div className="rounded-lg border border-sky-300/40 bg-sky-50/10 p-3 text-sm">
@@ -206,23 +217,29 @@ export function CommunityIssuePreviewCard({ block, inlineDraftId, onDraftCancell
 
       {/* Editable title */}
       <div className="mb-2">
-        <label className="mb-1 block text-xs text-cafe-muted">Title</label>
+        <label htmlFor={`${fieldId}-title`} className="mb-1 block text-xs text-cafe-muted">
+          Title
+        </label>
         <input
+          id={`${fieldId}-title`}
           type="text"
           value={editTitle}
           onChange={(e) => setEditTitle(e.target.value)}
-          disabled={isActionInProgress}
+          disabled={isActionInProgress || publicationStarted}
           className="w-full rounded border border-cafe/30 bg-cafe-surface px-2 py-1.5 text-xs text-cafe-text focus:border-sky-400 focus:outline-none disabled:opacity-50"
         />
       </div>
 
       {/* Editable body */}
       <div className="mb-2">
-        <label className="mb-1 block text-xs text-cafe-muted">Description (Markdown)</label>
+        <label htmlFor={`${fieldId}-body`} className="mb-1 block text-xs text-cafe-muted">
+          Description (Markdown)
+        </label>
         <textarea
+          id={`${fieldId}-body`}
           value={editBody}
           onChange={(e) => setEditBody(e.target.value)}
-          disabled={isActionInProgress}
+          disabled={isActionInProgress || publicationStarted}
           rows={6}
           className="w-full rounded border border-cafe/30 bg-cafe-surface px-2 py-1.5 text-xs text-cafe-text focus:border-sky-400 focus:outline-none disabled:opacity-50"
         />
@@ -253,6 +270,8 @@ export function CommunityIssuePreviewCard({ block, inlineDraftId, onDraftCancell
               <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
               Publishing...
             </span>
+          ) : publicationStarted ? (
+            '查询发布结果'
           ) : (
             'Submit to GitHub'
           )}
@@ -260,7 +279,7 @@ export function CommunityIssuePreviewCard({ block, inlineDraftId, onDraftCancell
         <button
           type="button"
           onClick={handleCancel}
-          disabled={isActionInProgress}
+          disabled={isActionInProgress || publicationStarted}
           className="rounded border border-cafe/30 px-3 py-1.5 text-xs text-cafe-muted transition hover:bg-cafe-surface disabled:opacity-50"
         >
           {state === 'cancelling' ? 'Cancelling...' : 'Cancel'}
