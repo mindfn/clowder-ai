@@ -934,7 +934,13 @@ test('plugin MCP lifecycle reaches existing projects and their provider injectio
   );
   const packageRoot = await writeFixturePackage({
     pluginId: 'dev.clowder.project-mcp',
-    contribution: { type: 'mcp', id: 'native', runtime: { transport: 'stdio', entrypoint: 'dist/mcp.js' } },
+    contribution: {
+      type: 'mcp',
+      id: 'native',
+      runtime: { transport: 'stdio', entrypoint: 'dist/mcp.js' },
+      actions: [{ method: 'native.run' }],
+    },
+    actions: "{ 'native.run': async input => ({ value: input.value }) }",
     files: { 'dist/mcp.js': 'process.exit(0);\n' },
   });
   const io = fileBasedMcpIO(projectRoot, {
@@ -947,9 +953,9 @@ test('plugin MCP lifecycle reaches existing projects and their provider injectio
   const name = id.replaceAll(':', '__');
   const projectEntry = (await readCapabilitiesConfig(consumer)).capabilities.find((entry) => entry.id === id);
   assert.ok(projectEntry?.mcpServer, 'plugin registration must cascade to an already initialized project');
-  const inject = (workingDirectory = consumer) =>
+  const inject = (workingDirectory = consumer, catId = 'codex') =>
     resolveProviderMcpConfig({
-      callbackEnv: { CAT_CAFE_CAT_ID: 'codex' },
+      callbackEnv: { CAT_CAFE_CAT_ID: catId },
       workingDirectory,
       mcpServerPath: join(projectRoot, 'packages/mcp-server/dist/index.js'),
       provider: 'codex',
@@ -958,12 +964,60 @@ test('plugin MCP lifecycle reaches existing projects and their provider injectio
   await writeCapabilitiesConfig(consumer, { version: 2, capabilities: [{ ...projectEntry, blockedCats: ['codex'] }] });
   const allCatIds = [...catRegistry.getAllIds()];
   assert.ok(allCatIds.includes('codex'), 'fixture needs real registry to model whole-project disable');
+  const allowedCat = allCatIds.find((catId) => catId !== 'codex');
+  assert.ok(allowedCat, 'fixture needs a member who remains enabled');
+  const caller = {
+    userId: 'owner',
+    catId: allowedCat,
+    threadId: 'thread',
+    invocationId: 'inv',
+    assertCurrent: async () => {},
+  };
+  const initialToken = projectEntry.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
+  assert.ok(initialToken, 'the fixture must exercise a real activation-scoped action token');
+  const assertFreshDescriptor = async (previousToken, phase) => {
+    const homeEntry = (await readCapabilitiesConfig(projectRoot)).capabilities.find((entry) => entry.id === id);
+    const currentToken = homeEntry.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
+    assert.ok(currentToken && currentToken !== previousToken, `${phase}: activation must rotate its token`);
+    for (const path of [consumer, disabledProject]) {
+      const entry = (await readCapabilitiesConfig(path)).capabilities.find((entry) => entry.id === id);
+      assert.ok(
+        entry.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN === currentToken,
+        `${phase}: project token must refresh`,
+      );
+    }
+    const providerEntry = (await inject(consumer, allowedCat))[name];
+    assert.ok(
+      providerEntry?.env?.CLOWDER_PLUGIN_ACTION_TOKEN === currentToken,
+      `${phase}: provider must inject the active token`,
+    );
+    await assert.rejects(runtime.supervisor.nativeActions.call(previousToken, 'native.run', {}, caller), {
+      statusCode: 401,
+    });
+    assert.deepEqual(
+      await runtime.supervisor.nativeActions.call(
+        providerEntry.env.CLOWDER_PLUGIN_ACTION_TOKEN,
+        'native.run',
+        { value: phase },
+        caller,
+      ),
+      { value: phase },
+    );
+    assert.equal((await inject())[name], undefined, `${phase}: blocked member must stay blocked`);
+    assert.equal(
+      (await inject(disabledProject, allowedCat))[name],
+      undefined,
+      `${phase}: blocked project must stay blocked`,
+    );
+    return currentToken;
+  };
   await writeCapabilitiesConfig(disabledProject, {
     version: 2,
     capabilities: [{ ...projectEntry, blockedCats: allCatIds }],
   });
   await runtime.supervisor.stopAll('test_restart');
   await runtime.supervisor.start(installed.pluginInstanceId);
+  const restartedToken = await assertFreshDescriptor(initialToken, 'restart');
   assert.deepEqual((await readCapabilitiesConfig(consumer)).capabilities.find((entry) => entry.id === id).blockedCats, [
     'codex',
   ]);
@@ -975,6 +1029,7 @@ test('plugin MCP lifecycle reaches existing projects and their provider injectio
   manifest.contributions[0].runtime.args = ['--updated'];
   await writeFile(manifestPath, JSON.stringify(manifest));
   await composition.manager.install({ source: { kind: 'local-directory', path: packageRoot } });
+  const updatedToken = await assertFreshDescriptor(restartedToken, 'package update');
   const updated = (await readCapabilitiesConfig(consumer)).capabilities.find((entry) => entry.id === id);
   assert.ok(updated.mcpServer.args.includes('--updated'), 'package update must cascade the new launch descriptor');
   assert.deepEqual(updated.blockedCats, ['codex']);
@@ -991,6 +1046,9 @@ test('plugin MCP lifecycle reaches existing projects and their provider injectio
 
   const beforeUninstall = (await composition.manager.get(installed.pluginId)).plugin;
   await composition.manager.uninstall(installed.pluginId, { expectedRevision: beforeUninstall.lifecycleRevision });
+  await assert.rejects(runtime.supervisor.nativeActions.call(updatedToken, 'native.run', {}, caller), {
+    statusCode: 401,
+  });
   assert.equal(
     (await readCapabilitiesConfig(consumer)).capabilities.some((entry) => entry.id === id),
     false,
