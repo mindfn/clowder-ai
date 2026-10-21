@@ -12,13 +12,16 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
+import { catRegistry } from '@cat-cafe/shared';
 import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
 
+import { fileBasedMcpIO } from '../dist/config/capabilities/capability-mcp-service.js';
 import {
   readCapabilitiesConfig,
   withCapabilityLock,
   writeCapabilitiesConfig,
 } from '../dist/config/capabilities/capability-orchestrator.js';
+import { resolveProviderMcpConfig } from '../dist/domains/cats/services/agents/providers/provider-mcp-config.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { LimbRegistry } from '../dist/domains/limb/LimbRegistry.js';
 import {
@@ -46,7 +49,7 @@ function fakeTaskRunner() {
   };
 }
 
-function createRuntime(projectRoot) {
+function createRuntime(projectRoot, mcpConfigIO) {
   const limbRegistry = new LimbRegistry();
   return {
     limbRegistry,
@@ -60,7 +63,7 @@ function createRuntime(projectRoot) {
       },
       limbRegistry,
       taskRunner: fakeTaskRunner(),
-      mcpConfigIO: {
+      mcpConfigIO: mcpConfigIO ?? {
         readConfig: () => readCapabilitiesConfig(projectRoot),
         writeAndRegenCli: (config) => writeCapabilitiesConfig(projectRoot, config),
         withLock: (fn) => withCapabilityLock(projectRoot, fn),
@@ -133,13 +136,15 @@ function feishuManifest() {
   };
 }
 
-async function writeFixturePackage() {
+async function writeFixturePackage(nativeAction = false) {
   const packageRoot = await tempRoot('cat-cafe-variants-feishu-package-');
   await mkdir(join(packageRoot, 'dist'), { recursive: true });
-  await writeFile(join(packageRoot, 'manifest.json'), `${JSON.stringify(feishuManifest())}\n`, 'utf8');
+  const manifest = feishuManifest();
+  if (nativeAction) manifest.contributions[0].actions = [{ method: 'native.run' }];
+  await writeFile(join(packageRoot, 'manifest.json'), `${JSON.stringify(manifest)}\n`, 'utf8');
   await writeFile(
     join(packageRoot, 'dist/plugin.js'),
-    'export default { create() { return { start() { return { actions: {}, stop() {} }; } }; } };\n',
+    'export default { create() { return { start() { return { actions: { "native.run": async input => input }, stop() {} }; } }; } };\n',
     'utf8',
   );
   await writeFile(join(packageRoot, 'dist/mcp.js'), 'process.exit(0);\n', 'utf8');
@@ -205,4 +210,123 @@ test('webhook mode with a Token delivers it to the actual MCP launch env', async
   ]);
   assert.ok(capability?.mcpServer, 'the declared MCP must be installed as a Host capability');
   assert.equal(capability.mcpServer.env?.FEISHU_TOKEN, 'tok_feishu');
+});
+
+test('variant changes refresh existing project MCP providers while preserving member and project blocks', async () => {
+  const projectRoot = await tempRoot('variants-cascade-home-');
+  const consumer = await tempRoot('variants-cascade-consumer-');
+  const blockedProject = await tempRoot('variants-cascade-blocked-');
+  for (const root of [projectRoot, consumer, blockedProject]) {
+    await writeCapabilitiesConfig(root, { version: 2, capabilities: [] });
+  }
+  await writeFile(
+    join(projectRoot, '.cat-cafe/governance-registry.json'),
+    JSON.stringify({ entries: [consumer, blockedProject].map((projectPath) => ({ projectPath })) }),
+  );
+  const io = fileBasedMcpIO(projectRoot, {
+    google: join(projectRoot, '.gemini/settings.json'),
+    antigravity: join(projectRoot, '.test-antigravity/mcp.json'),
+  });
+  const { runtime } = createRuntime(projectRoot, io);
+  const composition = createPluginManagerRuntimeComposition({
+    runtime,
+    catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
+    catalogManifests: [],
+    localGrantPolicy: (manifest) => manifest.features.flatMap((feature) => [...feature.capabilities]),
+  });
+  const installed = await composition.manager.install({
+    source: { kind: 'local-directory', path: await writeFixturePackage(true) },
+  });
+  const configure = async (updates) => {
+    const current = (await composition.manager.get(installed.pluginId)).plugin;
+    await composition.manager.configure(installed.pluginId, { expectedRevision: current.lifecycleRevision, updates });
+  };
+  await configure([
+    { key: 'connectionMode', value: 'websocket' },
+    { key: 'verificationToken', value: 'fixture-variant-secret' },
+    { key: 'appId', value: 'cli_fixture' },
+  ]);
+  const beforeEnable = (await composition.manager.get(installed.pluginId)).plugin;
+  await composition.manager.setEnabled(installed.pluginId, {
+    enabled: true,
+    expectedRevision: beforeEnable.lifecycleRevision,
+  });
+  const id = `plugin:${installed.pluginId}:feishu-mcp`;
+  const name = id.replaceAll(':', '__');
+  const entryAt = async (root) => (await readCapabilitiesConfig(root)).capabilities.find((entry) => entry.id === id);
+  const initial = await entryAt(consumer);
+  assert.ok(initial?.mcpServer, 'activation must reach an existing project automatically');
+  assert.equal(Object.hasOwn(initial.mcpServer.env ?? {}, 'FEISHU_TOKEN'), false);
+  const initialActionToken = initial.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
+  assert.ok(initialActionToken);
+  const allCats = [...catRegistry.getAllIds()];
+  const allowedCat = allCats.find((catId) => catId !== 'codex');
+  assert.ok(allowedCat);
+  await writeCapabilitiesConfig(consumer, {
+    version: 2,
+    capabilities: [{ ...initial, blockedCats: ['codex'] }],
+  });
+  await writeCapabilitiesConfig(blockedProject, {
+    version: 2,
+    capabilities: [{ ...initial, blockedCats: allCats }],
+  });
+  const inject = async (workingDirectory, catId) =>
+    (
+      await resolveProviderMcpConfig({
+        callbackEnv: { CAT_CAFE_CAT_ID: catId },
+        workingDirectory,
+        mcpServerPath: join(projectRoot, 'packages/mcp-server/dist/index.js'),
+        provider: 'codex',
+      })
+    )[name];
+  try {
+    // Configuring an enabled plugin refreshes its runtime in place.
+    // Both branch transitions must update the existing project descriptor.
+    for (const mode of ['webhook', 'websocket', 'webhook']) {
+      await configure([{ key: 'connectionMode', value: mode }]);
+      for (const root of [projectRoot, consumer, blockedProject]) {
+        const entry = await entryAt(root);
+        assert.ok(entry?.mcpServer, `${mode}: descriptor must still exist`);
+        assert.equal(
+          Object.hasOwn(entry.mcpServer.env ?? {}, 'FEISHU_TOKEN'),
+          mode === 'webhook',
+          `${mode}: ${root === projectRoot ? 'host' : root === consumer ? 'consumer' : 'blocked project'} descriptor`,
+        );
+      }
+      const provider = await inject(consumer, allowedCat);
+      assert.ok(provider, `${mode}: allowed member must receive the refreshed descriptor`);
+      assert.equal(Object.hasOwn(provider.env ?? {}, 'FEISHU_TOKEN'), mode === 'webhook');
+      const native = await runtime.supervisor.resolveNativeMcpLaunch({
+        mode: 'plugin_native',
+        pluginInstanceId: installed.pluginInstanceId,
+        contributionId: 'feishu-mcp',
+        actionMethods: ['native.run'],
+      });
+      assert.equal(Object.hasOwn(native.env, 'FEISHU_TOKEN'), mode === 'webhook');
+      assert.ok(native.env.CLOWDER_PLUGIN_ACTION_TOKEN === initialActionToken, 'live refresh must not rotate tokens');
+      assert.deepEqual(
+        await runtime.supervisor.nativeActions.call(
+          initialActionToken,
+          'native.run',
+          { mode },
+          {
+            userId: 'owner',
+            catId: allowedCat,
+            threadId: 'thread',
+            invocationId: 'inv',
+            assertCurrent: async () => {},
+          },
+        ),
+        { mode },
+      );
+      assert.deepEqual((await entryAt(consumer)).blockedCats, ['codex']);
+      assert.deepEqual((await entryAt(blockedProject)).blockedCats, allCats);
+      assert.equal(await inject(consumer, 'codex'), undefined);
+      assert.equal(await inject(blockedProject, allowedCat), undefined);
+    }
+    const fields = (await composition.manager.get(installed.pluginId)).plugin.configFields;
+    assert.notEqual(fields.find((field) => field.key === 'verificationToken').currentValue, null);
+  } finally {
+    await runtime.supervisor.stopAll('test_complete');
+  }
 });
