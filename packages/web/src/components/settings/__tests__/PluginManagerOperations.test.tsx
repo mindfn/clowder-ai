@@ -445,4 +445,59 @@ describe('Plugin Manager operation fields', () => {
     expect(container.textContent).toContain('请填写 Detail');
     expect(onSaveConfig).not.toHaveBeenCalled();
   });
+
+  it('hides fields whose visibleWhen condition does not match the selected mode', async () => {
+    const onSaveConfig = vi.fn();
+    const conditionalPlugin = {
+      ...plugin,
+      configFields: [
+        {
+          key: 'mode',
+          label: 'Mode',
+          kind: 'select' as const,
+          required: false,
+          default: 'webhook',
+          options: [
+            { value: 'webhook', label: 'Webhook' },
+            { value: 'polling', label: 'Polling' },
+          ],
+          currentValue: null,
+          sensitive: false,
+        },
+        {
+          key: 'token',
+          label: 'Token',
+          kind: 'secret' as const,
+          required: true,
+          requiredWhen: { key: 'mode', value: 'webhook' },
+          visibleWhen: { key: 'mode', value: 'webhook' },
+          currentValue: null,
+          sensitive: true,
+        },
+      ],
+    };
+    await act(async () =>
+      root.render(
+        <PluginManagerConfigurationSection
+          plugin={conditionalPlugin}
+          busy={false}
+          validationRequest={0}
+          saved={false}
+          onSaveConfig={onSaveConfig}
+        />,
+      ),
+    );
+    expect(container.querySelector('[data-testid="field-token"]')).not.toBeNull();
+
+    const mode = container.querySelector('[data-testid="field-mode"]') as HTMLSelectElement;
+    await act(async () => {
+      mode.value = 'polling';
+      mode.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="field-token"]')).toBeNull();
+    const save = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === '保存配置');
+    await act(async () => save?.click());
+    expect(container.textContent).not.toContain('请填写 Token');
+    expect(onSaveConfig).toHaveBeenCalledWith([{ key: 'mode', value: 'polling' }]);
+  });
 });

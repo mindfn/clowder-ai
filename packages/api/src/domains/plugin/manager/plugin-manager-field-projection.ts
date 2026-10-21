@@ -2,7 +2,7 @@
  * Owner-facing projection of a plugin's configuration fields: values are masked, operation callback
  * methods stay Host-private, and row actions are exposed only for the rows renderer (F202 W2-3 h1).
  */
-import { isPluginConfigurationFieldRequired, type PluginManagerConfigField } from '@cat-cafe/shared';
+import { isPluginConfigurationFieldRequired, isPluginConfigurationFieldVisible, type PluginManagerConfigField } from '@cat-cafe/shared';
 import type { ConfigurationField } from '@clowder-ai/plugin-contract';
 import type { OperationState } from '../operations/operation-state-machine.js';
 import { effectivePluginConfigurationValue } from './plugin-configuration-values.js';
@@ -45,6 +45,15 @@ export function configFieldProjection(
       ? {}
       : {
           requiredNow: isPluginConfigurationFieldRequired(field, (key) => {
+            const referenced = fields.find((candidate) => candidate.key === key);
+            return referenced ? effectivePluginConfigurationValue(referenced, stored[key]) : undefined;
+          }),
+        }),
+    ...(field.visibleWhen === undefined ? {} : { visibleWhen: { ...field.visibleWhen } }),
+    ...(field.visibleWhen === undefined
+      ? {}
+      : {
+          visibleNow: isPluginConfigurationFieldVisible(field, (key) => {
             const referenced = fields.find((candidate) => candidate.key === key);
             return referenced ? effectivePluginConfigurationValue(referenced, stored[key]) : undefined;
           }),

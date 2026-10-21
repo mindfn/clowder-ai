@@ -266,6 +266,12 @@ export interface PluginManagerConfigField {
   };
   /** Server-evaluated condition for a masked secret selector whose value cannot be projected. */
   requiredNow?: boolean;
+  visibleWhen?: {
+    key: string;
+    value: string | number | boolean | readonly (string | number | boolean)[];
+  };
+  /** Server-evaluated visibility for a field conditioned on a masked stored secret. */
+  visibleNow?: boolean;
   default?: string | number | boolean | string[];
   options?: PluginManagerConfigOption[];
   /** Secret fields expose only the fixed mask or null, never the stored value. */

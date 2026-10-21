@@ -1219,7 +1219,7 @@ packages:
     engines: {node: '>=20.0.0'}
 
   '@clowder-ai/plugin-contract@file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.37-c1-785543498768.tgz':
-    resolution: {integrity: sha512-6J4XPbWRWHRd7IkvZuITm/zGy8/ZxZfZiSGiEBXbeDDABhOzPcbHwxf7krcF5NIfDtUwdHNHA5kd6blb2apgbw==, tarball: file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.37-c1-785543498768.tgz}
+    resolution: {integrity: sha512-WI7HyLdE9JyfCXlUi2MnffFm95ogM6Ey5i5TIYw3jUMLNkfzAmnOwnjSj4z5ojxBDsjXqT0pboHBj+tluvHV7g==, tarball: file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.37-c1-785543498768.tgz}
     version: 0.1.0-beta.37
     engines: {node: '>=20.0.0'}
 

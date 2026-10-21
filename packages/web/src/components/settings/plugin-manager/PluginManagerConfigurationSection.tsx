@@ -1,6 +1,6 @@
 'use client';
 
-import { isPluginConfigurationFieldRequired } from '@cat-cafe/shared';
+import { isPluginConfigurationFieldRequired, isPluginConfigurationFieldVisible } from '@cat-cafe/shared';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { type PlatformFieldStatus, StepBadge } from '../../HubConfigIcons';
 import { ConfigFieldRenderer } from '../primitives/ConfigFieldRenderer';
@@ -49,6 +49,23 @@ function fieldIsRequired(
   });
 }
 
+function fieldIsVisible(
+  field: ConfigurationField,
+  fields: readonly ConfigurationField[],
+  drafts: Readonly<Record<string, string>>,
+): boolean {
+  const referenced = field.visibleWhen && fields.find((candidate) => candidate.key === field.visibleWhen?.key);
+  if (referenced?.kind === 'secret' && drafts[referenced.key] === undefined && referenced.currentValue !== null) {
+    // The Host cannot expose the stored secret. Reuse its evaluation of the same predicate.
+    return field.visibleNow ?? true;
+  }
+  return isPluginConfigurationFieldVisible(field, (key) => {
+    const referencedField = fields.find((candidate) => candidate.key === key);
+    const value = referencedField ? effectiveFieldValue(referencedField, drafts) : undefined;
+    return value && value.length > 0 ? value : undefined;
+  });
+}
+
 function renderedFieldValue(field: ConfigurationField, drafts: Readonly<Record<string, string>>): string {
   const draft = drafts[field.key];
   if (draft !== undefined) return draft;
@@ -61,7 +78,9 @@ function configurationUpdates(
   drafts: Readonly<Record<string, string>>,
 ): readonly { key: string; value: string | null }[] {
   return fields
-    .filter((field) => field.kind !== 'operation' && field.hidden !== true)
+    .filter(
+      (field) => field.kind !== 'operation' && field.hidden !== true && fieldIsVisible(field, fields, drafts),
+    )
     .flatMap((field) => {
       const draft = drafts[field.key];
       if (draft !== undefined) return [{ key: field.key, value: draft.length === 0 ? null : draft }];
@@ -126,7 +145,9 @@ export function PluginManagerConfigurationSection({
     field.actions?.some((action) => action.resultRender === 'rows')
       ? `${field.key}:${plugin.intent}:${plugin.live}`
       : field.key;
-  const configurableFields = fields.filter((field) => field.kind !== 'operation' && field.hidden !== true);
+  const configurableFields = fields.filter(
+    (field) => field.kind !== 'operation' && field.hidden !== true && fieldIsVisible(field, fields, fieldValues),
+  );
   const declaredSteps = (plugin.steps ?? plugin.setupSteps ?? []).map((step) =>
     typeof step === 'string' ? { text: step } : step,
   );
@@ -137,7 +158,9 @@ export function PluginManagerConfigurationSection({
   const selectedMode = modeField ? effectiveFieldValue(modeField, fieldValues) : undefined;
   const steps = declaredSteps.filter((step) => !step.mode || step.mode === selectedMode).map((step) => step.text);
   const updates = configurationUpdates(fields, fieldValues);
-  const displayedFields = fields.filter((field) => field.hidden !== true);
+  const displayedFields = fields.filter(
+    (field) => field.hidden !== true && fieldIsVisible(field, fields, fieldValues),
+  );
   const [operationRevision, setOperationRevision] = useState(0);
   const handleOperationChange = () => {
     setOperationRevision((value) => value + 1);
