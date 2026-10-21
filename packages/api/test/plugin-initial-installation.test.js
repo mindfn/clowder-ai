@@ -186,7 +186,13 @@ for (const requiresConfig of [false, true])
       },
     });
     const entry = catalogEntry(archive.integrity, { effectiveGrants: [] });
-    const catalog = { snapshot: async () => ({ entries: [entry], status: 'fresh', checkedAt: 100 }) };
+    let catalogReads = 0;
+    const catalog = {
+      snapshot: async () => {
+        catalogReads += 1;
+        return { entries: [entry], status: 'fresh', checkedAt: 100 };
+      },
+    };
     const projectRoot = await mkdtemp(join(tmpdir(), 'c1-initial-production-'));
     let fetches = 0;
     const make = () => {
@@ -215,7 +221,15 @@ for (const requiresConfig of [false, true])
       const ready = await prepareHostInitialPlugins(host);
       assert.equal((await host.managerRuntime.manager.get(entry.pluginId)).plugin.intent, 'disabled');
       await host.runtime.recoverAfterRestart();
+      const readsBeforeActivation = catalogReads;
       await ready.activate();
+      if (!requiresConfig) {
+        assert.equal(
+          catalogReads,
+          readsBeforeActivation,
+          'first-start activation must reuse the operation catalog snapshot',
+        );
+      }
       let p = (await host.managerRuntime.manager.get(entry.pluginId)).plugin;
       if (requiresConfig) {
         assert.equal(p.intent, 'disabled');

@@ -18,7 +18,12 @@ export interface InitialPluginInstallationOptions {
   readonly installer: Pick<OfficialPluginPackageInstaller, 'install' | 'installFromSnapshot'>;
   readonly loadSelection: () => Promise<unknown>;
   readonly reconcile?: (pluginId: string, instanceId: string) => Promise<void>;
-  readonly activate: (pluginId: string, instanceId: string, expectedRevision: number) => Promise<void>;
+  readonly activate: (
+    pluginId: string,
+    instanceId: string,
+    expectedRevision: number,
+    catalogSnapshot: OfficialPluginCatalogSnapshot,
+  ) => Promise<void>;
   readonly onFailure: (pluginId: string, error: unknown) => void;
 }
 
@@ -187,14 +192,28 @@ async function installPending(options: InitialPluginInstallationOptions, plan: I
     }
   }
 }
-async function activateInstalled(options: InitialPluginInstallationOptions, journal: Journal): Promise<void> {
+async function operationCatalogSnapshot(
+  options: InitialPluginInstallationOptions,
+  plan: InitialPluginPlan,
+): Promise<OfficialPluginCatalogSnapshot> {
+  if (plan.catalogSnapshot) return plan.catalogSnapshot;
+  try {
+    return await options.catalog.snapshot();
+  } catch {
+    return { entries: [], status: 'degraded', checkedAt: null, errorCode: 'CATALOG_FETCH_FAILED' };
+  }
+}
+async function activateInstalled(options: InitialPluginInstallationOptions, plan: InitialPluginPlan): Promise<void> {
+  const { journal } = plan;
+  if (!journal.plugins.some((p) => !p.done && p.prepared && p.instanceId && p.revision !== undefined)) return;
+  const catalogSnapshot = await operationCatalogSnapshot(options, plan);
   for (const p of journal.plugins) {
     if (p.done || !p.prepared || !p.instanceId || p.revision === undefined) continue;
     try {
       const instance = (await options.inventory.snapshot()).instances.find((i) => i.pluginInstanceId === p.instanceId);
       // Any user/lifecycle change wins over the initial default, including uninstall.
       if (instance?.lifecycleState === 'installed' && instance.lifecycleRevision === p.revision)
-        await options.activate(p.pluginId, p.instanceId, p.revision);
+        await options.activate(p.pluginId, p.instanceId, p.revision, catalogSnapshot);
       p.done = true;
       await saveJournal(options.statePath, journal);
     } catch (error) {
@@ -204,9 +223,13 @@ async function activateInstalled(options: InitialPluginInstallationOptions, jour
 }
 /** Called before recovery; activation is explicitly deferred until the Host has listened. */
 export async function prepareInitialPluginInstallation(options: InitialPluginInstallationOptions) {
-  const plan = await begin(options);
+  const initialPlan = await begin(options);
+  const plan =
+    initialPlan.catalogSnapshot || !initialPlan.journal.plugins.some((p) => !p.done)
+      ? initialPlan
+      : { ...initialPlan, catalogSnapshot: await operationCatalogSnapshot(options, initialPlan) };
   await installPending(options, plan);
-  return { activate: () => activateInstalled(options, plan.journal) };
+  return { activate: () => activateInstalled(options, plan) };
 }
 
 /** The same Manager installation/configuration/lifecycle used by explicit owner operations. */
@@ -218,6 +241,7 @@ export function prepareHostInitialPlugins(options: {
   readonly onFailure: InitialPluginInstallationOptions['onFailure'];
 }) {
   const { runtime, managerRuntime } = options;
+  let managerCatalogSnapshot: ReturnType<typeof managerRuntime.officialCatalog.projectSnapshot> | undefined;
   return prepareInitialPluginInstallation({
     statePath: join(dirname(runtime.paths.inventorySnapshotPath), PLUGIN_HOST_ENTRIES.initialInstallation),
     inventory: runtime.inventoryStore,
@@ -227,13 +251,17 @@ export function prepareHostInitialPlugins(options: {
       options.loadSelection ??
       (() => loadMachinePluginCatalog(new URL('initial-plugins.json', OFFICIAL_PLUGIN_CATALOG_URL).href)),
     reconcile: (pluginId, instanceId) => managerRuntime.configuration.reconcile(pluginId, instanceId),
-    activate: async (pluginId, instanceId, expectedRevision) => {
+    activate: async (pluginId, instanceId, expectedRevision, catalogSnapshot) => {
       const instance = (await runtime.inventoryStore.snapshot()).instances.find(
         (i) => i.pluginInstanceId === instanceId,
       );
       // Configuration requiring user input remains visible and disabled in Settings.
       if (instance?.configReadiness !== 'ready') return;
-      await managerRuntime.manager.setEnabled(pluginId, { enabled: true, expectedRevision });
+      managerCatalogSnapshot ??= managerRuntime.officialCatalog.projectSnapshot(catalogSnapshot);
+      await managerRuntime.manager.setEnabledFromCatalogSnapshot(managerCatalogSnapshot, pluginId, {
+        enabled: true,
+        expectedRevision,
+      });
     },
     onFailure: options.onFailure,
   });
