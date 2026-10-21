@@ -84,6 +84,30 @@ it('does not implicitly select first mode without a stored value or default', as
     [mode(null), field('token', { kind: 'secret', required: true, sensitive: true })],
     async (container) => {
       expect(container.querySelector('[data-testid="field-token"]')).toBeNull();
+      expect((container.querySelector('[data-testid="field-mode"]') as HTMLSelectElement).value).toBe('');
+    },
+  );
+});
+it('treats a cleared stored condition as a deletion when validating the draft', async () => {
+  await withForm(
+    [
+      mode('hook'),
+      field('selector', { kind: 'string', currentValue: 'enable' }),
+      field('token', { kind: 'secret', sensitive: true, requiredWhen: { key: 'selector', value: 'enable' } }),
+    ],
+    async (container, onSave) => {
+      const selector = container.querySelector('[data-testid="field-selector"]') as HTMLInputElement;
+      for (const value of ['temporary', '']) {
+        await act(async () => {
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(selector, value);
+          selector.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+      }
+      await save(container);
+      expect(onSave).toHaveBeenCalledOnce();
+      expect(onSave.mock.calls[0]?.[0]).toEqual(
+        expect.arrayContaining([expect.objectContaining({ key: 'selector', value: null })]),
+      );
     },
   );
 });
