@@ -31,22 +31,50 @@ import { registerPluginManagerRoutes } from '../dist/routes/plugin-manager-route
 const roots = [];
 const execFileAsync = promisify(execFile);
 
-test('file-based MCP mutations refuse an unreadable registry before writing CLI or project config', async () => {
-  const root = await tempRoot('plugin-mcp-corrupt-home-');
-  await mkdir(join(root, '.cat-cafe'), { recursive: true });
-  const path = join(root, '.cat-cafe/capabilities.json');
-  const bytes = '{ broken registry';
-  await writeFile(path, bytes);
-  const io = fileBasedMcpIO(root, {
-    google: join(root, '.test-cli/google.json'),
-    antigravity: join(root, '.test-cli/antigravity.json'),
+for (const state of ['absent', 'corrupt']) {
+  test(`file-based MCP mutations refuse ${state} host registries before writing CLI or project config`, async () => {
+    const root = await tempRoot('plugin-mcp-invalid-home-');
+    const consumer = await tempRoot('plugin-mcp-preserved-project-');
+    await writeCapabilitiesConfig(consumer, {
+      version: 2,
+      capabilities: [
+        { id: 'memory', type: 'mcp', source: 'cat-cafe', enabled: true, mcpServer: { command: 'node' } },
+        {
+          id: 'plugin:other:native',
+          pluginId: 'other',
+          type: 'mcp',
+          source: 'plugin',
+          enabled: true,
+          mcpServer: { command: 'node' },
+        },
+      ],
+    });
+    const consumerPath = join(consumer, '.cat-cafe/capabilities.json');
+    const consumerBytes = await readFile(consumerPath, 'utf8');
+    await mkdir(join(root, '.cat-cafe'), { recursive: true });
+    await writeFile(
+      join(root, '.cat-cafe/governance-registry.json'),
+      JSON.stringify({ entries: [{ projectPath: consumer }] }),
+    );
+    const path = join(root, '.cat-cafe/capabilities.json');
+    const bytes = '{ broken registry';
+    if (state === 'corrupt') await writeFile(path, bytes);
+    const io = fileBasedMcpIO(root, {
+      google: join(root, '.test-cli/google.json'),
+      antigravity: join(root, '.test-cli/antigravity.json'),
+    });
+    const entry = { id: 'test-mcp', type: 'mcp', enabled: true, source: 'external', mcpServer: { command: 'node' } };
+    const failure = new RegExp(
+      `Cannot synchronize global capabilities.*${state === 'corrupt' ? 'parse_error' : 'absent'}`,
+    );
+    await assert.rejects(() => installMcpCapability(root, entry, io), failure);
+    await assert.rejects(() => removeMcpCapability(root, entry.id, io, { hard: true }), failure);
+    if (state === 'corrupt') assert.equal(await readFile(path, 'utf8'), bytes);
+    else await assert.rejects(readFile(path), { code: 'ENOENT' });
+    assert.equal(await readFile(consumerPath, 'utf8'), consumerBytes);
+    await assert.rejects(() => stat(join(root, '.test-cli')), { code: 'ENOENT' });
   });
-  const entry = { id: 'test-mcp', type: 'mcp', enabled: true, source: 'external', mcpServer: { command: 'node' } };
-  await assert.rejects(() => installMcpCapability(root, entry, io), /parse_error/);
-  await assert.rejects(() => removeMcpCapability(root, entry.id, io, { hard: true }), /parse_error/);
-  assert.equal(await readFile(path, 'utf8'), bytes);
-  await assert.rejects(() => stat(join(root, '.test-cli')), { code: 'ENOENT' });
-});
+}
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -916,6 +944,8 @@ test('Host shutdown removes live registrations but preserves declared MCP state'
 
 test('plugin MCP lifecycle reaches existing projects and their provider injection without a manual sync', async () => {
   const projectRoot = await tempRoot('plugin-mcp-cascade-home-');
+  // The Host first-run bootstrap owns creation of the authoritative registry.
+  await writeCapabilitiesConfig(projectRoot, { version: 2, capabilities: [] });
   const broken = await tempRoot('plugin-mcp-cascade-broken-');
   const consumer = await tempRoot('plugin-mcp-cascade-consumer-');
   const disabledProject = await tempRoot('plugin-mcp-cascade-disabled-');

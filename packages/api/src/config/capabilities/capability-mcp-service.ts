@@ -52,7 +52,7 @@ export function fileBasedMcpIO(projectRoot: string, cliConfigPaths?: CliConfigPa
     antigravity: join(homedir(), '.gemini', 'antigravity', 'mcp_config.json'),
   };
   return {
-    readConfig: () => readMcpSyncConfig(projectRoot, 'project'),
+    readConfig: () => readMcpSyncConfig(projectRoot, 'global'),
     writeAndRegenCli: async (config) => {
       await writeCapabilitiesConfig(projectRoot, config);
       await reconcileMcpRuntimeConfig(config, paths, projectRoot);
