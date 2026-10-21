@@ -13,10 +13,9 @@
  *   editing → cancelling → cancelled
  */
 
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { RichCardBlock } from '@/stores/chat-types';
 import { apiFetch } from '@/utils/api-client';
-import { CommunityIssuePreviewCard } from './CommunityIssuePreviewCard';
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -29,7 +28,6 @@ type CardState = 'editing' | 'creating' | 'publishing' | 'published' | 'cancelli
 
 interface DraftMeta {
   kind: string;
-  draftId?: string;
   proposedTitle?: string;
   proposedBody?: string;
   proposedRepo?: string;
@@ -63,7 +61,6 @@ export function isCommunityIssueDraftBlock(block: RichCardBlock, messageSource?:
 
 export function CommunityIssueDraftCard({ block, messageId }: CommunityIssueDraftCardProps) {
   const meta = (block.meta as unknown as DraftMeta | undefined) ?? ({} as DraftMeta);
-  const fieldId = useId();
 
   const [state, setState] = useState<CardState>('editing');
   const [title, setTitle] = useState(meta.proposedTitle ?? '');
@@ -75,7 +72,6 @@ export function CommunityIssueDraftCard({ block, messageId }: CommunityIssueDraf
   const [publishedNumber, setPublishedNumber] = useState<number | null>(null);
   // R1 P1-1 fix: track draftId across retries so we skip create on retry-after-publish-failure
   const [draftId, setDraftId] = useState<string | null>(null);
-  const [publicationStarted, setPublicationStarted] = useState(false);
 
   // Fetch repo config on mount
   useEffect(() => {
@@ -163,16 +159,9 @@ export function CommunityIssueDraftCard({ block, messageId }: CommunityIssueDraf
         throw new Error(data.error ?? `HTTP ${pubRes.status}`);
       }
       const pubData = (await pubRes.json()) as {
-        draft: { status?: string; githubIssueUrl?: string; githubIssueNumber?: number };
+        draft: { githubIssueUrl?: string; githubIssueNumber?: number };
         githubIssueUrl?: string;
-        warning?: string;
       };
-      if (pubData.draft.status !== 'published') {
-        setPublicationStarted(true);
-        setError(pubData.warning ?? '发布结果待确认，请查询原发布结果。');
-        setState('editing');
-        return;
-      }
       setPublishedUrl(pubData.githubIssueUrl ?? pubData.draft.githubIssueUrl ?? null);
       setPublishedNumber(pubData.draft.githubIssueNumber ?? null);
       setState('published');
@@ -182,34 +171,9 @@ export function CommunityIssueDraftCard({ block, messageId }: CommunityIssueDraf
     }
   };
 
-  const handleCancel = async () => {
-    if (!draftId) {
-      setState('cancelled');
-      return;
-    }
-    setState('cancelling');
-    setError(null);
-    try {
-      const response = await apiFetch(
-        `/api/plugins/official.github-operations/github/community-issue-drafts/by-id/${encodeURIComponent(draftId)}/cancel`,
-        { method: 'POST' },
-      );
-      if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as { error?: string };
-        throw new Error(data.error ?? `Cancel failed (${response.status})`);
-      }
-      setState('cancelled');
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Cancel failed');
-      setState('editing');
-    }
+  const handleCancel = () => {
+    setState('cancelled');
   };
-
-  // A previously saved plugin draft is hydrated by the same owner preview; never create
-  // a second draft merely to display it. Publication still requires the user's click.
-  if (typeof meta.draftId === 'string' && /^[a-f0-9]{64}$/.test(meta.draftId)) {
-    return <CommunityIssuePreviewCard inlineDraftId={meta.draftId} />;
-  }
 
   // ── Published ──────────────────────────────────────────────
   if (state === 'published') {
@@ -259,29 +223,23 @@ export function CommunityIssueDraftCard({ block, messageId }: CommunityIssueDraf
 
       {/* Editable title */}
       <div className="mb-2">
-        <label htmlFor={`${fieldId}-title`} className="mb-1 block text-xs text-cafe-muted">
-          Title
-        </label>
+        <label className="mb-1 block text-xs text-cafe-muted">Title</label>
         <input
-          id={`${fieldId}-title`}
           type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          disabled={isActionInProgress || publicationStarted}
+          disabled={isActionInProgress}
           className="w-full rounded border border-cafe/30 bg-cafe-surface px-2 py-1.5 text-xs text-cafe-text focus:border-sky-400 focus:outline-none disabled:opacity-50"
         />
       </div>
 
       {/* Editable body */}
       <div className="mb-2">
-        <label htmlFor={`${fieldId}-body`} className="mb-1 block text-xs text-cafe-muted">
-          Description (Markdown)
-        </label>
+        <label className="mb-1 block text-xs text-cafe-muted">Description (Markdown)</label>
         <textarea
-          id={`${fieldId}-body`}
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          disabled={isActionInProgress || publicationStarted}
+          disabled={isActionInProgress}
           rows={6}
           className="w-full rounded border border-cafe/30 bg-cafe-surface px-2 py-1.5 text-xs text-cafe-text focus:border-sky-400 focus:outline-none disabled:opacity-50"
         />
@@ -289,15 +247,12 @@ export function CommunityIssueDraftCard({ block, messageId }: CommunityIssueDraf
 
       {/* Repo picker */}
       <div className="mb-2">
-        <label htmlFor={`${fieldId}-repo`} className="mb-1 block text-xs text-cafe-muted">
-          Target Repository
-        </label>
+        <label className="mb-1 block text-xs text-cafe-muted">Target Repository</label>
         {repos.length > 0 ? (
           <select
-            id={`${fieldId}-repo`}
             value={selectedRepo}
             onChange={(e) => setSelectedRepo(e.target.value)}
-            disabled={isActionInProgress || !!draftId}
+            disabled={isActionInProgress}
             className="w-full rounded border border-cafe/30 bg-cafe-surface px-2 py-1.5 text-xs text-cafe-text focus:border-sky-400 focus:outline-none disabled:opacity-50"
           >
             {repos.map((repo) => (
@@ -308,11 +263,10 @@ export function CommunityIssueDraftCard({ block, messageId }: CommunityIssueDraf
           </select>
         ) : (
           <input
-            id={`${fieldId}-repo`}
             type="text"
             value={selectedRepo}
             onChange={(e) => setSelectedRepo(e.target.value)}
-            disabled={isActionInProgress || !!draftId}
+            disabled={isActionInProgress}
             placeholder="owner/repo"
             className="w-full rounded border border-cafe/30 bg-cafe-surface px-2 py-1.5 text-xs text-cafe-text focus:border-sky-400 focus:outline-none disabled:opacity-50"
           />
@@ -345,8 +299,6 @@ export function CommunityIssueDraftCard({ block, messageId }: CommunityIssueDraf
               <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
               Publishing...
             </span>
-          ) : publicationStarted ? (
-            '查询发布结果'
           ) : (
             'Submit to GitHub'
           )}
@@ -354,7 +306,7 @@ export function CommunityIssueDraftCard({ block, messageId }: CommunityIssueDraf
         <button
           type="button"
           onClick={handleCancel}
-          disabled={isActionInProgress || publicationStarted}
+          disabled={isActionInProgress}
           className="rounded border border-cafe/30 px-3 py-1.5 text-xs text-cafe-muted transition hover:bg-cafe-surface disabled:opacity-50"
         >
           Cancel

@@ -7,16 +7,13 @@
  * full create → publish flow happen at the API layer (Task 2 + Task 5).
  */
 
-import React, { act } from 'react';
-import { createRoot } from 'react-dom/client';
+import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
-import { apiFetch } from '@/utils/api-client';
+import { describe, expect, it } from 'vitest';
 import { CommunityIssueDraftCard, isCommunityIssueDraftBlock } from '../CommunityIssueDraftCard';
 import { RichBlocks } from '../RichBlocks';
 
-vi.mock('@/utils/api-client', () => ({ apiFetch: vi.fn() }));
-Object.assign(globalThis as Record<string, unknown>, { React, IS_REACT_ACT_ENVIRONMENT: true });
+Object.assign(globalThis as Record<string, unknown>, { React });
 
 const draftBlock = {
   id: 'b_draft_1',
@@ -112,135 +109,3 @@ describe('RichBlocks routing to CommunityIssueDraftCard', () => {
     expect(html).toContain('Just a card');
   });
 });
-
-it('cat card retains one draft and queries an uncertain publication without marking it published', async () => {
-  const draft = { draftId: 'saved-draft', title: 'Bug', bodyMarkdown: 'Body', status: 'publishing' };
-  vi.mocked(apiFetch)
-    .mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ defaultRepo: 'org/repo', repos: ['org/repo'] }),
-    } as Response)
-    .mockResolvedValueOnce({ ok: true, json: async () => ({ draft: { ...draft, status: 'draft' } }) } as Response)
-    .mockResolvedValueOnce({
-      ok: true,
-      status: 202,
-      json: async () => ({ draft, warning: 'Publication outcome uncertain' }),
-    } as Response)
-    .mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        draft: {
-          ...draft,
-          status: 'published',
-          githubIssueNumber: 7,
-          githubIssueUrl: 'https://github.com/org/repo/issues/7',
-        },
-      }),
-    } as Response);
-  const container = document.createElement('div');
-  document.body.appendChild(container);
-  const root = createRoot(container);
-  try {
-    await act(async () => root.render(<CommunityIssueDraftCard block={draftBlock} messageId="message-1" />));
-    await act(async () => container.querySelector('button')!.click());
-    expect(container.textContent).not.toContain('Published to Community');
-    expect(container.textContent).toContain('Publication outcome uncertain');
-    expect(container.querySelector('input')?.disabled).toBe(true);
-    expect(container.textContent).toContain('查询发布结果');
-    expect(
-      Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Cancel')?.disabled,
-    ).toBe(true);
-    await act(async () => container.querySelector('button')!.click());
-    expect(container.querySelector('a')?.href).toBe('https://github.com/org/repo/issues/7');
-    expect(
-      vi
-        .mocked(apiFetch)
-        .mock.calls.filter(([url, init]) => String(url).endsWith('/community-issue-drafts') && init?.method === 'POST'),
-    ).toHaveLength(1);
-  } finally {
-    await act(async () => root.unmount());
-    container.remove();
-  }
-});
-
-it('a saved native draft opens the existing preview without creating another draft', async () => {
-  const id = 'a'.repeat(64);
-  const draft = {
-    draftId: id,
-    status: 'draft',
-    title: 'Saved title',
-    bodyMarkdown: 'Saved text',
-    targetRepo: 'org/repo',
-    labels: [],
-  };
-  const calls: string[] = [];
-  vi.mocked(apiFetch).mockImplementation(async (url) => {
-    calls.push(String(url));
-    return {
-      ok: true,
-      json: async () =>
-        String(url).endsWith('/config') ? { repos: ['org/repo'], defaultRepo: 'org/repo' } : { draft },
-    } as Response;
-  });
-  const container = document.createElement('div');
-  document.body.appendChild(container);
-  const root = createRoot(container);
-  try {
-    await act(async () =>
-      root.render(<CommunityIssueDraftCard block={{ ...draftBlock, meta: { ...draftBlock.meta, draftId: id } }} />),
-    );
-    expect(container.querySelector('input')?.value).toBe('Saved title');
-    expect(calls).toContain(`/api/plugins/official.github-operations/github/community-issue-drafts/by-id/${id}`);
-    expect(calls.every((url) => url.endsWith('/config') || url.includes('/by-id/'))).toBe(true);
-  } finally {
-    await act(async () => root.unmount());
-    container.remove();
-  }
-});
-
-for (const cancelled of [true, false])
-  it(`persisted draft cancellation after a publication refusal (cancel succeeds=${cancelled})`, async () => {
-    vi.mocked(apiFetch).mockReset();
-    vi.mocked(apiFetch)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ defaultRepo: 'org/repo', repos: ['org/repo'] }),
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ draft: { draftId: 'saved/after-refusal' } }),
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 403,
-        json: async () => ({ error: 'Publication refused' }),
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: cancelled,
-        status: cancelled ? 200 : 503,
-        json: async () => (cancelled ? { draft: { status: 'cancelled' } } : { error: 'Cancellation unavailable' }),
-      } as Response);
-    const container = document.createElement('div');
-    document.body.appendChild(container);
-    const root = createRoot(container);
-    try {
-      await act(async () => root.render(<CommunityIssueDraftCard block={draftBlock} messageId="message-cancel" />));
-      await act(async () => container.querySelector('button')!.click());
-      expect(container.textContent).toContain('Publication refused');
-      const cancel = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Cancel');
-      await act(async () => cancel!.click());
-      expect(apiFetch).toHaveBeenLastCalledWith(
-        '/api/plugins/official.github-operations/github/community-issue-drafts/by-id/saved%2Fafter-refusal/cancel',
-        expect.objectContaining({ method: 'POST' }),
-      );
-      if (cancelled) expect(container.textContent).toContain('Publish cancelled');
-      else {
-        expect(container.textContent).not.toContain('Publish cancelled');
-        expect(container.textContent).toContain('Cancellation unavailable');
-      }
-    } finally {
-      await act(async () => root.unmount());
-      container.remove();
-    }
-  });

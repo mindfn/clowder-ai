@@ -5,14 +5,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { promisify } from 'node:util';
+import { catRegistry } from '@cat-cafe/shared';
 import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
 import Fastify from 'fastify';
-
+import {
+  fileBasedMcpIO,
+  installMcpCapability,
+  removeMcpCapability,
+} from '../dist/config/capabilities/capability-mcp-service.js';
 import {
   readCapabilitiesConfig,
   withCapabilityLock,
   writeCapabilitiesConfig,
 } from '../dist/config/capabilities/capability-orchestrator.js';
+import { resolveProviderMcpConfig } from '../dist/domains/cats/services/agents/providers/provider-mcp-config.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { LimbRegistry } from '../dist/domains/limb/LimbRegistry.js';
 import { activateDeclaredMcp } from '../dist/domains/plugin/declared/declared-mcp-resources.js';
@@ -24,6 +30,23 @@ import { registerPluginManagerRoutes } from '../dist/routes/plugin-manager-route
 
 const roots = [];
 const execFileAsync = promisify(execFile);
+
+test('file-based MCP mutations refuse an unreadable registry before writing CLI or project config', async () => {
+  const root = await tempRoot('plugin-mcp-corrupt-home-');
+  await mkdir(join(root, '.cat-cafe'), { recursive: true });
+  const path = join(root, '.cat-cafe/capabilities.json');
+  const bytes = '{ broken registry';
+  await writeFile(path, bytes);
+  const io = fileBasedMcpIO(root, {
+    google: join(root, '.test-cli/google.json'),
+    antigravity: join(root, '.test-cli/antigravity.json'),
+  });
+  const entry = { id: 'test-mcp', type: 'mcp', enabled: true, source: 'external', mcpServer: { command: 'node' } };
+  await assert.rejects(() => installMcpCapability(root, entry, io), /parse_error/);
+  await assert.rejects(() => removeMcpCapability(root, entry.id, io, { hard: true }), /parse_error/);
+  assert.equal(await readFile(path, 'utf8'), bytes);
+  await assert.rejects(() => stat(join(root, '.test-cli')), { code: 'ENOENT' });
+});
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -49,7 +72,10 @@ function fakeTaskRunner() {
   };
 }
 
-function createRuntime(projectRoot, { limbRegistry = new LimbRegistry(), taskRunner = fakeTaskRunner() } = {}) {
+function createRuntime(
+  projectRoot,
+  { limbRegistry = new LimbRegistry(), taskRunner = fakeTaskRunner(), mcpConfigIO } = {},
+) {
   return {
     limbRegistry,
     taskRunner,
@@ -59,7 +85,7 @@ function createRuntime(projectRoot, { limbRegistry = new LimbRegistry(), taskRun
       contract: { manifestContractVersions: ['0.1.0'], validateEffectiveGrants, validateManifest },
       limbRegistry,
       taskRunner,
-      mcpConfigIO: {
+      mcpConfigIO: mcpConfigIO ?? {
         readConfig: () => readCapabilitiesConfig(projectRoot),
         writeAndRegenCli: async (config) => {
           await writeCapabilitiesConfig(projectRoot, config);
@@ -886,4 +912,92 @@ test('Host shutdown removes live registrations but preserves declared MCP state'
     ),
     false,
   );
+});
+
+test('plugin MCP lifecycle reaches existing projects and their provider injection without a manual sync', async () => {
+  const projectRoot = await tempRoot('plugin-mcp-cascade-home-');
+  const broken = await tempRoot('plugin-mcp-cascade-broken-');
+  const consumer = await tempRoot('plugin-mcp-cascade-consumer-');
+  const disabledProject = await tempRoot('plugin-mcp-cascade-disabled-');
+  await mkdir(join(broken, '.cat-cafe'), { recursive: true });
+  const brokenPath = join(broken, '.cat-cafe/capabilities.json');
+  const invalidConfig = '{ invalid config: do not overwrite';
+  await writeFile(brokenPath, invalidConfig);
+  await writeCapabilitiesConfig(consumer, { version: 2, capabilities: [] });
+  await writeCapabilitiesConfig(disabledProject, { version: 2, capabilities: [] });
+  await mkdir(join(projectRoot, '.cat-cafe'), { recursive: true });
+  await writeFile(
+    join(projectRoot, '.cat-cafe/governance-registry.json'),
+    JSON.stringify({
+      entries: [broken, consumer, disabledProject].map((projectPath) => ({ projectPath })),
+    }),
+  );
+  const packageRoot = await writeFixturePackage({
+    pluginId: 'dev.clowder.project-mcp',
+    contribution: { type: 'mcp', id: 'native', runtime: { transport: 'stdio', entrypoint: 'dist/mcp.js' } },
+    files: { 'dist/mcp.js': 'process.exit(0);\n' },
+  });
+  const io = fileBasedMcpIO(projectRoot, {
+    google: join(projectRoot, '.gemini/settings.json'),
+    antigravity: join(projectRoot, '.test-antigravity/mcp.json'),
+  });
+  const { runtime } = createRuntime(projectRoot, { mcpConfigIO: io });
+  const { composition, installed } = await installAndEnable(runtime, packageRoot);
+  const id = `plugin:${installed.pluginId}:native`;
+  const name = id.replaceAll(':', '__');
+  const projectEntry = (await readCapabilitiesConfig(consumer)).capabilities.find((entry) => entry.id === id);
+  assert.ok(projectEntry?.mcpServer, 'plugin registration must cascade to an already initialized project');
+  const inject = (workingDirectory = consumer) =>
+    resolveProviderMcpConfig({
+      callbackEnv: { CAT_CAFE_CAT_ID: 'codex' },
+      workingDirectory,
+      mcpServerPath: join(projectRoot, 'packages/mcp-server/dist/index.js'),
+      provider: 'codex',
+    });
+  assert.ok((await inject())[name], 'the real project-first provider must expose the synchronized MCP');
+  await writeCapabilitiesConfig(consumer, { version: 2, capabilities: [{ ...projectEntry, blockedCats: ['codex'] }] });
+  const allCatIds = [...catRegistry.getAllIds()];
+  assert.ok(allCatIds.includes('codex'), 'fixture needs real registry to model whole-project disable');
+  await writeCapabilitiesConfig(disabledProject, {
+    version: 2,
+    capabilities: [{ ...projectEntry, blockedCats: allCatIds }],
+  });
+  await runtime.supervisor.stopAll('test_restart');
+  await runtime.supervisor.start(installed.pluginInstanceId);
+  assert.deepEqual((await readCapabilitiesConfig(consumer)).capabilities.find((entry) => entry.id === id).blockedCats, [
+    'codex',
+  ]);
+  assert.equal((await inject())[name], undefined, 'explicit project member disable survives reactivation');
+
+  const manifestPath = join(packageRoot, 'manifest.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  manifest.version = '1.1.0';
+  manifest.contributions[0].runtime.args = ['--updated'];
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  await composition.manager.install({ source: { kind: 'local-directory', path: packageRoot } });
+  const updated = (await readCapabilitiesConfig(consumer)).capabilities.find((entry) => entry.id === id);
+  assert.ok(updated.mcpServer.args.includes('--updated'), 'package update must cascade the new launch descriptor');
+  assert.deepEqual(updated.blockedCats, ['codex']);
+  assert.deepEqual(
+    (await readCapabilitiesConfig(disabledProject)).capabilities.find((entry) => entry.id === id).blockedCats,
+    allCatIds,
+  );
+  assert.equal((await inject(disabledProject))[name], undefined, 'whole-project disable survives package update');
+  assert.equal(
+    await readFile(brokenPath, 'utf8'),
+    invalidConfig,
+    'a bad project must not block good projects or lose data',
+  );
+
+  const beforeUninstall = (await composition.manager.get(installed.pluginId)).plugin;
+  await composition.manager.uninstall(installed.pluginId, { expectedRevision: beforeUninstall.lifecycleRevision });
+  assert.equal(
+    (await readCapabilitiesConfig(consumer)).capabilities.some((entry) => entry.id === id),
+    false,
+  );
+  assert.equal(
+    (await readCapabilitiesConfig(disabledProject)).capabilities.some((entry) => entry.id === id),
+    false,
+  );
+  assert.equal((await inject())[name], undefined, 'uninstall must remove the project launch descriptor');
 });
