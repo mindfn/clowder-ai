@@ -2,7 +2,11 @@
 
 import { isPluginConfigurationFieldRequired } from '@cat-cafe/shared';
 import type { ConfigurationField as ContractConfigurationField, PluginManifest } from '@clowder-ai/plugin-contract';
-import { evaluateFieldRequiredness, resolveConfigurationVariant } from '@clowder-ai/plugin-contract/variant';
+import {
+  coerceStoredValues,
+  evaluateFieldRequiredness,
+  resolveConfigurationVariant,
+} from '@clowder-ai/plugin-contract/variant';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { type PlatformFieldStatus, StepBadge } from '../../HubConfigIcons';
 import { ConfigFieldRenderer } from '../primitives/ConfigFieldRenderer';
@@ -76,18 +80,35 @@ function variantProjectionOf(fields: readonly ConfigurationField[]): VariantProj
   };
 }
 
-/** Draft-scoped values: the same safe projection the server computes, overlaid with unsaved drafts. */
+/**
+ * Draft-scoped values: the same safe projection the server computes, overlaid
+ * with unsaved drafts. Under a variant declaration an unchosen select stays
+ * unchosen (no implicit first-option) and a stored secret contributes nothing
+ * (the mask is not a value — the server already judged its condition into
+ * `requiredNow`). Strings then go through the contract's single coercion
+ * boundary so requiredness compares typed values, never `"true"` vs `true`.
+ */
 function variantDraftValues(
   fields: readonly ConfigurationField[],
   drafts: Readonly<Record<string, string>>,
+  manifest: PluginManifest,
 ): Record<string, unknown> {
   const values: Record<string, unknown> = {};
   for (const field of fields) {
     if (field.kind === 'operation') continue;
-    const value = effectiveFieldValue(field, drafts);
-    if (value && value.length > 0) values[field.key] = value;
+    const draft = drafts[field.key];
+    if (draft !== undefined && draft.length > 0) {
+      values[field.key] = draft;
+      continue;
+    }
+    if (field.currentValue !== null) {
+      if (field.kind !== 'secret') values[field.key] = field.currentValue;
+      continue;
+    }
+    const defaultValue = serializedDefault(field);
+    if (defaultValue !== undefined) values[field.key] = defaultValue;
   }
-  return values;
+  return coerceStoredValues(manifest, values);
 }
 
 /**
@@ -102,7 +123,10 @@ function variantActiveKeysOf(
   drafts: Readonly<Record<string, string>>,
 ): ReadonlySet<string> {
   const claimed = new Set(projection.variants.branches.flatMap((branch) => branch.fields));
-  const resolution = resolveConfigurationVariant(projection.manifest, variantDraftValues(fields, drafts));
+  const resolution = resolveConfigurationVariant(
+    projection.manifest,
+    variantDraftValues(fields, drafts, projection.manifest),
+  );
   const branch =
     resolution.status === 'selected'
       ? projection.variants.branches.find((item) => item.id === resolution.branchId)
@@ -113,9 +137,18 @@ function variantActiveKeysOf(
   ]);
 }
 
-function renderedFieldValue(field: ConfigurationField, drafts: Readonly<Record<string, string>>): string {
+function renderedFieldValue(
+  field: ConfigurationField,
+  drafts: Readonly<Record<string, string>>,
+  variantMode: boolean,
+): string {
   const draft = drafts[field.key];
   if (draft !== undefined) return draft;
+  if (variantMode && field.kind === 'select') {
+    // An unchosen discriminator stays unchosen: no implicit first option.
+    if (field.currentValue !== null) return field.currentValue;
+    return serializedDefault(field) ?? '';
+  }
   if (field.kind === 'select' || field.kind === 'boolean') return effectiveFieldValue(field, drafts);
   return '';
 }
@@ -124,6 +157,7 @@ function configurationUpdates(
   fields: readonly ConfigurationField[],
   drafts: Readonly<Record<string, string>>,
   activeKeys?: ReadonlySet<string>,
+  variantMode = false,
 ): readonly { key: string; value: string | null }[] {
   return fields
     .filter((field) => field.kind !== 'operation' && field.hidden !== true)
@@ -131,6 +165,7 @@ function configurationUpdates(
     .flatMap((field) => {
       const draft = drafts[field.key];
       if (draft !== undefined) return [{ key: field.key, value: draft.length === 0 ? null : draft }];
+      if (variantMode) return [];
       if (field.currentValue === null && field.default === undefined) {
         if (field.kind === 'select' && field.options?.[0]) {
           return [{ key: field.key, value: field.options[0].value }];
@@ -195,11 +230,23 @@ export function PluginManagerConfigurationSection({
   const configurableFields = fields.filter((field) => field.kind !== 'operation' && field.hidden !== true);
   const variantProjection = variantProjectionOf(fields);
   const variantActiveKeys = variantProjection ? variantActiveKeysOf(fields, variantProjection, fieldValues) : undefined;
-  const variantDrafts = () => variantDraftValues(fields, fieldValues);
-  const fieldRequired = (field: ConfigurationField): boolean =>
-    variantProjection
-      ? evaluateFieldRequiredness(field as unknown as ContractConfigurationField, variantDrafts())
-      : fieldIsRequired(field, fields, fieldValues);
+  const variantDrafts = (): Record<string, unknown> =>
+    variantProjection ? variantDraftValues(fields, fieldValues, variantProjection.manifest) : {};
+  const fieldRequired = (field: ConfigurationField): boolean => {
+    if (variantProjection) {
+      const refKey = field.requiredWhen?.key;
+      if (refKey) {
+        const referenced = fields.find((candidate) => candidate.key === refKey);
+        if (referenced?.kind === 'secret' && fieldValues[refKey] === undefined && referenced.currentValue !== null) {
+          // The stored secret is masked; the server already judged its condition
+          // into `requiredNow`, so the client must not compare the mask.
+          return field.requiredNow ?? false;
+        }
+      }
+      return evaluateFieldRequiredness(field as unknown as ContractConfigurationField, variantDrafts());
+    }
+    return fieldIsRequired(field, fields, fieldValues);
+  };
   const declaredSteps = (plugin.steps ?? plugin.setupSteps ?? []).map((step) =>
     typeof step === 'string' ? { text: step } : step,
   );
@@ -209,7 +256,7 @@ export function PluginManagerConfigurationSection({
   );
   const selectedMode = modeField ? effectiveFieldValue(modeField, fieldValues) : undefined;
   const steps = declaredSteps.filter((step) => !step.mode || step.mode === selectedMode).map((step) => step.text);
-  const updates = configurationUpdates(fields, fieldValues, variantActiveKeys);
+  const updates = configurationUpdates(fields, fieldValues, variantActiveKeys, variantProjection !== undefined);
   const displayedFields = fields.filter(
     (field) =>
       field.hidden !== true &&
@@ -339,7 +386,7 @@ export function PluginManagerConfigurationSection({
                       <ConfigFieldRenderer
                         key={field.key}
                         field={{ ...renderField(field), label: fieldLabel(field) }}
-                        value={renderedFieldValue(field, fieldValues)}
+                        value={renderedFieldValue(field, fieldValues, variantProjection !== undefined)}
                         required={fieldRequired(field)}
                         error={fieldErrors[field.key]}
                         onChange={changeField}
