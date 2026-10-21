@@ -20,7 +20,6 @@ import {
   responseError,
 } from './plugin-manager-live-api';
 
-const POLL_INTERVAL_MS = 5_000;
 const EMPTY_COMPATIBILITY: readonly PluginManagerDesignFixture[] = [];
 // Dependency preparation alone may take five minutes; allow checkout and package admission as well.
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
@@ -139,10 +138,8 @@ export function PluginManagerLiveContent({
     mounted.current = true;
     initialSelection.current = new URLSearchParams(window.location.search).get('plugin');
     void loadList('');
-    const timer = window.setInterval(() => void loadList(query.current), POLL_INTERVAL_MS);
     return () => {
       mounted.current = false;
-      window.clearInterval(timer);
     };
   }, [loadList]);
 

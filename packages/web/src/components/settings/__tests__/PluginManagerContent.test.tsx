@@ -1072,7 +1072,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(container.textContent).not.toContain('README 暂不可用。');
   });
 
-  it('polls by replacing the same projection without emitting duplicate UI errors', async () => {
+  it('loads on page open without polling the plugin list in the background', async () => {
     vi.useFakeTimers();
     let listReads = 0;
     mockApiFetch.mockImplementation(async (url) => {
@@ -1097,7 +1097,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
       await Promise.resolve();
     });
 
-    expect(listReads).toBe(3);
+    expect(listReads).toBe(2);
     expect(mockApiFetch.mock.calls.filter(([url]) => url === '/api/plugin-manager/marketplaces/refresh')).toHaveLength(
       1,
     );
@@ -1105,18 +1105,14 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(container.querySelectorAll('[data-plugin-id="dev.clowder.video-analysis"]')).toHaveLength(1);
   });
 
-  it('keeps an unavailable detail state stable while polling retries it', async () => {
+  it('keeps an unavailable detail state stable without background retries', async () => {
     vi.useFakeTimers();
     let detailReads = 0;
-    let resolveRetry: ((response: Response) => void) | undefined;
-    const retry = new Promise<Response>((resolve) => {
-      resolveRetry = resolve;
-    });
     mockApiFetch.mockImplementation(async (url) => {
       if (url === '/api/plugin-manager/plugins') return json(response(managerPlugin({ installed: true })));
       if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') {
         detailReads += 1;
-        return detailReads === 1 ? json({}, 503) : retry;
+        return json({}, 503);
       }
       if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis/documentation') return json({});
       return json({}, 404);
@@ -1132,12 +1128,9 @@ describe('F202 live Plugin Manager Console wiring', () => {
       await Promise.resolve();
     });
 
-    expect(detailReads).toBe(2);
+    expect(detailReads).toBe(1);
     expect(container.textContent).toContain('README 暂不可用。');
     expect(container.textContent).not.toContain('README 加载中…');
-
-    resolveRetry?.(json({}, 503));
-    await flushEffects();
   });
   it('shows all installed plugins, five available initially, and finds later plugins by scrolling or search', async () => {
     const installed = Array.from({ length: 7 }, (_, i) =>
