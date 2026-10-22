@@ -212,6 +212,10 @@ export class AcpAgentService implements AgentService {
   /** Becomes true only after this concrete ACP service observes usable standard usage telemetry. */
   private observedUsageUpdate = false;
 
+  async releaseSession(nativeSessionId: string): Promise<void> {
+    await this.pool.releaseSession(this.poolKey, nativeSessionId);
+  }
+
   constructor(config: AcpAgentServiceConfig) {
     this.antigravity = config.antigravity;
     this.catId = config.catId;

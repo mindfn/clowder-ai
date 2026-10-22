@@ -256,6 +256,8 @@ describe('F202 live Plugin Manager Console wiring', () => {
 
     expect(container.textContent).toContain('Installed GitHub');
     expect(container.textContent).not.toContain('Video Analysis');
+    expect(container.textContent).not.toContain('正在加载可安装插件。');
+    expect(container.textContent).not.toContain('目录暂时不可用');
 
     await act(async () => {
       resolveRemote?.(

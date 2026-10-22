@@ -1027,7 +1027,6 @@ async function buildCatCafeMcpArgs(
         let cmd: string | undefined;
         let cmdArgs: string[] | undefined;
         let envEntries: Record<string, string> | undefined;
-        let pluginCredentialFile: string | undefined;
         const isCatCafe = isManagedCatCafeSplit(s);
         const workingDir = resolveCodexMcpWorkingDir(s.workingDir, configSourceRoot);
 
@@ -1043,17 +1042,15 @@ async function buildCatCafeMcpArgs(
           envEntries = pluginMcpEnvironment(s, callbackEnv);
         }
         if (!cmd) continue;
-        if (s.source === 'plugin' && envEntries?.CLOWDER_PLUGIN_ACTION_TOKEN) {
-          // The pool rebinds this Host-owned path when replacing a session.
-          // Keep it in MCP config, not frozen inside the opaque secret wrapper.
-          pluginCredentialFile = envEntries.CAT_CAFE_CREDENTIAL_FILE;
-          delete envEntries.CAT_CAFE_CREDENTIAL_FILE;
-        }
         if (envEntries) {
+          // Pooled replacement hosts rebind session paths through server.env.
+          // A frozen wrapper copy would override the newly bound credential file.
+          const wrapperEnv = { ...envEntries };
+          for (const key of MCP_SESSION_ENV_KEYS) delete wrapperEnv[key];
           const wrapped = writeCodexMcpEnvWrapper({
             command: cmd,
             args: cmdArgs ?? [],
-            env: envEntries,
+            env: wrapperEnv,
             ...(workingDir ? { cwd: workingDir } : {}),
           });
           cmd = wrapped.command;
@@ -1070,11 +1067,9 @@ async function buildCatCafeMcpArgs(
           '--config',
           `mcp_servers.${tomlName}.enabled=true`,
         );
-        if (pluginCredentialFile) {
-          args.push(
-            '--config',
-            `mcp_servers.${tomlName}.env.CAT_CAFE_CREDENTIAL_FILE=${toTomlString(pluginCredentialFile)}`,
-          );
+        for (const key of MCP_SESSION_ENV_KEYS) {
+          const value = envEntries?.[key];
+          if (value) args.push('--config', `mcp_servers.${tomlName}.env.${key}=${toTomlString(value)}`);
         }
         if (isCatCafe) {
           args.push('--config', `mcp_servers.${tomlName}.default_tools_approval_mode="approve"`);

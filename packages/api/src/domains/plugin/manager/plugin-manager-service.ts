@@ -75,6 +75,11 @@ export interface PluginManagerConfigurationPort {
   /** Reconcile static defaults/no-required-fields immediately after idempotent admission. */
   reconcile?(pluginId: string, pluginInstanceId: string): Promise<void>;
   configure(pluginId: string, pluginInstanceId: string, request: PluginManagerConfigureRequest): Promise<void>;
+  configureBootstrapRoot?(
+    pluginId: string,
+    pluginInstanceId: string,
+    request: PluginManagerConfigureRequest,
+  ): Promise<void>;
 }
 
 export interface PluginManagerServiceOptions {
@@ -97,6 +102,7 @@ export type PluginManagerServiceErrorCode =
   | 'LIFECYCLE_UNAVAILABLE'
   | 'RUNTIME_START_FAILED'
   | 'CONFIGURATION_UNAVAILABLE'
+  | 'AUDIT_UNAVAILABLE'
   | 'INVALID_CONFIGURATION';
 
 export class PluginManagerServiceError extends Error {
@@ -313,6 +319,18 @@ export class PluginManagerService {
       );
     }
     await this.options.configuration.configure(pluginId, instance.pluginInstanceId, request);
+    return { pluginId, pluginInstanceId: instance.pluginInstanceId };
+  }
+
+  async configureBootstrapRoot(
+    pluginId: string,
+    request: PluginManagerConfigureRequest,
+  ): Promise<PluginManagerMutationResult> {
+    const current = (await this.get(pluginId)).plugin;
+    const instance = this.requireCurrentInstance(current, request.expectedRevision);
+    if (!this.options.configuration?.configureBootstrapRoot)
+      throw new PluginManagerServiceError('AUDIT_UNAVAILABLE', 'Plugin audit log is unavailable');
+    await this.options.configuration.configureBootstrapRoot(pluginId, instance.pluginInstanceId, request);
     return { pluginId, pluginInstanceId: instance.pluginInstanceId };
   }
 

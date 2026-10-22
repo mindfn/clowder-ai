@@ -5358,6 +5358,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       }
       const generationRecorder = requestGenerationRecorder;
       const options: AgentServiceOptions = {
+        hostSessionId: activeSessionRecordForResume?.id,
         ...(sessionId ? { sessionId } : {}),
         ...baseOptions,
         ...(params.liveCompanion
