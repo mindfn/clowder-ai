@@ -62,14 +62,12 @@ export async function activateDeclaredMcp(
           }),
         }),
       );
-      // Activation credentials live only in the launch snapshot above, never
-      // in the durable Host/project discovery projections.
-      const {
-        CLOWDER_PLUGIN_ACTION_TOKEN: _token,
-        CLOWDER_PLUGIN_ACTION_PATH: _path,
-        ...durableEnv
-      } = server.env ?? {};
-      const durableEntry = { ...entry, mcpServer: { ...server, env: durableEnv } };
+      // Persist only the standard environment reference, never its process-lifetime value.
+      const { CLOWDER_PLUGIN_ACTION_TOKEN: _token, ...durableEnv } = server.env ?? {};
+      const durableEntry = {
+        ...entry,
+        mcpServer: { ...server, env: { ...durableEnv, ...host.nativeActionEnvironmentReferences?.(contribution.id) } },
+      };
       await installMcpCapability(host.projectRoot, durableEntry, host.mcpConfigIO, {
         userId: `plugin:${admission.packageRecord.pluginId}`,
       });

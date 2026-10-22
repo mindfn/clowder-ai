@@ -42,19 +42,6 @@ export class NativeMcpLaunches {
     this.#activations.clear();
   }
 
-  /** Ambient provider launches share the same live activation truth as native-policy launches. */
-  current(capabilityId: string): NativeMcpServer | undefined {
-    const matches: NativeMcpServer[] = [];
-    for (const [instanceId, activation] of this.#activations) {
-      if (this.actions.generation(instanceId) !== activation.generation) continue;
-      for (const launch of activation.launches) {
-        if (capabilityId === `plugin:${activation.admission.packageRecord.pluginId}:${launch.contributionId}`)
-          matches.push(launch.server);
-      }
-    }
-    return matches.length === 1 ? matches[0] : undefined;
-  }
-
   async resolve(policy: ToolExecutionPolicy): Promise<NativeMcpServer> {
     // Normalize synchronously: the caller cannot replace coordinates across admission's await.
     if (policy.mode !== 'plugin_native') throw unavailable();

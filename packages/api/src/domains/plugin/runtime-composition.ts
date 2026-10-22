@@ -4,7 +4,6 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { DeliveryPresentationContext } from '@clowder-ai/plugin-contract';
 import { type Capability, type PluginManifest } from '@clowder-ai/plugin-contract';
 import { fileBasedMcpIO, type McpConfigIO } from '../../config/capabilities/capability-mcp-service.js';
-import { bindHostPluginMcpSource } from '../../config/capabilities/invoke-plugin-mcp.js';
 import { createThreadDeepLinkUrl, resolveFrontendBaseUrl } from '../../config/frontend-origin.js';
 import type { IConnectorThreadBindingStore } from '../../infrastructure/connectors/ConnectorThreadBindingStore.js';
 import { WhisperSttProvider } from '../../infrastructure/connectors/media/WhisperSttProvider.js';
@@ -550,7 +549,6 @@ export function createDormantPluginRuntimeComposition(
     },
   );
   deliveryTarget.current = supervisor;
-  const releaseMcpSource = bindHostPluginMcpSource((id) => supervisor.currentNativeMcpLaunch(id));
   supervisor.register(
     new BundledPluginRuntimeCarrier({
       inventory: inventoryStore,
@@ -638,7 +636,6 @@ export function createDormantPluginRuntimeComposition(
         // An admitted start can acquire ownership after the first stop snapshot.
         // Recovery is now closed and drained, so this final stop has a stable set.
         await supervisor.stopAll(reason);
-        releaseMcpSource();
       }
     },
   };

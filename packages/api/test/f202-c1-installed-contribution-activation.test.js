@@ -255,15 +255,17 @@ test('installed native MCP receives its scoped action token without exposing a p
   const capability = (await readCapabilitiesConfig(projectRoot)).capabilities.find(
     (item) => item.type === 'mcp' && item.pluginId === installed.pluginId,
   );
-  const token = capability.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
-  assert.ok(token);
+  const reference = capability.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
+  assert.match(reference, /^\$\{[A-Z0-9_]+\}$/);
   const launch = await runtime.supervisor.resolveNativeMcpLaunch({
     mode: 'plugin_native',
     pluginInstanceId: installed.pluginInstanceId,
     contributionId: 'native',
     actionMethods: ['native.run'],
   });
-  assert.equal(launch.env.CLOWDER_PLUGIN_ACTION_TOKEN, token);
+  const token = launch.env.CLOWDER_PLUGIN_ACTION_TOKEN;
+  assert.ok(token);
+  assert.equal(process.env[reference.slice(2, -1)], token);
   assert.equal(launch.command, capability.mcpServer.command);
   assert.deepEqual(launch.args, capability.mcpServer.args);
   assert.equal(capability.mcpServer.env.CLOWDER_PLUGIN_ACTION_PATH, '/api/plugin-runtime/action');
@@ -1009,17 +1011,21 @@ test('plugin MCP lifecycle reaches existing projects and their provider injectio
     invocationId: 'inv',
     assertCurrent: async () => {},
   };
-  const initialToken = projectEntry.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
-  assert.ok(initialToken, 'the fixture must exercise a real activation-scoped action token');
+  const initialReference = projectEntry.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
+  const initialToken = process.env[initialReference.slice(2, -1)];
+  assert.ok(initialToken, 'the fixture must exercise a real Host-lifetime connection token');
   const assertFreshDescriptor = async (previousToken, phase) => {
     const homeEntry = (await readCapabilitiesConfig(projectRoot)).capabilities.find((entry) => entry.id === id);
-    const currentToken = homeEntry.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
-    assert.ok(currentToken && currentToken !== previousToken, `${phase}: activation must rotate its token`);
+    const currentReference = homeEntry.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
+    assert.equal(currentReference, initialReference);
+    const currentToken = process.env[currentReference.slice(2, -1)];
+    assert.ok(currentToken);
+    assert.equal(currentToken, previousToken, `${phase}: the same Host keeps its credential`);
     for (const path of [consumer, disabledProject]) {
       const entry = (await readCapabilitiesConfig(path)).capabilities.find((entry) => entry.id === id);
       assert.ok(
-        entry.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN === currentToken,
-        `${phase}: project token must refresh`,
+        entry.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN === currentReference,
+        `${phase}: project must retain the reference without persisting its value`,
       );
     }
     const providerEntry = (await inject(consumer, allowedCat))[name];
@@ -1027,9 +1033,6 @@ test('plugin MCP lifecycle reaches existing projects and their provider injectio
       providerEntry?.env?.CLOWDER_PLUGIN_ACTION_TOKEN === currentToken,
       `${phase}: provider must inject the active token`,
     );
-    await assert.rejects(runtime.supervisor.nativeActions.call(previousToken, 'native.run', {}, caller), {
-      statusCode: 401,
-    });
     assert.deepEqual(
       await runtime.supervisor.nativeActions.call(
         providerEntry.env.CLOWDER_PLUGIN_ACTION_TOKEN,
@@ -1052,6 +1055,9 @@ test('plugin MCP lifecycle reaches existing projects and their provider injectio
     capabilities: [{ ...projectEntry, blockedCats: allCatIds }],
   });
   await runtime.supervisor.stopAll('test_restart');
+  await assert.rejects(runtime.supervisor.nativeActions.call(initialToken, 'native.run', {}, caller), {
+    statusCode: 401,
+  });
   await runtime.supervisor.start(installed.pluginInstanceId);
   const restartedToken = await assertFreshDescriptor(initialToken, 'restart');
   assert.deepEqual((await readCapabilitiesConfig(consumer)).capabilities.find((entry) => entry.id === id).blockedCats, [

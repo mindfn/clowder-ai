@@ -17,8 +17,8 @@
  *   - System prompt: prepended to prompt text (ACP agents have no system prompt flag)
  */
 
-import type { CapabilitiesConfig, CatId } from '@cat-cafe/shared';
-import { readCapabilitiesConfig } from '../../../../../../config/capabilities/capability-orchestrator.js';
+import type { CatId } from '@cat-cafe/shared';
+import { readInvocationMcpConfig } from '../../../../../../config/capabilities/invoke-mcp-config.js';
 import { createModuleLogger } from '../../../../../../infrastructure/logger.js';
 import { createPromptDigest } from '../../../context/prompt-digest.js';
 import type {
@@ -395,26 +395,7 @@ export class AcpAgentService implements AgentService {
       const userProjectRoot = options?.workingDirectory;
       let baseMcpServers: AcpMcpServer[];
       if (this.mcpWhitelist !== null) {
-        let capConfig: CapabilitiesConfig | null = null;
-        // Track which root supplied capabilities.json — external MCP entries
-        // with relative paths must resolve against the config source, not runtime root.
-        let configSourceRoot = this.projectRoot;
-        if (this.mcpSupportEnabled && userProjectRoot && userProjectRoot !== this.projectRoot) {
-          try {
-            capConfig = await readCapabilitiesConfig(userProjectRoot);
-            configSourceRoot = userProjectRoot;
-          } catch {
-            /* No project-local config — fall back to runtime root */
-          }
-        }
-        if (!capConfig) {
-          try {
-            capConfig = await readCapabilitiesConfig(this.projectRoot);
-            configSourceRoot = this.projectRoot;
-          } catch {
-            /* best-effort — resolveAcpMcpServers handles null config */
-          }
-        }
+        const { config: capConfig, configSourceRoot } = readInvocationMcpConfig(this.projectRoot, userProjectRoot);
         const disabled = resolveDisabledServerIds(this.projectRoot, this.catId as string, capConfig);
         baseMcpServers = await resolveAcpMcpServers(this.projectRoot, this.mcpWhitelist, undefined, {
           mcpSupport: this.mcpSupportEnabled,
