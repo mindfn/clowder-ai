@@ -68,8 +68,9 @@ export function materializeSessionMcpServers(
   return baseServers.map((server) => {
     if (!('command' in server)) return server;
     const registered = Object.fromEntries((server.env ?? []).map((e) => [e.name, e.value]));
+    const nativeActionServer = Boolean(registered.CLOWDER_PLUGIN_ACTION_TOKEN);
     const env = pluginMcpEnvironment(
-      { source: registered.CLOWDER_PLUGIN_ACTION_TOKEN ? 'plugin' : undefined, env: registered },
+      { source: nativeActionServer ? 'plugin' : undefined, env: registered },
       callbackEnv ?? {},
     );
     const entries = Object.entries(env ?? {}).map(([name, value]) => ({ name, value }));
@@ -77,7 +78,7 @@ export function materializeSessionMcpServers(
     return {
       ...server,
       env:
-        credentialFileOnly && isCatCafeStdioServer(server)
+        credentialFileOnly && (isCatCafeStdioServer(server) || nativeActionServer)
           ? materialized.filter(
               (entry) => entry.name !== 'CAT_CAFE_INVOCATION_ID' && entry.name !== 'CAT_CAFE_CALLBACK_TOKEN',
             )
