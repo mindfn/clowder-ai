@@ -6,7 +6,12 @@ import { isSameCapabilityRoot } from './invoke-capability-root.js';
 function read(root: string): CapabilitiesConfig | null {
   try {
     const value = JSON.parse(readFileSync(join(root, '.cat-cafe/capabilities.json'), 'utf8'));
-    return (value?.version === 1 || value?.version === 2) && Array.isArray(value.capabilities) ? value : null;
+    return (value?.version === 1 || value?.version === 2) &&
+      Array.isArray(value.capabilities) &&
+      // Match readCapabilitiesConfigState: every consumer reads fields off each entry.
+      value.capabilities.every((entry: unknown) => typeof entry === 'object' && entry !== null && !Array.isArray(entry))
+      ? value
+      : null;
   } catch {
     return null;
   }

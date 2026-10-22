@@ -199,3 +199,37 @@ test('ACP expands references once at session launch, preserving replacement valu
   assert.equal(materialized[0].env[0].value, 'literal:${NOT_A_SECOND_LOOKUP}');
   assert.equal(base[0].env[0].value, '${MCP_FIXTURE_VALUE}');
 });
+
+for (const version of [1, 2]) {
+  test(`v${version} invocation reads reject non-object entries and retain the existing global fallback`, (t) => {
+    const host = root(t),
+      project = root(t);
+    const entry = {
+      id: 'valid',
+      type: 'mcp',
+      enabled: true,
+      globalEnabled: true,
+      mcpServer: { command: 'fixture', env: { LIVE: '${FIXTURE_CURRENT}' } },
+    };
+    save(host, entry);
+    const file = join(project, '.cat-cafe/capabilities.json');
+    for (const invalid of [null, 'scalar', 42, false, []]) {
+      const bytes = JSON.stringify({ version, capabilities: [entry, invalid] });
+      writeFileSync(file, bytes);
+      const resolved = readInvocationMcpConfig(host, project);
+      assert.equal(resolved.configSourceRoot, host);
+      assert.equal(resolved.accessScope, 'global');
+      assert.deepEqual(resolved.config.capabilities, [entry]);
+      assert.equal(readFileSync(file, 'utf8'), bytes);
+    }
+    save(project, entry);
+    writeFileSync(join(host, '.cat-cafe/capabilities.json'), JSON.stringify({ version, capabilities: [null] }));
+    const projectOnly = readInvocationMcpConfig(host, project);
+    assert.equal(projectOnly.accessScope, 'project');
+    assert.equal(projectOnly.configSourceRoot, project);
+    assert.deepEqual(projectOnly.config.capabilities, [entry]);
+    assert.equal(readInvocationMcpConfig(host).config, null);
+    writeFileSync(file, JSON.stringify({ version, capabilities: [null] }));
+    assert.equal(readInvocationMcpConfig(host, project).config, null);
+  });
+}
