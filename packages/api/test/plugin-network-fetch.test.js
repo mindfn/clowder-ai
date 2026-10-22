@@ -50,3 +50,23 @@ test('desktop bridge configuration fails closed when only one credential is pres
     /configuration is incomplete/,
   );
 });
+
+test('desktop bridge accepts bodyless HTTP statuses without an uncaught Response constructor error', async (t) => {
+  const statuses = [204, 205, 304];
+  let index = 0;
+  const server = http.createServer((_request, response) => {
+    response.writeHead(statuses[index++]).end();
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  process.env.CAT_CAFE_PLUGIN_NETWORK_BRIDGE_URL = `http://127.0.0.1:${address.port}`;
+  process.env.CAT_CAFE_PLUGIN_NETWORK_BRIDGE_TOKEN = 'desktop-secret';
+
+  for (const status of statuses) {
+    const response = await fetchPluginNetworkResource('https://registry.npmjs.org/a/-/a-1.0.0.tgz');
+    assert.equal(response.status, status);
+    assert.equal(await response.text(), '');
+  }
+});
