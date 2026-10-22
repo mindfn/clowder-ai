@@ -1171,6 +1171,17 @@ test('plugin MCP wrapper follows the replacement host credential file instead of
       },
     },
   });
+  const declared = config.capabilities.at(-1);
+  const live = {
+    name: declared.id.replaceAll(':', '__'),
+    command: declared.mcpServer.command,
+    args: declared.mcpServer.args,
+    env: { ...declared.mcpServer.env },
+    workingDirectory: credsDir,
+    transport: 'stdio',
+  };
+  const releaseSource = bindHostPluginMcpSource(credsDir, (id) => (id === declared.id ? live : undefined));
+  declared.mcpServer.env = {};
   writeFileSync(configPath, JSON.stringify(config));
   const previousRoots = Object.fromEntries(
     ['CAT_CAFE_RUNTIME_ROOT', 'CAT_CAFE_WORKSPACE_ROOT'].map((key) => [key, process.env[key]]),
@@ -1214,6 +1225,7 @@ test('plugin MCP wrapper follows the replacement host credential file instead of
     assert.equal(JSON.parse(readFileSync(oldPath, 'utf8')).invocationId, 'plugin-seed');
     assert.doesNotMatch(JSON.stringify(resume), /seed-token|current-token|CAT_CAFE_CALLBACK_TOKEN/);
   } finally {
+    releaseSource();
     for (const [key, value] of Object.entries(previousRoots)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
