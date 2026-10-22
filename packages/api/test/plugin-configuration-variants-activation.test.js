@@ -8,7 +8,7 @@
  * materialized MCP capability env, so no consumer can silently regress while unit tests stay green.
  */
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { afterEach, test } from 'node:test';
@@ -473,3 +473,85 @@ test('package API cwd without runtime override reaches MCP tools/list through pr
     }
   }
 });
+
+for (const legacy of ['missing-env-mapping', 'persisted-old-token']) {
+  test(`startup recovers an already installed plugin with ${legacy} without reinstall or retoggle`, async () => {
+    const host = await tempRoot('plugin-existing-install-upgrade-');
+    const consumer = await tempRoot('plugin-existing-install-consumer-');
+    await writeCapabilitiesConfig(host, { version: 2, capabilities: [] });
+    const f = await installConfigureEnable(
+      [
+        { key: 'connectionMode', value: 'webhook' },
+        { key: 'verificationToken', value: ' preserved legacy secret ' },
+        { key: 'appId', value: 'existing-app' },
+      ],
+      { runtime: host, workspace: host, mcpTools: true },
+    );
+    const before = await f.runtime.inventoryStore.snapshot();
+    const originalReference = f.capability.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
+    const previousToken = process.env[originalReference.slice(2, -1)];
+    await f.runtime.shutdown();
+    delete process.env[originalReference.slice(2, -1)];
+    const existing = structuredClone(f.capability);
+    delete existing.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
+    delete existing.mcpServer.env.CLOWDER_PLUGIN_ACTION_PATH;
+    if (legacy === 'persisted-old-token') {
+      existing.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN = previousToken;
+      existing.mcpServer.env.CLOWDER_PLUGIN_ACTION_PATH = '/api/plugin-runtime/action';
+    }
+    await writeCapabilitiesConfig(host, { version: 2, capabilities: [existing] });
+    await writeCapabilitiesConfig(consumer, { version: 2, capabilities: [existing] });
+    const projectFile = join(consumer, '.cat-cafe/capabilities.json');
+    const projectBytes = await readFile(projectFile, 'utf8');
+    const { runtime: restarted } = createRuntime(host);
+    let client;
+    try {
+      const recovery = await restarted.recoverAfterRestart();
+      await restarted.lifecycle.drainRestartRecovery();
+      assert.equal(recovery.resumeRequested, 1);
+      const registered = (await readCapabilitiesConfig(host)).capabilities.find((e) => e.id === existing.id);
+      assert.equal(registered.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN, originalReference);
+      const token = process.env[originalReference.slice(2, -1)];
+      assert.ok(token);
+      assert.notEqual(token, previousToken);
+      const after = await restarted.inventoryStore.snapshot();
+      assert.deepEqual(after.grants, before.grants);
+      assert.equal(after.instances[0].pluginInstanceId, before.instances[0].pluginInstanceId);
+      assert.equal(after.instances[0].packageDigest, before.instances[0].packageDigest);
+      assert.equal(after.instances[0].activationState, 'enabled');
+      const servers = await resolveProviderMcpConfig({
+        workingDirectory: consumer,
+        mcpServerPath: join(host, 'packages/mcp-server/dist/index.js'),
+        callbackEnv: { CAT_CAFE_CAT_ID: catRegistry.getAllIds()[0] },
+      });
+      const server = servers[existing.id.replaceAll(':', '__')];
+      assert.ok(server);
+      assert.equal(server.env.CLOWDER_PLUGIN_ACTION_TOKEN, token);
+      assert.equal(server.env.FEISHU_TOKEN, ' preserved legacy secret ');
+      assert.equal(await readFile(projectFile, 'utf8'), projectBytes, 'unregistered legacy project needs no rewrite');
+      client = new Client({ name: 'existing-install-upgrade', version: '1' });
+      await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: server.env }));
+      assert.deepEqual(
+        (await client.listTools()).tools.map((t) => t.name),
+        ['fixture_native_action'],
+      );
+      const caller = {
+        userId: 'owner',
+        catId: 'codex',
+        threadId: 'fixture',
+        invocationId: 'fixture',
+        assertCurrent: async () => {},
+      };
+      assert.deepEqual(
+        await restarted.supervisor.nativeActions.call(token, 'native.run', { value: 'recovered' }, caller),
+        { value: 'recovered' },
+      );
+      await assert.rejects(restarted.supervisor.nativeActions.call(previousToken, 'native.run', {}, caller), {
+        statusCode: 401,
+      });
+    } finally {
+      await client?.close();
+      await restarted.shutdown();
+    }
+  });
+}

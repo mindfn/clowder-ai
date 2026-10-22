@@ -59,18 +59,23 @@ export function materializeSessionMcpServers(
   baseServers: AcpMcpServer[],
   callbackEnv?: Record<string, string>,
 ): AcpMcpServer[] {
-  if (!callbackEnv || Object.keys(callbackEnv).length === 0) return baseServers;
-
+  const hasCallbacks = callbackEnv && Object.keys(callbackEnv).length > 0;
+  const hasReferences = baseServers.some(
+    (server) => 'command' in server && server.env.some((entry) => /\$\{[^}]+\}/.test(entry.value)),
+  );
+  if (!hasCallbacks && !hasReferences) return baseServers;
   return baseServers.map((server) => {
-    if ('command' in server && server.env.some((entry) => entry.name === 'CLOWDER_PLUGIN_ACTION_TOKEN')) {
-      const env = pluginMcpEnvironment(
-        { source: 'plugin', env: Object.fromEntries(server.env.map((e) => [e.name, e.value])) },
-        callbackEnv,
-      );
-      return { ...server, env: Object.entries(env ?? {}).map(([name, value]) => ({ name, value })) };
-    }
-    if (!isCatCafeStdioServer(server)) return server;
-    return { ...server, env: mergeCallbackEnv(server.env, callbackEnv) };
+    if (!('command' in server)) return server;
+    const registered = Object.fromEntries(server.env.map((e) => [e.name, e.value]));
+    const env = pluginMcpEnvironment(
+      { source: registered.CLOWDER_PLUGIN_ACTION_TOKEN ? 'plugin' : undefined, env: registered },
+      callbackEnv ?? {},
+    );
+    const entries = Object.entries(env ?? {}).map(([name, value]) => ({ name, value }));
+    return {
+      ...server,
+      env: isCatCafeStdioServer(server) && callbackEnv ? mergeCallbackEnv(entries, callbackEnv) : entries,
+    };
   });
 }
 

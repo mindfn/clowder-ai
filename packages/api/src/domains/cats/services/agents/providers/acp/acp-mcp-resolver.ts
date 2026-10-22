@@ -25,7 +25,6 @@ import {
   isRetiredGithubMcpConfigEntry,
 } from '../../../../../../config/capabilities/retired-github-mcp.js';
 import { createModuleLogger } from '../../../../../../infrastructure/logger.js';
-import { resolveEnvReferences } from '../../../../../../utils/env-references.js';
 import type { AcpMcpServer, AcpMcpServerStdio } from './types.js';
 
 const log = createModuleLogger('acp-mcp-resolver');
@@ -125,9 +124,7 @@ function capabilityEntryToAcpMcpServer(
       name,
       command: resolveAcpMcpCommand(mcpServer.command, workingDir, projectRoot),
       args: (mcpServer.args ?? []).map((arg) => resolveAcpMcpArg(arg, workingDir, projectRoot)),
-      env: mcpServer.env
-        ? Object.entries(resolveEnvReferences(mcpServer.env)).map(([k, v]) => ({ name: k, value: v }))
-        : [],
+      env: mcpServer.env ? Object.entries(mcpServer.env).map(([k, v]) => ({ name: k, value: v })) : [],
     };
   }
   log.warn({ name }, 'Capability entry has no usable transport — skipping');

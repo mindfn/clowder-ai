@@ -156,7 +156,7 @@ test('client config adapters share generic env expansion, including ACP session 
     capabilitiesConfig: config,
     configSourceRoot: project,
   });
-  assert.equal(acp[0].env.find((e) => e.name === 'CUSTOM').value, 'prefix:current-value');
+  assert.equal(materializeSessionMcpServers(acp)[0].env.find((e) => e.name === 'CUSTOM').value, 'prefix:current-value');
   const native = [
     {
       name: 'plugin-fixture',
@@ -179,4 +179,19 @@ test('client config adapters share generic env expansion, including ACP session 
   assert.equal(environment.CAT_CAFE_INVOCATION_ID, 'current-invocation');
   assert.equal(environment.CUSTOM, 'untouched');
   assert.equal(native[0].env[0].value, '${MCP_FIXTURE_TOKEN}');
+});
+
+test('ACP expands references once at session launch, preserving replacement values verbatim', (t) => {
+  const old = process.env.MCP_FIXTURE_VALUE;
+  process.env.MCP_FIXTURE_VALUE = 'literal:${NOT_A_SECOND_LOOKUP}';
+  t.after(() => {
+    if (old === undefined) delete process.env.MCP_FIXTURE_VALUE;
+    else process.env.MCP_FIXTURE_VALUE = old;
+  });
+  const base = [
+    { name: 'ordinary', command: process.execPath, args: [], env: [{ name: 'VALUE', value: '${MCP_FIXTURE_VALUE}' }] },
+  ];
+  const materialized = materializeSessionMcpServers(base);
+  assert.equal(materialized[0].env[0].value, 'literal:${NOT_A_SECOND_LOOKUP}');
+  assert.equal(base[0].env[0].value, '${MCP_FIXTURE_VALUE}');
 });
