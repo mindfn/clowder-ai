@@ -20,6 +20,7 @@ import {
   assertMappedCapabilitySource,
   isSameCapabilityRoot,
 } from '../../../../../config/capabilities/invoke-capability-root.js';
+import { resolveInvocationMcpServers } from '../../../../../config/capabilities/invoke-plugin-mcp.js';
 import {
   toOpenCodeMcpEntry,
   toOpenCodeRemoteMcpEntry,
@@ -84,7 +85,10 @@ export function buildOpenCodeMcpSync(
       if (parsed?.version === 1 || parsed?.version === 2) capConfig = parsed;
     }
     if (capConfig && catId) {
-      for (const s of resolveServersForCat(capConfig, catId, { accessScope }) as Array<{
+      for (const s of resolveInvocationMcpServers(capConfig, catId, {
+        accessScope,
+        hostRoot: binaryProjectRoot,
+      }) as Array<{
         name: string;
         enabled: boolean;
         command: string;

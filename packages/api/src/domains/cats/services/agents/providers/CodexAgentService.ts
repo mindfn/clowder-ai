@@ -1,4 +1,5 @@
 import type { RuntimeProviderProfile } from '../../../../../config/account-resolver.js';
+import { resolveInvocationMcpServers } from '../../../../../config/capabilities/invoke-plugin-mcp.js';
 import { finalizeCodexAccountEnvironment } from '../../../../../config/codex-account-environment.js';
 import { resolveCodexAccountLaunch, resolveCodexApiExecutionHome } from '../../../../../config/codex-account-launch.js';
 import { codexManagedLaunchArgs } from '../../../../../config/codex-managed-launch.js';
@@ -40,11 +41,7 @@ import {
   resolveCodexSpeedWire,
 } from '@cat-cafe/shared';
 import { parse as parseToml } from 'smol-toml';
-import {
-  resolveBinaryRoot,
-  resolvePencilCommand,
-  resolveServersForCat,
-} from '../../../../../config/capabilities/capability-orchestrator.js';
+import { resolveBinaryRoot, resolvePencilCommand } from '../../../../../config/capabilities/capability-orchestrator.js';
 import {
   assertMappedCapabilitySource,
   isSameCapabilityRoot,
@@ -874,7 +871,10 @@ async function buildCatCafeMcpArgs(
       configSourceRoot = capabilitiesProjectRoot;
     }
     if (capConfig && catId) {
-      for (const s of resolveServersForCat(capConfig, catId, { accessScope }) as Array<{
+      for (const s of resolveInvocationMcpServers(capConfig, catId, {
+        accessScope,
+        hostRoot: binaryProjectRoot,
+      }) as Array<{
         name: string;
         enabled: boolean;
         command: string;
