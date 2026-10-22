@@ -17,6 +17,22 @@ async function request(endpoint, token, target) {
   });
 }
 
+function rawRequest(endpoint, token, target) {
+  const url = new URL('/fetch', endpoint);
+  const body = Buffer.from(JSON.stringify({ url: target }));
+  const request = require('node:http').request(url, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+      'content-length': body.byteLength,
+    },
+  });
+  request.on('error', () => {});
+  request.end(body);
+  return request;
+}
+
 test('bridges the canonical catalog through Electron net.fetch on loopback', async (t) => {
   const calls = [];
   const bridge = createPluginNetworkBridge({
@@ -63,6 +79,76 @@ test('rejects missing credentials and non-plugin destinations before Electron fe
   assert.equal(unauthorized.status, 401);
   assert.equal(forbidden.status, 403);
   assert.equal(calls, 0);
+});
+
+test('aborts Electron fetch when the client disconnects after sending the complete request', async () => {
+  let startedResolve;
+  const started = new Promise((resolve) => {
+    startedResolve = resolve;
+  });
+  let abortedResolve;
+  const aborted = new Promise((resolve) => {
+    abortedResolve = resolve;
+  });
+  const bridge = createPluginNetworkBridge({
+    netFetch: async (_url, init) => {
+      startedResolve();
+      return new Promise((_resolve, reject) => {
+        init.signal.addEventListener(
+          'abort',
+          () => {
+            abortedResolve();
+            reject(init.signal.reason ?? new Error('aborted'));
+          },
+          { once: true },
+        );
+      });
+    },
+  });
+  const binding = await bridge.start();
+  const client = rawRequest(
+    binding.endpoint,
+    binding.token,
+    'https://raw.githubusercontent.com/zts212653/clowder-ai-plugins/main/catalog/catalog.json',
+  );
+  await started;
+  client.destroy();
+  await Promise.race([aborted, new Promise((_, reject) => setTimeout(() => reject(new Error('not aborted')), 250))]);
+  await bridge.close();
+});
+
+test('closing the bridge aborts every in-flight Electron fetch before resolving', async () => {
+  let startedResolve;
+  const started = new Promise((resolve) => {
+    startedResolve = resolve;
+  });
+  let abortedResolve;
+  const aborted = new Promise((resolve) => {
+    abortedResolve = resolve;
+  });
+  const bridge = createPluginNetworkBridge({
+    netFetch: async (_url, init) => {
+      startedResolve();
+      return new Promise((_resolve, reject) => {
+        init.signal.addEventListener(
+          'abort',
+          () => {
+            abortedResolve();
+            reject(init.signal.reason ?? new Error('aborted'));
+          },
+          { once: true },
+        );
+      });
+    },
+  });
+  const binding = await bridge.start();
+  rawRequest(
+    binding.endpoint,
+    binding.token,
+    'https://raw.githubusercontent.com/zts212653/clowder-ai-plugins/main/catalog/catalog.json',
+  );
+  await started;
+  await Promise.all([bridge.close(), aborted]);
 });
 
 test('ServiceManager gives the API an ephemeral bridge credential and closes it with owned services', async (t) => {

@@ -56,6 +56,7 @@ function service({
   lifecycle,
   configuration,
   quarantine,
+  stateProjection,
 } = {}) {
   return new PluginManagerService({
     catalog: {
@@ -68,6 +69,7 @@ function service({
     },
     inventory: { snapshot: async () => inventory },
     installedPackages: { list: async () => installedPackages },
+    ...(stateProjection === undefined ? {} : { stateProjection }),
     ...(installer === undefined ? {} : { installer }),
     ...(lifecycle === undefined ? {} : { lifecycle }),
     ...(configuration === undefined ? {} : { configuration }),
@@ -226,6 +228,63 @@ describe('F202 terminal Plugin Manager service', () => {
     assert.notEqual(result, 'remote-blocked-operation');
     assert.equal(catalogReads, 0);
     assert.deepEqual(lifecycleCalls, [['instance:github', false, 1]]);
+  });
+
+  it('applies the live state projection to local installed rows before authorizing lifecycle writes', async () => {
+    let projectionCalls = 0;
+    const lifecycleCalls = [];
+    const installed = {
+      ...bundledGithub,
+      pluginId: published.pluginId,
+      pluginInstanceId: 'pi_video',
+      displayName: published.displayName,
+      source: {
+        kind: 'catalog',
+        catalogId: published.catalogId,
+        packageName: published.packageName,
+        trust: 'official',
+      },
+      installedVersion: published.version,
+      availableVersion: published.version,
+      packageDigest: published.packageDigest,
+      auth: 'connected',
+      config: 'ready',
+      intent: 'disabled',
+      live: 'stopped',
+      lifecycleRevision: 3,
+      capabilitySummary: [],
+      capabilities: [],
+    };
+    const manager = service({
+      inventory: installedInventory(),
+      installedPackages: [installed],
+      stateProjection: {
+        read: async () => {
+          projectionCalls += 1;
+          return { authState: 'disconnected', configState: 'incomplete', intentState: 'disabled' };
+        },
+      },
+      lifecycle: {
+        setEnabled: async (...args) => lifecycleCalls.push(args),
+        uninstall: async () => {},
+      },
+    });
+
+    const canonical = (await manager.get(published.pluginId)).plugin;
+    const local = (await manager.getLocal(published.pluginId)).plugin;
+    assert.deepEqual(
+      { auth: local.auth, config: local.config, actions: local.actions },
+      { auth: canonical.auth, config: canonical.config, actions: canonical.actions },
+    );
+    assert.equal(local.auth, 'disconnected');
+    assert.equal(local.config, 'incomplete');
+    assert.equal(local.actions.setEnabled, false);
+    await assert.rejects(
+      manager.setEnabled(published.pluginId, { enabled: true, expectedRevision: 3 }),
+      (error) => error?.code === 'ACTION_NOT_ALLOWED',
+    );
+    assert.equal(projectionCalls, 3);
+    assert.deepEqual(lifecycleCalls, []);
   });
 
   it('returns installed package contributions in detail without treating grants as tools', async () => {
