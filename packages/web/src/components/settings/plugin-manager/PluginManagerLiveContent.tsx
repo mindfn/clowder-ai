@@ -63,19 +63,25 @@ export function PluginManagerLiveContent({
     }
   }, []);
 
+  const loadCurrentDetail = useCallback(
+    (pluginId: string, afterMutation = false) =>
+      loadDetail(pluginId, afterMutation, localPluginIds.current.has(pluginId)),
+    [loadDetail],
+  );
+
   const selectPlugin = useCallback(
     (pluginId: string | null) => {
       selectedPluginIdRef.current = pluginId;
       setSelectedPluginId(pluginId);
       setConfigurationSavedPluginId((current) => (current === pluginId ? current : null));
       if (pluginId && !compatibilityFixtures.some((plugin) => plugin.id === pluginId)) {
-        void loadDetail(pluginId, false, localPluginIds.current.has(pluginId));
+        void loadCurrentDetail(pluginId);
         return;
       }
       detailGeneration.current += 1;
       setDetailState({ state: 'idle' });
     },
-    [loadDetail, compatibilityFixtures],
+    [loadCurrentDetail, compatibilityFixtures],
   );
   const linkedSelection = useRef(selectPlugin);
   linkedSelection.current = selectPlugin;
@@ -105,13 +111,10 @@ export function PluginManagerLiveContent({
       generation: number,
       afterMutation: boolean,
       local: boolean,
+      localInventory?: PluginManagerListResponse,
     ): Promise<boolean> => {
       if (!mounted.current || generation !== listGeneration.current) return false;
-      if (local) {
-        const nextLocalPluginIds = new Set(localPluginIds.current);
-        for (const plugin of value.plugins) nextLocalPluginIds.add(plugin.pluginId);
-        localPluginIds.current = nextLocalPluginIds;
-      }
+      if (localInventory) localPluginIds.current = new Set(localInventory.plugins.map((plugin) => plugin.pluginId));
       setSnapshot(value);
       const requested = initialSelection.current;
       if (requested && value.plugins.some((plugin) => plugin.pluginId === requested)) {
@@ -123,11 +126,11 @@ export function PluginManagerLiveContent({
       if (!local) initialSelection.current = null;
       const current = selectedPluginIdRef.current;
       if (current && value.plugins.some((plugin) => plugin.pluginId === current)) {
-        await loadDetail(current, afterMutation, localPluginIds.current.has(current));
+        await loadCurrentDetail(current, afterMutation);
       }
       return true;
     },
-    [loadDetail, selectPlugin],
+    [loadCurrentDetail, selectPlugin],
   );
 
   const hydrateRemoteList = useCallback(
@@ -163,8 +166,14 @@ export function PluginManagerLiveContent({
     async (search: string, afterMutation = false) => {
       const generation = ++listGeneration.current;
       try {
-        const localValue = await fetchManagerList(search, afterMutation, true);
-        const localCommitted = await commitListSnapshot(localValue, generation, afterMutation, true);
+        const normalizedSearch = search.trim();
+        const localInventoryPromise = fetchManagerList('', afterMutation, true);
+        const localValuePromise =
+          normalizedSearch.length === 0
+            ? localInventoryPromise
+            : fetchManagerList(normalizedSearch, afterMutation, true);
+        const [localInventory, localValue] = await Promise.all([localInventoryPromise, localValuePromise]);
+        const localCommitted = await commitListSnapshot(localValue, generation, afterMutation, true, localInventory);
         if (!localCommitted) return localValue;
         void hydrateRemoteList(search, generation, afterMutation, true);
         return localValue;
@@ -394,7 +403,7 @@ export function PluginManagerLiveContent({
         })();
       }}
       onConfigure={(pluginId, updates) => void configure(pluginId, updates)}
-      onOperationChange={(pluginId) => void loadDetail(pluginId, true)}
+      onOperationChange={(pluginId) => void loadCurrentDetail(pluginId, true)}
     />
   );
 }
