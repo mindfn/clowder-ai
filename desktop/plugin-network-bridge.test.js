@@ -56,6 +56,7 @@ test('bridges the canonical catalog through Electron net.fetch on loopback', asy
   assert.equal(await response.text(), '{"plugins":[]}');
   assert.equal(calls.length, 1);
   assert.equal(calls[0][1].redirect, 'error');
+  assert.equal(calls[0][1].signal.aborted, false);
 });
 
 test('rejects missing credentials and non-plugin destinations before Electron fetch', async (t) => {
@@ -149,6 +150,69 @@ test('closing the bridge aborts every in-flight Electron fetch before resolving'
   );
   await started;
   await Promise.all([bridge.close(), aborted]);
+});
+
+for (const declaredLength of [String(32 * 1024 * 1024 + 1), 'not-a-number']) {
+  test(`rejects declared package length ${declaredLength} and releases the upstream body`, async () => {
+    let upstreamAborted = false;
+    let bodyCancelled = false;
+    const bridge = createPluginNetworkBridge({
+      netFetch: async (_url, init) => {
+        init.signal.addEventListener('abort', () => {
+          upstreamAborted = true;
+        });
+        return new Response(
+          new ReadableStream({
+            cancel() {
+              bodyCancelled = true;
+            },
+          }),
+          { headers: { 'content-length': declaredLength } },
+        );
+      },
+    });
+    const binding = await bridge.start();
+
+    const response = await request(binding.endpoint, binding.token, 'https://registry.npmjs.org/a/-/a.tgz');
+    assert.equal(response.status, 413);
+    await bridge.close();
+    assert.equal(upstreamAborted, true);
+    assert.equal(bodyCancelled, true);
+  });
+}
+
+test('cancels a streaming catalog response that crosses the bounded body limit', async () => {
+  let upstreamAborted = false;
+  let bodyCancelled = false;
+  const bridge = createPluginNetworkBridge({
+    netFetch: async (_url, init) => {
+      init.signal.addEventListener('abort', () => {
+        upstreamAborted = true;
+      });
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(256 * 1024 + 1));
+          },
+          cancel() {
+            bodyCancelled = true;
+          },
+        }),
+      );
+    },
+  });
+  const binding = await bridge.start();
+
+  await assert.rejects(
+    request(
+      binding.endpoint,
+      binding.token,
+      'https://raw.githubusercontent.com/zts212653/clowder-ai-plugins/main/catalog/catalog.json',
+    ),
+  );
+  await bridge.close();
+  assert.equal(upstreamAborted, true);
+  assert.equal(bodyCancelled, true);
 });
 
 test('ServiceManager gives the API an ephemeral bridge credential and closes it with owned services', async (t) => {
