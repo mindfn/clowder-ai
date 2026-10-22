@@ -20,6 +20,17 @@ const CALLBACK_ENV = {
 };
 
 describe('materializeSessionMcpServers', () => {
+  it('accepts existing stdio registrations without an env field', () => {
+    const base = [{ name: 'cat-cafe-collab', command: 'node', args: ['collab.js'] }];
+    assert.strictEqual(materializeSessionMcpServers(base), base);
+    const withCallbacks = materializeSessionMcpServers(base, CALLBACK_ENV);
+    assert.equal(
+      withCallbacks[0].env.find((entry) => entry.name === 'CAT_CAFE_INVOCATION_ID').value,
+      CALLBACK_ENV.CAT_CAFE_INVOCATION_ID,
+    );
+    assert.equal(Object.hasOwn(base[0], 'env'), false);
+  });
+
   it('injects callback env into cat-cafe-* stdio servers', () => {
     const base = [
       { name: 'cat-cafe-collab', command: 'node', args: ['collab.js'], env: [] },
