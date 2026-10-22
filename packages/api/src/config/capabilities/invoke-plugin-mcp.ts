@@ -1,17 +1,15 @@
-import { resolve } from 'node:path';
 import type { CapabilitiesConfig } from '@cat-cafe/shared';
 import type { NativeMcpServer } from '../../domains/plugin/declared/native-mcp-types.js';
 import { resolveServersForCat } from './capability-orchestrator.js';
-import { isSameCapabilityRoot } from './invoke-capability-root.js';
 
-const sources = new Map<string, (capabilityId: string) => NativeMcpServer | undefined>();
+type PluginMcpSource = (capabilityId: string) => NativeMcpServer | undefined;
+let activeHostSource: PluginMcpSource | undefined;
 
-/** Bind a Host-owned runtime port, not a second copy of its activation state. */
-export function bindHostPluginMcpSource(root: string, source: (id: string) => NativeMcpServer | undefined): () => void {
-  const key = resolve(root);
-  sources.set(key, source);
+/** The single Host plugin manager supplies a live read port, never a copied credential registry. */
+export function bindHostPluginMcpSource(source: PluginMcpSource): () => void {
+  activeHostSource = source;
   return () => {
-    if (sources.get(key) === source) sources.delete(key);
+    if (activeHostSource === source) activeHostSource = undefined;
   };
 }
 
@@ -19,9 +17,9 @@ export function bindHostPluginMcpSource(root: string, source: (id: string) => Na
 export function resolveInvocationMcpServers(
   config: CapabilitiesConfig,
   catId: string,
-  options: { accessScope: 'global' | 'project'; hostRoot: string },
+  options: { accessScope: 'global' | 'project' },
 ): ReturnType<typeof resolveServersForCat> {
-  const source = [...sources].find(([root]) => isSameCapabilityRoot(root, options.hostRoot))?.[1];
+  const source = activeHostSource;
   const refused = new Set<string>();
   const projected: CapabilitiesConfig = {
     ...config,

@@ -354,7 +354,7 @@ for (const resumeKind of ['replacement', 'cold', 'unregistered-project']) {
       });
       process.env.CAT_CAFE_RUNTIME_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
       process.env.CAT_CAFE_WORKSPACE_ROOT = lateHome;
-      t.after(bindHostPluginMcpSource(process.env.CAT_CAFE_RUNTIME_ROOT, (id) => live.current(id)));
+      t.after(bindHostPluginMcpSource((id) => live.current(id)));
       mkdirSync(join(lateHome, '.cat-cafe'));
       const original = JSON.parse(readFileSync(join(project, '.cat-cafe/capabilities.json'), 'utf8'));
       const hostFile = join(lateHome, '.cat-cafe/capabilities.json');
@@ -1211,9 +1211,7 @@ test('plugin MCP wrapper follows the replacement host credential file instead of
     workingDirectory: credsDir,
     transport: 'stdio',
   };
-  const releaseSource = bindHostPluginMcpSource(resolve(dirname(fileURLToPath(import.meta.url)), '../../..'), (id) =>
-    id === declared.id ? live : undefined,
-  );
+  const releaseSource = bindHostPluginMcpSource((id) => (id === declared.id ? live : undefined));
   declared.mcpServer.env = {};
   writeFileSync(configPath, JSON.stringify(config));
   const previousRoots = Object.fromEntries(

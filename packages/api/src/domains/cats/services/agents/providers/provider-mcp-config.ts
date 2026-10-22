@@ -95,7 +95,7 @@ export async function resolveProviderMcpConfigResolution(input: {
           if (cap.type === 'mcp') managedMcpServerNames.add(cap.id.replace(/:/g, '__'));
         }
       }
-      for (const s of resolveInvocationMcpServers(capConfig, catId, { accessScope, hostRoot: binaryProjectRoot })) {
+      for (const s of resolveInvocationMcpServers(capConfig, catId, { accessScope })) {
         managedMcpServerNames.add(s.name);
         if (!s.enabled) continue;
         if (isManagedCatCafeSplit(s)) {
