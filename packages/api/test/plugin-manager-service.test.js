@@ -170,6 +170,42 @@ function installedInventory(overrides = {}) {
 }
 
 describe('F202 terminal Plugin Manager service', () => {
+  it('projects Host-bundled candidates without awaiting remote catalog discovery', async () => {
+    let remoteCatalogReads = 0;
+    let localCatalogReads = 0;
+    const manager = new PluginManagerService({
+      catalog: {
+        snapshot: async () => {
+          remoteCatalogReads += 1;
+          return new Promise(() => {});
+        },
+        localSnapshot: async () => {
+          localCatalogReads += 1;
+          return {
+            candidates: [published],
+            status: 'stale',
+            refreshedAt: null,
+          };
+        },
+      },
+      inventory: { snapshot: async () => emptyInventory },
+      installedPackages: { list: async () => [] },
+    });
+
+    const result = await Promise.race([
+      manager.listLocal(),
+      new Promise((resolve) => setTimeout(() => resolve('remote-blocked-bundled-state'), 100)),
+    ]);
+
+    assert.notEqual(result, 'remote-blocked-bundled-state');
+    assert.equal(remoteCatalogReads, 0);
+    assert.equal(localCatalogReads, 1);
+    assert.deepEqual(
+      result.plugins.map((plugin) => plugin.pluginId),
+      [published.pluginId],
+    );
+  });
+
   it('projects installed plugins without awaiting remote catalog discovery', async () => {
     let catalogReads = 0;
     const neverSettles = new Promise(() => {});

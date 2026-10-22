@@ -199,6 +199,10 @@ export class MachineOfficialPluginCatalog implements OfficialPluginCatalogProvid
     return this.inFlight;
   }
 
+  localSnapshot(): OfficialPluginCatalogSnapshot {
+    return this.project();
+  }
+
   private async refresh(checkedAt: number): Promise<OfficialPluginCatalogSnapshot> {
     this.checkedAt = checkedAt;
     let raw: unknown;

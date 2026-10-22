@@ -31,6 +31,8 @@ export interface PluginManagerCatalogSnapshot {
 
 export interface PluginManagerCatalogPort {
   snapshot(): Promise<PluginManagerCatalogSnapshot>;
+  /** Host-owned entries available without remote discovery or repository refresh. */
+  localSnapshot?(): Promise<PluginManagerCatalogSnapshot>;
 }
 
 export interface PluginManagerInstalledPackagesPort {
@@ -248,7 +250,7 @@ export class PluginManagerService {
   }
 
   async listLocal(): Promise<PluginManagerListResponse> {
-    return (await this.project(undefined, loadingCatalog)).response;
+    return (await this.project(undefined, await this.readLocalCatalog())).response;
   }
 
   async search(query: string): Promise<PluginManagerListResponse> {
@@ -256,7 +258,7 @@ export class PluginManagerService {
   }
 
   async searchLocal(query: string): Promise<PluginManagerListResponse> {
-    return (await this.project(query, loadingCatalog)).response;
+    return (await this.project(query, await this.readLocalCatalog())).response;
   }
 
   async get(pluginId: string): Promise<PluginManagerDetailResponse> {
@@ -265,8 +267,12 @@ export class PluginManagerService {
   }
 
   async getLocal(pluginId: string): Promise<PluginManagerDetailResponse> {
-    const result = await this.project(undefined, loadingCatalog);
+    const result = await this.project(undefined, await this.readLocalCatalog());
     return this.detailFromProjection(pluginId, result);
+  }
+
+  private async readLocalCatalog(): Promise<PluginManagerCatalogSnapshot> {
+    return (await this.options.catalog.localSnapshot?.()) ?? loadingCatalog;
   }
 
   private async detailFromProjection(
