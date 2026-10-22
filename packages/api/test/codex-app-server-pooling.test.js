@@ -7,7 +7,6 @@ import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import Fastify from 'fastify';
-import { bindHostPluginMcpSource } from '../dist/config/capabilities/invoke-plugin-mcp.js';
 import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js';
 import {
   buildCodexActiveWriterWaitSignal,
@@ -15,7 +14,6 @@ import {
   codexConfigObjectFromArgs,
 } from '../dist/domains/cats/services/agents/providers/CodexAgentService.js';
 import { resolveProviderMcpConfig } from '../dist/domains/cats/services/agents/providers/provider-mcp-config.js';
-import { NativeMcpLaunches } from '../dist/domains/plugin/declared/native-mcp-launches.js';
 import { NativePluginActions } from '../dist/domains/plugin/declared/native-plugin-actions.js';
 import { syncMcpProject } from '../dist/mcp/mcp-sync-engine.js';
 import { pluginNativeActionRoutes } from '../dist/routes/plugin-native-action-routes.js';
@@ -319,22 +317,6 @@ for (const resumeKind of ['replacement', 'cold', 'unregistered-project']) {
         ],
       }),
     );
-    const live = new NativeMcpLaunches(async () => authority, actions);
-    const publish = () =>
-      live.activate(authority, actions.generation('wrapper-fixture'), [
-        {
-          contributionId: 'native',
-          server: {
-            name: pluginName,
-            command: process.execPath,
-            args: [childPath],
-            env: actions.environment('wrapper-fixture', 'native'),
-            workingDirectory: project,
-            transport: 'stdio',
-          },
-        },
-      ]);
-    publish();
     let lateHome;
     let sharedProject;
     {
@@ -354,7 +336,6 @@ for (const resumeKind of ['replacement', 'cold', 'unregistered-project']) {
       });
       process.env.CAT_CAFE_RUNTIME_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
       process.env.CAT_CAFE_WORKSPACE_ROOT = lateHome;
-      t.after(bindHostPluginMcpSource((id) => live.current(id)));
       mkdirSync(join(lateHome, '.cat-cafe'));
       const original = JSON.parse(readFileSync(join(project, '.cat-cafe/capabilities.json'), 'utf8'));
       const hostFile = join(lateHome, '.cat-cafe/capabilities.json');
@@ -373,11 +354,17 @@ for (const resumeKind of ['replacement', 'cold', 'unregistered-project']) {
           actionCalls++;
           return { ok: true };
         });
-        publish();
       }
-      original.capabilities.find((entry) => entry.source === 'plugin').mcpServer.env = {};
+      original.capabilities.find((entry) => entry.source === 'plugin').mcpServer.env = actions.environmentReferences(
+        'wrapper-fixture',
+        'native',
+      );
       writeFileSync(hostFile, JSON.stringify(original));
-      assert.ok(!readFileSync(hostFile, 'utf8').includes('CLOWDER_PLUGIN_ACTION_TOKEN'));
+      assert.ok(
+        !readFileSync(hostFile, 'utf8').includes(
+          actions.environment('wrapper-fixture', 'native').CLOWDER_PLUGIN_ACTION_TOKEN,
+        ),
+      );
       assert.ok(!existsSync(join(lateHome, '.cat-cafe/governance-registry.json')));
     }
     const pool = new FakeHostPool();
@@ -489,7 +476,6 @@ for (const resumeKind of ['replacement', 'cold', 'unregistered-project']) {
         actionCalls++;
         return { ok: true };
       });
-      publish();
       assert.deepEqual(
         await sameChild(),
         { credentialReadable: true, status: 200 },
@@ -1202,17 +1188,9 @@ test('plugin MCP wrapper follows the replacement host credential file instead of
       },
     },
   });
-  const declared = config.capabilities.at(-1);
-  const live = {
-    name: declared.id.replaceAll(':', '__'),
-    command: declared.mcpServer.command,
-    args: declared.mcpServer.args,
-    env: { ...declared.mcpServer.env },
-    workingDirectory: credsDir,
-    transport: 'stdio',
-  };
-  const releaseSource = bindHostPluginMcpSource((id) => (id === declared.id ? live : undefined));
-  declared.mcpServer.env = {};
+  const oldPluginVariable = process.env.MCP_WRAPPER_FIXTURE_TOKEN;
+  process.env.MCP_WRAPPER_FIXTURE_TOKEN = 'a'.repeat(64);
+  config.capabilities.at(-1).mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN = '${MCP_WRAPPER_FIXTURE_TOKEN}';
   writeFileSync(configPath, JSON.stringify(config));
   const previousRoots = Object.fromEntries(
     ['CAT_CAFE_RUNTIME_ROOT', 'CAT_CAFE_WORKSPACE_ROOT'].map((key) => [key, process.env[key]]),
@@ -1256,7 +1234,8 @@ test('plugin MCP wrapper follows the replacement host credential file instead of
     assert.equal(JSON.parse(readFileSync(oldPath, 'utf8')).invocationId, 'plugin-seed');
     assert.doesNotMatch(JSON.stringify(resume), /seed-token|current-token|CAT_CAFE_CALLBACK_TOKEN/);
   } finally {
-    releaseSource();
+    if (oldPluginVariable === undefined) delete process.env.MCP_WRAPPER_FIXTURE_TOKEN;
+    else process.env.MCP_WRAPPER_FIXTURE_TOKEN = oldPluginVariable;
     for (const [key, value] of Object.entries(previousRoots)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;

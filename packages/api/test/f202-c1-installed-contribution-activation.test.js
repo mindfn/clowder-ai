@@ -255,8 +255,8 @@ test('installed native MCP receives its scoped action token without exposing a p
   const capability = (await readCapabilitiesConfig(projectRoot)).capabilities.find(
     (item) => item.type === 'mcp' && item.pluginId === installed.pluginId,
   );
-  assert.equal(capability.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN, undefined);
-  assert.equal(capability.mcpServer.env.CLOWDER_PLUGIN_ACTION_PATH, undefined);
+  const reference = capability.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
+  assert.match(reference, /^\$\{[A-Z0-9_]+\}$/);
   const launch = await runtime.supervisor.resolveNativeMcpLaunch({
     mode: 'plugin_native',
     pluginInstanceId: installed.pluginInstanceId,
@@ -265,6 +265,7 @@ test('installed native MCP receives its scoped action token without exposing a p
   });
   const token = launch.env.CLOWDER_PLUGIN_ACTION_TOKEN;
   assert.ok(token);
+  assert.equal(process.env[reference.slice(2, -1)], token);
   assert.equal(launch.command, capability.mcpServer.command);
   assert.deepEqual(launch.args, capability.mcpServer.args);
   assert.equal(launch.env.CLOWDER_PLUGIN_ACTION_PATH, '/api/plugin-runtime/action');
@@ -1010,19 +1011,21 @@ test('plugin MCP lifecycle reaches existing projects and their provider injectio
     invocationId: 'inv',
     assertCurrent: async () => {},
   };
-  const initialToken = runtime.supervisor.currentNativeMcpLaunch(id).env.CLOWDER_PLUGIN_ACTION_TOKEN;
-  assert.ok(initialToken, 'the fixture must exercise a real Host-owned connection token');
+  const initialReference = projectEntry.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
+  const initialToken = process.env[initialReference.slice(2, -1)];
+  assert.ok(initialToken, 'the fixture must exercise a real Host-lifetime connection token');
   const assertFreshDescriptor = async (previousToken, phase) => {
     const homeEntry = (await readCapabilitiesConfig(projectRoot)).capabilities.find((entry) => entry.id === id);
-    const currentToken = runtime.supervisor.currentNativeMcpLaunch(id).env.CLOWDER_PLUGIN_ACTION_TOKEN;
+    const currentReference = homeEntry.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
+    assert.equal(currentReference, initialReference);
+    const currentToken = process.env[currentReference.slice(2, -1)];
     assert.ok(currentToken);
-    assert.equal(currentToken, previousToken, `${phase}: the same Host keeps its connection credential`);
-    assert.equal(homeEntry.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN, undefined);
+    assert.equal(currentToken, previousToken, `${phase}: the same Host keeps its credential`);
     for (const path of [consumer, disabledProject]) {
       const entry = (await readCapabilitiesConfig(path)).capabilities.find((entry) => entry.id === id);
       assert.ok(
-        entry.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN === undefined,
-        `${phase}: project must not persist a runtime token`,
+        entry.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN === currentReference,
+        `${phase}: project must retain the reference without persisting its value`,
       );
     }
     const providerEntry = (await inject(consumer, allowedCat))[name];

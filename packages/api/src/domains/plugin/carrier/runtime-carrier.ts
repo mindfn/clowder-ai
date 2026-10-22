@@ -121,6 +121,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
         this.resources && {
           ...this.resources,
           nativeActionEnvironment: (contributionId) => this.nativeActions.environment(pluginInstanceId, contributionId),
+          nativeActionEnvironmentReferences: (id) => this.nativeActions.environmentReferences(pluginInstanceId, id),
         },
       );
       await this.#runtimeContributions.activate(
@@ -183,6 +184,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
       this.resources && {
         ...this.resources,
         nativeActionEnvironment: (contributionId) => this.nativeActions.environment(pluginInstanceId, contributionId),
+        nativeActionEnvironmentReferences: (id) => this.nativeActions.environmentReferences(pluginInstanceId, id),
       },
     );
     this.#nativeMcpLaunches.activate(admission, generation, launches);
@@ -214,10 +216,6 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   /** Host-only launch resolution; it does not grant invocation authority or provider support. */
   resolveNativeMcpLaunch(policy: ToolExecutionPolicy): Promise<NativeMcpServer> {
     return this.#nativeMcpLaunches.resolve(policy);
-  }
-
-  currentNativeMcpLaunch(capabilityId: string): NativeMcpServer | undefined {
-    return this.#nativeMcpLaunches.current(capabilityId);
   }
 
   async deliver(pluginInstanceId: string, input: PluginDeliveryInput): Promise<PluginDeliveryReceipt> {
