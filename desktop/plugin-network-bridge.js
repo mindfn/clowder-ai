@@ -46,8 +46,9 @@ async function readRequestJson(request) {
 async function pipeBoundedResponse(source, response, maxBytes) {
   const declared = source.headers.get('content-length');
   if (declared !== null && (!Number.isSafeInteger(Number(declared)) || Number(declared) > maxBytes)) {
+    void source.body?.cancel().catch(() => undefined);
     response.writeHead(413).end();
-    return;
+    return false;
   }
   response.statusCode = source.status;
   const contentType = source.headers.get('content-type');
@@ -56,7 +57,7 @@ async function pipeBoundedResponse(source, response, maxBytes) {
   response.setHeader('x-content-type-options', 'nosniff');
   if (!source.body) {
     response.end();
-    return;
+    return true;
   }
   const reader = source.body.getReader();
   let total = 0;
@@ -68,11 +69,12 @@ async function pipeBoundedResponse(source, response, maxBytes) {
       if (total > maxBytes) {
         await reader.cancel();
         response.destroy();
-        return;
+        return false;
       }
       response.write(value);
     }
     response.end();
+    return true;
   } finally {
     reader.releaseLock();
   }
@@ -94,7 +96,8 @@ async function fetchAllowedTarget(request, response, policy, netFetch, activeCon
       redirect: 'error',
       signal: controller.signal,
     });
-    await pipeBoundedResponse(upstream, response, policy.maxBytes);
+    const consumed = await pipeBoundedResponse(upstream, response, policy.maxBytes);
+    if (!consumed) controller.abort();
   } finally {
     clearTimeout(timeout);
     request.off('aborted', abort);
