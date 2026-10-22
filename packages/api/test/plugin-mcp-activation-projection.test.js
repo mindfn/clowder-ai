@@ -88,7 +88,7 @@ for (const kind of ['removed', 'wrong-owner', 'no-connection', 'runtime-unavaila
     if (kind === 'runtime-unavailable') f.release();
     const server = f.resolve();
     assert.equal(server.enabled, false);
-    assert.equal(server.env.CLOWDER_PLUGIN_ACTION_TOKEN, undefined);
+    assert.equal(server.env?.CLOWDER_PLUGIN_ACTION_TOKEN, undefined);
     assert.equal(f.entry.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN, 'old-activation');
   });
 }
