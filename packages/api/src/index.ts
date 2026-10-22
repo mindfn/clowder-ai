@@ -1,6 +1,11 @@
+import { reportAcpHostPolicy, resolveAcpHostPolicy } from './config/acp-host-policy.js';
 import { AgentServiceUnavailableError } from './domains/cats/services/agents/registry/AgentServiceUnavailableError.js';
 import { createRefreshingAcpSessionProvider } from './domains/cats/services/agents/session-contract/acp-session-provider.js';
-import { SessionImplementationRegistry } from './domains/cats/services/agents/session-contract/implementation-registry.js';
+import {
+  SessionImplementationRegistry,
+  sessionImplementationKey,
+} from './domains/cats/services/agents/session-contract/implementation-registry.js';
+import { resolveMemberSessionRef } from './domains/cats/services/agents/session-contract/plugin-agent-provider.js';
 import {
   RegisteredSessionAgentService,
   selectSessionAgentService,
@@ -620,6 +625,7 @@ function hasRuntimeSessionDrain(service: AgentService): service is AgentService 
 
 async function main(): Promise<void> {
   startupMilestone('module-graph-loaded');
+  const acpHostPolicy = resolveAcpHostPolicy();
   let managedCommandWakeRecovery: ManagedCommandWakeRecoverySweep | undefined;
   const { logger: customLogger, isDebugMode, LOG_DIR_PATH } = await import('./infrastructure/logger.js');
   let sessionHookAuthenticationReady = (): boolean => false;
@@ -633,6 +639,7 @@ async function main(): Promise<void> {
   const { saveSpan } = await import('./utils/member-save-diagnostics.js');
 
   const app = Fastify({ logger: customLogger as unknown as import('fastify').FastifyBaseLogger });
+  reportAcpHostPolicy(app.log, acpHostPolicy);
   const messageReadDiagnostics = registerMessageReadDiagnostics(app);
   const privateUserId = (process.env.CAT_CAFE_USER_ID ?? 'default-user').trim();
   let runtimeDeploymentRevision: string | null = null;
@@ -2008,6 +2015,7 @@ async function main(): Promise<void> {
     clearL0Cache(); // Invalidate stale L0 compilations from previous sync
     const projectRoot = resolveActiveProjectRoot();
     const activeAcpProfileIds = new Set<string>();
+    const activeRegisteredSessionIds = new Set<string>();
     const activeCodexProfileIds = new Set<string>();
     for (const [id, config] of Object.entries(configs)) {
       await saveSpan(
@@ -2017,9 +2025,19 @@ async function main(): Promise<void> {
           // F32-b P1 fix: do NOT pass model here — let constructors resolve via
           // getCatModel(catId) which respects env override (CAT_*_MODEL > config > fallback)
           const service = await selectSessionAgentService<AgentService | undefined | Promise<AgentService | undefined>>(
-            sessionContractSettings.bindings.get(id),
-            (sessionRef) => {
+            resolveMemberSessionRef(
+              config.agentProvider,
+              sessionContractSettings.bindings.get(id),
+              config.carrier === 'acp' ? getAcpConfig(id, projectRoot)?.agentProvider : undefined,
+            ),
+            async (sessionRef) => {
               activeAcpProfileIds.add(id);
+              activeRegisteredSessionIds.add(id);
+              const previous = registeredSessionServices.get(id);
+              if (previous && previous.implementationKey !== sessionImplementationKey(sessionRef)) {
+                await previous.releaseAll('member_binding_changed');
+                registeredSessionServices.delete(id);
+              }
               const registered =
                 registeredSessionServices.get(id) ??
                 new RegisteredSessionAgentService({
@@ -2146,7 +2164,7 @@ async function main(): Promise<void> {
       );
     }
     for (const [id, registered] of registeredSessionServices) {
-      if (configs[id]) continue;
+      if (activeRegisteredSessionIds.has(id)) continue;
       await registered.releaseAll('member_removed');
       registeredSessionServices.delete(id);
     }
@@ -4884,8 +4902,9 @@ async function main(): Promise<void> {
   const collectiveArtifactOwnerHolder: import('./domains/plugin/host-surface/collective-artifact-owner.js').CollectiveArtifactOwnerHolder =
     {};
   const pluginRuntime = cloudConversations.createRuntime({
-    agentSessionProviders: (packages) =>
+    agentSessionProviders: (packages, configuration) =>
       declaredAgentSessionProviders({
+        configuration,
         log: app.log,
         settings: sessionContractSettings,
         packages,
@@ -5240,6 +5259,20 @@ async function main(): Promise<void> {
   });
   const { pluginManagerUploadRoutes, registerPluginManagerRoutes } = await import('./routes/plugin-manager-routes.js');
   const { registerPluginMarketplaceRoutes } = await import('./routes/plugin-marketplace-routes.js');
+  const { registerAgentClientLibraryRoutes } = await import('./routes/agent-client-library-routes.js');
+  registerAgentClientLibraryRoutes(app, {
+    inventory: pluginRuntime.inventoryStore,
+    packages: pluginRuntime.packages,
+    registry: sessionImplementations,
+    configuration: {
+      readConfig: async (instanceId, key) => {
+        const snapshot = await pluginRuntime.inventoryStore.snapshot();
+        const instance = snapshot.instances.find((instance) => instance.pluginInstanceId === instanceId);
+        if (!instance) return undefined;
+        return (await pluginManagerRuntime.configuration.readActionInput(instance.pluginId))[key];
+      },
+    },
+  });
   registerPluginMarketplaceRoutes(app, marketplaceSources);
   const { PluginManagerBindings } = await import('./domains/plugin/manager/plugin-manager-bindings.js');
   await app.register(async (managerApp) => {

@@ -167,7 +167,10 @@ export interface DormantPluginRuntimeCompositionOptions {
   /** Live Host registries consumed by package-declared runtime contributions. */
   readonly limbRegistry?: LimbRegistry;
   readonly cloudConversationHosts?: CloudConversationHostRegistry;
-  readonly agentSessionProviders?: (packages: VerifiedPluginPackageLocator) => AgentSessionProviderLifecycle;
+  readonly agentSessionProviders?: (
+    packages: VerifiedPluginPackageLocator,
+    configuration: PluginRuntimeConfigurationPort,
+  ) => AgentSessionProviderLifecycle;
   readonly taskRunner?: DeclaredScheduleTaskRunner;
   /** Injectable so isolated tests never regenerate a user's CLI configuration. */
   readonly mcpConfigIO?: McpConfigIO;
@@ -542,7 +545,7 @@ export function createDormantPluginRuntimeComposition(
     {
       packages,
       configuration,
-      agentSessionProviders: options.agentSessionProviders?.(packages),
+      agentSessionProviders: options.agentSessionProviders?.(packages, configuration),
       ...(options.cloudConversationHosts === undefined
         ? {}
         : { cloudConversationHosts: options.cloudConversationHosts }),
@@ -1043,6 +1046,7 @@ export function createPluginManagerRuntimeComposition(
     options.additionalStateProjection,
   );
   const configuration = new HostPluginConfigurationService({
+    packages: options.runtime.packages,
     lifecycle: options.runtime.lifecycle,
     projectRoot: options.runtime.projectRoot,
     inventory: options.runtime.inventoryStore,

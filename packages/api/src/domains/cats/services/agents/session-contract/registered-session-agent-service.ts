@@ -2,6 +2,7 @@ import type { CatId } from '@cat-cafe/shared';
 import type { AgentMessage, AgentService, AgentServiceOptions, ProviderContinuityPreflight } from '../../types.js';
 import { AgentSessionBridgeService } from './AgentSessionBridgeService.js';
 import type { SessionImplementationRef, SessionImplementationRegistry } from './implementation-registry.js';
+import { sessionImplementationKey } from './implementation-registry.js';
 import type { AgentSessionProvider } from './types.js';
 
 interface RegisteredInput {
@@ -14,6 +15,9 @@ interface RegisteredInput {
 export class RegisteredSessionAgentService implements AgentService {
   private cached?: { provider: AgentSessionProvider; bridge: AgentSessionBridgeService; lifetime: AbortController };
   constructor(private readonly input: RegisteredInput) {}
+  get implementationKey(): string {
+    return sessionImplementationKey(this.input.ref);
+  }
   invoke(prompt: string, options?: AgentServiceOptions): AsyncIterable<AgentMessage> {
     return this.run(prompt, options);
   }
@@ -45,7 +49,14 @@ export class RegisteredSessionAgentService implements AgentService {
         yield {
           type,
           errorCode: code,
-          ...(type === 'error' ? { error: code } : {}),
+          ...(type === 'error'
+            ? {
+                error:
+                  code === 'session_implementation_unavailable' && 'pluginId' in this.input.ref
+                    ? `绑定的 ACP client 暂不可用（${this.input.ref.pluginId}/${this.input.ref.contributionId}）。请在设置 → 插件集成中检查配置并启用插件，或为成员选择其他 client。`
+                    : code,
+              }
+            : {}),
           catId: this.input.catId,
           metadata: { ...metadata },
           timestamp: Date.now(),

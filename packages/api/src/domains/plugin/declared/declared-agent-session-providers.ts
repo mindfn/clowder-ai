@@ -1,10 +1,7 @@
 import { open } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 import type { CatId } from '@cat-cafe/shared';
-import {
-  type SessionImplementationRegistry,
-  sessionImplementationKey,
-} from '../../cats/services/agents/session-contract/implementation-registry.js';
+import { type SessionImplementationRegistry } from '../../cats/services/agents/session-contract/implementation-registry.js';
 import {
   AGENT_PROVIDER_DECLARATION_FILE,
   type AgentProviderDeclaration,
@@ -16,6 +13,8 @@ import type { SessionContractSettings } from '../../cats/services/agents/session
 import type { AgentSessionProvider } from '../../cats/services/agents/session-contract/types.js';
 import type { PluginRuntimeAdmission } from '../carrier/runtime-carrier.js';
 import type { VerifiedPluginPackageLocator } from '../external-runtime/types.js';
+import type { PluginRuntimeConfigurationPort } from '../manifest-configuration-projection.js';
+import { resolveAgentClientLibrary } from './agent-client-library.js';
 import { resolvePackageFile } from './declared-resource-paths.js';
 export interface AgentSessionProviderLifecycle {
   activate(admission: PluginRuntimeAdmission): Promise<(() => Promise<void>) | undefined>;
@@ -25,6 +24,7 @@ export function declaredAgentSessionProviders(input: {
   packages: VerifiedPluginPackageLocator;
   registry: SessionImplementationRegistry;
   services: ReadonlyMap<string, RegisteredSessionAgentService>;
+  configuration?: Pick<PluginRuntimeConfigurationPort, 'readConfig'>;
   log?: { info(...args: unknown[]): void; warn(...args: unknown[]): void };
   createProvider(declaration: AgentProviderDeclaration, ctx: { catId: CatId }): AgentSessionProvider;
 }): AgentSessionProviderLifecycle {
@@ -59,19 +59,37 @@ export function declaredAgentSessionProviders(input: {
         providerId = declarationId(raw);
         const result = parseAgentProviderDeclaration(raw, { packageRoot: located.rootDir });
         if (!result.ok) throw new Error(`${result.code}: ${result.reason}`);
-        const registration = registerPluginAgentProvider(input.registry, {
-          pluginId: admission.packageRecord.pluginId,
-          declaration: result.declaration,
-          createProvider: input.createProvider,
-        });
+        const declarations =
+          'configurationKey' in result.declaration
+            ? await resolveAgentClientLibrary({
+                declaration: result.declaration,
+                admission,
+                packageRoot: located.rootDir,
+                configuration: input.configuration ?? { readConfig: async () => undefined },
+              })
+            : [result.declaration];
+        const registrations: ReturnType<typeof registerPluginAgentProvider>[] = [];
+        try {
+          for (const declaration of declarations)
+            registrations.push(
+              registerPluginAgentProvider(input.registry, {
+                pluginId: admission.packageRecord.pluginId,
+                declaration,
+                createProvider: input.createProvider,
+              }),
+            );
+        } catch (error) {
+          for (const registration of registrations) registration.unregister();
+          throw error;
+        }
         log('registered');
         return async () => {
-          registration.unregister();
+          for (const registration of registrations) registration.unregister();
           log('unregistered');
           await Promise.all(
-            [...input.settings.bindings]
-              .filter(([, ref]) => sessionImplementationKey(ref) === registration.key)
-              .map(([catId]) => input.services.get(catId)?.releaseAll('implementation_unregistered')),
+            [...input.services.values()]
+              .filter((service) => registrations.some((registration) => service.implementationKey === registration.key))
+              .map((service) => service.releaseAll('implementation_unregistered')),
           );
         };
       } catch (error) {
@@ -88,7 +106,7 @@ function declarationId(raw: unknown): string {
   return raw && typeof raw === 'object' && 'id' in raw && typeof raw.id === 'string' ? raw.id.slice(0, 128) : 'unknown';
 }
 
-async function readDeclaration(path: string): Promise<unknown> {
+export async function readDeclaration(path: string): Promise<unknown> {
   const file = await open(path, 'r');
   try {
     const size = (await file.stat()).size;

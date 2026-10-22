@@ -250,7 +250,20 @@ export function createRefreshingAcpSessionProvider(input: {
       const clear = () => {
         if (queue.get(input.catId) === building) queue.delete(input.catId);
       };
-      void building.then(clear, clear);
+      const failed = () => {
+        // An older rejection must not evict a newer configuration's construction.
+        if (pending === building) pending = undefined;
+      };
+      void building.then(
+        (service) => {
+          clear();
+          if (!service) failed();
+        },
+        () => {
+          clear();
+          failed();
+        },
+      );
       pending = building;
       generation = revision;
     }
