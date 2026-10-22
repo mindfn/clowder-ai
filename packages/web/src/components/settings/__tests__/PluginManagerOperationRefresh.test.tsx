@@ -302,4 +302,49 @@ describe('Plugin Manager operation refresh', () => {
     expect(writes).toBe(1);
     expect(container.querySelector('button[aria-label="禁用Fixture"]')).not.toBeNull();
   });
+
+  it('keeps installed detail local when a filtered local search omits the row', async () => {
+    const initialRemote = deferred<Response>();
+    const canonicalPlugin = { ...plugin, publisher: 'Clowder AI' };
+    let localDetails = 0;
+    let canonicalDetails = 0;
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins/_local') {
+        return json({ plugins: [plugin], catalog: { status: 'loading', refreshedAt: null } });
+      }
+      if (url === '/api/plugin-manager/plugins') return initialRemote.promise;
+      if (url === '/api/plugin-manager/plugins/_local/search?q=Clowder%20AI') {
+        return json({ plugins: [], catalog: { status: 'loading', refreshedAt: null } });
+      }
+      if (url === '/api/plugin-manager/plugins/search?q=Clowder%20AI') {
+        return json({ plugins: [canonicalPlugin], catalog: { status: 'fresh', refreshedAt: 1 } });
+      }
+      if (url === '/api/plugin-manager/plugins/_local/dev.clowder.fixture') {
+        localDetails += 1;
+        return json({
+          plugin: { ...canonicalPlugin, capabilities: [], configFields: [] },
+          catalog: { status: 'loading', refreshedAt: null },
+        });
+      }
+      if (url === '/api/plugin-manager/plugins/dev.clowder.fixture') {
+        canonicalDetails += 1;
+        return new Promise<Response>(() => {});
+      }
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginManagerLiveContent />));
+    await flushEffects();
+
+    const search = container.querySelector('input[aria-label="搜索插件"]') as HTMLInputElement | null;
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setValue?.call(search, 'Clowder AI');
+      search?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flushEffects();
+
+    expect(localDetails).toBeGreaterThanOrEqual(2);
+    expect(canonicalDetails).toBe(0);
+  });
 });

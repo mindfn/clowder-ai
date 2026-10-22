@@ -107,7 +107,11 @@ export function PluginManagerLiveContent({
       local: boolean,
     ): Promise<boolean> => {
       if (!mounted.current || generation !== listGeneration.current) return false;
-      if (local) localPluginIds.current = new Set(value.plugins.map((plugin) => plugin.pluginId));
+      if (local) {
+        const nextLocalPluginIds = new Set(localPluginIds.current);
+        for (const plugin of value.plugins) nextLocalPluginIds.add(plugin.pluginId);
+        localPluginIds.current = nextLocalPluginIds;
+      }
       setSnapshot(value);
       const requested = initialSelection.current;
       if (requested && value.plugins.some((plugin) => plugin.pluginId === requested)) {

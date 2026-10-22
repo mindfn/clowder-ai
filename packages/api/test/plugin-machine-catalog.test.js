@@ -141,7 +141,7 @@ test('projects the Host bundle locally without starting remote catalog discovery
   const snapshot = await catalog.localSnapshot();
 
   assert.equal(remoteLoads, 0);
-  assert.equal(snapshot.status, 'stale');
+  assert.equal(snapshot.status, 'loading');
   assert.deepEqual(
     snapshot.candidates.map((candidate) => candidate.pluginId),
     ['official.chatgpt-dot'],
