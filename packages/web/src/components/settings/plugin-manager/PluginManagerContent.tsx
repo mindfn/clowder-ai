@@ -123,7 +123,7 @@ export function PluginManagerContent({
 }: {
   fixtures: readonly PluginManagerDesignFixture[];
   pageHeader?: Omit<SettingsPageHeaderProps, 'children'>;
-  catalogStatus?: 'fresh' | 'stale' | 'degraded' | 'unavailable';
+  catalogStatus?: 'loading' | 'fresh' | 'stale' | 'degraded' | 'unavailable';
   catalogMessage?: string;
   loading?: boolean;
   error?: string | null;
@@ -218,7 +218,7 @@ export function PluginManagerContent({
         />
       )}
 
-      {catalogStatus !== 'fresh' && (
+      {catalogStatus !== 'fresh' && catalogStatus !== 'loading' && (
         <div className="flex items-start gap-2 rounded-xl bg-conn-amber-bg px-3 py-2.5">
           <HubIcon name="alert-triangle" className="mt-0.5 h-4 w-4 shrink-0 text-conn-amber-text" />
           <SettingsText as="p" variant="sm" tone="amber">

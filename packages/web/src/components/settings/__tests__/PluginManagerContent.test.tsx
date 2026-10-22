@@ -229,6 +229,71 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(mockApiFetch.mock.calls.some(([url]) => url === '/api/plugins/personal-chrome')).toBe(false);
   });
 
+  it('renders installed plugins before remote catalog discovery settles, then hydrates available plugins once', async () => {
+    const installed = managerPlugin({ installed: true, pluginId: 'local.github', displayName: 'Installed GitHub' });
+    let resolveRemote: ((value: Response) => void) | undefined;
+    const remote = new Promise<Response>((resolve) => {
+      resolveRemote = resolve;
+    });
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins/local') {
+        return json({
+          plugins: [installed],
+          catalog: { status: 'loading', refreshedAt: null, message: '正在加载可安装插件。' },
+        });
+      }
+      if (url === '/api/plugin-manager/plugins') return remote;
+      if (url === '/api/plugin-manager/plugins/local/local.github') {
+        return json({ ...detail(installed), catalog: { status: 'loading', refreshedAt: null } });
+      }
+      if (url === '/api/plugin-manager/plugins/local.github') return json(detail(installed));
+      if (url === '/api/plugin-manager/plugins/local.github/documentation') return json({});
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+
+    expect(container.textContent).toContain('Installed GitHub');
+    expect(container.textContent).not.toContain('Video Analysis');
+
+    await act(async () => {
+      resolveRemote?.(
+        json({
+          plugins: [installed, managerPlugin()],
+          catalog: { status: 'fresh', refreshedAt: 1_000 },
+        }),
+      );
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain('Installed GitHub');
+    expect(container.textContent).toContain('Video Analysis');
+    expect(mockApiFetch.mock.calls.filter(([url]) => url === '/api/plugin-manager/plugins').length).toBe(1);
+  });
+
+  it('keeps installed plugins usable when the incremental remote catalog read fails', async () => {
+    const installed = managerPlugin({ installed: true, pluginId: 'local.github', displayName: 'Installed GitHub' });
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins/local') {
+        return json({ plugins: [installed], catalog: { status: 'loading', refreshedAt: null } });
+      }
+      if (url === '/api/plugin-manager/plugins') throw new TypeError('network unavailable');
+      if (url === '/api/plugin-manager/plugins/local/local.github') {
+        return json({ ...detail(installed), catalog: { status: 'loading', refreshedAt: null } });
+      }
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+
+    expect(container.textContent).toContain('Installed GitHub');
+    expect(container.textContent).toContain('目录暂时不可用；已安装插件仍可管理');
+    expect(container.querySelector('button[aria-label="启用Installed GitHub"]')).not.toBeNull();
+  });
+
   it('reaches archive confirmation from the live Manager toolbar and refreshes after installation', async () => {
     let installed = false;
     const confirmation = {
