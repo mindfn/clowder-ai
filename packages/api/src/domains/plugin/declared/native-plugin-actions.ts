@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { PluginNativeActionTarget } from '../../cats/services/types.js';
 import { type PluginCallContext, withPluginCallContext } from '../carrier/plugin-call-context.js';
@@ -22,6 +22,8 @@ interface Binding {
 
 /** A native MCP transport can call only actions belonging to its current local activation. */
 export class NativePluginActions {
+  // One secret per Host lifetime. Enable/disable changes authority, not credentials.
+  readonly #hostSecret = randomBytes(32);
   readonly #bindings = new Map<string, Binding>();
   readonly #tokens = new Map<
     string,
@@ -56,7 +58,9 @@ export class NativePluginActions {
     for (const contribution of admission.packageRecord.manifest.contributions ?? []) {
       if (contribution.type === 'mcp' && allowed.has(contribution.id) && contribution.actions?.length) {
         connections.set(contribution.id, {
-          token: randomBytes(32).toString('hex'),
+          token: createHmac('sha256', this.#hostSecret)
+            .update(JSON.stringify([instanceId, contribution.id]))
+            .digest('hex'),
           methods: new Set(contribution.actions.map((action) => action.method)),
         });
       }

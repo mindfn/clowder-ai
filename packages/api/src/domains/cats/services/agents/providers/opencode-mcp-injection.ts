@@ -87,7 +87,7 @@ export function buildOpenCodeMcpSync(
     if (capConfig && catId) {
       for (const s of resolveInvocationMcpServers(capConfig, catId, {
         accessScope,
-        capabilitiesProjectRoot: capabilityRoot,
+        hostRoot: binaryProjectRoot,
       }) as Array<{
         name: string;
         enabled: boolean;

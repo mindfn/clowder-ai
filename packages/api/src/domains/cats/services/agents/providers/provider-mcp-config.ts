@@ -88,7 +88,7 @@ export async function resolveProviderMcpConfigResolution(input: {
     if (capConfig && catId) {
       for (const s of resolveInvocationMcpServers(capConfig, catId, {
         accessScope,
-        capabilitiesProjectRoot,
+        hostRoot: binaryProjectRoot,
       })) {
         managedMcpServerNames.add(s.name);
         if (!s.enabled) continue;

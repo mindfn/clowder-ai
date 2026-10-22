@@ -49,7 +49,7 @@ function fixture(t) {
   const resolve = () =>
     resolveInvocationMcpServers(project, 'codex-sol', {
       accessScope: 'project',
-      capabilitiesProjectRoot: root,
+      hostRoot: root,
     })[0];
   return { entry, project, host, path, save, resolve, release };
 }
@@ -100,16 +100,7 @@ test('user-owned MCP configuration does not receive a plugin connection', (t) =>
   assert.equal(f.resolve().env.CLOWDER_PLUGIN_ACTION_TOKEN, 'old-activation');
 });
 
-for (const kind of [
-  'override',
-  'command',
-  'args',
-  'workingDir',
-  'source',
-  'missing-owner',
-  'duplicate-project',
-  'duplicate-host',
-]) {
+for (const kind of ['override', 'source', 'missing-owner', 'duplicate-project', 'duplicate-host']) {
   test(`project ${kind} cannot receive a fresh Host connection`, (t) => {
     const f = fixture(t);
     if (kind === 'override')
@@ -147,5 +138,29 @@ test('project environment cannot modify the Host-owned plugin executable environ
 test('persisted Host credentials are not read when the live launch is available', (t) => {
   const f = fixture(t);
   writeFileSync(f.path, '{invalid');
+  assert.equal(f.resolve().env.CLOWDER_PLUGIN_ACTION_TOKEN, 'current-activation');
+});
+
+test('project transport drift never chooses an executable and cannot block the live Host launch', (t) => {
+  const f = fixture(t);
+  f.entry.mcpServer.command = 'project-controlled-command';
+  f.entry.mcpServer.args = ['project-controlled.mjs'];
+  f.entry.mcpServer.workingDir = '/project-controlled';
+  f.host.capabilities[0].mcpServer.args = ['new-host-version.mjs'];
+  const server = f.resolve();
+  assert.equal(server.enabled, true);
+  assert.equal(server.command, 'node');
+  assert.deepEqual(server.args, ['new-host-version.mjs']);
+  assert.notEqual(server.workingDir, '/project-controlled');
+  assert.equal(server.env.CLOWDER_PLUGIN_ACTION_TOKEN, 'current-activation');
+});
+
+test('the persisted plugin environment has no credential-consumption path', (t) => {
+  const f = fixture(t);
+  Object.defineProperty(f.entry.mcpServer, 'env', {
+    get() {
+      throw new Error('persisted plugin environment must not be read');
+    },
+  });
   assert.equal(f.resolve().env.CLOWDER_PLUGIN_ACTION_TOKEN, 'current-activation');
 });

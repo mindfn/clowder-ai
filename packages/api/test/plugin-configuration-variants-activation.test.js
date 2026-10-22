@@ -152,10 +152,17 @@ async function writeFixturePackage(nativeAction = false) {
 }
 
 /** Install, configure, then enable — the real owner path. Returns the materialized MCP env. */
-async function installConfigureEnable(updates) {
-  const projectRoot = await tempRoot('cat-cafe-variants-feishu-project-');
-  const packageRoot = await writeFixturePackage();
-  const { runtime } = createRuntime(projectRoot);
+async function installConfigureEnable(updates, roots) {
+  const projectRoot = roots?.runtime ?? (await tempRoot('cat-cafe-variants-feishu-project-'));
+  const configRoot = roots?.workspace ?? projectRoot;
+  const packageRoot = await writeFixturePackage(Boolean(roots));
+  const io = roots
+    ? fileBasedMcpIO(configRoot, {
+        google: join(configRoot, '.gemini/settings.json'),
+        antigravity: join(configRoot, '.test-antigravity/mcp.json'),
+      })
+    : undefined;
+  const { runtime } = createRuntime(projectRoot, io);
   const composition = createPluginManagerRuntimeComposition({
     runtime,
     catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
@@ -173,10 +180,10 @@ async function installConfigureEnable(updates) {
     enabled: true,
     expectedRevision: beforeEnable.lifecycleRevision,
   });
-  const capability = (await readCapabilitiesConfig(projectRoot))?.capabilities.find(
+  const capability = (await readCapabilitiesConfig(configRoot))?.capabilities.find(
     (candidate) => candidate.type === 'mcp' && candidate.pluginId === installed.pluginId,
   );
-  return { capability, composition, installed };
+  return { capability, composition, installed, runtime };
 }
 
 test('websocket mode without a Token activates with no FEISHU_TOKEN on the MCP launch env', async () => {
@@ -333,5 +340,51 @@ test('variant changes refresh existing project MCP providers while preserving me
     assert.notEqual(fields.find((field) => field.key === 'verificationToken').currentValue, null);
   } finally {
     await runtime.supervisor.stopAll('test_complete');
+  }
+});
+
+test('production composition launches plugins across separate runtime and persistent workspace roots', async (t) => {
+  const runtimeRoot = await tempRoot('plugin-runtime-wiring-');
+  const workspaceRoot = await tempRoot('plugin-workspace-wiring-');
+  const consumer = await tempRoot('plugin-consumer-wiring-');
+  const saved = Object.fromEntries(
+    ['CAT_CAFE_RUNTIME_ROOT', 'CAT_CAFE_WORKSPACE_ROOT'].map((key) => [key, process.env[key]]),
+  );
+  let ownedRuntime;
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  try {
+    process.env.CAT_CAFE_RUNTIME_ROOT = runtimeRoot;
+    process.env.CAT_CAFE_WORKSPACE_ROOT = workspaceRoot;
+    await writeCapabilitiesConfig(workspaceRoot, { version: 2, capabilities: [] });
+    const f = await installConfigureEnable(
+      [
+        { key: 'connectionMode', value: 'websocket' },
+        { key: 'appId', value: 'cli_1' },
+      ],
+      { runtime: runtimeRoot, workspace: workspaceRoot },
+    );
+    ownedRuntime = f.runtime;
+    await writeCapabilitiesConfig(consumer, { version: 2, capabilities: [f.capability] });
+    const id = f.capability.id;
+    const live = f.runtime.supervisor.currentNativeMcpLaunch(id);
+    assert.ok(live?.env.CLOWDER_PLUGIN_ACTION_TOKEN);
+    assert.equal(f.capability.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN, undefined);
+    const servers = await resolveProviderMcpConfig({
+      workingDirectory: consumer,
+      mcpServerPath: join(runtimeRoot, 'packages/mcp-server/dist/index.js'),
+      callbackEnv: { CAT_CAFE_CAT_ID: catRegistry.getAllIds()[0] },
+    });
+    const server = servers[id.replaceAll(':', '__')];
+    assert.ok(server, 'real composition must provide the live plugin despite distinct runtime/workspace roots');
+    assert.equal(server.env.CLOWDER_PLUGIN_ACTION_TOKEN, live.env.CLOWDER_PLUGIN_ACTION_TOKEN);
+    assert.equal(server.command, live.command);
+    assert.deepEqual(server.args, [...live.args]);
+  } finally {
+    await ownedRuntime?.shutdown();
   }
 });
