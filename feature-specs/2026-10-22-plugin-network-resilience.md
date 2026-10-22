@@ -2,7 +2,7 @@
 
 ## Outcome
 
-Opening Plugin Manager must never wait for GitHub or npm before showing and operating on installed plugins. The packaged Electron application uses Chromium's system-proxy-aware network stack for official catalog and package downloads. Source/headless deployments keep explicit environment-proxy configuration.
+Opening Plugin Manager must never wait for GitHub or npm before showing Host-bundled candidates or operating on installed plugins. The packaged Electron application uses Chromium's system-proxy-aware network stack for official catalog and package downloads. Source/headless deployments keep explicit environment-proxy configuration.
 
 This is a Host transport and projection repair. It does not add plugin-specific branches, a second catalog, background polling, proxy settings UI, or a replacement for the user's native Git configuration.
 
@@ -10,6 +10,7 @@ This is a Host transport and projection repair. It does not add plugin-specific 
 
 | Fact | Canonical owner | Consumer | Failure behavior |
 | --- | --- | --- | --- |
+| Built-in candidates shipped by the Host | Host-bundled catalog snapshot | Initial Plugin Manager list/detail | Visible immediately without starting remote discovery |
 | Installed package, instance, grants and lifecycle | Host inventory and installed-package projection | Initial Plugin Manager list/detail | Remains available without any remote request |
 | Discoverable versions and update candidates | Signed official catalog | One incremental page refresh and explicit install/update | Failure degrades discovery/update only |
 | Package bytes | Catalog-pinned npm archive plus SHA-512 verification | Explicit install/update | Fail closed; never substitute local or stale bytes |
@@ -21,7 +22,7 @@ This is a Host transport and projection repair. It does not add plugin-specific 
 
 | Invariant | Executable evidence |
 | --- | --- |
-| Local list/detail do not await catalog I/O | Deferred catalog promise stays unresolved while local endpoint returns installed state |
+| Local list/detail do not await catalog I/O | Deferred remote catalog promise stays unresolved while local endpoint returns Host-bundled candidates and installed state |
 | The page paints local state before remote discovery settles | Web test observes installed row while remote list promise is pending, then observes remote additions |
 | No idle/background polling is introduced | Component performs one local read and one remote read per load/search/mutation refresh |
 | Catalog failure cannot erase or disable installed state | Service and UI tests retain installed row and expose a discovery warning |
@@ -43,7 +44,7 @@ This is a Host transport and projection repair. It does not add plugin-specific 
 
 ## Implementation units
 
-1. Add local-only list/search/detail service methods and read-only routes. They project an empty, loading catalog over the existing local inventory without invoking `catalog.snapshot()`.
+1. Add local-only list/search/detail service methods and read-only routes. They project the Host-owned local catalog snapshot plus existing inventory without invoking remote `catalog.snapshot()` or repository refresh.
 2. Change the live Plugin Manager loader to commit the local response first, then make one canonical remote request and replace it only if its generation is current.
 3. Add a packaged-desktop loopback bridge around Electron `net.fetch`. Permit only the canonical catalog URL and `registry.npmjs.org`, bound response sizes, and pass an ephemeral endpoint/token only to the owned API child.
 4. Route official catalog/archive fetches through a shared API adapter: desktop bridge when present, ordinary Node fetch otherwise. Source/headless administrators opt into Node's standard environment-proxy support at process startup.
