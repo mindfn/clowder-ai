@@ -1152,6 +1152,11 @@ test('plugin MCP wrapper follows the replacement host credential file instead of
     },
   });
   writeFileSync(configPath, JSON.stringify(config));
+  const previousRoots = Object.fromEntries(
+    ['CAT_CAFE_RUNTIME_ROOT', 'CAT_CAFE_WORKSPACE_ROOT'].map((key) => [key, process.env[key]]),
+  );
+  process.env.CAT_CAFE_RUNTIME_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+  process.env.CAT_CAFE_WORKSPACE_ROOT = credsDir;
   try {
     const pool = new FakeHostPool();
     const service = new CodexAgentService({
@@ -1189,6 +1194,10 @@ test('plugin MCP wrapper follows the replacement host credential file instead of
     assert.equal(JSON.parse(readFileSync(oldPath, 'utf8')).invocationId, 'plugin-seed');
     assert.doesNotMatch(JSON.stringify(resume), /seed-token|current-token|CAT_CAFE_CALLBACK_TOKEN/);
   } finally {
+    for (const [key, value] of Object.entries(previousRoots)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     writeFileSync(configPath, originalConfig);
     rmSync(fixture, { force: true });
   }
