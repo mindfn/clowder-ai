@@ -287,10 +287,14 @@ test('variant changes refresh existing project MCP providers while preserving me
   assert.equal(Object.hasOwn(initial.mcpServer.env ?? {}, 'FEISHU_TOKEN'), false);
   assert.equal(
     initial.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN,
-    undefined,
-    'activation credentials must not be persisted',
+    runtime.supervisor.nativeActions.environmentReferences(installed.pluginInstanceId, 'feishu-mcp')
+      .CLOWDER_PLUGIN_ACTION_TOKEN,
+    'registration must persist only an environment reference',
   );
-  const initialActionToken = runtime.supervisor.currentNativeMcpLaunch(id).env.CLOWDER_PLUGIN_ACTION_TOKEN;
+  const initialActionToken = runtime.supervisor.nativeActions.environment(
+    installed.pluginInstanceId,
+    'feishu-mcp',
+  ).CLOWDER_PLUGIN_ACTION_TOKEN;
   assert.ok(initialActionToken);
   const allCats = [...catRegistry.getAllIds()];
   const allowedCat = allCats.find((catId) => catId !== 'codex');
@@ -393,9 +397,14 @@ for (const configOnWorkspace of [false, true])
       ownedRuntime = f.runtime;
       await writeCapabilitiesConfig(consumer, { version: 2, capabilities: [f.capability] });
       const id = f.capability.id;
-      const live = f.runtime.supervisor.currentNativeMcpLaunch(id);
+      const live = await f.runtime.supervisor.resolveNativeMcpLaunch({
+        mode: 'plugin_native',
+        pluginInstanceId: f.installed.pluginInstanceId,
+        contributionId: 'feishu-mcp',
+        actionMethods: ['native.run'],
+      });
       assert.ok(live?.env.CLOWDER_PLUGIN_ACTION_TOKEN);
-      assert.equal(f.capability.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN, undefined);
+      assert.match(f.capability.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN, /^\$\{[A-Z0-9_]+\}$/);
       const servers = await resolveProviderMcpConfig({
         workingDirectory: consumer,
         mcpServerPath: join(runtimeRoot, 'packages/mcp-server/dist/index.js'),

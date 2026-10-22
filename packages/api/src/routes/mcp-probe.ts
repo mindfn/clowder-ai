@@ -11,6 +11,7 @@ import type { StdioServerParameters } from '@modelcontextprotocol/sdk/client/std
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { resolvePencilCommand } from '../config/capabilities/capability-orchestrator.js';
+import { resolveEnvReferences } from '../utils/env-references.js';
 
 export interface McpProbeResult {
   connectionStatus: 'connected' | 'disconnected' | 'unknown';
@@ -44,22 +45,10 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 function sanitizeEnv(env: Record<string, string> | undefined): Record<string, string> | undefined {
   const safe: Record<string, string> = { ...getDefaultEnvironment() };
   if (!env) return safe;
-  for (const [key, value] of Object.entries(env)) {
+  for (const [key, value] of Object.entries(resolveEnvReferences(env))) {
     if (typeof value === 'string') safe[key] = value;
   }
   return safe;
-}
-
-/**
- * Resolve `${ENV_VAR}` references in header values from process.env.
- * Supports bare `${VAR}` as well as embedded `Bearer ${VAR}` patterns.
- */
-function resolveEnvVarsInRecord(record: Record<string, string>): Record<string, string> {
-  const resolved: Record<string, string> = {};
-  for (const [key, value] of Object.entries(record)) {
-    resolved[key] = value.replace(/\$\{([^}]+)\}/g, (_, name) => process.env[name] ?? '');
-  }
-  return resolved;
 }
 
 function remainingTimeout(deadlineMs: number): number {
@@ -145,7 +134,7 @@ async function probeHttpMcp(capability: CapabilityEntry, options: { timeoutMs?: 
   const deadlineMs = Date.now() + timeoutMs;
   const requestInit: RequestInit = {};
   if (capability.mcpServer?.headers && Object.keys(capability.mcpServer.headers).length > 0) {
-    requestInit.headers = resolveEnvVarsInRecord(capability.mcpServer.headers);
+    requestInit.headers = resolveEnvReferences(capability.mcpServer.headers);
   }
 
   const transport = new StreamableHTTPClientTransport(parsed, { requestInit });

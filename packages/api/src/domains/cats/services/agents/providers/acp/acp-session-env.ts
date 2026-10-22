@@ -1,9 +1,10 @@
+import { pluginMcpEnvironment } from '../../../../../../config/capabilities/plugin-mcp-environment.js';
 /**
  * Per-invocation MCP server env materialization for ACP sessions.
  *
  * Static MCP configs (from .mcp.json via acp-mcp-resolver) don't carry
  * per-invocation callback env (CAT_CAFE_API_URL, token, etc.).
- * This module merges callbackEnv into cat-cafe* servers before newSession().
+ * This module merges callbackEnv into cat-cafe* and native-action servers before newSession().
  */
 
 import type { AcpMcpServer, AcpMcpServerStdio } from './types.js';
@@ -50,7 +51,7 @@ function mergeCallbackEnv(
 
 /**
  * Materialize per-invocation MCP server configs by merging callbackEnv
- * into cat-cafe* servers. Non-cat-cafe servers are passed through unchanged.
+ * into cat-cafe* and native-action servers. Other servers pass through unchanged.
  *
  * @returns New array (never mutates input)
  */
@@ -61,6 +62,13 @@ export function materializeSessionMcpServers(
   if (!callbackEnv || Object.keys(callbackEnv).length === 0) return baseServers;
 
   return baseServers.map((server) => {
+    if ('command' in server && server.env.some((entry) => entry.name === 'CLOWDER_PLUGIN_ACTION_TOKEN')) {
+      const env = pluginMcpEnvironment(
+        { source: 'plugin', env: Object.fromEntries(server.env.map((e) => [e.name, e.value])) },
+        callbackEnv,
+      );
+      return { ...server, env: Object.entries(env ?? {}).map(([name, value]) => ({ name, value })) };
+    }
     if (!isCatCafeStdioServer(server)) return server;
     return { ...server, env: mergeCallbackEnv(server.env, callbackEnv) };
   });

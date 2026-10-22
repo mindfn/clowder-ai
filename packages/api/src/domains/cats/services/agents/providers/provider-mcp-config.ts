@@ -6,14 +6,14 @@ import {
   MCP_CALLBACK_ENV_KEYS,
   resolveCatCafeNodeCommand,
   resolvePencilCommand,
+  resolveServersForCat,
   summarizeMcpInjection,
 } from '../../../../../config/capabilities/capability-orchestrator.js';
 import {
   assertMappedCapabilitySource,
-  isSameCapabilityRoot,
   resolveInvokeCapabilityRoot,
 } from '../../../../../config/capabilities/invoke-capability-root.js';
-import { resolveInvocationMcpServers } from '../../../../../config/capabilities/invoke-plugin-mcp.js';
+import { readInvocationMcpConfig } from '../../../../../config/capabilities/invoke-mcp-config.js';
 import { isManagedCatCafeSplit } from '../../../../../config/capabilities/mcp-constants.js';
 import {
   resolveMcpArgs,
@@ -64,29 +64,13 @@ export async function resolveProviderMcpConfigResolution(input: {
   try {
     // F249: Project config is the single truth source for MCP resolution.
     // Try project first; fall back to global for uninitialized projects.
-    let capConfig = null;
-    let configSourceRoot = capabilitiesProjectRoot;
-    let accessScope: 'global' | 'project' = 'global';
-    if (input.workingDirectory && !isSameCapabilityRoot(input.workingDirectory, capabilitiesProjectRoot)) {
-      try {
-        const projectRaw = readFileSync(join(input.workingDirectory, '.cat-cafe', 'capabilities.json'), 'utf-8');
-        const parsed = JSON.parse(projectRaw);
-        if (parsed?.version === 1 || parsed?.version === 2) {
-          capConfig = parsed;
-          configSourceRoot = input.workingDirectory;
-          accessScope = 'project';
-        }
-      } catch {
-        /* No project config — fall back to global */
-      }
-    }
-    if (!capConfig) {
-      const raw = readFileSync(join(capabilitiesProjectRoot, '.cat-cafe', 'capabilities.json'), 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (parsed?.version === 1 || parsed?.version === 2) capConfig = parsed;
-    }
+    const {
+      config: capConfig,
+      configSourceRoot,
+      accessScope,
+    } = readInvocationMcpConfig(capabilitiesProjectRoot, input.workingDirectory);
     if (capConfig && catId) {
-      for (const s of resolveInvocationMcpServers(capConfig, catId, {
+      for (const s of resolveServersForCat(capConfig, catId, {
         accessScope,
       })) {
         managedMcpServerNames.add(s.name);

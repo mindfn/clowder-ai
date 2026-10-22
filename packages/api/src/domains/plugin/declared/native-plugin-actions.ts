@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { PluginNativeActionTarget } from '../../cats/services/types.js';
 import { type PluginCallContext, withPluginCallContext } from '../carrier/plugin-call-context.js';
@@ -72,8 +72,10 @@ export class NativePluginActions {
       invoke,
     };
     this.#bindings.set(instanceId, binding);
-    for (const [contributionId, connection] of connections)
+    for (const [contributionId, connection] of connections) {
       this.#tokens.set(connection.token, { binding, contributionId, methods: connection.methods });
+      process.env[this.environmentKey(instanceId, contributionId)] = connection.token;
+    }
   }
 
   /** Resolve policy coordinates from the active Host-issued token, not package-supplied identity. */
@@ -95,6 +97,23 @@ export class NativePluginActions {
       CLOWDER_PLUGIN_ACTION_TOKEN: connection.token,
       CLOWDER_PLUGIN_ACTION_PATH: '/api/plugin-runtime/action',
     };
+  }
+
+  /** Durable MCP registration stores a reference, while its value belongs to this Host process. */
+  environmentReferences(instanceId: string, contributionId: string): Readonly<Record<string, string>> {
+    if (!this.#bindings.get(instanceId)?.connections.has(contributionId)) return {};
+    return {
+      CLOWDER_PLUGIN_ACTION_TOKEN: `\${${this.environmentKey(instanceId, contributionId)}}`,
+      CLOWDER_PLUGIN_ACTION_PATH: '/api/plugin-runtime/action',
+    };
+  }
+
+  private environmentKey(instanceId: string, contributionId: string): string {
+    const id = createHash('sha256')
+      .update(JSON.stringify([instanceId, contributionId]))
+      .digest('hex')
+      .toUpperCase();
+    return `CLOWDER_PLUGIN_${id}_ACTION_TOKEN`;
   }
 
   deactivate(instanceId: string): void {
