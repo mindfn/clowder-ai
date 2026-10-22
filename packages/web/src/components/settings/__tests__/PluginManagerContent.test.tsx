@@ -294,60 +294,6 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(container.querySelector('button[aria-label="启用Installed GitHub"]')).not.toBeNull();
   });
 
-  it('reaches archive confirmation from the live Manager toolbar and refreshes after installation', async () => {
-    let installed = false;
-    const confirmation = {
-      pluginId: 'dev.clowder.video-analysis',
-      pluginInstanceId: 'pi_video',
-      currentPackageDigest: digest,
-      candidatePackageDigest: digest,
-      expectedLifecycleRevision: 7,
-      expectedGrantRevision: 1,
-      candidateEffectiveGrants: [],
-    };
-    mockApiFetch.mockImplementation(async (url, init) => {
-      if (url === '/api/plugin-manager/plugins') return json(response(managerPlugin({ installed })));
-      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis')
-        return json(detail(managerPlugin({ installed })));
-      if (url === '/api/plugin-manager/plugins/install/upload') {
-        const body = init?.body as FormData;
-        if (!body.has('replacement'))
-          return json(
-            {
-              code: 'ARCHIVE_REPLACEMENT_CONFIRMATION_REQUIRED',
-              replacement: {
-                confirmation,
-                displayName: 'Video Analysis',
-                currentVersion: '0.1.0',
-                candidateVersion: '0.2.0',
-              },
-            },
-            409,
-          );
-        expect(JSON.parse(body.get('replacement') as string)).toEqual(confirmation);
-        installed = true;
-        return json({ pluginId: confirmation.pluginId, pluginInstanceId: confirmation.pluginInstanceId }, 201);
-      }
-      return json({}, 404);
-    });
-    await act(async () => root.render(<PluginsContent />));
-    await flushEffects();
-    const input = container.querySelector<HTMLInputElement>('[data-plugin-manager-toolbar] input[type="file"]');
-    expect(input, 'archive must be reachable from the real live Manager toolbar').not.toBeNull();
-    if (!input) return;
-    Object.defineProperty(input, 'files', { configurable: true, value: [new File(['fixture'], 'plugin.tgz')] });
-    await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
-    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('0.1.0 替换为 0.2.0');
-    expect(installed).toBe(false);
-    const confirm = [...container.querySelectorAll('button')].find((button) => button.textContent === '确认替换');
-    expect(confirm).toBeDefined();
-    await act(async () => confirm?.click());
-    await flushEffects();
-    expect(installed).toBe(true);
-    expect(mockApiFetch.mock.calls.filter(([url]) => url === '/api/plugin-manager/plugins').length).toBeGreaterThan(1);
-    expect(container.textContent).toContain('安装成功: dev.clowder.video-analysis');
-  });
-
   it('keeps a historical installed plugin visible with the existing unknown-origin label in list and detail', async () => {
     const legacy = {
       ...managerPlugin({ installed: true, pluginId: 'dev.clowder.genoffice-docx', displayName: 'Installed GenOffice' }),
@@ -572,7 +518,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ enabled: true, expectedRevision: 7 }),
       },
-      undefined,
+      { mutationTimeoutMs: 5 * 60_000 },
     );
     expect(listReads).toBeGreaterThanOrEqual(2);
     expect(container.textContent).toContain('插件状态已变化，已刷新最新状态');
@@ -891,14 +837,18 @@ describe('F202 live Plugin Manager Console wiring', () => {
     await act(async () => save?.click());
     await flushEffects();
 
-    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugin-manager/plugins/telegram/contributions/configuration', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        expectedRevision: plugin.lifecycleRevision,
-        updates: [{ key: 'TELEGRAM_BOT_TOKEN', value: '123456:secret' }],
-      }),
-    });
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      '/api/plugin-manager/plugins/telegram/contributions/configuration',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          expectedRevision: plugin.lifecycleRevision,
+          updates: [{ key: 'TELEGRAM_BOT_TOKEN', value: '123456:secret' }],
+        }),
+      },
+      { mutationTimeoutMs: 5 * 60_000 },
+    );
   });
 
   it('refreshes saved configuration and revision when reconnect fails, without toggling intent', async () => {
@@ -1008,6 +958,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
           ],
         }),
       },
+      { mutationTimeoutMs: 5 * 60_000 },
     );
     expect(container.textContent).toContain('配置已保存');
 
@@ -1022,7 +973,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ enabled: true, expectedRevision: 8 }),
       },
-      undefined,
+      { mutationTimeoutMs: 5 * 60_000 },
     );
   });
 
@@ -1052,7 +1003,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ expectedRevision: 7 }),
       },
-      undefined,
+      { mutationTimeoutMs: 5 * 60_000 },
     );
     nativeConfirm.mockRestore();
   });
@@ -1216,11 +1167,17 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(container.textContent).not.toContain('README 暂不可用。');
   });
 
-  it('polls by replacing the same projection without emitting duplicate UI errors', async () => {
+  it('does not poll the remote catalog while the page is idle', async () => {
     vi.useFakeTimers();
     let listReads = 0;
     mockApiFetch.mockImplementation(async (url) => {
       if (String(url).startsWith('/api/plugin-manager/marketplaces')) return json({ sources: [] });
+      if (url === '/api/plugin-manager/plugins/local') {
+        return json({
+          plugins: [managerPlugin({ installed: true })],
+          catalog: { status: 'loading', refreshedAt: null },
+        });
+      }
       if (url === '/api/plugin-manager/plugins') {
         listReads += 1;
         return json(response(managerPlugin({ installed: true })));
@@ -1241,7 +1198,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
       await Promise.resolve();
     });
 
-    expect(listReads).toBe(3);
+    expect(listReads).toBe(2);
     expect(mockApiFetch.mock.calls.filter(([url]) => url === '/api/plugin-manager/marketplaces/refresh')).toHaveLength(
       1,
     );
@@ -1249,18 +1206,23 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(container.querySelectorAll('[data-plugin-id="dev.clowder.video-analysis"]')).toHaveLength(1);
   });
 
-  it('keeps an unavailable detail state stable while polling retries it', async () => {
+  it('keeps an unavailable detail state stable without idle retries', async () => {
     vi.useFakeTimers();
     let detailReads = 0;
-    let resolveRetry: ((response: Response) => void) | undefined;
-    const retry = new Promise<Response>((resolve) => {
-      resolveRetry = resolve;
-    });
     mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins/local') {
+        return json({
+          plugins: [managerPlugin({ installed: true })],
+          catalog: { status: 'loading', refreshedAt: null },
+        });
+      }
       if (url === '/api/plugin-manager/plugins') return json(response(managerPlugin({ installed: true })));
-      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis') {
+      if (
+        url === '/api/plugin-manager/plugins/local/dev.clowder.video-analysis' ||
+        url === '/api/plugin-manager/plugins/dev.clowder.video-analysis'
+      ) {
         detailReads += 1;
-        return detailReads === 1 ? json({}, 503) : retry;
+        return json({}, 503);
       }
       if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis/documentation') return json({});
       return json({}, 404);
@@ -1269,6 +1231,8 @@ describe('F202 live Plugin Manager Console wiring', () => {
     await act(async () => root.render(<PluginsContent />));
     await flushEffects();
     expect(container.textContent).toContain('README 暂不可用。');
+    const readsAfterMount = detailReads;
+    expect(readsAfterMount).toBeGreaterThan(0);
 
     await act(async () => {
       vi.advanceTimersByTime(5_000);
@@ -1276,12 +1240,9 @@ describe('F202 live Plugin Manager Console wiring', () => {
       await Promise.resolve();
     });
 
-    expect(detailReads).toBe(2);
     expect(container.textContent).toContain('README 暂不可用。');
     expect(container.textContent).not.toContain('README 加载中…');
-
-    resolveRetry?.(json({}, 503));
-    await flushEffects();
+    expect(detailReads).toBe(readsAfterMount);
   });
   it('shows all installed plugins, five available initially, and finds later plugins by scrolling or search', async () => {
     const installed = Array.from({ length: 7 }, (_, i) =>

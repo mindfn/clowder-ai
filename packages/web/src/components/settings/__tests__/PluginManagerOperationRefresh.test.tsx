@@ -77,7 +77,6 @@ describe('Plugin Manager operation refresh', () => {
   });
 
   it('opens the requested package from a recovery settings link instead of selecting the first item', async () => {
-    const interval = vi.spyOn(window, 'setInterval');
     window.history.replaceState(null, '', '/settings?s=plugins&plugin=official.companion.personal-chrome');
     const companion = { ...plugin, pluginId: 'official.companion.personal-chrome', displayName: 'Companion' };
     mockApiFetch.mockImplementation(async (url) => {
@@ -100,11 +99,6 @@ describe('Plugin Manager operation refresh', () => {
       button.textContent?.includes('返回插件列表'),
     );
     await act(async () => back?.click());
-    const poll = interval.mock.calls.find((call) => call[1] === 5_000)?.[0];
-    expect(typeof poll).toBe('function');
-    await act(async () => {
-      if (typeof poll === 'function') poll();
-    });
     await flushEffects();
     expect(detailPanel?.classList.contains('hidden')).toBe(true);
   });
@@ -163,6 +157,12 @@ describe('Plugin Manager operation refresh', () => {
     const lifecycle = deferred<Response>();
     let terminal = false;
     mockApiFetch.mockImplementation(async (url, init, options) => {
+      if (url === '/api/plugin-manager/plugins/local') {
+        return json({
+          plugins: [terminal ? { ...plugin, intent: 'disabled', live: 'stopped', lifecycleRevision: 2 } : plugin],
+          catalog: { status: 'loading', refreshedAt: null },
+        });
+      }
       if (url === '/api/plugin-manager/plugins') {
         return json({
           plugins: [terminal ? { ...plugin, intent: 'disabled', live: 'stopped', lifecycleRevision: 2 } : plugin],
@@ -198,6 +198,12 @@ describe('Plugin Manager operation refresh', () => {
     const lifecycle = deferred<Response>();
     let terminal = false;
     mockApiFetch.mockImplementation(async (url, init, options) => {
+      if (url === '/api/plugin-manager/plugins/local') {
+        return json({
+          plugins: [terminal ? { ...plugin, intent: 'disabled', live: 'crashed', lifecycleRevision: 2 } : plugin],
+          catalog: { status: 'loading', refreshedAt: null },
+        });
+      }
       if (url === '/api/plugin-manager/plugins') {
         return json({
           plugins: [terminal ? { ...plugin, intent: 'disabled', live: 'crashed', lifecycleRevision: 2 } : plugin],
