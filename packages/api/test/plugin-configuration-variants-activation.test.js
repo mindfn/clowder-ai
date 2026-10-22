@@ -49,12 +49,13 @@ function fakeTaskRunner() {
   };
 }
 
-function createRuntime(projectRoot, mcpConfigIO) {
+function createRuntime(projectRoot, mcpConfigIO, hostRoot = projectRoot) {
   const limbRegistry = new LimbRegistry();
   return {
     limbRegistry,
     runtime: createDormantPluginRuntimeComposition({
       projectRoot,
+      mcpHostRoot: hostRoot,
       messageStore: new MessageStore(),
       contract: {
         manifestContractRange: '0.1.0 || 0.2.0',
@@ -153,7 +154,9 @@ async function writeFixturePackage(nativeAction = false) {
 
 /** Install, configure, then enable — the real owner path. Returns the materialized MCP env. */
 async function installConfigureEnable(updates, roots) {
-  const projectRoot = roots?.runtime ?? (await tempRoot('cat-cafe-variants-feishu-project-'));
+  const projectRoot =
+    (roots?.configOnWorkspace ? roots.workspace : roots?.runtime) ??
+    (await tempRoot('cat-cafe-variants-feishu-project-'));
   const configRoot = roots?.workspace ?? projectRoot;
   const packageRoot = await writeFixturePackage(Boolean(roots));
   const io = roots
@@ -162,7 +165,7 @@ async function installConfigureEnable(updates, roots) {
         antigravity: join(configRoot, '.test-antigravity/mcp.json'),
       })
     : undefined;
-  const { runtime } = createRuntime(projectRoot, io);
+  const { runtime } = createRuntime(projectRoot, io, roots?.runtime);
   const composition = createPluginManagerRuntimeComposition({
     runtime,
     catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
@@ -343,48 +346,49 @@ test('variant changes refresh existing project MCP providers while preserving me
   }
 });
 
-test('production composition launches plugins across separate runtime and persistent workspace roots', async (t) => {
-  const runtimeRoot = await tempRoot('plugin-runtime-wiring-');
-  const workspaceRoot = await tempRoot('plugin-workspace-wiring-');
-  const consumer = await tempRoot('plugin-consumer-wiring-');
-  const saved = Object.fromEntries(
-    ['CAT_CAFE_RUNTIME_ROOT', 'CAT_CAFE_WORKSPACE_ROOT'].map((key) => [key, process.env[key]]),
-  );
-  let ownedRuntime;
-  t.after(() => {
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+for (const configOnWorkspace of [false, true])
+  test(`production composition launches plugins across separate runtime/workspace roots (configOnWorkspace=${configOnWorkspace})`, async (t) => {
+    const runtimeRoot = await tempRoot('plugin-runtime-wiring-');
+    const workspaceRoot = await tempRoot('plugin-workspace-wiring-');
+    const consumer = await tempRoot('plugin-consumer-wiring-');
+    const saved = Object.fromEntries(
+      ['CAT_CAFE_RUNTIME_ROOT', 'CAT_CAFE_WORKSPACE_ROOT'].map((key) => [key, process.env[key]]),
+    );
+    let ownedRuntime;
+    t.after(() => {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    });
+    try {
+      process.env.CAT_CAFE_RUNTIME_ROOT = runtimeRoot;
+      process.env.CAT_CAFE_WORKSPACE_ROOT = workspaceRoot;
+      await writeCapabilitiesConfig(workspaceRoot, { version: 2, capabilities: [] });
+      const f = await installConfigureEnable(
+        [
+          { key: 'connectionMode', value: 'websocket' },
+          { key: 'appId', value: 'cli_1' },
+        ],
+        { runtime: runtimeRoot, workspace: workspaceRoot, configOnWorkspace },
+      );
+      ownedRuntime = f.runtime;
+      await writeCapabilitiesConfig(consumer, { version: 2, capabilities: [f.capability] });
+      const id = f.capability.id;
+      const live = f.runtime.supervisor.currentNativeMcpLaunch(id);
+      assert.ok(live?.env.CLOWDER_PLUGIN_ACTION_TOKEN);
+      assert.equal(f.capability.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN, undefined);
+      const servers = await resolveProviderMcpConfig({
+        workingDirectory: consumer,
+        mcpServerPath: join(runtimeRoot, 'packages/mcp-server/dist/index.js'),
+        callbackEnv: { CAT_CAFE_CAT_ID: catRegistry.getAllIds()[0] },
+      });
+      const server = servers[id.replaceAll(':', '__')];
+      assert.ok(server, 'real composition must provide the live plugin despite distinct runtime/workspace roots');
+      assert.equal(server.env.CLOWDER_PLUGIN_ACTION_TOKEN, live.env.CLOWDER_PLUGIN_ACTION_TOKEN);
+      assert.equal(server.command, live.command);
+      assert.deepEqual(server.args, [...live.args]);
+    } finally {
+      await ownedRuntime?.shutdown();
     }
   });
-  try {
-    process.env.CAT_CAFE_RUNTIME_ROOT = runtimeRoot;
-    process.env.CAT_CAFE_WORKSPACE_ROOT = workspaceRoot;
-    await writeCapabilitiesConfig(workspaceRoot, { version: 2, capabilities: [] });
-    const f = await installConfigureEnable(
-      [
-        { key: 'connectionMode', value: 'websocket' },
-        { key: 'appId', value: 'cli_1' },
-      ],
-      { runtime: runtimeRoot, workspace: workspaceRoot },
-    );
-    ownedRuntime = f.runtime;
-    await writeCapabilitiesConfig(consumer, { version: 2, capabilities: [f.capability] });
-    const id = f.capability.id;
-    const live = f.runtime.supervisor.currentNativeMcpLaunch(id);
-    assert.ok(live?.env.CLOWDER_PLUGIN_ACTION_TOKEN);
-    assert.equal(f.capability.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN, undefined);
-    const servers = await resolveProviderMcpConfig({
-      workingDirectory: consumer,
-      mcpServerPath: join(runtimeRoot, 'packages/mcp-server/dist/index.js'),
-      callbackEnv: { CAT_CAFE_CAT_ID: catRegistry.getAllIds()[0] },
-    });
-    const server = servers[id.replaceAll(':', '__')];
-    assert.ok(server, 'real composition must provide the live plugin despite distinct runtime/workspace roots');
-    assert.equal(server.env.CLOWDER_PLUGIN_ACTION_TOKEN, live.env.CLOWDER_PLUGIN_ACTION_TOKEN);
-    assert.equal(server.command, live.command);
-    assert.deepEqual(server.args, [...live.args]);
-  } finally {
-    await ownedRuntime?.shutdown();
-  }
-});

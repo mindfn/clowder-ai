@@ -126,6 +126,8 @@ export interface PluginRuntimePersistencePaths {
 }
 
 export interface DormantPluginRuntimeCompositionOptions {
+  /** Executable Host identity; independent of persistent inventory/configuration roots. */
+  readonly mcpHostRoot?: string;
   readonly collectiveArtifactOwner?: import('./host-surface/collective-artifact-owner.js').CollectiveArtifactOwnerHolder;
   readonly builtinRuntimes?: ReadonlyMap<string, BuiltinPluginRuntime>;
   readonly taskArtifactReader?: import('../growing/ports/PreparedArtifactReader.js').PreparedArtifactReader;
@@ -557,7 +559,9 @@ export function createDormantPluginRuntimeComposition(
     },
   );
   deliveryTarget.current = supervisor;
-  const releaseMcpSource = bindHostPluginMcpSource(options.projectRoot, (id) => supervisor.currentNativeMcpLaunch(id));
+  const releaseMcpSource = bindHostPluginMcpSource(options.mcpHostRoot ?? options.projectRoot, (id) =>
+    supervisor.currentNativeMcpLaunch(id),
+  );
   supervisor.register(
     new BundledPluginRuntimeCarrier({
       inventory: inventoryStore,
