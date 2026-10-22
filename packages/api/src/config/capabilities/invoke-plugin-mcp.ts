@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { CapabilitiesConfig } from '@cat-cafe/shared';
+import { isDeepStrictEqual } from 'node:util';
+import type { CapabilitiesConfig, CapabilityEntry } from '@cat-cafe/shared';
 import { resolveServersForCat } from './capability-orchestrator.js';
 
 const CONNECTION_KEYS = ['CLOWDER_PLUGIN_ACTION_TOKEN', 'CLOWDER_PLUGIN_ACTION_PATH'] as const;
@@ -24,19 +25,38 @@ export function resolveInvocationMcpServers(
   } catch {
     // An unavailable Host registry cannot authorize a cached project connection.
   }
-  for (const server of connections) {
-    const projectEntry = config.capabilities.find((entry) => entry.id === server.capabilityId);
-    const current = host?.capabilities.find(
-      (entry) => entry.type === 'mcp' && entry.id === server.capabilityId && entry.pluginId === projectEntry?.pluginId,
-    );
-    const environment = current?.mcpServer?.env;
-    const env = { ...server.env };
-    for (const key of CONNECTION_KEYS) {
-      delete env[key];
-      if (environment?.[key]) env[key] = environment[key];
+  return servers.map((server) => {
+    if (!connections.includes(server)) return server;
+    const projectEntries = config.capabilities.filter((entry) => entry.id === server.capabilityId);
+    const hostEntries = host?.capabilities.filter((entry) => entry.id === server.capabilityId) ?? [];
+    const project = projectEntries[0];
+    const current = hostEntries[0];
+    if (
+      host &&
+      projectEntries.length === 1 &&
+      hostEntries.length === 1 &&
+      project?.pluginId &&
+      current?.pluginId === project.pluginId &&
+      project.source === current.source &&
+      current.type === 'mcp' &&
+      !project.mcpServerOverride &&
+      !current.mcpServerOverride &&
+      isDeepStrictEqual(transport(project), transport(current)) &&
+      current.mcpServer?.env?.CLOWDER_PLUGIN_ACTION_TOKEN
+    ) {
+      // Never attach a Host credential to a project-selected executable or env
+      // (including NODE_OPTIONS/PATH). Only project access policy survives.
+      const trusted = resolveServersForCat({ ...host, capabilities: [current] }, catId)[0];
+      if (trusted) return { ...trusted, enabled: server.enabled };
     }
-    server.env = env;
-    if (!env.CLOWDER_PLUGIN_ACTION_TOKEN) server.enabled = false;
-  }
-  return servers;
+    const env = { ...server.env };
+    for (const key of CONNECTION_KEYS) delete env[key];
+    return { ...server, enabled: false, env };
+  });
+}
+
+function transport(entry: CapabilityEntry): Omit<NonNullable<CapabilityEntry['mcpServer']>, 'env'> | undefined {
+  if (!entry.mcpServer) return undefined;
+  const { env: _environment, ...definition } = entry.mcpServer;
+  return definition;
 }
