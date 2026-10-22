@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { after, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import Fastify from 'fastify';
 import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js';
@@ -12,7 +13,9 @@ import {
   CodexAgentService,
   codexConfigObjectFromArgs,
 } from '../dist/domains/cats/services/agents/providers/CodexAgentService.js';
+import { resolveProviderMcpConfig } from '../dist/domains/cats/services/agents/providers/provider-mcp-config.js';
 import { NativePluginActions } from '../dist/domains/plugin/declared/native-plugin-actions.js';
+import { syncMcpProject } from '../dist/mcp/mcp-sync-engine.js';
 import { pluginNativeActionRoutes } from '../dist/routes/plugin-native-action-routes.js';
 import { getCliExecutionExit, isCliExecutionRunning } from '../dist/utils/CliExecutionObservation.js';
 import { createHarness, sessionOptions } from './helpers/codex-host-pool-harness.js';
@@ -231,7 +234,7 @@ after(() => {
   rmSync(credsDir, { recursive: true, force: true });
 });
 
-for (const resumeKind of ['replacement', 'cold']) {
+for (const resumeKind of ['replacement', 'cold', 'unregistered-project']) {
   test(`${resumeKind} pooled resume authenticates a real plugin wrapper child with the current credential file`, async (t) => {
     const project = mkdtempSync(join(credsDir, 'plugin-wrapper-'));
     const childPath = join(project, 'native-action-child.mjs');
@@ -304,6 +307,51 @@ for (const resumeKind of ['replacement', 'cold']) {
         ],
       }),
     );
+    let lateHome;
+    let sharedProject;
+    {
+      lateHome = mkdtempSync(join(tmpdir(), 'plugin-unregistered-home-'));
+      if (resumeKind === 'unregistered-project')
+        sharedProject = mkdtempSync(join(tmpdir(), 'plugin-unregistered-shared-'));
+      const saved = Object.fromEntries(
+        ['CAT_CAFE_RUNTIME_ROOT', 'CAT_CAFE_WORKSPACE_ROOT'].map((key) => [key, process.env[key]]),
+      );
+      t.after(() => {
+        for (const [key, value] of Object.entries(saved)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+        rmSync(lateHome, { recursive: true, force: true });
+        if (sharedProject) rmSync(sharedProject, { recursive: true, force: true });
+      });
+      process.env.CAT_CAFE_RUNTIME_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+      process.env.CAT_CAFE_WORKSPACE_ROOT = lateHome;
+      mkdirSync(join(lateHome, '.cat-cafe'));
+      const original = JSON.parse(readFileSync(join(project, '.cat-cafe/capabilities.json'), 'utf8'));
+      const hostFile = join(lateHome, '.cat-cafe/capabilities.json');
+      writeFileSync(hostFile, JSON.stringify(original));
+      if (sharedProject) {
+        await syncMcpProject(project, lateHome);
+        mkdirSync(join(sharedProject, '.cat-cafe'));
+        writeFileSync(
+          join(sharedProject, '.cat-cafe/capabilities.json'),
+          readFileSync(join(project, '.cat-cafe/capabilities.json')),
+        );
+        // Both consumer projects are outside this Host and absent from governance.
+        // A normal activation rotates only the authoritative descriptor here.
+        actions.deactivate('wrapper-fixture');
+        actions.activate(authority, actions.generation('wrapper-fixture'), async () => {
+          actionCalls++;
+          return { ok: true };
+        });
+        original.capabilities.find((entry) => entry.source === 'plugin').mcpServer.env = actions.environment(
+          'wrapper-fixture',
+          'native',
+        );
+        writeFileSync(hostFile, JSON.stringify(original));
+      }
+      assert.ok(!existsSync(join(lateHome, '.cat-cafe/governance-registry.json')));
+    }
     const pool = new FakeHostPool();
     const service = new CodexAgentService({
       carrierMode: 'app_server',
@@ -360,7 +408,51 @@ for (const resumeKind of ['replacement', 'cold']) {
       { credentialReadable: true, status: 200 },
       'fresh plugin child must pass real Host HTTP callback authentication on resumed host',
     );
-    assert.equal(actionCalls, resumeKind === 'replacement' ? 2 : 1);
+    if (sharedProject) {
+      const servers = await resolveProviderMcpConfig({
+        callbackEnv: { ...envFor(current), CAT_CAFE_CREDENTIAL_FILE: currentPath },
+        workingDirectory: sharedProject,
+        mcpServerPath: join(lateHome, 'packages/mcp-server/dist/index.js'),
+        credentialFile: currentPath,
+      });
+      const shared = servers[pluginName];
+      const { stdout } = await promisify(execFile)(shared.command, shared.args, {
+        env: { ...process.env, ...shared.env },
+        timeout: 10_000,
+      });
+      assert.deepEqual(
+        JSON.parse(stdout),
+        { credentialReadable: true, status: 200 },
+        'shared provider must use the current Host activation despite a stale project copy',
+      );
+      const file = join(sharedProject, '.cat-cafe/capabilities.json');
+      const config = JSON.parse(readFileSync(file, 'utf8'));
+      config.capabilities.find((entry) => entry.source === 'plugin').blockedCats = ['codex-sol'];
+      writeFileSync(file, JSON.stringify(config));
+      const blocked = await resolveProviderMcpConfig({
+        callbackEnv: { ...envFor(current), CAT_CAFE_CREDENTIAL_FILE: currentPath },
+        workingDirectory: sharedProject,
+        mcpServerPath: join(lateHome, 'packages/mcp-server/dist/index.js'),
+        credentialFile: currentPath,
+      });
+      assert.equal(blocked[pluginName], undefined, 'Host connection binding must not lift an explicit member disable');
+      const stale = await promisify(execFile)(process.execPath, [childPath], {
+        env: { ...process.env, ...envFor(current), ...activation, CAT_CAFE_CREDENTIAL_FILE: currentPath },
+        timeout: 10_000,
+      });
+      assert.deepEqual(
+        JSON.parse(stale.stdout),
+        { credentialReadable: true, status: 401 },
+        'revoked activation must remain rejected',
+      );
+      const unchanged = JSON.parse(readFileSync(join(project, '.cat-cafe/capabilities.json'), 'utf8'));
+      assert.equal(
+        unchanged.capabilities.find((entry) => entry.pluginId === 'fixture').mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN,
+        activation.CLOWDER_PLUGIN_ACTION_TOKEN,
+        'binding must not rewrite project storage',
+      );
+    }
+    assert.equal(actionCalls, resumeKind === 'replacement' || sharedProject ? 2 : 1);
   });
 }
 

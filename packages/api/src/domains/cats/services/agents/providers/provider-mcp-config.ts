@@ -6,7 +6,6 @@ import {
   MCP_CALLBACK_ENV_KEYS,
   resolveCatCafeNodeCommand,
   resolvePencilCommand,
-  resolveServersForCat,
   summarizeMcpInjection,
 } from '../../../../../config/capabilities/capability-orchestrator.js';
 import {
@@ -14,6 +13,7 @@ import {
   isSameCapabilityRoot,
   resolveInvokeCapabilityRoot,
 } from '../../../../../config/capabilities/invoke-capability-root.js';
+import { resolveInvocationMcpServers } from '../../../../../config/capabilities/invoke-plugin-mcp.js';
 import { isManagedCatCafeSplit } from '../../../../../config/capabilities/mcp-constants.js';
 import {
   resolveMcpArgs,
@@ -95,7 +95,7 @@ export async function resolveProviderMcpConfigResolution(input: {
           if (cap.type === 'mcp') managedMcpServerNames.add(cap.id.replace(/:/g, '__'));
         }
       }
-      for (const s of resolveServersForCat(capConfig, catId, { accessScope })) {
+      for (const s of resolveInvocationMcpServers(capConfig, catId, { accessScope, capabilitiesProjectRoot })) {
         managedMcpServerNames.add(s.name);
         if (!s.enabled) continue;
         if (isManagedCatCafeSplit(s)) {
