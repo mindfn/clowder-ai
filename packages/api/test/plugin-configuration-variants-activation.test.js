@@ -57,7 +57,7 @@ function createRuntime(projectRoot, mcpConfigIO) {
       projectRoot,
       messageStore: new MessageStore(),
       contract: {
-        manifestContractVersions: ['0.1.0', '0.2.0'],
+        manifestContractRange: '0.1.0 || 0.2.0',
         validateEffectiveGrants,
         validateManifest,
       },
