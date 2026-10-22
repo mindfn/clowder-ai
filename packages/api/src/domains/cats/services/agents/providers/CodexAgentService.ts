@@ -906,7 +906,10 @@ async function buildCatCafeMcpArgs(
       configSourceRoot = capabilitiesProjectRoot;
     }
     if (capConfig && catId) {
-      for (const s of resolveInvocationMcpServers(capConfig, catId, { accessScope, capabilitiesProjectRoot }) as Array<{
+      for (const s of resolveInvocationMcpServers(capConfig, catId, {
+        accessScope,
+        hostRoot: binaryProjectRoot,
+      }) as Array<{
         name: string;
         enabled: boolean;
         command: string;

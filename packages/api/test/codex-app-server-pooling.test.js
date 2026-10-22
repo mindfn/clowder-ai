@@ -276,12 +276,20 @@ for (const resumeKind of ['replacement', 'cold', 'unregistered-project']) {
       effectiveGrants: [],
     };
     let actionCalls = 0;
-    const actions = new NativePluginActions(async () => authority);
+    let actions = new NativePluginActions(async () => authority);
     actions.activate(authority, 0, async () => {
       actionCalls++;
       return { ok: true };
     });
     const activation = actions.environment('wrapper-fixture', 'native');
+    if (resumeKind === 'unregistered-project') {
+      actions.deactivateAll();
+      actions = new NativePluginActions(async () => authority);
+      actions.activate(authority, 0, async () => {
+        actionCalls++;
+        return { ok: true };
+      });
+    }
     const app = Fastify();
     t.after(() => app.close());
     await app.register(pluginNativeActionRoutes, {
@@ -346,7 +354,7 @@ for (const resumeKind of ['replacement', 'cold', 'unregistered-project']) {
       });
       process.env.CAT_CAFE_RUNTIME_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
       process.env.CAT_CAFE_WORKSPACE_ROOT = lateHome;
-      t.after(bindHostPluginMcpSource(lateHome, (id) => live.current(id)));
+      t.after(bindHostPluginMcpSource(process.env.CAT_CAFE_RUNTIME_ROOT, (id) => live.current(id)));
       mkdirSync(join(lateHome, '.cat-cafe'));
       const original = JSON.parse(readFileSync(join(project, '.cat-cafe/capabilities.json'), 'utf8'));
       const hostFile = join(lateHome, '.cat-cafe/capabilities.json');
@@ -432,7 +440,7 @@ for (const resumeKind of ['replacement', 'cold', 'unregistered-project']) {
       const servers = await resolveProviderMcpConfig({
         callbackEnv: { ...envFor(current), CAT_CAFE_CREDENTIAL_FILE: currentPath },
         workingDirectory: sharedProject,
-        mcpServerPath: join(lateHome, 'packages/mcp-server/dist/index.js'),
+        mcpServerPath: join(process.env.CAT_CAFE_RUNTIME_ROOT, 'packages/mcp-server/dist/index.js'),
         credentialFile: currentPath,
       });
       const shared = servers[pluginName];
@@ -452,7 +460,7 @@ for (const resumeKind of ['replacement', 'cold', 'unregistered-project']) {
       const blocked = await resolveProviderMcpConfig({
         callbackEnv: { ...envFor(current), CAT_CAFE_CREDENTIAL_FILE: currentPath },
         workingDirectory: sharedProject,
-        mcpServerPath: join(lateHome, 'packages/mcp-server/dist/index.js'),
+        mcpServerPath: join(process.env.CAT_CAFE_RUNTIME_ROOT, 'packages/mcp-server/dist/index.js'),
         credentialFile: currentPath,
       });
       assert.equal(blocked[pluginName], undefined, 'Host connection binding must not lift an explicit member disable');
@@ -465,6 +473,29 @@ for (const resumeKind of ['replacement', 'cold', 'unregistered-project']) {
         { credentialReadable: true, status: 401 },
         'revoked activation must remain rejected',
       );
+      const hostConnection = actions.environment('wrapper-fixture', 'native');
+      const sameChild = async () =>
+        JSON.parse(
+          (
+            await promisify(execFile)(process.execPath, [childPath], {
+              env: { ...process.env, ...envFor(current), ...hostConnection, CAT_CAFE_CREDENTIAL_FILE: currentPath },
+              timeout: 10_000,
+            })
+          ).stdout,
+        );
+      actions.deactivate('wrapper-fixture');
+      assert.equal((await sameChild()).status, 401, 'a disabled plugin must not execute');
+      actions.activate(authority, actions.generation('wrapper-fixture'), async () => {
+        actionCalls++;
+        return { ok: true };
+      });
+      publish();
+      assert.deepEqual(
+        await sameChild(),
+        { credentialReadable: true, status: 200 },
+        'reenable must work with the same child credentials, without sync or restart',
+      );
+
       const unchanged = JSON.parse(readFileSync(join(project, '.cat-cafe/capabilities.json'), 'utf8'));
       assert.equal(
         unchanged.capabilities.find((entry) => entry.pluginId === 'fixture').mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN,
@@ -472,7 +503,7 @@ for (const resumeKind of ['replacement', 'cold', 'unregistered-project']) {
         'binding must not rewrite project storage',
       );
     }
-    assert.equal(actionCalls, resumeKind === 'replacement' || sharedProject ? 2 : 1);
+    assert.equal(actionCalls, sharedProject ? 3 : resumeKind === 'replacement' ? 2 : 1);
   });
 }
 

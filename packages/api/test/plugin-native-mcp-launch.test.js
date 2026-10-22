@@ -218,7 +218,11 @@ test('native launch binds same-plugin instances to distinct Host tokens and neve
   assert.equal(f.router.nativeActions.target(first.env.CLOWDER_PLUGIN_ACTION_TOKEN, 'native.read'), undefined);
   await f.router.start('instance-a');
   const restarted = await f.router.resolveNativeMcpLaunch(policy());
-  assert.notEqual(restarted.env.CLOWDER_PLUGIN_ACTION_TOKEN, first.env.CLOWDER_PLUGIN_ACTION_TOKEN);
+  assert.equal(
+    restarted.env.CLOWDER_PLUGIN_ACTION_TOKEN,
+    first.env.CLOWDER_PLUGIN_ACTION_TOKEN,
+    'enable/disable must not rotate Host-lifetime connection credentials',
+  );
 });
 
 test('native launch rechecks stop intent after asynchronous inventory admission', async (t) => {
