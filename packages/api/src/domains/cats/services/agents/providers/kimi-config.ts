@@ -317,7 +317,6 @@ export async function writeMcpConfigFile(
     if (capConfig && catId) {
       for (const s of resolveInvocationMcpServers(capConfig, catId, {
         accessScope,
-        hostRoot: binaryProjectRoot,
       }) as Array<{
         name: string;
         enabled: boolean;

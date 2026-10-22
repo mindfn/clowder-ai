@@ -21,7 +21,6 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { fileBasedMcpIO } from '../dist/config/capabilities/capability-mcp-service.js';
 import {
   readCapabilitiesConfig,
-  resolveBinaryRoot,
   withCapabilityLock,
   writeCapabilitiesConfig,
 } from '../dist/config/capabilities/capability-orchestrator.js';
@@ -53,13 +52,12 @@ function fakeTaskRunner() {
   };
 }
 
-function createRuntime(projectRoot, mcpConfigIO, hostRoot = projectRoot) {
+function createRuntime(projectRoot, mcpConfigIO) {
   const limbRegistry = new LimbRegistry();
   return {
     limbRegistry,
     runtime: createDormantPluginRuntimeComposition({
       projectRoot,
-      mcpHostRoot: hostRoot,
       messageStore: new MessageStore(),
       contract: {
         manifestContractRange: '0.1.0 || 0.2.0',
@@ -185,7 +183,7 @@ async function installConfigureEnable(updates, roots) {
         antigravity: join(configRoot, '.test-antigravity/mcp.json'),
       })
     : undefined;
-  const { runtime } = createRuntime(projectRoot, io, roots?.hostRoot ?? roots?.runtime);
+  const { runtime } = createRuntime(projectRoot, io);
   const composition = createPluginManagerRuntimeComposition({
     runtime,
     catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
@@ -437,7 +435,6 @@ test('package API cwd without runtime override reaches MCP tools/list through pr
         runtime: runtimeRoot,
         workspace: workspaceRoot,
         configOnWorkspace: true,
-        hostRoot: resolveBinaryRoot(),
         mcpTools: true,
       },
     );

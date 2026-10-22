@@ -32,7 +32,7 @@ function fixture(t) {
   host.capabilities[0].mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN = 'current-activation';
   const save = () => writeFileSync(path, JSON.stringify(host));
   save();
-  const release = bindHostPluginMcpSource(root, (id) => {
+  const release = bindHostPluginMcpSource((id) => {
     const candidates = host.capabilities.filter((c) => c.id === id && c.pluginId === 'fixture');
     const c = candidates[0];
     if (candidates.length !== 1 || !c?.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN) return undefined;
@@ -49,7 +49,6 @@ function fixture(t) {
   const resolve = () =>
     resolveInvocationMcpServers(project, 'codex-sol', {
       accessScope: 'project',
-      hostRoot: root,
     })[0];
   return { entry, project, host, path, save, resolve, release };
 }
@@ -163,4 +162,23 @@ test('the persisted plugin environment has no credential-consumption path', (t) 
     },
   });
   assert.equal(f.resolve().env.CLOWDER_PLUGIN_ACTION_TOKEN, 'current-activation');
+});
+
+test('closing a previous Host cannot disconnect the current manager read port', (t) => {
+  const f = fixture(t);
+  const replacement = {
+    name: 'plugin__fixture__native',
+    command: 'current-host-node',
+    args: ['verified-plugin.mjs'],
+    env: { CLOWDER_PLUGIN_ACTION_TOKEN: 'replacement-host-connection' },
+    transport: 'stdio',
+  };
+  const releaseCurrent = bindHostPluginMcpSource((id) => (id === f.entry.id ? replacement : undefined));
+  t.after(releaseCurrent);
+  f.release();
+  assert.equal(f.resolve().command, replacement.command);
+  assert.equal(f.resolve().env.CLOWDER_PLUGIN_ACTION_TOKEN, replacement.env.CLOWDER_PLUGIN_ACTION_TOKEN);
+  releaseCurrent();
+  assert.equal(f.resolve().enabled, false);
+  assert.equal(f.resolve().env?.CLOWDER_PLUGIN_ACTION_TOKEN, undefined);
 });
