@@ -230,7 +230,10 @@ describe('F202 live Plugin Manager Console wiring', () => {
   });
 
   it('renders installed plugins before remote catalog discovery settles, then hydrates available plugins once', async () => {
-    const installed = managerPlugin({ installed: true, pluginId: 'local.github', displayName: 'Installed GitHub' });
+    const installed = {
+      ...managerPlugin({ installed: true, pluginId: 'local.github', displayName: 'Installed GitHub' }),
+      live: 'running' as const,
+    };
     let resolveRemote: ((value: Response) => void) | undefined;
     const remote = new Promise<Response>((resolve) => {
       resolveRemote = resolve;
@@ -244,10 +247,40 @@ describe('F202 live Plugin Manager Console wiring', () => {
       }
       if (url === '/api/plugin-manager/plugins') return remote;
       if (url === '/api/plugin-manager/plugins/_local/local.github') {
-        return json({ ...detail(installed), catalog: { status: 'loading', refreshedAt: null } });
+        const localDetail = detail(installed);
+        return json({
+          ...localDetail,
+          plugin: {
+            ...localDetail.plugin,
+            contributions: [
+              {
+                id: 'github-tools',
+                kind: 'mcp',
+                name: 'github-tools',
+                description: 'GitHub tools.',
+              },
+            ],
+          },
+          catalog: { status: 'loading', refreshedAt: null },
+        });
+      }
+      if (url === '/api/plugin-manager/plugins/local.github/documentation') {
+        return json({ readmeMarkdown: '# Installed README\n\nLocal package documentation.' });
+      }
+      if (url === '/api/plugin-manager/plugins/local.github/contributions/tools') {
+        return json({
+          pluginId: installed.pluginId,
+          tools: [
+            {
+              contributionId: 'github-tools',
+              name: 'installed_tool',
+              description: 'Tool projected by the active local runtime.',
+              inputSchema: { type: 'object' },
+            },
+          ],
+        });
       }
       if (url === '/api/plugin-manager/plugins/local.github') return json(detail(installed));
-      if (url === '/api/plugin-manager/plugins/local.github/documentation') return json({});
       return json({}, 404);
     });
 
@@ -258,6 +291,8 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(container.textContent).not.toContain('Video Analysis');
     expect(container.textContent).not.toContain('正在加载可安装插件。');
     expect(container.textContent).not.toContain('目录暂时不可用');
+    expect(container.textContent).toContain('Local package documentation.');
+    expect(container.textContent).toContain('installed_tool');
 
     await act(async () => {
       resolveRemote?.(

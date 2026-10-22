@@ -188,7 +188,7 @@ export async function fetchManagerDetail(
   const resourcePath = `/api/plugin-manager/plugins/${encodedId}`;
   const [response, documentation] = await Promise.all([
     afterMutation ? apiFetch(path, undefined, { afterCurrentGet: true }) : apiFetch(path),
-    local || pluginId === 'official.chatgpt-dot'
+    pluginId === 'official.chatgpt-dot'
       ? Promise.resolve({ state: 'absent' } as const)
       : fetchDocumentation(resourcePath),
   ]);
@@ -196,7 +196,7 @@ export async function fetchManagerDetail(
   const value: unknown = await response.json();
   if (!isDetailResponse(value)) throw new Error('detail response is invalid');
   const tools =
-    !local && value.plugin.artifact === 'installed' && value.plugin.live === 'running'
+    value.plugin.artifact === 'installed' && value.plugin.live === 'running'
       ? await fetchContributionTools(resourcePath)
       : [];
   return {
