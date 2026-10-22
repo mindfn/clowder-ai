@@ -316,7 +316,8 @@ export async function createAcpServiceForConfig(
   }
   const spawn = await saveSpan('acp.prepare', () => prepareAcpSpawnContext(effectiveInput, bootstrap, accountContext));
   if (!spawn) return null;
-  const verified = verifyAcpBootstrap(bootstrap, profileId, input.bootstrapRoot, spawn.env);
+  const root = input.bootstrapRoot ?? acpConfig.bootstrapRoot;
+  const verified = verifyAcpBootstrap(bootstrap, profileId, root, spawn.env, acpConfig.bootstrapRoot !== undefined);
   const pool = await saveSpan('acp.pool', () => ensureAcpPool(effectiveInput, verified, spawn));
 
   // #712 P1-1: pass whitelist — MCP resolution happens at invoke time in

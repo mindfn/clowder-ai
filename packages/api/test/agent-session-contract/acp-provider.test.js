@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createAcpServiceForConfig } from '../../dist/domains/cats/services/agents/providers/acp/AcpServiceFactory.js';
 import { transformAcpEvent } from '../../dist/domains/cats/services/agents/providers/acp/acp-event-transformer.js';
 import { AgentSessionBridgeService } from '../../dist/domains/cats/services/agents/session-contract/AgentSessionBridgeService.js';
@@ -157,7 +157,7 @@ test('release reports errors; native id absence strips stale Host sessionId', as
   assert.deepEqual(await failing.provider.release('host'), { ok: false, code: 'failed', reason: 'close failed' });
   await bridge.releaseAll('done');
 });
-test('real ACP transformer replay preserves output, thinking and usage telemetry', async () => {
+test('real ACP transformer replay preserves thinking, loop telemetry and existing consumed fields', async () => {
   const metadata = { provider: 'acp', model: 'fixture' };
   const updates = [
     { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hello' } },
@@ -186,16 +186,10 @@ test('real ACP transformer replay preserves output, thinking and usage telemetry
     model: m.metadata?.model,
     usage: m.metadata?.usage,
   });
-  for (const original of native)
+  for (const original of native.filter((m) => ['text', 'tool_use'].includes(m.type)))
     assert.deepEqual(fields(messages.find((m) => m.type === original.type)), fields(original));
-  for (const type of ['system_info', 'agent_loop']) {
-    assert.ok(native.some((m) => m.type === type));
-    assert.ok(messages.some((m) => m.type === type));
-  }
-  assert.equal(
-    messages.some((m) => m.type === 'status'),
-    false,
-  );
+  for (const type of ['system_info', 'agent_loop'])
+    assert.deepEqual(fields(messages.find((m) => m.type === type)), fields(native.find((m) => m.type === type)));
 });
 test(
   'reference ACP subprocess: factory → adapter → bridge, two turns + resume + cancel',
@@ -203,6 +197,9 @@ test(
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'session-reference-'));
     const pools = new Map();
+    const previousMode = process.env.CAT_CAFE_WINDOWS_ACP_BOOTSTRAP_MODE;
+    // The transport fixture does not attest trust in the host machine's Temp ancestors.
+    if (process.platform === 'win32') process.env.CAT_CAFE_WINDOWS_ACP_BOOTSTRAP_MODE = 'trusted-host';
     try {
       const service = await createAcpServiceForConfig({
         projectRoot: root,
@@ -261,7 +258,9 @@ test(
       registration.unregister();
     } finally {
       await Promise.all([...pools.values()].map((pool) => pool.closeAll()));
-      await rm(root, { recursive: true, force: true });
+      if (previousMode === undefined) delete process.env.CAT_CAFE_WINDOWS_ACP_BOOTSTRAP_MODE;
+      else process.env.CAT_CAFE_WINDOWS_ACP_BOOTSTRAP_MODE = previousMode;
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   },
 );
@@ -329,6 +328,10 @@ test(
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'session-http-'));
     const pools = new Map();
+    const previousMode = process.env.CAT_CAFE_WINDOWS_ACP_BOOTSTRAP_MODE;
+    // This case tests HTTP payload projection, not trust in the machine's Temp ancestors.
+    // Native strict-mode rejection remains covered by acp-bootstrap-strict-native.test.ts.
+    if (process.platform === 'win32') process.env.CAT_CAFE_WINDOWS_ACP_BOOTSTRAP_MODE = 'trusted-host';
     try {
       const preload = join(root, 'mock-fetch.mjs');
       await writeFile(
@@ -355,7 +358,7 @@ test(
           command: 'node',
           startupArgs: [
             '--import',
-            preload,
+            pathToFileURL(preload).href,
             fileURLToPath(new URL('../fixtures/agent-session-reference/fake-acp-agent.mjs', import.meta.url)),
             '--http',
             'https://fixture.invalid/agent',
@@ -370,6 +373,8 @@ test(
       await bridge.releaseAll('done');
     } finally {
       await Promise.all([...pools.values()].map((pool) => pool.closeAll()));
+      if (previousMode === undefined) delete process.env.CAT_CAFE_WINDOWS_ACP_BOOTSTRAP_MODE;
+      else process.env.CAT_CAFE_WINDOWS_ACP_BOOTSTRAP_MODE = previousMode;
       await rm(root, { recursive: true, force: true });
     }
   },

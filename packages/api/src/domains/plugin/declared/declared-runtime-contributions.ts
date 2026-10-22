@@ -166,6 +166,19 @@ export class DeclaredRuntimeContributions {
     await active.releaseAgentProvider?.();
   }
 
+  async refreshAgentSessionProviders(admission: PluginRuntimeAdmission): Promise<void> {
+    const id = admission.instance.pluginInstanceId;
+    const active = this.#active.get(id);
+    if (!active?.releaseAgentProvider) return;
+    const pending = { ...active, releaseAgentProvider: undefined };
+    this.#active.set(id, pending);
+    await active.releaseAgentProvider();
+    const releaseAgentProvider = await this.host.agentSessionProviders?.activate(admission);
+    if (this.#active.get(id) === pending && !active.lifetime.signal.aborted) {
+      this.#active.set(id, { ...pending, releaseAgentProvider });
+    } else await releaseAgentProvider?.();
+  }
+
   async deactivateAll(): Promise<void> {
     await Promise.all([...this.#active.keys()].map((id) => this.deactivate(id)));
   }

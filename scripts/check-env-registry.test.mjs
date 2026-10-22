@@ -14,6 +14,9 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
+import { parseVars } from './lib/env-registry-parser.mjs';
+import { loadEnvRegistrySource } from './lib/env-registry-source.mjs';
+import './lib/env-registry-source.test.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..');
 
@@ -66,13 +69,8 @@ const ALLOWLIST = new Map([
 
 // ── Extract registered names from env-registry.ts ──
 function loadRegisteredNames() {
-  const src = readFileSync(join(ROOT, 'packages/api/src/config/env-registry.ts'), 'utf-8');
-  const names = new Set();
-  // Match: name: 'VAR_NAME' or name: "VAR_NAME"
-  for (const m of src.matchAll(/name:\s*['"]([A-Z_][A-Z0-9_]*)['"],?/g)) {
-    names.add(m[1]);
-  }
-  return names;
+  const src = loadEnvRegistrySource(join(ROOT, 'packages/api/src/config/env-registry.ts'));
+  return new Set(parseVars(src).map(({ name }) => name));
 }
 
 // ── Recursively collect .ts files ──
