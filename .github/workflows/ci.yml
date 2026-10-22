@@ -40,6 +40,8 @@ jobs:
           python3 -B .github/scripts/public-test-namespace-init.test.py
           sudo --preserve-env "$(command -v node)" --test .github/scripts/run-public-test-distributable.test.mjs
       - run: pnpm check
+      - name: Browser env wrapper regression
+        run: node --test --test-name-pattern='applies --env' packages/web/test/run-with-node-env-test.test.cjs
 
   build:
     name: Build
