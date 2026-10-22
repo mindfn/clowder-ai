@@ -100,6 +100,39 @@ test('propagates Electron transport failures as loopback transport failures', as
   );
 });
 
+test('destroys a partial loopback response when the Electron body stream fails', async (t) => {
+  let pull = 0;
+  const bridge = createPluginNetworkBridge({
+    netFetch: async () =>
+      new Response(
+        new ReadableStream({
+          pull(controller) {
+            if (pull === 0) {
+              pull += 1;
+              controller.enqueue(new TextEncoder().encode('partial'));
+              return;
+            }
+            controller.error(new TypeError('upstream body reset'));
+          },
+        }),
+        { headers: { 'content-type': 'application/octet-stream' } },
+      ),
+  });
+  const binding = await bridge.start();
+  t.after(() => bridge.close());
+
+  await assert.rejects(async () => {
+    const response = await request(
+      binding.endpoint,
+      binding.token,
+      'https://raw.githubusercontent.com/zts212653/clowder-ai-plugins/main/catalog/catalog.json',
+    );
+    assert.equal(response.status, 200);
+    await response.arrayBuffer();
+  });
+  assert.equal(pull, 1);
+});
+
 test('aborts Electron fetch when the client disconnects after sending the complete request', async () => {
   let startedResolve;
   const started = new Promise((resolve) => {
