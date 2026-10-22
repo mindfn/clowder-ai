@@ -59,11 +59,12 @@ export function PluginManagerLiveContent({
   const listGeneration = useRef(0);
   const detailGeneration = useRef(0);
   const mounted = useRef(true);
+  const localProjectionActive = useRef(false);
   const initialSelection = useRef<string | null>(null);
   const [initialDetailPluginId, setInitialDetailPluginId] = useState<string | null>(null);
   const enableRequests = useRef(new Set<string>());
 
-  const loadDetail = useCallback(async (pluginId: string, afterMutation = false) => {
+  const loadDetail = useCallback(async (pluginId: string, afterMutation = false, local = false) => {
     const generation = ++detailGeneration.current;
     setDetailState((current) =>
       (current.state === 'ready' || current.state === 'unavailable') && current.pluginId === pluginId
@@ -71,7 +72,7 @@ export function PluginManagerLiveContent({
         : { state: 'loading', pluginId },
     );
     try {
-      const value = await fetchManagerDetail(pluginId, afterMutation);
+      const value = await fetchManagerDetail(pluginId, afterMutation, local);
       if (!mounted.current || generation !== detailGeneration.current) return;
       setDetailState({ state: 'ready', pluginId, detail: value });
     } catch {
@@ -86,7 +87,7 @@ export function PluginManagerLiveContent({
       setSelectedPluginId(pluginId);
       setConfigurationSavedPluginId((current) => (current === pluginId ? current : null));
       if (pluginId && !compatibilityFixtures.some((plugin) => plugin.id === pluginId)) {
-        void loadDetail(pluginId);
+        void loadDetail(pluginId, false, localProjectionActive.current);
         return;
       }
       detailGeneration.current += 1;
@@ -116,32 +117,77 @@ export function PluginManagerLiveContent({
     return () => window.removeEventListener('hashchange', selectLinkedPlugin);
   }, [catalogReady]);
 
+  const commitListSnapshot = useCallback(
+    async (
+      value: PluginManagerListResponse,
+      generation: number,
+      afterMutation: boolean,
+      local: boolean,
+    ): Promise<boolean> => {
+      if (!mounted.current || generation !== listGeneration.current) return false;
+      localProjectionActive.current = local;
+      setSnapshot(value);
+      const requested = initialSelection.current;
+      if (requested && value.plugins.some((plugin) => plugin.pluginId === requested)) {
+        initialSelection.current = null;
+        setInitialDetailPluginId(requested);
+        selectPlugin(requested);
+        return true;
+      }
+      if (!local) initialSelection.current = null;
+      const current = selectedPluginIdRef.current;
+      if (current && value.plugins.some((plugin) => plugin.pluginId === current)) {
+        await loadDetail(current, afterMutation, local);
+      }
+      return true;
+    },
+    [loadDetail, selectPlugin],
+  );
+
+  const hydrateRemoteList = useCallback(
+    async (search: string, generation: number, afterMutation: boolean, localCommitted: boolean) => {
+      try {
+        const value = await fetchManagerList(search, afterMutation);
+        await commitListSnapshot(value, generation, afterMutation, false);
+        return value;
+      } catch {
+        if (!mounted.current || generation !== listGeneration.current) return;
+        if (localCommitted) {
+          setSnapshot((current) =>
+            current === null
+              ? current
+              : {
+                  ...current,
+                  catalog: {
+                    status: 'unavailable',
+                    refreshedAt: null,
+                    message: '目录暂时不可用；已安装插件仍可管理，稍后再次打开或搜索会重新加载。',
+                  },
+                },
+          );
+          return;
+        }
+        setError('插件列表加载失败；现有状态没有被改写。');
+      }
+    },
+    [commitListSnapshot],
+  );
+
   const loadList = useCallback(
     async (search: string, afterMutation = false) => {
       const generation = ++listGeneration.current;
       try {
-        const value = await fetchManagerList(search, afterMutation);
-        if (!mounted.current) return;
-        if (generation !== listGeneration.current) return value;
-        setSnapshot(value);
-        const requested = initialSelection.current;
-        initialSelection.current = null;
-        if (requested && value.plugins.some((plugin) => plugin.pluginId === requested)) {
-          setInitialDetailPluginId(requested);
-          selectPlugin(requested);
-          return;
-        }
-        const current = selectedPluginIdRef.current;
-        if (current && value.plugins.some((plugin) => plugin.pluginId === current)) {
-          await loadDetail(current, afterMutation);
-        }
-        return value;
+        const localValue = await fetchManagerList(search, afterMutation, true);
+        const localCommitted = await commitListSnapshot(localValue, generation, afterMutation, true);
+        if (!localCommitted) return localValue;
+        void hydrateRemoteList(search, generation, afterMutation, true);
+        return localValue;
       } catch {
-        if (!mounted.current || generation !== listGeneration.current) return;
-        setError('插件列表加载失败；现有状态没有被改写。');
+        // Older Hosts and partially upgraded desktop bundles can still fall through to canonical discovery.
+        return hydrateRemoteList(search, generation, afterMutation, false);
       }
     },
-    [loadDetail, selectPlugin],
+    [commitListSnapshot, hydrateRemoteList],
   );
 
   useEffect(() => {

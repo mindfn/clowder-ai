@@ -56,6 +56,17 @@ async function harness({
   const calls = [];
   const audits = [];
   const manager = {
+    listLocal: async () => {
+      calls.push(['list-local']);
+      return { ...listed, catalog: { status: 'loading', refreshedAt: null } };
+    },
+    getLocal: async (pluginId) => {
+      calls.push(['get-local', pluginId]);
+      return {
+        plugin: { ...listed.plugins[0], capabilities: [], configFields: [] },
+        catalog: { status: 'loading', refreshedAt: null },
+      };
+    },
     list: async () => {
       calls.push(['list']);
       return listed;
@@ -423,6 +434,22 @@ test('exposes canonical Manager state/lifecycle operations and version update th
     assert.equal(list.statusCode, 200, list.payload);
     assert.equal(list.json().catalog.status, 'degraded');
 
+    const local = await app.inject({
+      method: 'GET',
+      url: '/api/plugin-manager/plugins/local',
+      headers: readHeaders,
+    });
+    assert.equal(local.statusCode, 200, local.payload);
+    assert.equal(local.json().catalog.status, 'loading');
+
+    const localDetail = await app.inject({
+      method: 'GET',
+      url: '/api/plugin-manager/plugins/local/official.video',
+      headers: readHeaders,
+    });
+    assert.equal(localDetail.statusCode, 200, localDetail.payload);
+    assert.equal(localDetail.json().catalog.status, 'loading');
+
     const search = await app.inject({
       method: 'GET',
       url: '/api/plugin-manager/plugins/search?q=scene',
@@ -470,6 +497,8 @@ test('exposes canonical Manager state/lifecycle operations and version update th
 
     assert.deepEqual(calls, [
       ['list'],
+      ['list-local'],
+      ['get-local', 'official.video'],
       ['search', 'scene'],
       ['get', 'official.video'],
       [

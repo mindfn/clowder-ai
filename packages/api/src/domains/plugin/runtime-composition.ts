@@ -711,6 +711,12 @@ export class OfficialPluginManagerCatalogAdapter implements PluginManagerCatalog
     return this.projectSnapshot(releaseSnapshot);
   }
 
+  async localSnapshot(): Promise<PluginManagerCatalogSnapshot> {
+    const releaseSnapshot =
+      (await this.provider.localSnapshot?.()) ?? ({ entries: [], status: 'bootstrap', checkedAt: null } as const);
+    return this.projectSnapshot(releaseSnapshot);
+  }
+
   projectSnapshot(releaseSnapshot: OfficialPluginCatalogSnapshot): PluginManagerCatalogSnapshot {
     const manifests = validatedManifestMap(this.packageManifests, this.manifestValidator);
     const candidates: PluginManagerCatalogCandidate[] = [];
