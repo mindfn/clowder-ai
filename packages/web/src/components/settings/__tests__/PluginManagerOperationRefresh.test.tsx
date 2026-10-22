@@ -230,7 +230,7 @@ describe('Plugin Manager operation refresh', () => {
     let disabled = false;
     let writes = 0;
     mockApiFetch.mockImplementation(async (url, init) => {
-      if (url === '/api/plugin-manager/plugins/local') {
+      if (url === '/api/plugin-manager/plugins/_local') {
         return json({
           plugins: [disabled ? { ...plugin, intent: 'disabled', lifecycleRevision: 2 } : plugin],
           catalog: { status: 'loading', refreshedAt: null },
@@ -270,7 +270,7 @@ describe('Plugin Manager operation refresh', () => {
     let writes = 0;
     let localReads = 0;
     mockApiFetch.mockImplementation(async (url, init) => {
-      if (url === '/api/plugin-manager/plugins/local') {
+      if (url === '/api/plugin-manager/plugins/_local') {
         localReads += 1;
         const localStates = [
           { ...disabledPlugin, actions: { ...disabledPlugin.actions, setEnabled: false } },

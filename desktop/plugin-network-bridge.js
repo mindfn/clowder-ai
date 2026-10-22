@@ -119,6 +119,7 @@ async function handleBridgeRequest(request, response, token, netFetch, activeCon
     response.writeHead(rejection).end();
     return;
   }
+  let upstreamStarted = false;
   try {
     const body = await readRequestJson(request);
     const policy = targetPolicy(typeof body?.url === 'string' ? body.url : '');
@@ -130,9 +131,14 @@ async function handleBridgeRequest(request, response, token, netFetch, activeCon
       response.writeHead(503).end();
       return;
     }
+    upstreamStarted = true;
     await fetchAllowedTarget(request, response, policy, netFetch, activeControllers);
   } catch (error) {
     if (response.destroyed) return;
+    if (upstreamStarted) {
+      response.destroy();
+      return;
+    }
     if (!response.headersSent) response.writeHead(error?.message === 'REQUEST_TOO_LARGE' ? 413 : 502);
     if (!response.writableEnded) response.end();
   }

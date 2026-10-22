@@ -236,14 +236,14 @@ describe('F202 live Plugin Manager Console wiring', () => {
       resolveRemote = resolve;
     });
     mockApiFetch.mockImplementation(async (url) => {
-      if (url === '/api/plugin-manager/plugins/local') {
+      if (url === '/api/plugin-manager/plugins/_local') {
         return json({
           plugins: [installed],
           catalog: { status: 'loading', refreshedAt: null, message: '正在加载可安装插件。' },
         });
       }
       if (url === '/api/plugin-manager/plugins') return remote;
-      if (url === '/api/plugin-manager/plugins/local/local.github') {
+      if (url === '/api/plugin-manager/plugins/_local/local.github') {
         return json({ ...detail(installed), catalog: { status: 'loading', refreshedAt: null } });
       }
       if (url === '/api/plugin-manager/plugins/local.github') return json(detail(installed));
@@ -273,16 +273,22 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(container.textContent).toContain('Installed GitHub');
     expect(container.textContent).toContain('Video Analysis');
     expect(mockApiFetch.mock.calls.filter(([url]) => url === '/api/plugin-manager/plugins').length).toBe(1);
+    expect(
+      mockApiFetch.mock.calls.filter(([url]) => url === '/api/plugin-manager/plugins/_local/local.github').length,
+    ).toBeGreaterThan(0);
+    expect(mockApiFetch.mock.calls.filter(([url]) => url === '/api/plugin-manager/plugins/local.github').length).toBe(
+      0,
+    );
   });
 
   it('keeps installed plugins usable when the incremental remote catalog read fails', async () => {
     const installed = managerPlugin({ installed: true, pluginId: 'local.github', displayName: 'Installed GitHub' });
     mockApiFetch.mockImplementation(async (url) => {
-      if (url === '/api/plugin-manager/plugins/local') {
+      if (url === '/api/plugin-manager/plugins/_local') {
         return json({ plugins: [installed], catalog: { status: 'loading', refreshedAt: null } });
       }
       if (url === '/api/plugin-manager/plugins') throw new TypeError('network unavailable');
-      if (url === '/api/plugin-manager/plugins/local/local.github') {
+      if (url === '/api/plugin-manager/plugins/_local/local.github') {
         return json({ ...detail(installed), catalog: { status: 'loading', refreshedAt: null } });
       }
       return json({}, 404);

@@ -82,6 +82,24 @@ test('rejects missing credentials and non-plugin destinations before Electron fe
   assert.equal(calls, 0);
 });
 
+test('propagates Electron transport failures as loopback transport failures', async (t) => {
+  const bridge = createPluginNetworkBridge({
+    netFetch: async () => {
+      throw new TypeError('proxy connection reset');
+    },
+  });
+  const binding = await bridge.start();
+  t.after(() => bridge.close());
+
+  await assert.rejects(
+    request(
+      binding.endpoint,
+      binding.token,
+      'https://raw.githubusercontent.com/zts212653/clowder-ai-plugins/main/catalog/catalog.json',
+    ),
+  );
+});
+
 test('aborts Electron fetch when the client disconnects after sending the complete request', async () => {
   let startedResolve;
   const started = new Promise((resolve) => {

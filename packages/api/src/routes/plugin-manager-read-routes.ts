@@ -35,7 +35,7 @@ export function registerPluginManagerReadRoutes(app: FastifyInstance, options: P
     }
   });
 
-  app.get('/api/plugin-manager/plugins/local', async (request, reply) => {
+  app.get('/api/plugin-manager/plugins/_local', async (request, reply) => {
     const access = requirePluginReadAccess(request, accessOptions);
     if ('error' in access) return pluginAccessError(reply, access);
     try {
@@ -45,7 +45,7 @@ export function registerPluginManagerReadRoutes(app: FastifyInstance, options: P
     }
   });
 
-  app.get('/api/plugin-manager/plugins/local/search', async (request, reply) => {
+  app.get('/api/plugin-manager/plugins/_local/search', async (request, reply) => {
     const access = requirePluginReadAccess(request, accessOptions);
     if ('error' in access) return pluginAccessError(reply, access);
     const parsed = searchQuerySchema.safeParse(request.query);
@@ -57,7 +57,7 @@ export function registerPluginManagerReadRoutes(app: FastifyInstance, options: P
     }
   });
 
-  app.get<{ Params: { pluginId: string } }>('/api/plugin-manager/plugins/local/:pluginId', async (request, reply) => {
+  app.get<{ Params: { pluginId: string } }>('/api/plugin-manager/plugins/_local/:pluginId', async (request, reply) => {
     const access = requirePluginReadAccess(request, accessOptions);
     if ('error' in access) return pluginAccessError(reply, access);
     const parsedId = pluginIdSchema.safeParse(request.params.pluginId);

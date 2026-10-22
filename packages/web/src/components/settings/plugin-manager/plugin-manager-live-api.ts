@@ -184,7 +184,7 @@ export async function fetchManagerDetail(
   local = false,
 ): Promise<ConsolePluginManagerDetail> {
   const encodedId = encodeURIComponent(pluginId);
-  const path = local ? `/api/plugin-manager/plugins/local/${encodedId}` : `/api/plugin-manager/plugins/${encodedId}`;
+  const path = local ? `/api/plugin-manager/plugins/_local/${encodedId}` : `/api/plugin-manager/plugins/${encodedId}`;
   const resourcePath = `/api/plugin-manager/plugins/${encodedId}`;
   const [response, documentation] = await Promise.all([
     afterMutation ? apiFetch(path, undefined, { afterCurrentGet: true }) : apiFetch(path),
@@ -212,7 +212,7 @@ export async function fetchManagerList(
   local = false,
 ): Promise<PluginManagerListResponse> {
   const normalized = search.trim();
-  const prefix = local ? '/api/plugin-manager/plugins/local' : '/api/plugin-manager/plugins';
+  const prefix = local ? '/api/plugin-manager/plugins/_local' : '/api/plugin-manager/plugins';
   const path = normalized.length === 0 ? prefix : `${prefix}/search?q=${encodeURIComponent(normalized)}`;
   const response = afterMutation ? await apiFetch(path, undefined, { afterCurrentGet: true }) : await apiFetch(path);
   if (!response.ok) throw new Error(`list request failed (${response.status})`);

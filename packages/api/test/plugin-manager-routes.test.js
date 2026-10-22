@@ -436,7 +436,7 @@ test('exposes canonical Manager state/lifecycle operations and version update th
 
     const local = await app.inject({
       method: 'GET',
-      url: '/api/plugin-manager/plugins/local',
+      url: '/api/plugin-manager/plugins/_local',
       headers: readHeaders,
     });
     assert.equal(local.statusCode, 200, local.payload);
@@ -444,11 +444,19 @@ test('exposes canonical Manager state/lifecycle operations and version update th
 
     const localDetail = await app.inject({
       method: 'GET',
-      url: '/api/plugin-manager/plugins/local/official.video',
+      url: '/api/plugin-manager/plugins/_local/official.video',
       headers: readHeaders,
     });
     assert.equal(localDetail.statusCode, 200, localDetail.payload);
     assert.equal(localDetail.json().catalog.status, 'loading');
+
+    const pluginNamedLocal = await app.inject({
+      method: 'GET',
+      url: '/api/plugin-manager/plugins/local',
+      headers: readHeaders,
+    });
+    assert.equal(pluginNamedLocal.statusCode, 200, pluginNamedLocal.payload);
+    assert.ok(calls.some((call) => call[0] === 'get' && call[1] === 'local'));
 
     const search = await app.inject({
       method: 'GET',
@@ -499,6 +507,7 @@ test('exposes canonical Manager state/lifecycle operations and version update th
       ['list'],
       ['list-local'],
       ['get-local', 'official.video'],
+      ['get', 'local'],
       ['search', 'scene'],
       ['get', 'official.video'],
       [

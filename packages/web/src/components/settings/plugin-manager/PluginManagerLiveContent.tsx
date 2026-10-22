@@ -41,7 +41,7 @@ export function PluginManagerLiveContent({
   const listGeneration = useRef(0);
   const detailGeneration = useRef(0);
   const mounted = useRef(true);
-  const localProjectionActive = useRef(false);
+  const localPluginIds = useRef(new Set<string>());
   const initialSelection = useRef<string | null>(null);
   const [initialDetailPluginId, setInitialDetailPluginId] = useState<string | null>(null);
   const enableRequests = useRef(new Set<string>());
@@ -69,7 +69,7 @@ export function PluginManagerLiveContent({
       setSelectedPluginId(pluginId);
       setConfigurationSavedPluginId((current) => (current === pluginId ? current : null));
       if (pluginId && !compatibilityFixtures.some((plugin) => plugin.id === pluginId)) {
-        void loadDetail(pluginId, false, localProjectionActive.current);
+        void loadDetail(pluginId, false, localPluginIds.current.has(pluginId));
         return;
       }
       detailGeneration.current += 1;
@@ -107,7 +107,7 @@ export function PluginManagerLiveContent({
       local: boolean,
     ): Promise<boolean> => {
       if (!mounted.current || generation !== listGeneration.current) return false;
-      localProjectionActive.current = local;
+      if (local) localPluginIds.current = new Set(value.plugins.map((plugin) => plugin.pluginId));
       setSnapshot(value);
       const requested = initialSelection.current;
       if (requested && value.plugins.some((plugin) => plugin.pluginId === requested)) {
@@ -119,7 +119,7 @@ export function PluginManagerLiveContent({
       if (!local) initialSelection.current = null;
       const current = selectedPluginIdRef.current;
       if (current && value.plugins.some((plugin) => plugin.pluginId === current)) {
-        await loadDetail(current, afterMutation, local);
+        await loadDetail(current, afterMutation, localPluginIds.current.has(current));
       }
       return true;
     },
