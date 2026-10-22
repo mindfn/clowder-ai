@@ -40,16 +40,15 @@ function fixture(t) {
   return { entry, project, host, path, save, resolve };
 }
 
-test('Host activation binding preserves project policy, overrides, and stored bytes', (t) => {
+test('Host activation binding preserves project policy and stored bytes', (t) => {
   const f = fixture(t);
-  f.entry.mcpServerOverride = { command: 'custom-node', args: ['custom.mjs'], env: { ...f.entry.mcpServer.env } };
   const before = structuredClone(f.project);
   const hostBytes = readFileSync(f.path);
   let server = f.resolve();
   assert.equal(server.env.CLOWDER_PLUGIN_ACTION_TOKEN, 'current-activation');
   assert.equal(server.env.PLUGIN_CONFIG, 'project-value');
-  assert.equal(server.command, 'custom-node');
-  assert.deepEqual(server.args, ['custom.mjs']);
+  assert.equal(server.command, 'node');
+  assert.deepEqual(server.args, ['plugin.mjs']);
   assert.equal(server.enabled, true);
   assert.deepEqual(f.project, before);
   assert.deepEqual(readFileSync(f.path), hostBytes);
@@ -85,4 +84,48 @@ test('user-owned MCP configuration does not receive a plugin connection', (t) =>
   delete f.entry.pluginId;
   f.entry.source = 'user';
   assert.equal(f.resolve().env.CLOWDER_PLUGIN_ACTION_TOKEN, 'old-activation');
+});
+
+for (const kind of [
+  'override',
+  'command',
+  'args',
+  'workingDir',
+  'source',
+  'missing-owner',
+  'duplicate-project',
+  'duplicate-host',
+]) {
+  test(`project ${kind} cannot receive a fresh Host connection`, (t) => {
+    const f = fixture(t);
+    if (kind === 'override')
+      f.entry.mcpServerOverride = { ...f.entry.mcpServer, command: 'project-controlled-command' };
+    if (kind === 'command') f.entry.mcpServer.command = 'project-controlled-command';
+    if (kind === 'args') f.entry.mcpServer.args = ['project-controlled.mjs'];
+    if (kind === 'workingDir') f.entry.mcpServer.workingDir = '/project-controlled';
+    if (kind === 'source') f.entry.source = 'external';
+    if (kind === 'missing-owner') {
+      delete f.entry.pluginId;
+      delete f.host.capabilities[0].pluginId;
+      f.entry.source = 'plugin';
+      f.host.capabilities[0].source = 'plugin';
+    }
+    if (kind === 'duplicate-project') f.project.capabilities.push(structuredClone(f.entry));
+    if (kind === 'duplicate-host') f.host.capabilities.push(structuredClone(f.host.capabilities[0]));
+    f.save();
+    const server = f.resolve();
+    assert.equal(server.enabled, false);
+    assert.equal(server.env?.CLOWDER_PLUGIN_ACTION_TOKEN, undefined);
+  });
+}
+
+test('project environment cannot modify the Host-owned plugin executable environment', (t) => {
+  const f = fixture(t);
+  f.entry.mcpServer.env.NODE_OPTIONS = '--import=./project-controlled.mjs';
+  f.entry.mcpServer.env.PLUGIN_CONFIG = 'stale-project-value';
+  const server = f.resolve();
+  assert.equal(server.enabled, true);
+  assert.equal(server.env.NODE_OPTIONS, undefined);
+  assert.equal(server.env.PLUGIN_CONFIG, 'project-value');
+  assert.equal(server.env.CLOWDER_PLUGIN_ACTION_TOKEN, 'current-activation');
 });
