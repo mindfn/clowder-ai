@@ -1,3 +1,4 @@
+import type { PluginManagerConfigField } from '@cat-cafe/shared';
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
@@ -5,14 +6,17 @@ import { PluginManagerConfigurationSection } from '../plugin-manager/PluginManag
 import { PLUGIN_MANAGER_DESIGN_FIXTURES } from '../plugin-manager/plugin-manager-fixtures';
 
 vi.mock('@/utils/api-client', () => ({ apiFetch: vi.fn() }));
-const variants = {
+const variants: NonNullable<PluginManagerConfigField['configurationVariants']> = {
   discriminator: 'mode',
   branches: [
     { id: 'hook', when: { properties: { mode: { const: 'hook' } } }, fields: ['token'] },
     { id: 'socket', when: { properties: { mode: { const: 'socket' } } }, fields: [] },
   ],
 };
-const field = (key: string, rest: any) => ({
+const field = (
+  key: string,
+  rest: Pick<PluginManagerConfigField, 'kind'> & Partial<PluginManagerConfigField>,
+): PluginManagerConfigField => ({
   key,
   label: key,
   required: false,
@@ -32,11 +36,11 @@ const mode = (value: string | null) =>
     ],
   });
 async function withForm(
-  fields: any[],
+  fields: PluginManagerConfigField[],
   check: (container: HTMLDivElement, onSave: ReturnType<typeof vi.fn>) => Promise<void>,
 ) {
-  (globalThis as any).React = React;
-  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  (globalThis as { React?: typeof React }).React = React;
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -64,8 +68,8 @@ async function withForm(
   } finally {
     await act(async () => root.unmount());
     container.remove();
-    delete (globalThis as any).React;
-    delete (globalThis as any).IS_REACT_ACT_ENVIRONMENT;
+    delete (globalThis as { React?: typeof React }).React;
+    delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   }
 }
 async function save(container: HTMLDivElement) {
