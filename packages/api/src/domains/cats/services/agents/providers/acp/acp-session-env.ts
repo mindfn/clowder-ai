@@ -61,12 +61,12 @@ export function materializeSessionMcpServers(
 ): AcpMcpServer[] {
   const hasCallbacks = callbackEnv && Object.keys(callbackEnv).length > 0;
   const hasReferences = baseServers.some(
-    (server) => 'command' in server && server.env.some((entry) => /\$\{[^}]+\}/.test(entry.value)),
+    (server) => 'command' in server && (server.env ?? []).some((entry) => /\$\{[^}]+\}/.test(entry.value)),
   );
   if (!hasCallbacks && !hasReferences) return baseServers;
   return baseServers.map((server) => {
     if (!('command' in server)) return server;
-    const registered = Object.fromEntries(server.env.map((e) => [e.name, e.value]));
+    const registered = Object.fromEntries((server.env ?? []).map((e) => [e.name, e.value]));
     const env = pluginMcpEnvironment(
       { source: registered.CLOWDER_PLUGIN_ACTION_TOKEN ? 'plugin' : undefined, env: registered },
       callbackEnv ?? {},
