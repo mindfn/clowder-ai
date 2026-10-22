@@ -114,6 +114,13 @@ const unavailableCatalog: PluginManagerCatalogSnapshot = {
   message: 'Plugin catalog is unavailable.',
 };
 
+const loadingCatalog: PluginManagerCatalogSnapshot = {
+  candidates: [],
+  status: 'loading',
+  refreshedAt: null,
+  message: 'Loading available plugins; installed plugins are ready.',
+};
+
 function catalogProjection(snapshot: PluginManagerCatalogSnapshot): PluginManagerCatalogProjection {
   return {
     status: snapshot.status,
@@ -198,12 +205,32 @@ export class PluginManagerService {
     return (await this.project()).response;
   }
 
+  async listLocal(): Promise<PluginManagerListResponse> {
+    return (await this.project(undefined, loadingCatalog)).response;
+  }
+
   async search(query: string): Promise<PluginManagerListResponse> {
     return (await this.project(query)).response;
   }
 
+  async searchLocal(query: string): Promise<PluginManagerListResponse> {
+    return (await this.project(query, loadingCatalog)).response;
+  }
+
   async get(pluginId: string): Promise<PluginManagerDetailResponse> {
     const result = await this.project();
+    return this.detailFromProjection(pluginId, result);
+  }
+
+  async getLocal(pluginId: string): Promise<PluginManagerDetailResponse> {
+    const result = await this.project(undefined, loadingCatalog);
+    return this.detailFromProjection(pluginId, result);
+  }
+
+  private async detailFromProjection(
+    pluginId: string,
+    result: Awaited<ReturnType<PluginManagerService['project']>>,
+  ): Promise<PluginManagerDetailResponse> {
     const projected = result.entries.find((candidate) => candidate.plugin.pluginId === pluginId);
     if (!projected) throw new PluginManagerServiceError('PLUGIN_NOT_FOUND', `Unknown plugin ${pluginId}`);
     const detail = projected.detail ?? detailFromListItem(projected.plugin);
@@ -217,8 +244,19 @@ export class PluginManagerService {
     };
   }
 
+  private async getInstalled(pluginId: string): Promise<PluginManagerDetailResponse> {
+    try {
+      return await this.getLocal(pluginId);
+    } catch (error) {
+      // Older embedders may not provide the installed-package projection yet. Keep
+      // them compatible without making the normal Host path wait for the catalog.
+      if (!(error instanceof PluginManagerServiceError) || error.code !== 'PLUGIN_NOT_FOUND') throw error;
+      return this.get(pluginId);
+    }
+  }
+
   async configure(pluginId: string, request: PluginManagerConfigureRequest): Promise<PluginManagerMutationResult> {
-    const current = (await this.get(pluginId)).plugin;
+    const current = (await this.getInstalled(pluginId)).plugin;
     const instance = this.requireCurrentInstance(current, request.expectedRevision);
     if (!this.options.configuration) {
       throw new PluginManagerServiceError(
@@ -300,7 +338,7 @@ export class PluginManagerService {
   }
 
   async setEnabled(pluginId: string, request: PluginManagerSetEnabledRequest): Promise<PluginManagerMutationResult> {
-    const current = (await this.get(pluginId)).plugin;
+    const current = (await this.getInstalled(pluginId)).plugin;
     return this.setEnabledCurrent(pluginId, request, current);
   }
 
@@ -339,7 +377,7 @@ export class PluginManagerService {
   }
 
   async uninstall(pluginId: string, request: PluginManagerUninstallRequest): Promise<PluginManagerMutationResult> {
-    const current = (await this.get(pluginId)).plugin;
+    const current = (await this.getInstalled(pluginId)).plugin;
     if (current.artifact === 'quarantined') {
       return this.removeQuarantinedPackage(pluginId, current, request.expectedRevision);
     }
