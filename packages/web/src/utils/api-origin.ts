@@ -1,3 +1,5 @@
+import { deploymentDefaults, resolveDirectApiPort } from '@cat-cafe/shared';
+
 function getBrowserLocation(): Location | null {
   if (typeof globalThis !== 'object' || globalThis === null) return null;
   const candidate = (globalThis as { location?: Location }).location;
@@ -76,14 +78,12 @@ export function resolveApiUrl(): string {
   }
   const envUrl = configuredApiOrigin(location);
   if (envUrl) return envUrl;
-  if (typeof window === 'undefined') return 'http://localhost:3004';
+  if (typeof window === 'undefined') return deploymentDefaults.apiBaseUrl;
   const protocol = location?.protocol ?? 'http:';
   const hostname = location?.hostname ?? 'localhost';
   const port = Number(location?.port ?? '') || 0;
   // Behind reverse proxy (default port 80/443 → port is empty string):
   // API lives at the same origin, proxied via /api/ and /socket.io/ paths.
   if (!port) return `${protocol}//${hostname}`;
-  // Direct access with explicit port: convention frontendPort + 1 = apiPort
-  // (runtime: 3001→3002, alpha: 3011→3012).
-  return `${protocol}//${hostname}:${port + 1}`;
+  return `${protocol}//${hostname}:${resolveDirectApiPort(port, deploymentDefaults)}`;
 }

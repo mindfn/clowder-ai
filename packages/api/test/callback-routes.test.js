@@ -7,8 +7,9 @@
 
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
-import { isValidRichBlock } from '@cat-cafe/shared';
+import { coCreatorDisplay, isValidRichBlock } from '@cat-cafe/shared';
 import Fastify from 'fastify';
+import { getCoCreatorConfig } from '../dist/config/cat-config-loader.js';
 import {
   adaptInvocationQueue,
   adaptMessageStore,
@@ -1435,7 +1436,8 @@ describe('Callback Routes', () => {
     // F236 AC-A1/A2: anchor-first shape — preview replaces the full content body.
     assert.equal(body.messages[0].preview, 'Message 1');
     assert.equal(body.messages[1].preview, 'Reply 1');
-    assert.equal(body.messages[0].speaker, 'co-creator'); // F236 R1: human → co-creator, never raw userId
+    const coCreator = getCoCreatorConfig();
+    assert.equal(body.messages[0].speaker, coCreator.nickname ?? coCreatorDisplay(coCreator).nickname); // configured human, never raw userId
     assert.ok(
       body.messages[1].speaker && body.messages[1].speaker !== 'user-1',
       'cat speaker resolved via sender-display, no internal id leak',
@@ -4424,6 +4426,41 @@ describe('Callback Routes', () => {
     const msgs = socketManager.getMessages();
     assert.ok(msgs.length >= 1, 'should have at least 1 broadcast');
     assert.equal(msgs[0].invocationId, invocationId, 'create-rich-block broadcast must include invocationId');
+  });
+
+  test('a fixed Work card survives the real callback buffer and message publication', async () => {
+    const app = await createApp();
+    const thread = threadStore.create('user-1', 'Fixed Work references');
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus', thread.id);
+    const headers = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken };
+    const meta = { kind: 'work_reference', reference: { contentRef: `work:${'a'.repeat(64)}`, ownerRevision: 1 } };
+    const block = { id: 'fixed-work-v1', kind: 'card', v: 1, title: 'A film', bodyMarkdown: 'First cut', meta };
+    const attached = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/create-rich-block',
+      headers,
+      payload: { block },
+    });
+    assert.equal(attached.statusCode, 200, attached.body);
+    const published = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers,
+      payload: { content: 'Delivered v1' },
+    });
+    assert.equal(published.statusCode, 200, published.body);
+    const saved = messageStore.getRecent(10).find((message) => message.threadId === thread.id);
+    assert.deepEqual(saved.extra.rich.blocks[0].meta, meta, 'the card must retain its immutable owner coordinates');
+    const invalid = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/create-rich-block',
+      headers,
+      payload: {
+        block: { ...block, id: 'invalid-work', meta: { ...meta, reference: { ...meta.reference, ownerRevision: 0 } } },
+      },
+    });
+    assert.equal(invalid.statusCode, 400, 'malformed references must not become ordinary success cards');
+    await app.close();
   });
 
   test('create-rich-block names the response its turn is streaming into', async () => {

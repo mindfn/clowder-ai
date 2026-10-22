@@ -1,9 +1,10 @@
 import { hasUsableAgentKeyCredentials } from '@cat-cafe/shared/utils';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { projectAgentKeyCollaborationContract } from './agent-key-collaboration-contract.js';
 import { CANONICAL_TOOL_REGISTRY } from './canonical-server-tools.js';
 import { derivedProfileSet, projectServerFamily } from './canonical-tool-registry.js';
+import { registerCoCreatorPresentation } from './co-creator-presentation.js';
 import { jsonSchemaToZod } from './json-schema-to-zod.js';
 import { runWithNativeTurnAuth } from './native-turn-auth.js';
 import type { FamilyToolDefinition, McpServerFamily } from './tool-governance-snapshot.js';
@@ -203,12 +204,12 @@ function registerTools(server: McpServer, tools: readonly ToolDef[], env: Toolse
     name: string,
     config: RegisterToolConfig,
     cb: RegisteredToolHandler,
-  ) => void;
+  ) => RegisteredTool;
   const principal = resolvePostMessageRegistrationPrincipal(env);
   for (const tool of tools) {
     const annotations = tool.annotations;
     const deliveryMeta = projectSchemaDeliveryMeta(tool);
-    registerExplicit(
+    const registered = registerExplicit(
       tool.name,
       {
         ...projectRegistrationContract(tool, principal),
@@ -231,6 +232,7 @@ function registerTools(server: McpServer, tools: readonly ToolDef[], env: Toolse
           return protectToolResponse(tool.name, typed, annotations.readOnlyHint);
         }),
     );
+    registerCoCreatorPresentation(server, tool.name, registered);
   }
 }
 

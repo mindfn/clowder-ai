@@ -290,6 +290,47 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     };
   }
 
+  it('F321 keeps unrelated private Profile content behind the authenticated pull entry', async () => {
+    const { FileProfileRepository } = await import('../dist/domains/cats/services/profile/ProfileRepository.js');
+    const dataDir = await mkdtemp(join(tmpdir(), 'f321-pull-only-'));
+    try {
+      const repository = new FileProfileRepository({ dataDir, relationshipKeyForCat: () => 'maine-coon' });
+      for (const path of [
+        repository.primerPath(repository.scope('user-1', 'codex')),
+        repository.corpusPath('user-1'),
+      ]) {
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, 'PRIVATE_UNRELATED_PROFILE_PAYLOAD');
+      }
+      const prompts = [];
+      const service = {
+        async *invoke(prompt) {
+          prompts.push(prompt);
+          yield { type: 'done', catId: 'codex', timestamp: Date.now() };
+        },
+      };
+      await collect(
+        invokeSingleCat(
+          { ...makeDeps(), profileRepository: repository },
+          {
+            catId: 'codex',
+            service,
+            prompt: '17乘19是多少？',
+            userId: 'user-1',
+            ownerAuthProvenance: 'strict',
+            threadId: 'thread-f321-pull',
+            isLastCat: true,
+          },
+        ),
+      );
+      assert.equal(prompts.length, 1);
+      assert.doesNotMatch(prompts[0], /PRIVATE_UNRELATED_PROFILE_PAYLOAD|当前关系档案/);
+      assert.equal(repository.readCorpus('user-1').content, 'PRIVATE_UNRELATED_PROFILE_PAYLOAD');
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it('F275 binds an admitted work from strict invocation truth and carries it in callback auth context', async () => {
     const createCalls = [];
     const binding = { workId: 'wrk_managed', attemptId: 'wat_managed' };
@@ -5731,6 +5772,46 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     });
   });
 
+  it('AGY official ACP does not replay an uncertain upstream failure even before text arrives', async () => {
+    let invokeCount = 0;
+    const deps = makeDeps();
+    const workspace = await mkdtemp(join(tmpdir(), 'agy-acp-no-replay-'));
+    deps.threadStore = { get: async () => ({ projectPath: workspace }) };
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      freshnessCarrierCapability: () => ({
+        provider: 'google',
+        carrier: 'agy_acp',
+        deliverySemantics: 'unsupported',
+        activeInvocationGuidance: 'unsupported',
+      }),
+      async *invoke() {
+        invokeCount++;
+        yield { type: 'error', catId: 'opus', error: 'Premature close', timestamp: Date.now() };
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+    try {
+      const messages = await collect(
+        invokeSingleCat(deps, {
+          catId: 'opus',
+          service,
+          prompt: 'test',
+          userId: 'owner-acp',
+          threadId: 'thread-acp',
+          isLastCat: true,
+        }),
+      );
+      assert.equal(invokeCount, 1);
+      assert.equal(
+        messages.some((message) => message.type === 'error' && message.error === 'Premature close'),
+        true,
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it('transient CLI self-heal: retries once when Claude exits code 1 before any stream output', async () => {
     let invokeCount = 0;
     const service = {
@@ -11107,8 +11188,9 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.ok(
       msgs.some(
         (message) =>
-          message.type === 'error' && String(message.error).includes('AGY native requires a thread projectPath'),
+          message.type === 'error' && /AGY(?: native)? requires a thread projectPath/u.test(String(message.error)),
       ),
+      JSON.stringify(msgs.filter((message) => message.type === 'error')),
     );
   });
 

@@ -21,6 +21,7 @@ export * from './chatgpt-cloud-presentation.js';
 // Export shared CLI effort helpers
 export * from './cli-effort.js';
 export * from './cli-tool-label.js';
+export * from './co-creator-display.js';
 export * from './codex-account.js';
 // F291: OAuth Codex Standard/Fast semantic contract
 export * from './codex-speed.js';
@@ -46,6 +47,7 @@ export * from './context-window-catalog.js';
 // F322: shared wire validation for the owner-private conversation presentation preference.
 export * from './conversation-view-preference.js';
 export { CORE_COMMANDS } from './core-commands.js';
+export * from './deployment-defaults.js';
 // F247: one contract for the shared Remote entry and the source-bound Host.
 export * from './dot-mcp.js';
 // Export Eval Hub metric reference normalization (F248 B3)
@@ -67,6 +69,7 @@ export type {
 } from './message-search.js';
 // First-party host-tool identities shared by onboarding discovery and catalog repair.
 export * from './native-tool-identities.js';
+export * from './plugin-archive-replacement.js';
 export * from './plugin-configuration-required.js';
 // Browser Preview Gateway request identity shared by API and Web.
 export * from './preview-gateway.js';
@@ -132,6 +135,7 @@ export * from './types/executable-action-successor.js';
 export * from './types/home-state.js';
 // Export all types
 export * from './types/index.js';
+export * from './types/living-work.js';
 // F314: one accepted-source contract shared by API persistence and MCP producers.
 export * from './types/local-review.js';
 export * from './types/media-publication-source.js';
@@ -142,6 +146,7 @@ export * from './types/message-publication-landing.js';
 export * from './types/output-message.js';
 export * from './types/video-project.js';
 export * from './types/video-project-review.js';
+export * from './types/work-video.js';
 export * from './types/workspace-content-review.js';
 export * from './utils/local-session-import.js';
 export * from './utils/media-byte-range.js';

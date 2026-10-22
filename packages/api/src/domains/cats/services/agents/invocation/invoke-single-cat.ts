@@ -47,13 +47,13 @@ import { context, SpanStatusCode, trace } from '@opentelemetry/api';
 import {
   providerRequiresThreadWorkspace,
   resolveBuiltinClientForProvider,
-  resolveForClient,
   validateRuntimeProviderBinding,
 } from '../../../../../config/account-resolver.js';
 import { AccountStoreVerdictError } from '../../../../../config/account-store-format.js';
 import { resolveBoundAccountRefForCat } from '../../../../../config/cat-account-binding.js';
 import { buildCatGitIdentityEnv } from '../../../../../config/cat-git-identity.js';
 import { getCatModel } from '../../../../../config/cat-models.js';
+import { resolveCatRuntimeAccount } from '../../../../../config/cat-runtime-account.js';
 import { resolveCodexAccountLaunch } from '../../../../../config/codex-account-launch.js';
 import { codexExecutionAccountSnapshot } from '../../../../../config/codex-execution-account.js';
 import { parseOpenCodeModel, resolveEffectiveOpenCodeModel } from '../../../../../config/opencode-model.js';
@@ -1402,6 +1402,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     activeInvocationGuidance: 'undeclared' as const,
   };
   let invocationCapacitySnapshot = params.capacitySnapshot;
+  const isAgyAcp = freshnessCarrierCapability.carrier === 'agy_acp';
 
   // F247 KD-17: cloud-only cats skip provider CLI dispatch, but still own a
   // normal durable child invocation. The bounded Host transport branch runs
@@ -2565,8 +2566,8 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
     const catConfig = catRegistry.tryGet(catId as string)?.config;
     const provider = catConfig?.clientId;
-    const requiresThreadWorkspace = providerRequiresThreadWorkspace(provider) || isAgyNative;
-    const workspaceRequiredBy = isAgyNative ? 'AGY native' : 'OpenCode';
+    const requiresThreadWorkspace = providerRequiresThreadWorkspace(provider) || isAgyNative || isAgyAcp;
+    const workspaceRequiredBy = isAgyNative || isAgyAcp ? 'AGY' : 'OpenCode';
 
     let firstReplyNamingInstruction = '';
     // Resolve workingDirectory from thread's projectPath
@@ -2870,10 +2871,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     const projectRoot = resolveActiveProjectRoot(process.cwd());
     const effectiveAccountRef = resolveBoundAccountRefForCat(projectRoot, catId, catConfig);
     const resolveRuntimeAccount = async () => {
-      if (!builtinClient || (catConfig?.configurationSource === 'native_tool' && !effectiveAccountRef)) return null;
+      if (!builtinClient) return null;
       // Yield to event loop so preflight warnings are delivered before account resolution.
       await Promise.resolve();
-      const runtime = resolveForClient(projectRoot, builtinClient, effectiveAccountRef);
+      const runtime = resolveCatRuntimeAccount(projectRoot, catId, builtinClient, catConfig);
       if (effectiveAccountRef && !runtime) {
         throw new Error(`bound account "${effectiveAccountRef}" not found`);
       }
@@ -3601,7 +3602,12 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           ? { createPromptGenerationId: durableTranscriptWriter.keyedContentDigest.bind(durableTranscriptWriter) }
           : {}),
       });
-      applyPreparedPrompt(attempt);
+      try {
+        applyPreparedPrompt(attempt);
+      } catch (error) {
+        await attempt.release('provider_generation_replaced');
+        throw error;
+      }
       currentPresentationAttempt = attempt;
       const generationReadyAtMs = Date.now();
       if (contextContinuityHandshake && contextEpochDecision) {
@@ -5314,8 +5320,8 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       );
     }
 
-    let allowSessionRetry = Boolean(sessionId) && !requiresImportedHistory;
-    let allowTransientRetry = true;
+    let allowSessionRetry = Boolean(sessionId) && !requiresImportedHistory && !isAgyAcp;
+    let allowTransientRetry = !isAgyAcp;
     let nextRequestGenerationReason: RequestGenerationRetryReason | undefined;
     let consumedClaudeCompactionObservation: string | undefined;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {

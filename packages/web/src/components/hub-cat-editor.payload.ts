@@ -1,5 +1,5 @@
 import type { CatData } from '@/hooks/useCatData';
-import { buildAgyProfilePatch } from './hub-cat-editor.agy';
+import { buildAgyProfilePatch, usesAgyAcp } from './hub-cat-editor.agy';
 import {
   type ClientId,
   DEFAULT_ANTIGRAVITY_COMMAND_ARGS,
@@ -94,12 +94,14 @@ function preserveHiddenAcpFields(cat?: CatData | null): Record<string, unknown> 
 
 function buildAcpTransportConfig(form: HubCatEditorFormState, cat?: CatData | null) {
   const transport = form.acpTransport ?? 'stdio';
-  const command = trimText(form.acpCommand) || defaultAcpCommandForClient(form.clientId);
+  const officialAgy = usesAgyAcp(form);
+  const command =
+    trimText(form.acpCommand) || (officialAgy ? 'agy_acp_server.par' : defaultAcpCommandForClient(form.clientId));
   if (!command) throw new Error('ACP Command 不能为空');
   const startupArgs = splitCommandArgs(
-    trimText(form.acpStartupArgs) || defaultAcpStartupArgsForClient(form.clientId, transport),
+    trimText(form.acpStartupArgs) || (officialAgy ? '' : defaultAcpStartupArgsForClient(form.clientId, transport)),
   );
-  if (startupArgs.length === 0) throw new Error('ACP Startup Args 不能为空');
+  if (startupArgs.length === 0 && !officialAgy) throw new Error('ACP Startup Args 不能为空');
   const maxLiveProcesses = optionalPositiveInteger(form.acpMaxLiveProcesses, 'ACP Max Processes');
   const idleTtlMinutes = optionalPositiveInteger(form.acpIdleTtlMinutes, 'ACP Idle TTL');
   const savedTtl = cat?.acp?.pool?.idleTtlMs;
@@ -132,6 +134,7 @@ function buildAcpTransportConfig(form: HubCatEditorFormState, cat?: CatData | nu
 
 function buildAcpPatch(form: HubCatEditorFormState, cat?: CatData | null): Record<string, unknown> {
   if (form.carrier === 'acp') return { acp: buildAcpTransportConfig(form, cat) };
+  if (form.clientId === 'google' && form.agyNativeEnabled && cat?.acp) return { acp: null };
   return {};
 }
 

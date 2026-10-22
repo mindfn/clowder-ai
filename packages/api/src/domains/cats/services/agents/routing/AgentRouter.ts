@@ -19,7 +19,7 @@
  */
 
 import type { CatId, CatRoutingError, MessageContent } from '@cat-cafe/shared';
-import { catRegistry, escapeRegExp } from '@cat-cafe/shared';
+import { catRegistry, deploymentDefaults, escapeRegExp } from '@cat-cafe/shared';
 import type {
   RoutingPreviewReason,
   RoutingPreviewReasonKind,
@@ -1306,7 +1306,7 @@ export class AgentRouter {
 
   /** Build shared strategy dependencies (public for ModeOrchestrator) */
   getStrategyDeps(): RouteStrategyDeps {
-    const apiPort = process.env.API_SERVER_PORT ?? '3004';
+    const apiPort = process.env.API_SERVER_PORT ?? String(deploymentDefaults.apiPort);
     return {
       services: this.services,
       unavailableServices: this.unavailableServices,

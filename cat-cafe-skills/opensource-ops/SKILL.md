@@ -165,8 +165,8 @@ triggers:
 
 - **不要为每个 PR/issue 自动注册 tracking**。只有以下两类情况才注册显式 typed predicate：
   1. 工作真实阻塞在外部条件（等作者回复、等 CI、等 maintainer review）。
-  2. 计划做 formal external review 时，需要先用 已安装 GitHub 插件的 PR 跟踪工具（先 `tool_search`）seed projection，才能在终端态记录 `github_record_external_review_verdict`。
-- 注册时必须写明 `when`、阻塞解除后的 `nextStep` 和 `expiresAt`。
+  2. 计划做 formal external review 时，使用已安装 GitHub 插件的 PR tracking 与 review-verdict 原生工具；按当前 schema 核对真实 assignment、exact HEAD 和 action lease，不把登记 tracking 当作审查授权。
+- 注册使用唯一 `registrationId` 和当前工具 schema；普通 subject 入口无需 `when`/`nextStep`，`expiresAt` 可选。精确重试复用原 ID 和原参数。
 - Advisory / triage / 纯审计不需要注册 tracking。
 
 ### Merge / closure

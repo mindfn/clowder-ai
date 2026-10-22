@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { link, lstat, mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { catRegistry } from '@cat-cafe/shared';
 import { resolveBinaryRoot } from '../../../../../config/capabilities/capability-orchestrator.js';
 import { isSameCapabilityRoot } from '../../../../../config/capabilities/invoke-capability-root.js';
 import { resolveKimiRuntimePaths } from '../../../../../utils/kimi-cli-runtime.js';
@@ -19,6 +20,14 @@ async function restoreWithoutOverwrite(source: string, target: string): Promise<
   await unlink(source);
 }
 
+function isNativeHomeDirectory(directory: string, nativeDirectory: string): boolean {
+  return (
+    isSameCapabilityRoot(directory, nativeDirectory) ||
+    (pathsEqual(basename(directory), basename(nativeDirectory)) &&
+      isSameCapabilityRoot(dirname(directory), dirname(nativeDirectory)))
+  );
+}
+
 /** Kimi Code has no invoke-time MCP flag: lend it a native project config.
  * Keep the original file intact under a recoverable name until the client exits.
  * A second invocation must not replace the first invocation's capability surface.
@@ -29,7 +38,10 @@ export async function prepareKimiMcpConfig(input: {
   mcpServerPath?: string;
 }): Promise<KimiMcpLease> {
   const noop: KimiMcpLease = { env: {}, dispose: async () => {} };
-  if (!input.callbackEnv?.CAT_CAFE_CAT_ID || input.mcpServerPath === '') return noop;
+  if (!input.callbackEnv?.CAT_CAFE_CAT_ID) return noop;
+  const mcpSupport = catRegistry.tryGet(input.callbackEnv.CAT_CAFE_CAT_ID)?.config.mcpSupport;
+  // Disabling host injection must not bypass the member's native MCP off switch.
+  if (input.mcpServerPath === '' && mcpSupport !== false) return noop;
   if (!input.workingDirectory) throw new Error('Kimi MCP injection requires an explicit working directory');
   const binaryRoot = resolveBinaryRoot(resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../../../..'));
   // Project entries shadow native HOME entries. Explicitly block native-only
@@ -37,11 +49,7 @@ export async function prepareKimiMcpConfig(input: {
   const nativeDirectory = resolveKimiRuntimePaths(input.callbackEnv).shareDir;
   const directory = join(input.workingDirectory, '.kimi-code');
   // Compare existing parents too: first use may not have created either leaf yet.
-  if (
-    isSameCapabilityRoot(directory, nativeDirectory) ||
-    (pathsEqual(basename(directory), basename(nativeDirectory)) &&
-      isSameCapabilityRoot(dirname(directory), dirname(nativeDirectory)))
-  ) {
+  if (isNativeHomeDirectory(directory, nativeDirectory)) {
     throw new Error('Refusing to replace the native HOME Kimi MCP configuration');
   }
   const servers = await resolveKimiMcpSurface({
@@ -49,6 +57,7 @@ export async function prepareKimiMcpConfig(input: {
     callbackEnv: input.callbackEnv,
     mcpServerPath: input.mcpServerPath ?? join(binaryRoot, 'packages/mcp-server/dist/index.js'),
     nativeDirectory,
+    mcpSupport,
   });
   await mkdir(directory, { recursive: true });
   if ((await lstat(directory)).isSymbolicLink()) throw new Error('Refusing a linked Kimi MCP directory');

@@ -93,7 +93,7 @@ test('requires an explicit absolute instance root and three safe distinct ports'
   };
   assert.equal(resolveDesktopRuntime(env).redisPort, 6367);
   for (const key of ['FRONTEND_PORT', 'API_SERVER_PORT', 'REDIS_PORT']) {
-    for (const value of ['', 'abc', '0', '65536', '3003', '3004', '6399'])
+    for (const value of ['', 'abc', '0', '65536', '3001', '3002', '3003', '3004', '6399'])
       assert.throws(() => resolveDesktopRuntime({ ...env, [key]: value }), /isolated.*port/i);
   }
   assert.throws(() => resolveDesktopRuntime({ ...env, API_SERVER_PORT: env.FRONTEND_PORT }), /distinct/);

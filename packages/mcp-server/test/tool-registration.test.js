@@ -129,10 +129,16 @@ describe('MCP Server Tool Registration', () => {
     const server = createServer();
     const holdTool = server._registeredTools.cat_cafe_hold_ball;
     assert.ok(holdTool, 'hold_ball tool should exist');
-    const desc = holdTool.description;
+    const { renderCoCreatorText } = await import('../dist/co-creator-presentation.js');
+    const desc = renderCoCreatorText(holdTool.description, {
+      name: 'Nora',
+      nickname: 'operator',
+      role: 'operator',
+      mention: '@nora',
+    });
     assert.ok(typeof desc === 'string' && desc.length > 0, 'hold_ball must have a description string');
     // #1-misuse exclusion: waiting on a person's reply is @co-creator/@cat, never a hold.
-    assert.match(desc, /waiting for co-creator\/user OR another cat to reply/);
+    assert.match(desc, /waiting for operator\/user OR another cat to reply/);
     assert.match(desc, /redundant 2nd trigger/);
     // an inbound co-creator/cat message counts as a callback (Phase M clarifier extension)
     assert.match(desc, /sending a message into this thread IS such a callback/);
@@ -292,6 +298,7 @@ describe('MCP Server Tool Registration', () => {
       'cat_cafe_multi_mention',
       'cat_cafe_start_vote',
       'cat_cafe_propose_thread',
+      'cat_cafe_continue_approved_task',
       'cat_cafe_propose_session_handoff',
       'cat_cafe_propose_profile_update',
       'cat_cafe_propose_taste',

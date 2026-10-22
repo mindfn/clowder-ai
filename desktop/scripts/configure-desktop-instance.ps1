@@ -78,7 +78,7 @@ function Assert-Identity($identity) {
   foreach ($text in $ports) {
     if ($text -notmatch '^\d+$') { throw 'Invalid isolated port' }
     $value = [int]$text
-    if ($value -lt 1024 -or $value -gt 65535 -or $value -in @(3003,3004,6399)) { throw 'Unsafe isolated port' }
+    if ($value -lt 1024 -or $value -gt 65535 -or $value -in @(3001,3002,3003,3004,6399)) { throw 'Unsafe isolated port' }
   }
   if (@($ports | ForEach-Object { [int]$_ } | Select-Object -Unique).Count -ne 3) { throw 'Ports must be distinct' }
 }

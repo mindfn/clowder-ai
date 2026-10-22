@@ -20,6 +20,7 @@ import {
   isCatAvailable,
   setRuntimeDefaultCatId,
 } from '../config/cat-config-loader.js';
+import { coCreatorMentionInputSchema } from '../config/co-creator-mention.js';
 import { configEventBus, createChangeSetId } from '../config/config-event-bus.js';
 import type { ConfigSnapshot } from '../config/config-snapshot.js';
 import {
@@ -106,7 +107,7 @@ const timeZonePatchSchema = z
 const coCreatorPatchSchema = z.object({
   name: z.string().trim().min(1),
   aliases: z.array(z.string().trim().min(1)),
-  mentionPatterns: z.array(z.string().trim().min(1)).min(1),
+  mentionPatterns: z.array(coCreatorMentionInputSchema).min(1),
   timeZone: timeZonePatchSchema.optional(),
   avatar: z.string().trim().nullable().optional(),
   color: z

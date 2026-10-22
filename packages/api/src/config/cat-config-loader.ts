@@ -32,6 +32,7 @@ import {
 } from '@cat-cafe/shared';
 import { z } from 'zod';
 import { createModuleLogger } from '../infrastructure/logger.js';
+import { isUserSelectedCatalog } from './cat-catalog-initialization.js';
 import { bootstrapCatCatalog, type CatCatalogReadOptions, readCatCatalogRaw } from './cat-catalog-store.js';
 import { resolveProjectTemplatePath } from './project-template-path.js';
 import {
@@ -81,7 +82,7 @@ const cliConfigSchema = z.object({
 const agyProfileSchema = z
   .object({
     enabled: z.boolean().optional(),
-    carrier: z.enum(['legacy', 'native']).optional(),
+    carrier: z.enum(['legacy', 'native', 'acp']).optional(),
     profileId: z.string().min(1).optional(),
     homeRoot: z.string().min(1).optional(),
     model: z.string().min(1).optional(),
@@ -302,6 +303,7 @@ const reviewPolicySchema = z.object({
 /** F067: Owner config schema */
 const coCreatorConfigSchema = z.object({
   name: z.string().min(1),
+  nickname: z.string().min(1).optional(),
   aliases: z.array(z.string().min(1)),
   mentionPatterns: z.array(mentionPatternSchema).min(1),
   timeZone: timeZoneSchema.optional(),
@@ -312,6 +314,7 @@ const coCreatorConfigSchema = z.object({
 /** Version 1: breeds only (legacy) */
 const catCafeConfigSchemaV1 = z.object({
   version: z.literal(1),
+  memberInitialization: z.string().min(1).optional(),
   breeds: z.array(catBreedSchema),
   selectedAccountRefs: z.record(z.string(), z.string().min(1)).optional(),
 });
@@ -320,6 +323,7 @@ const catCafeConfigSchemaV1 = z.object({
 const catCafeConfigSchemaV2 = z
   .object({
     version: z.literal(2),
+    memberInitialization: z.string().min(1).optional(),
     breeds: z.array(catBreedSchema),
     selectedAccountRefs: z.record(z.string(), z.string().min(1)).optional(),
     roster: z.record(z.string(), rosterEntrySchema),
@@ -523,6 +527,11 @@ function removeUnavailableTemplateVariants(
 
       const catId = variant.catId ?? breed.catId;
       if (!catId) return true;
+      // New installations must not gain unselected variants through read-side merging.
+      if (isUserSelectedCatalog(catalogJson)) {
+        removedCatIds.add(catId);
+        return false;
+      }
       const input = {
         breedId: breed.id,
         variantId: variant.id,
@@ -559,6 +568,17 @@ function mergeTemplateWithCatalog(templatePath: string, options: CatCatalogReadO
   const baseJson = JSON.parse(baseRaw) as Record<string, unknown>;
   const catalogJson = JSON.parse(catalogRaw) as Record<string, unknown>;
   const merged = deepMergeConfig(baseJson, catalogJson);
+  // Older explicit owner records never opted into the template's familiar address.
+  // Starting to parse nickname must not silently rename an existing installation.
+  if (
+    catalogJson.coCreator &&
+    typeof catalogJson.coCreator === 'object' &&
+    !Object.hasOwn(catalogJson.coCreator, 'nickname') &&
+    merged.coCreator &&
+    typeof merged.coCreator === 'object'
+  ) {
+    delete (merged.coCreator as Record<string, unknown>).nickname;
+  }
 
   // #772: Template-only breeds must not leak into runtime.
   // When a catalog exists, only catalog breeds are runtime members.

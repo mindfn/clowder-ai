@@ -876,9 +876,12 @@ inspect_runtime_daemon() {
 active_runtime_application_ports() {
   local api_port frontend_port preview_port entry label port active=""
   api_port="$(runtime_env_value API_SERVER_PORT 2>/dev/null || true)"
-  api_port="${api_port:-${API_SERVER_PORT:-3004}}"
+  local default_api_port default_frontend_port
+  default_api_port="$(node "$(dirname "${BASH_SOURCE[0]}")/read-deployment-default.mjs" apiPort)"
+  default_frontend_port="$(node "$(dirname "${BASH_SOURCE[0]}")/read-deployment-default.mjs" webPort)"
+  api_port="${api_port:-${API_SERVER_PORT:-$default_api_port}}"
   frontend_port="$(runtime_env_value FRONTEND_PORT 2>/dev/null || true)"
-  frontend_port="${frontend_port:-${FRONTEND_PORT:-3003}}"
+  frontend_port="${frontend_port:-${FRONTEND_PORT:-$default_frontend_port}}"
   preview_port="$(runtime_env_value PREVIEW_GATEWAY_PORT 2>/dev/null || true)"
   preview_port="${preview_port:-${PREVIEW_GATEWAY_PORT:-4100}}"
 

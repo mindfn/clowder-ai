@@ -67,7 +67,8 @@ describe('F190 visual contract — no hard borders in card/panel components', ()
     expect(addMenu).toContain('<ComposerPopover');
     expect(addMenu).toContain('presentation={presentation}');
     expect(readSrc('ComposerPopover.tsx')).toMatch(/presentation === 'classic'[\s\S]*?bg-cafe-surface-canvas/);
-    expect(inputMenus.match(/bottom-full[^\n]+bg-cafe-surface-canvas/g)).toHaveLength(3);
+    // Business menus now live in plugins; this component retains the mention menu.
+    expect(inputMenus.match(/bottom-full[^\n]+bg-cafe-surface-canvas/g)).toHaveLength(1);
     expect(whisper).toMatch(/bottom-full[^\n]+bg-cafe-surface-canvas/);
     expect(pathCompletion).toMatch(/bottom-full[^\n]+bg-cafe-surface-canvas/);
     expect(contextPicker).toMatch(/bottom-full[^\n]+bg-cafe-surface-canvas/);
@@ -598,7 +599,7 @@ describe('#723 cross-page typography consistency', () => {
       'settings/capability-settings-ui.tsx',
       'settings/primitives/SettingsCollapsibleCard.tsx',
       'settings/primitives/SettingsRow.tsx',
-      'settings/PluginConfigPanel.tsx',
+      'settings/plugin-manager/PluginManagerConfigurationSection.tsx',
     ]) {
       const src = readSrc(file);
       expect(src).not.toContain('console-divider-t');

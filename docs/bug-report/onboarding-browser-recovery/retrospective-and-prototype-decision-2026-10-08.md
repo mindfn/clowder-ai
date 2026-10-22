@@ -162,7 +162,7 @@ phase-1-intro
 
 可交互原型：
 
-[bootcamp-onboarding-prototype.html](./bootcamp-onboarding-prototype.html)
+bootcamp-onboarding-prototype.html
 
 原型模拟完整 12 阶段路径，并验证以下行为：
 

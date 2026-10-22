@@ -33,6 +33,7 @@ export type FreshnessCarrier =
   | 'claude_stream_json'
   | 'kimi_stream_json'
   | 'agy_stream_json'
+  | 'agy_acp'
   | 'mcp_result_piggyback'
   | 'other';
 export type FreshnessCarrierDeliverySemantics =
@@ -68,6 +69,7 @@ export const FRESHNESS_CARRIERS = [
   'claude_stream_json',
   'kimi_stream_json',
   'agy_stream_json',
+  'agy_acp',
   'mcp_result_piggyback',
   'other',
 ] as const satisfies readonly FreshnessCarrier[];

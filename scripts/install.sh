@@ -573,7 +573,9 @@ default_frontend_url() {
     if [[ -f .env ]]; then
         frontend_port="$(read_env_key FRONTEND_PORT || true)"
     fi
-    frontend_port="${frontend_port:-${FRONTEND_PORT:-3003}}"
+    local default_frontend_port
+    default_frontend_port="$(node "$PROJECT_DIR/scripts/read-deployment-default.mjs" webPort)"
+    frontend_port="${frontend_port:-${FRONTEND_PORT:-$default_frontend_port}}"
     printf 'http://localhost:%s\n' "$frontend_port"
 }
 

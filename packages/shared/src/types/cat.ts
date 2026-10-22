@@ -48,7 +48,7 @@ export interface CatColor {
 export interface AgyProfileConfig {
   readonly enabled?: boolean;
   /** F325 staged migration: each profile has exactly one selected execution carrier. */
-  readonly carrier?: 'legacy' | 'native';
+  readonly carrier?: 'legacy' | 'native' | 'acp';
   readonly profileId?: string;
   readonly homeRoot?: string;
   readonly model?: string;

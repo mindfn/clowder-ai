@@ -1,5 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('@cat-cafe/shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@cat-cafe/shared')>();
+  return {
+    ...actual,
+    deploymentDefaults: actual.resolveDeploymentDefaults({
+      schemaVersion: 1,
+      activeProfile: 'fixture',
+      profiles: {
+        fixture: {
+          webPort: 4510,
+          apiPort: 4599,
+          envRegistryFrontendPort: 4510,
+          corsOrigins: ['http://localhost:4510'],
+          roadmapPath: 'docs/ACTIVE.md',
+          repositoryFullName: 'synthetic-owner/browser-fixture',
+          brand: actual.deploymentDefaults.brand,
+        },
+      },
+    }),
+  };
+});
+
 /* ---------- helpers to mock browser Location ---------- */
 
 function stubLocation(overrides: Partial<Location> | null) {
@@ -101,6 +123,14 @@ describe('resolveApiUrl', () => {
     vi.stubEnv('API_SERVER_PORT', '4117');
     process.env.NEXT_PUBLIC_API_URL = 'http://localhost:3004';
     expect((await loadResolveApiUrl())()).toBe('http://localhost:4117');
+  });
+
+  it('uses the selected deployment SSR default when no runtime identity is configured', async () => {
+    vi.stubGlobal('window', undefined);
+    vi.stubGlobal('document', undefined);
+    vi.stubEnv('API_SERVER_PORT', undefined);
+    stubLocation(null);
+    expect((await loadResolveApiUrl())()).toBe('http://localhost:4599');
   });
   it.each([
     'https://outside.invalid',
@@ -205,5 +235,29 @@ describe('resolveApiUrl', () => {
     stubLocation({ hostname: 'localhost', protocol: 'http:', port: '3011' });
     const resolve = await loadResolveApiUrl();
     expect(resolve()).toBe('http://localhost:3012');
+  });
+
+  it.each([
+    ['localhost', undefined],
+    ['127.0.0.1', 'https://api.example.com'],
+    ['10.0.0.5', 'http://localhost:4777'],
+  ])('uses the configured non-adjacent API port at the configured Web port (%s, env=%s)', async (hostname, env) => {
+    if (env) process.env.NEXT_PUBLIC_API_URL = env;
+    stubLocation({ hostname, protocol: 'http:', port: '4510' });
+    const resolve = await loadResolveApiUrl();
+    expect(resolve()).toBe(`http://${hostname}:4599`);
+  });
+
+  it('keeps an explicit compatible API origin ahead of configured port defaults', async () => {
+    process.env.NEXT_PUBLIC_API_URL = 'http://localhost:4777';
+    stubLocation({ hostname: '127.0.0.1', port: '4510' });
+    const resolve = await loadResolveApiUrl();
+    expect(resolve()).toBe('http://127.0.0.1:4777');
+  });
+
+  it('keeps adjacency for a worktree port outside the selected deployment profile', async () => {
+    stubLocation({ hostname: 'localhost', port: '4780' });
+    const resolve = await loadResolveApiUrl();
+    expect(resolve()).toBe('http://localhost:4781');
   });
 });

@@ -23,6 +23,7 @@ export function namedAlphaFixture(t) {
     'scripts/alpha-worktree.sh',
     'scripts/start-dev.sh',
     'scripts/download-source-overrides.sh',
+    'scripts/redis-backup-retention.mjs',
     'scripts/lib/node-runtime-guard.sh',
     'scripts/lib/quickstart-freshness.sh',
     'scripts/lib/alpha-redis-identity.sh',
@@ -35,6 +36,9 @@ export function namedAlphaFixture(t) {
     'scripts/lib/alpha-redis-leases.mjs',
     'scripts/lib/process-identity.mjs',
     'scripts/lib/process-tree.mjs',
+    'scripts/read-deployment-default.mjs',
+    'packages/shared/src/deployment-defaults.ts',
+    'packages/shared/src/deployment-profiles.json',
     'packages/api/src/config/alpha-coordinates.ts',
   ]) {
     if (!existsSync(join(SOURCE_ROOT, entry))) continue;

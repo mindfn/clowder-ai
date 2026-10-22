@@ -20,6 +20,7 @@ import { authTerminalFromTurnExecution } from './CallbackAuthTurnExecutionProjec
 import type { AuthInvocationMigrationResult, IAuthInvocationBackend } from './IAuthInvocationBackend.js';
 import { MemoryAuthInvocationBackend } from './MemoryAuthInvocationBackend.js';
 import type { OwnerAuthProvenance } from './owner-auth-provenance.js';
+import type { RetiredAuthorizationSnapshot } from './retired-auth-authorization.js';
 import { normalizeToolExecutionPolicy } from './tool-execution-policy.js';
 
 export interface InvocationRecord {
@@ -46,6 +47,8 @@ export interface InvocationRecord {
   traceContext?: CallerTraceContext;
   /** ADR-042 callback authorization boundary, persisted across API restarts. */
   toolExecutionPolicy?: ToolExecutionPolicy;
+  /** Read-only history of a retired authority; terminal records only. */
+  readonly retiredAuthorization?: RetiredAuthorizationSnapshot;
   /** In-invocation idempotency keys for callback post-message de-duplication. */
   clientMessageIds: Set<string>;
   /**

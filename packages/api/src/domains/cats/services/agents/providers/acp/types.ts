@@ -92,6 +92,7 @@ export interface AcpInitializeResult {
       list?: Record<string, unknown>;
       close?: Record<string, unknown>;
     };
+    _meta?: Record<string, unknown>;
     promptCapabilities?: AcpPromptCapabilities;
     mcpCapabilities?: {
       http?: boolean;
@@ -118,6 +119,7 @@ export interface AcpPromptCapabilities {
 export interface AcpNewSessionParams {
   cwd: string;
   mcpServers: AcpMcpServer[];
+  _meta?: Record<string, unknown>;
 }
 
 export interface AcpNewSessionResult {

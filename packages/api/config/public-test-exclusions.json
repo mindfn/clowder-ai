@@ -10,12 +10,12 @@
       "introducedBy": "78f3bc57c",
       "expiresOn": "2027-12-31",
       "audit": {
-        "reviewedOn": "2026-10-17",
-        "sourceHead": "235bb90755fdba01cf968e27af08ded14a4d039d",
-        "publicHead": "7fca378fa010a288484e909446a2faeee5a7fbe2",
+        "reviewedOn": "2026-10-20",
+        "sourceHead": "f4d3fd786e4bdc976e57fcad437c5e1e0d388986",
+        "publicHead": "15e1f96703b76d4b84b7b6483f86a7fdd9746b92",
         "status": "resource_contract",
         "matchedFileCount": 41,
-        "matchedFilesHash": "1fc29e45db82f9c0eb56d4ba75520f789d7196477da65b633fcfaf60aed8208d"
+        "matchedFilesHash": "e79d256449dd65051f25f7825fe8d3b3f9168d2bdeb656e57b683b285bc1cdaf"
       },
       "publicAudit": {
         "reviewedOn": "2026-10-15",
@@ -75,6 +75,14 @@
           "status": "resource_contract",
           "matchedFileCount": 49,
           "matchedFilesHash": "e0a7a8a6cbefb0de3a9e5eb5801f04f470cf4057f94afb4a0615c12cc13b2b0e"
+        },
+        {
+          "reviewedOn": "2026-10-17",
+          "sourceHead": "235bb90755fdba01cf968e27af08ded14a4d039d",
+          "publicHead": "7fca378fa010a288484e909446a2faeee5a7fbe2",
+          "status": "resource_contract",
+          "matchedFileCount": 41,
+          "matchedFilesHash": "1fc29e45db82f9c0eb56d4ba75520f789d7196477da65b633fcfaf60aed8208d"
         }
       ]
     },

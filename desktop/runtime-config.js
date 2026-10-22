@@ -64,7 +64,7 @@ function resolveDesktopRuntime(env = process.env, executable = process.execPath)
   const port = (key) => {
     const raw = env[key];
     const value = /^\d+$/.test(raw || '') ? Number(raw) : NaN;
-    if (!Number.isInteger(value) || value < 1024 || value > 65535 || [3003, 3004, 6399].includes(value))
+    if (!Number.isInteger(value) || value < 1024 || value > 65535 || [3001, 3002, 3003, 3004, 6399].includes(value))
       throw new Error(`Invalid isolated desktop port: ${key}`);
     return value;
   };

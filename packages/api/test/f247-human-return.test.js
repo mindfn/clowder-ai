@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { catRegistry } from '@cat-cafe/shared';
 import Fastify from 'fastify';
+import { _resetCachedConfig, getCoCreatorConfig, loadCatConfig } from '../dist/config/cat-config-loader.js';
 import { MemoryCloudReturnGrantStore } from '../dist/domains/cats/services/cloud-bridge/cloud-return-grant.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 
 test('cloud replies to the human persist without routing to a cat, with optional human mention', async (t) => {
+  const template = loadCatConfig(new URL('../../../cat-template.json', import.meta.url).pathname);
+  t.after(() => _resetCachedConfig());
   const originalCats = catRegistry.getAllConfigs();
   catRegistry.reset();
   for (const [id, config] of Object.entries(originalCats)) {
@@ -51,7 +54,26 @@ test('cloud replies to the human persist without routing to a cat, with optional
     invocationQueue,
     socketManager: { broadcastAgentMessage: (message) => broadcasts.push(message), emitToUser() {} },
   });
-  for (const content of ['在呢，You。', '@co-creator\n在呢。']) {
+  const home = {
+    name: 'You',
+    aliases: ['L.S.', 'you'],
+    mentionPatterns: ['@co-creator', '@co-creator', '@co-creator'],
+  };
+  const configured = { name: 'Mina', aliases: ['M.'], mentionPatterns: ['@mina', '@m.(a+b)'] };
+  const cases = [
+    { owner: home, content: '在呢，You。', mentioned: false },
+    ...home.mentionPatterns.map((handle) => ({ owner: home, content: `${handle}\n在呢。`, mentioned: true })),
+    ...configured.mentionPatterns.map((handle) => ({
+      owner: configured,
+      content: `${handle}\n在呢。`,
+      mentioned: true,
+    })),
+    { owner: configured, content: '告诉@mina这件事', mentioned: false },
+    { owner: configured, content: '```\n@mina\n```', mentioned: false },
+    { owner: configured, content: '@mina123 不是句柄', mentioned: false },
+  ];
+  for (const { owner, content, mentioned } of cases) {
+    getCoCreatorConfig({ ...template, version: 2, coCreator: owner });
     const source = messageStore.append({
       userId: 'alice',
       from: { kind: 'user', userId: 'alice' },
@@ -83,11 +105,12 @@ test('cloud replies to the human persist without routing to a cat, with optional
     assert.equal(stored.replyTo, source.id);
     assert.equal(stored.content, content);
     assert.deepEqual(stored.mentions, []);
-    assert.equal(Boolean(stored.mentionsUser), content.startsWith('@co-creator'));
+    assert.equal(Boolean(stored.mentionsUser), mentioned, content);
+    assert.equal(Boolean(broadcasts.at(-1).mentionsUser), mentioned, content);
     const retry = await send();
     assert.equal(retry.json().status, 'duplicate');
     assert.equal(retry.json().messageId, stored.id);
   }
-  assert.equal(broadcasts.length, 2);
+  assert.equal(broadcasts.length, cases.length);
   assert.deepEqual(invocationQueue.list(thread.id, 'alice'), []);
 });

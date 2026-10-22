@@ -17,7 +17,7 @@ interface CatNameplateProps {
   onEditCat?: () => void;
 }
 
-/** Nameplate placement is separate from the shared member avatar's frame and identity ring. */
+/** The nameplate supplies its working-surface gap; sender identity stays shared. */
 export function CatNameplate({ catId, name, title, onEditCat, sender }: CatNameplateProps) {
   const { getCatById } = useCatData();
   const identity =
@@ -34,7 +34,7 @@ export function CatNameplate({ catId, name, title, onEditCat, sender }: CatNamep
       title={title}
       surface={catColorVar(catId, 'surface')}
       ink={catColorVar(catId, 'text')}
-      avatar={<SenderAvatar sender={identity} presentation="message" onClick={onEditCat} />}
+      avatar={<SenderAvatar sender={identity} presentation="nameplate" onClick={onEditCat} />}
     />
   );
 }

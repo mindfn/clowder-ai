@@ -1,5 +1,6 @@
 'use client';
 
+import { coCreatorDisplay } from '@cat-cafe/shared';
 import { useEffect, useSyncExternalStore } from 'react';
 import type { CoCreatorConfig } from '@/components/config-viewer-types';
 import { refreshCoCreatorMentionData, resetMentionDataForTest } from '@/lib/mention-highlight';
@@ -83,4 +84,8 @@ export function resetCoCreatorConfigCacheForTest(): void {
 export function primeCoCreatorConfigCache(cc: CoCreatorConfig): void {
   publishCoCreator(cc);
   fetchCoCreatorPromise = Promise.resolve(cc);
+}
+
+export function useCoCreatorDisplay() {
+  return coCreatorDisplay(useCoCreatorConfig());
 }

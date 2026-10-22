@@ -260,6 +260,8 @@ export interface CredentialEntry {
  */
 export interface CatCafeConfigV1 {
   readonly version: 1;
+  /** Persisted enrollment policy; retain it when parsing or writing a catalog. */
+  readonly memberInitialization?: string;
   readonly breeds: readonly CatBreed[];
   readonly selectedAccountRefs?: Readonly<Record<string, string>>;
 }
@@ -270,6 +272,8 @@ export interface CatCafeConfigV1 {
 export interface CoCreatorConfig {
   /** Primary display name (e.g. "You") */
   readonly name: string;
+  /** Optional familiar form of address, already present in the install template. */
+  readonly nickname?: string;
   /** Alternative names cats may use (e.g. ["L.S.", "you"]) */
   readonly aliases: readonly string[];
   /** Line-start mention patterns for routing detection (e.g. ["@co-creator", "@co-creator"]) */
@@ -287,6 +291,8 @@ export interface CoCreatorConfig {
  */
 export interface CatCafeConfigV2 {
   readonly version: 2;
+  /** Persisted enrollment policy; retain it when parsing or writing a catalog. */
+  readonly memberInitialization?: string;
   readonly breeds: readonly CatBreed[];
   readonly selectedAccountRefs?: Readonly<Record<string, string>>;
   readonly roster: Roster;

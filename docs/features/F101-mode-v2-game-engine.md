@@ -3,7 +3,7 @@ feature_ids: [F101]
 related_features: [F011, F090, F107, F202]
 topics: [mode, game, werewolf, game-engine]
 doc_kind: spec
-tips_exempt: "The retired game implementation remains retired. Historical identity quotations are summarized for public documentation; no gameplay or user action is introduced."
+tips_exempt: "Renewed 2026-10-21: the retired game remains retired. KD-19 retains its public identity summary and the verbatim source quotation stays in Internal Notes; no gameplay entry or user action is introduced."
 created: 2026-03-11
 reopened: 2026-03-14
 updated: 2026-10-18

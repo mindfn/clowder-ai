@@ -15,7 +15,7 @@ async function freePort() {
   });
   const port = server.address().port;
   await new Promise((resolve) => server.close(resolve));
-  if ([3003, 3004, 6399].includes(port)) return freePort();
+  if ([3001, 3002, 3003, 3004, 6399].includes(port)) return freePort();
   return port;
 }
 
@@ -70,6 +70,7 @@ export async function profileDesktopStartup(sourceRoot, frozenRoot, { profileRoo
   profileRoot = path.resolve(profileRoot);
   if (fs.existsSync(profileRoot)) throw new Error('Preserve previous startup profile evidence');
   fs.mkdirSync(profileRoot);
+  profileRoot = fs.realpathSync(profileRoot);
   const ports = new Set();
   while (ports.size < 3) ports.add(await freePort());
   const [frontendPort, apiPort, redisPort] = ports;

@@ -9,7 +9,7 @@ Object.assign(globalThis as Record<string, unknown>, { React });
 
 const registry = vi.hoisted(() => ({ cats: [] as Array<{ id: string }> }));
 
-// Use the real member avatar and registry so placement cannot hide a duplicate frame.
+// Use the real member avatar and registry to preserve the accepted nameplate presentation.
 vi.mock('@/hooks/useCatData', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useCatData')>();
   return {
@@ -34,7 +34,7 @@ const OPUS = {
   defaultModel: 'claude',
 } as unknown as CatData;
 
-/** Nameplate placement must not duplicate the shared member avatar body. */
+/** You chose B on 2026-10-05: a working-surface gap, with no second cat-colour mark. */
 const render = (props: Partial<React.ComponentProps<typeof CatNameplate>> = {}) => {
   registry.cats = [OPUS];
   return renderToStaticMarkup(<CatNameplate catId="opus" name="宪宪" {...props} />);
@@ -57,10 +57,10 @@ describe('the nameplate carries a 32px face laid over its left end', () => {
       expect(plate.height).toBe('26px');
       expect(plate.paddingLeft).toBe('40px');
       expect(plate.paddingRight).toBe('10px');
-      expect(face.width).not.toBe('32px');
-      expect(face.height).not.toBe('32px');
+      expect(face.width).toBe('32px');
+      expect(face.height).toBe('32px');
       expect(face.bottom).toBe('-2px');
-      expect(face.boxShadow).not.toContain('0 0 0 2px');
+      expect(face.boxShadow).toBe('0 0 0 2px var(--shell-work)');
       expect(name.fontSize).toBe('13px');
       expect(name.fontWeight).toBe('600');
       expect(name.textOverflow).toBe('ellipsis');
@@ -76,16 +76,13 @@ describe('the nameplate carries a 32px face laid over its left end', () => {
     );
   });
 
-  it('delegates the full-size image and identity ring to the shared member body', () => {
+  it('keeps the shared full-size identity image without adding a cat-colour ring to the nameplate', () => {
     const html = render();
-    const wrapper = attrsOf(html, 'cat-nameplate-avatar');
-    expect(wrapper).not.toContain('box-shadow');
-    expect(wrapper).not.toContain('rounded-full');
-    const body = /<[^>]*data-sender-avatar="message"[^>]*>/.exec(html)?.[0] ?? '';
+    const body = /<[^>]*data-sender-avatar="[^"]+"[^>]*>/.exec(html)?.[0] ?? '';
     expect(body).toContain('w-8 h-8');
-    expect(body).not.toContain('box-shadow');
-    expect(html).toContain('data-member-avatar-ring');
-    expect(html).toContain('box-shadow:inset 0 0 0 1px #9B7EBD');
+    expect(body).toContain('background-color:var(--shell-work)');
+    expect(html).not.toContain('data-member-avatar-ring');
+    expect(html).toContain('/avatars/opus.png');
     expect(html).toContain('w-full h-full object-cover');
   });
 

@@ -18,13 +18,21 @@ import { prepareOpenCodeAcpSpawnConfig } from '../opencode-acp-spawn-config.js';
 import { AcpAgentService } from './AcpAgentService.js';
 import { AcpClient } from './AcpClient.js';
 import { AcpHttpStreamClient } from './AcpHttpStreamClient.js';
-import { AcpProcessPool, DEFAULT_ACP_IDLE_TTL_MS, type PoolKey } from './AcpProcessPool.js';
-import { resolveAcpBootstrapArgs, resolveAcpBootstrapCommand, resolveAcpBootstrapCwd } from './acp-bootstrap-cwd.js';
+import { AcpProcessPool, DEFAULT_ACP_IDLE_TTL_MS } from './AcpProcessPool.js';
 // resolveAcpMcpServers + resolveDisabledServerIds moved to AcpAgentService.invoke()
 // for invoke-time resolution (#712 P1-1).
 import { createAcpPoolSpawnSignature } from './acp-pool-signature.js';
 import { skipAcpProfile } from './acp-registration-failure.js';
 import { tryPrepareAcpProcessEnv } from './acp-spawn-env.js';
+import { denyAgyAcpPermission } from './agy/agy-acp-permission.js';
+import { prepareAgyAcpProfile } from './agy/agy-acp-profile.js';
+import type { AgyAcpConfig } from './agy/agy-acp-session.js';
+import {
+  type AcpBootstrapContext,
+  resolveAcpBootstrap,
+  type VerifiedAcpBootstrapContext,
+  verifyAcpBootstrap,
+} from './bootstrap/acp-bootstrap-context.js';
 
 export type AcpPoolRegistry = Map<string, AcpProcessPool>;
 
@@ -43,21 +51,13 @@ export interface CreateAcpServiceForConfigInput {
   onUnavailable?: (reason: AgentRegistrationFailure) => void;
 }
 
-interface AcpBootstrapContext {
-  projectRoot: string;
-  command: string;
-  args: string[];
-  cwd: string;
-  model?: string;
-  poolKey: PoolKey;
-}
-
 interface AcpAccountContext {
   accountRef?: string;
   account: RuntimeProviderProfile | null;
 }
 
 interface AcpSpawnContext {
+  antigravity?: AgyAcpConfig;
   env?: Record<string, string>;
   sessionModel?: string;
   openCodeRuntimeConfig: unknown;
@@ -88,28 +88,6 @@ function resolveAcpContextPolicy(config: CatConfig, effectiveModel: string): Acp
   };
 }
 
-function resolveAcpBootstrap(
-  projectRoot: string,
-  profileId: string,
-  acpConfig: AcpVariantConfig,
-  effectiveModel: string,
-  bootstrapRoot?: string,
-): AcpBootstrapContext {
-  const model = effectiveModel.trim() || undefined;
-  const args = resolveAcpBootstrapArgs(projectRoot, acpConfig.startupArgs, {
-    base_model: model,
-    model,
-  });
-  return {
-    projectRoot,
-    command: resolveAcpBootstrapCommand(projectRoot, acpConfig.command),
-    args,
-    cwd: resolveAcpBootstrapCwd(projectRoot, profileId, bootstrapRoot),
-    model,
-    poolKey: { projectPath: projectRoot, providerProfile: profileId },
-  };
-}
-
 function resolveAcpAccount(projectRoot: string, config: CatConfig): AcpAccountContext {
   if (config.configurationSource === 'native_tool' && !config.accountRef) return { account: null };
   const catId = config.id;
@@ -130,6 +108,32 @@ async function prepareAcpSpawnContext(
 ): Promise<AcpSpawnContext | null> {
   const { config, profileId } = input;
   const catId = config.id;
+  if (config.agyProfile?.carrier === 'acp') {
+    try {
+      if (
+        config.clientId !== 'google' ||
+        input.acpConfig.transport === 'httpstream' ||
+        (accountContext.account &&
+          (accountContext.account.authType !== 'oauth' || Object.keys(accountContext.account.envVars ?? {}).length))
+      ) {
+        throw new Error('AGY official ACP requires Google personal OAuth over stdio without account overrides');
+      }
+      const prepared = await prepareAgyAcpProfile({
+        catId,
+        model: input.effectiveModel,
+        projectRoot: bootstrap.projectRoot,
+        profile: config.agyProfile,
+      });
+      return { ...prepared, sessionModel: input.effectiveModel, openCodeRuntimeConfig: null, contextPolicy: null };
+    } catch (err) {
+      return skipAcpProfile(
+        input,
+        'invalid-spawn-env',
+        { err, catId, profileId, accountRef: accountContext.accountRef },
+        'ACP registry sync skipped member due to invalid AGY profile',
+      );
+    }
+  }
   const acpEnvResult = tryPrepareAcpProcessEnv({
     clientId: config.clientId,
     provider: config.provider,
@@ -201,7 +205,7 @@ async function prepareAcpSpawnContext(
 
 async function ensureAcpPool(
   input: CreateAcpServiceForConfigInput,
-  bootstrap: AcpBootstrapContext,
+  bootstrap: VerifiedAcpBootstrapContext,
   spawn: AcpSpawnContext,
 ): Promise<AcpProcessPool> {
   const { profileId, acpConfig, poolRegistry } = input;
@@ -209,6 +213,7 @@ async function ensureAcpPool(
     command: bootstrap.command,
     args: bootstrap.args,
     cwd: bootstrap.cwd,
+    bootstrapIsolation: bootstrap.isolation,
     env: spawn.env ?? null,
     openCodeRuntimeConfig: spawn.openCodeRuntimeConfig,
     contextPolicy: spawn.contextPolicy,
@@ -216,6 +221,7 @@ async function ensureAcpPool(
     idleTtlMs: acpConfig.pool?.idleTtlMs ?? DEFAULT_ACP_IDLE_TTL_MS,
     transport: acpConfig.transport ?? 'stdio',
     supportsMultiplexing: acpConfig.supportsMultiplexing,
+    ...(spawn.antigravity ? { sessionPolicy: { provider: 'antigravity', profile: spawn.antigravity.profile } } : {}),
   });
 
   const existingPool = poolRegistry.get(profileId);
@@ -233,15 +239,19 @@ async function ensureAcpPool(
       idleTtlMs: acpConfig.pool?.idleTtlMs ?? DEFAULT_ACP_IDLE_TTL_MS,
       healthCheckIntervalMs: 30_000,
     },
-    acpConfig,
+    spawn.antigravity ? { ...acpConfig, supportsMultiplexing: false, rejectActiveSessionLease: true } : acpConfig,
     () => {
       const clientCfg = {
         command: bootstrap.command,
         args: bootstrap.args,
         // Cold starts must recreate a lost cwd and revalidate its permissions.
         // Existing live processes keep their cwd and drain under pool policy.
-        cwd: resolveAcpBootstrapCwd(bootstrap.projectRoot, profileId, input.bootstrapRoot),
+        cwd: bootstrap.verifyCwd(),
+        ...(process.platform === 'win32' ? { verifyBootstrapCwd: bootstrap.verifyCwd } : {}),
         ...(spawn.env ? { env: spawn.env } : {}),
+        ...(spawn.antigravity
+          ? { inheritParentEnv: false, permissionHandler: denyAgyAcpPermission, antigravityDiagnostics: true }
+          : {}),
       };
       return acpConfig.transport === 'httpstream' ? new AcpHttpStreamClient(clientCfg) : new AcpClient(clientCfg);
     },
@@ -271,7 +281,7 @@ export async function createAcpServiceForConfig(
     );
   }
 
-  const bootstrap = resolveAcpBootstrap(projectRoot, profileId, acpConfig, effectiveModel, input.bootstrapRoot);
+  const bootstrap = resolveAcpBootstrap(projectRoot, profileId, acpConfig, effectiveModel);
   let accountContext: AcpAccountContext;
   try {
     accountContext = resolveAcpAccount(bootstrap.projectRoot, config);
@@ -306,11 +316,13 @@ export async function createAcpServiceForConfig(
   }
   const spawn = await saveSpan('acp.prepare', () => prepareAcpSpawnContext(effectiveInput, bootstrap, accountContext));
   if (!spawn) return null;
-  const pool = await saveSpan('acp.pool', () => ensureAcpPool(effectiveInput, bootstrap, spawn));
+  const verified = verifyAcpBootstrap(bootstrap, profileId, input.bootstrapRoot, spawn.env);
+  const pool = await saveSpan('acp.pool', () => ensureAcpPool(effectiveInput, verified, spawn));
 
   // #712 P1-1: pass whitelist — MCP resolution happens at invoke time in
   // AcpAgentService so capability toggles take effect without registry rebuild.
   return new AcpAgentService({
+    ...(spawn.antigravity ? { antigravity: spawn.antigravity, agentBusyRetryDelaysMs: [] } : {}),
     catId,
     pool,
     poolKey: bootstrap.poolKey,

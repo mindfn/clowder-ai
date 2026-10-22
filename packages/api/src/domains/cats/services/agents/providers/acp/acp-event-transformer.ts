@@ -30,6 +30,7 @@ export interface AcpSessionState {
   emittedToolUseByCallId: Set<string>;
   /** toolCallIds that have already emitted a final `tool_result`. */
   finalEmittedByCallId: Set<string>;
+  toolDetailsByCallId: Map<string, { name?: string; source: AgentMessage['toolSource'] }>;
   /** Latest optional tool facts by native ID; scoped to this invocation and discarded after final. */
   toolCallsByCallId: Map<string, AcpToolSnapshot>;
   /** Accumulated thinking text — flushed as a single event when a non-thinking event arrives. */
@@ -48,6 +49,7 @@ export function createAcpSessionState(): AcpSessionState {
   return {
     emittedToolUseByCallId: new Set<string>(),
     finalEmittedByCallId: new Set<string>(),
+    toolDetailsByCallId: new Map(),
     toolCallsByCallId: new Map<string, AcpToolSnapshot>(),
     thinkingBuffer: '',
     scratchpadDetected: false,
@@ -93,6 +95,23 @@ export function flushAcpThinking(state: AcpSessionState, catId: CatId, metadata:
   };
 }
 
+function toolResultText(inner: Record<string, unknown>): string {
+  const text = (value: unknown): string => {
+    if (typeof value === 'string') return value;
+    if (!value || typeof value !== 'object') return '';
+    if (Array.isArray(value)) return value.map(text).filter(Boolean).join('\n');
+    const record = value as Record<string, unknown>;
+    return typeof record.text === 'string' ? record.text : text(record.content);
+  };
+  const content = text(inner.content);
+  if (content) return content;
+  return inner.rawOutput === undefined
+    ? ''
+    : typeof inner.rawOutput === 'string'
+      ? inner.rawOutput
+      : JSON.stringify(inner.rawOutput);
+}
+
 export function transformAcpEvent(
   update: AcpSessionUpdate,
   catId: CatId,
@@ -131,6 +150,28 @@ export function transformAcpEvent(
 
   /** Wrap result with flushed thinking (if any) — returns array when both exist. */
   function withFlush(msg: AgentMessage | AgentMessage[] | null): AgentMessage | AgentMessage[] | null {
+    const toolIdentity = (message: AgentMessage): AgentMessage => {
+      if (message.type !== 'tool_use' && message.type !== 'tool_result') return message;
+      const id = typeof inner.toolCallId === 'string' ? inner.toolCallId : undefined;
+      const previous = id ? state?.toolDetailsByCallId?.get(id) : undefined;
+      const meta = inner._meta as { is_mcp_tool_call?: boolean } | undefined;
+      const source = previous?.source ?? (meta?.is_mcp_tool_call === true ? 'mcp' : 'host_cli');
+      const name = message.toolName ?? previous?.name;
+      if (id) state?.toolDetailsByCallId?.set(id, { ...(name ? { name } : {}), source });
+      return {
+        ...message,
+        ...(id ? { toolUseId: id } : {}),
+        ...(name ? { toolName: name } : {}),
+        toolSource: source,
+        ...(message.type === 'tool_result'
+          ? {
+              content: message.content || toolResultText(inner),
+              toolResultStatus: inner.status === 'failed' ? 'error' : inner.status === 'completed' ? 'ok' : 'unknown',
+            }
+          : {}),
+      };
+    };
+    msg = Array.isArray(msg) ? msg.map(toolIdentity) : msg ? toolIdentity(msg) : null;
     if (!flushPending) return msg;
     if (!msg) return flushPending;
     if (Array.isArray(msg)) return [flushPending, ...msg];

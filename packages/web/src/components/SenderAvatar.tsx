@@ -12,11 +12,12 @@ export function SenderAvatar({
 }: {
   sender: SenderMeta;
   className?: string;
-  presentation?: 'inline' | 'message';
+  presentation?: 'inline' | 'message' | 'nameplate';
   onClick?: () => void;
   streaming?: boolean;
 }) {
   const message = presentation === 'message';
+  const fullSize = presentation !== 'inline';
   const image =
     sender.avatar ??
     (sender.icon && 'src' in sender.icon ? sender.icon.src : undefined) ??
@@ -31,20 +32,27 @@ export function SenderAvatar({
       aria-label={onClick ? `编辑 ${sender.label}` : undefined}
       aria-hidden={onClick ? undefined : true}
       data-sender-avatar={presentation}
-      className={`${message ? 'relative w-8 h-8 rounded-full overflow-hidden' : className} inline-flex shrink-0 items-center justify-center ${streaming ? 'animate-pulse' : ''} ${onClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
-      style={message ? { backgroundColor: 'var(--cafe-surface)', color: sender.color } : undefined}
+      className={`${fullSize ? 'relative w-8 h-8 rounded-full overflow-hidden' : className} inline-flex shrink-0 items-center justify-center ${streaming ? 'animate-pulse' : ''} ${onClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+      style={
+        fullSize
+          ? {
+              backgroundColor: presentation === 'nameplate' ? 'var(--shell-work)' : 'var(--cafe-surface)',
+              color: sender.color,
+            }
+          : undefined
+      }
     >
       {image || (!sender.icon && !sender.fallbackIcon) ? (
         <AvatarImageWithFallback
           src={image}
           alt=""
-          className={message ? 'w-full h-full object-cover' : `${className} rounded-full object-cover`}
+          className={fullSize ? 'w-full h-full object-cover' : `${className} rounded-full object-cover`}
         />
       ) : (
         <ConnectorIcon
           iconSpec={sender.icon}
           fallbackIcon={sender.fallbackIcon}
-          className={message ? 'w-5 h-5' : className}
+          className={fullSize ? 'w-5 h-5' : className}
         />
       )}
       {message && (

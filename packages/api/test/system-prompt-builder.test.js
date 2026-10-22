@@ -827,7 +827,8 @@ describe('SystemPromptBuilder', () => {
     assert.ok(ctx.includes('terminal Release'));
     assert.ok(ctx.includes('不要发送“收到/谢谢” ACK'));
     assert.ok(ctx.includes('继续原任务'));
-    assert.ok(ctx.includes('无需 @co-creator'));
+    const { getCoCreatorConfig } = await import('../dist/config/cat-config-loader.js');
+    assert.ok(ctx.includes(`无需 ${getCoCreatorConfig().mentionPatterns[0]}`));
     assert.ok(!ctx.includes('回复请用 cross_post_message'));
   });
 

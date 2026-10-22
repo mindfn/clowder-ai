@@ -1,3 +1,4 @@
+import { deploymentDefaults } from '@cat-cafe/shared';
 import { z } from 'zod';
 import { defineMcpMigrationFactory } from '../tool-governance-migration.js';
 
@@ -10,7 +11,7 @@ const defineTool = defineMcpMigrationFactory('external-runtime-session-tools.ts'
   authority: 'callback-owner',
 });
 
-const API_URL = process.env['CAT_CAFE_API_URL'] ?? 'http://localhost:3004';
+const API_URL = process.env['CAT_CAFE_API_URL'] ?? deploymentDefaults.apiBaseUrl;
 
 function resolveToolUserId(): string {
   return process.env['CAT_CAFE_USER_ID'] ?? 'default-user';
@@ -69,7 +70,7 @@ export const listExternalRuntimeSessionsInputSchema = {
 };
 
 export const readExternalRuntimeSessionInputSchema = {
-  sessionId: z.string().min(1).describe('Clowder AI SessionRecord id'),
+  sessionId: z.string().min(1).describe(`${deploymentDefaults.brand.name} SessionRecord id`),
 };
 
 export async function handleRegisterExternalRuntimeSession(input: {
@@ -142,7 +143,7 @@ export const externalRuntimeSessionCallbackTools = [
     name: 'cat_cafe_register_external_runtime_session',
     description:
       'Register an Antigravity IDE-direct runtime session using persistent agent-key auth. ' +
-      'Use when an IDE-direct conversation needs Clowder AI session-chain evidence without invocation callback credentials. ' +
+      `Use when an IDE-direct conversation needs ${deploymentDefaults.brand.name} session-chain evidence without invocation callback credentials. ` +
       'Shared Antigravity MCP GOTCHA: pass agentKeyCatId so the right sidecar key is selected.',
     inputSchema: registerExternalRuntimeSessionInputSchema,
     handler: handleRegisterExternalRuntimeSession,
@@ -162,7 +163,7 @@ export const externalRuntimeSessionReadTools = [
     description:
       'List orphan, dispatched, or IDE-direct external runtime sessions by runtime, cat, and recent activity. ' +
       'Use when an external runtime session looks lost, detached from the current thread, or needs cross-runtime drilldown. ' +
-      'Use before reading digest/events when there is no normal Clowder AI thread yet.',
+      `Use before reading digest/events when there is no normal ${deploymentDefaults.brand.name} thread yet.`,
     inputSchema: listExternalRuntimeSessionsInputSchema,
     handler: handleListExternalRuntimeSessions,
     governance: {

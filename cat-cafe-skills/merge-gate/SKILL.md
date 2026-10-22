@@ -372,8 +372,9 @@ gh pr comment {PR_NUMBER} --body '@codex review'
 # Skip this step for non-community PRs.
 #
 # Do not call localhost:3004 or hand-build callback auth. The author calls
-# github_community_request_guardian({id: caseId, payload: {author, reviewer}}); the assigned non-author/non-reviewer
-# guardian receives the returned checklist + signoffToken and calls github_community_guardian_signoff.
+# installed GitHub plugin tool github_community_request_guardian with {id, payload}, using its live schema.
+# The assigned non-author/non-reviewer guardian consumes the returned checklist/token via
+# github_community_guardian_signoff; runtime supplies native identity, not caller-supplied metadata.
 # Merge remains blocked until the canonical community case projects an approved durable signoff.
 
 # 6.8 Hotfix Cross-Cat Review Gate（F177 Phase E）🔴

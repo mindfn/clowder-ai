@@ -47,6 +47,7 @@ export interface HubCatEditorFormState {
   carrier: CatCarrier;
   provider: string;
   agyNativeEnabled?: boolean;
+  agyAcpEnabled?: boolean;
   agyProfileEnabled?: boolean;
   agyAutoApprove?: boolean;
   agyProfileId?: string;
@@ -391,7 +392,9 @@ export function initialState(cat?: CatData | null, draft?: HubCatEditorDraft | n
     accountRef: cat?.accountRef ?? createDraft?.accountRef ?? '',
     accountBindingMode: cat?.accountBindingMode,
     defaultModel:
-      (cat?.agyProfile?.carrier === 'native' ? cat.agyProfile.model : undefined) ??
+      (cat?.agyProfile?.carrier === 'native' || cat?.agyProfile?.carrier === 'acp'
+        ? cat.agyProfile.model
+        : undefined) ??
       cat?.defaultModel ??
       createDraft?.defaultModel ??
       '',
@@ -406,9 +409,12 @@ export function initialState(cat?: CatData | null, draft?: HubCatEditorDraft | n
         : (getCatCarrierOptions(clientId)[0] ?? 'cli')),
     provider: cat?.provider ?? '',
     agyNativeEnabled: cat?.clientId === 'google' && cat?.agyProfile?.carrier === 'native',
+    agyAcpEnabled: cat?.clientId === 'google' && cat?.agyProfile?.carrier === 'acp',
     agyProfileEnabled: cat?.agyProfile ? cat.agyProfile.enabled === true : true,
     agyProfileId: cat?.agyProfile?.profileId ?? catId,
-    agyAutoApprove: cat?.agyProfile?.carrier === 'native' && cat.agyProfile.autoApprove === true,
+    agyAutoApprove:
+      (cat?.agyProfile?.carrier === 'native' || cat?.agyProfile?.carrier === 'acp') &&
+      cat.agyProfile.autoApprove === true,
     agyHomeRoot: cat?.agyProfile?.homeRoot ?? '',
     agyTrustedWorkspaces: cat?.agyProfile?.trustedWorkspaces?.join('\n') ?? '',
     acpTransport: (acpConfig?.transport as 'stdio' | 'httpstream' | undefined) ?? 'stdio',

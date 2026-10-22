@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { deriveNamedAlphaCoordinates, namedAlphaEnvironment } from './lib/alpha-coordinates.mjs';
 import { namedAlphaFixture } from './lib/alpha-named-fixture.mjs';
 import { captureNamedAlphaRedisIdentity, verifyNamedAlphaRedisIdentity } from './lib/alpha-redis-process.mjs';
+import { waitForPreviewFixture } from './lib/preview-fixture-readiness.mjs';
 
 const cli = join(dirname(fileURLToPath(import.meta.url)), 'preview-process.mjs');
 const test =
@@ -100,24 +101,25 @@ for (const [verificationFails, earlyWrapper, missingResult, pnpmWrapper, identit
     });
     const raw = JSON.stringify(coordinates);
     const directory = join(f.alphaRoot, '.cat-cafe/redis');
-    const pidFile = join(directory, `redis-${ports[3]}.pid`);
+    const pidFile = join(directory, `redis-${coordinates.ports.redis}.pid`);
     const registry = join(f.directory, 'leases');
     const driver = join(f.directory, 'driver.sh');
-    const probe = identityProbeFixture(f.directory, ports[3], pidFile, identityFailureMode);
+    const probe = identityProbeFixture(f.directory, coordinates.ports.redis, pidFile, identityFailureMode);
+    const readinessBody = createHash('sha256').update(f.directory).digest('hex');
     writeFileSync(
       join(f.directory, 'server.cjs'),
-      `require('node:http').createServer((q,s)=>s.end('alpha fixture')).listen(${ports[0]},'127.0.0.1');`,
+      `require('node:http').createServer((q,s)=>s.end(${JSON.stringify(readinessBody)})).listen(${ports[0]},'127.0.0.1');`,
     );
     writeFileSync(
       driver,
       `set -e
 setup_storage
 redis-cli -p "$REDIS_PORT" set preview-cleanup-marker preserved
-"${process.execPath}" "${join(f.directory, 'server.cjs')}" &
-register_managed_pid "$!"
 ${verificationFails ? 'named_alpha_redis_is_owned() { return 1; }' : ''}
 ${missingResult ? 'publish_preview_cleanup_result() { :; }' : ''}
 ${probe ? `touch '${probe.armed}'` : ''}
+"${process.execPath}" "${join(f.directory, 'server.cjs')}" &
+register_managed_pid "$!"
 wait
 `,
     );
@@ -138,7 +140,7 @@ wait
       if (existsSync(pidFile)) {
         const proof = captureNamedAlphaRedisIdentity(raw);
         verifyNamedAlphaRedisIdentity(raw, proof);
-        execFileSync('redis-cli', ['-h', '127.0.0.1', '-p', String(ports[3]), 'shutdown', 'save']);
+        execFileSync('redis-cli', ['-h', '127.0.0.1', '-p', String(coordinates.ports.redis), 'shutdown', 'save']);
       }
       if (previewRecord?.origin === 'launchd') {
         spawnSync('launchctl', ['bootout', `gui/${process.getuid()}/${previewRecord.launchdLabel}`]);
@@ -166,9 +168,24 @@ setInterval(()=>{},1000);`,
       : pnpmWrapper
         ? ['pnpm', 'run', 'start']
         : ['/bin/bash', './scripts/start-dev.sh', '--quick'];
+    const startupDeadline = performance.now() + 45_000;
     const started = run('start', ['--', '/usr/bin/env', ...assignments, ...launcher]);
     assert.equal(started.status, 0, started.stderr || started.stdout);
     previewRecord = JSON.parse(readFileSync(recordPath, 'utf8'));
+    await waitForPreviewFixture({
+      port: ports[0],
+      expectedBody: readinessBody,
+      deadline: startupDeadline,
+      diagnostics: () =>
+        JSON.stringify({
+          start: started.stdout,
+          stderr: started.stderr,
+          record: previewRecord,
+          logTail: existsSync(previewRecord.logPath)
+            ? readFileSync(previewRecord.logPath, 'utf8').slice(-8_000)
+            : 'log missing',
+        }),
+    });
     const proof = captureNamedAlphaRedisIdentity(raw);
     verifyNamedAlphaRedisIdentity(raw, proof);
     assert.equal(readdirSync(registry).length, 1, 'producer registered its own Redis lease');

@@ -9,6 +9,7 @@ import {
   flatCodexStreamBubbles,
   installActiveHarness,
   installBackgroundHarness,
+  seedProcessingResponse,
   threadCodexStreamBubbles,
 } from './useAgentMessages-codex-tool-text-convergence.helpers';
 
@@ -17,6 +18,7 @@ const event = (type: 'tool_use' | 'tool_result', threadId: string, initial?: Rec
   type,
   catId: 'codex',
   threadId,
+  messageId: `response-final-input-${threadId}`,
   invocationId: 'parent',
   turnInvocationId: 'child',
   timestamp: 1,
@@ -38,6 +40,7 @@ function assertVisible(tools: ToolEvent[]) {
 describe('final ACP input through actual active handler', () => {
   const active = installActiveHarness();
   it.each([undefined, { command: 'ech' }])('updates visible input without reopening the call (%s)', (initial) => {
+    seedProcessingResponse('thread-1', 'response-final-input-thread-1', 'codex', 'child');
     active.render();
     active.send(event('tool_use', 'thread-1', initial));
     active.send(event('tool_result', 'thread-1'));
@@ -52,6 +55,7 @@ describe('final ACP input through actual active handler', () => {
 describe('final ACP input through background handler', () => {
   const background = installBackgroundHarness();
   it('survives thread switching with the native pair key', () => {
+    seedProcessingResponse('thread-bg', 'response-final-input-thread-bg', 'codex', 'child');
     background.dispatchBg(event('tool_use', 'thread-bg'));
     background.dispatchBg(event('tool_result', 'thread-bg'));
     assertVisible(threadCodexStreamBubbles('thread-bg').flatMap((message) => message.toolEvents ?? []));

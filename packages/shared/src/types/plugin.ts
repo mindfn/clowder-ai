@@ -146,6 +146,12 @@ export type PluginManagerLiveState = 'stopped' | 'starting' | 'handshaking' | 'r
 
 export type PluginManagerPackageSource =
   | {
+      /** Older installed records may not have recorded their admission origin. This is read metadata, not install input. */
+      kind: 'unknown';
+      packageName: null;
+      trust: 'unknown';
+    }
+  | {
       kind: 'catalog';
       catalogId: string;
       packageName: string;
@@ -425,7 +431,11 @@ export type PluginManagerInstallRequest =
       expectedDigest: string;
     }
   | {
-      source: { kind: 'local-directory' | 'local-archive'; path: string };
+      source: { kind: 'local-directory'; path: string };
+    }
+  | {
+      source: { kind: 'local-archive'; path: string };
+      replacement?: import('../plugin-archive-replacement.js').PluginArchiveReplacementConfirmation;
     }
   | {
       source: { kind: 'git'; url: string; marketplace?: PluginMarketplaceSelection };

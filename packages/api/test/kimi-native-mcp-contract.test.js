@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
+import { catRegistry } from '@cat-cafe/shared';
+import { prepareKimiMcpConfig } from '../dist/domains/cats/services/agents/providers/kimi-mcp-config.js';
 import { nativeLoaders, nativeSchemas } from './helpers/kimi-native-contract.js';
 import { kimiNativeFixture, managedCapability } from './helpers/kimi-native-fixture.js';
 
@@ -11,6 +13,57 @@ const transports = {
   http: { transport: 'http', url: 'https://example.invalid/mcp' },
   sse: { transport: 'sse', url: 'https://example.invalid/events' },
 };
+
+for (const injectionDisabled of [false, true]) {
+  test(`member MCP off denies every native layer with injection ${injectionDisabled ? 'disabled' : 'configured'}`, async (t) => {
+    const member = catRegistry.getOrThrow('kimi').config;
+    const previous = member.mcpSupport;
+    t.after(() => {
+      if (previous === undefined) delete member.mcpSupport;
+      else member.mcpSupport = previous;
+    });
+    const f = await kimiNativeFixture(t, { capabilities: [managedCapability()] });
+    const originals = new Map([
+      [join(f.native, 'mcp.json'), { mcpServers: { homeTool: transports.http } }],
+      [join(f.project, '.mcp.json'), { mcpServers: { rootTool: transports.stdio } }],
+      [join(f.cwd, '.mcp.json'), { mcpServers: { cwdTool: transports.sse } }],
+      [f.file, { mcpServers: { originalProjectTool: transports.stdio } }],
+    ]);
+    for (const [file, value] of originals) {
+      await f.put(file, value);
+      originals.set(file, await readFile(file));
+    }
+    member.mcpSupport = false;
+    const lease = injectionDisabled
+      ? await prepareKimiMcpConfig({
+          workingDirectory: f.cwd,
+          mcpServerPath: '',
+          callbackEnv: { CAT_CAFE_CAT_ID: 'kimi', KIMI_CODE_HOME: f.native },
+        })
+      : await f.lease();
+    try {
+      await assertNativeDisabled(f);
+    } finally {
+      await lease.dispose();
+    }
+    for (const [file, before] of originals) assert.deepEqual(await readFile(file), before);
+    if (!injectionDisabled) {
+      member.mcpSupport = true;
+      const enabled = await f.lease();
+      try {
+        for (const load of Object.values(nativeLoaders)) {
+          const effective = await load(f.loadInput);
+          for (const name of ['cat-cafe-collab', 'rootTool', 'cwdTool']) {
+            assert.ok(effective[name] && effective[name].enabled !== false, `${name}: explicit enable must still work`);
+          }
+          assert.equal(effective.homeTool.enabled, false);
+        }
+      } finally {
+        await enabled.dispose();
+      }
+    }
+  });
+}
 
 test('native transport inference ignores foreign type hints on valid HOME entries', async (t) => {
   const f = await kimiNativeFixture(t);
@@ -40,7 +93,9 @@ async function assertNativeDisabled(f, names) {
   }
   for (const [version, load] of Object.entries(nativeLoaders)) {
     const effective = await load(f.loadInput);
-    for (const name of names) assert.equal(effective[name]?.enabled, false, `${version}: ${name} must stay disabled`);
+    for (const name of names ?? Object.keys(effective)) {
+      assert.equal(effective[name]?.enabled, false, `${version}: ${name} must stay disabled`);
+    }
   }
 }
 

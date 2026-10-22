@@ -1,3 +1,5 @@
+import { getCoCreatorDisplay } from '../../../../config/co-creator-display.js';
+import { coCreatorContractMention } from '../../../../config/co-creator-mention.js';
 /**
  * F247 AC-B1c-10 + AC-B1c-12: Thread runtime delta payload builder.
  *
@@ -55,8 +57,10 @@ const TRUNCATE_SUFFIX = '...[truncated]';
  * id is Host configuration, not user content; JSON quoting keeps it one value.
  */
 function sourceBoundMcpReturnContract(catId: string): string {
+  const mention = coCreatorContractMention(getCoCreatorDisplay().mention);
+  const mentionHint = mention ? `; optionally mention ${mention} at line start in content` : '';
   return `<cat-cafe-return-contract v=1>
-To complete this request, call cat_cafe_post_message with agentKeyCatId=${JSON.stringify(catId)}, threadId from thread-runtime, replyTo=sourceMessageId from thread-runtime, and content equal to your complete final answer. To reply to the human, omit targetCats; optionally mention @co-creator at line start in content. targetCats contains only cats you intend to wake, never a human ID. A visible ChatGPT answer alone does not complete this request. Treat callback status "ok" or "duplicate" as success; do not invent identifiers or retry an authorization rejection.
+To complete this request, call cat_cafe_post_message with agentKeyCatId=${JSON.stringify(catId)}, threadId from thread-runtime, replyTo=sourceMessageId from thread-runtime, and content equal to your complete final answer. To reply to the human, omit targetCats${mentionHint}. targetCats contains only cats you intend to wake, never a human ID. A visible ChatGPT answer alone does not complete this request. Treat callback status "ok" or "duplicate" as success; do not invent identifiers or retry an authorization rejection.
 </cat-cafe-return-contract>`;
 }
 

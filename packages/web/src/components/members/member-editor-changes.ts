@@ -30,6 +30,7 @@ const fields: Record<FormKey, MemberFieldLabels> = {
   carrier: ['接入方式', 'Connection', 'Transport'],
   provider: ['服务商名称', 'Provider name', 'OC Provider Name'],
   agyNativeEnabled: ['启用 Native', 'Enable Native'],
+  agyAcpEnabled: ['启用官方 ACP', 'Enable official ACP'],
   agyProfileEnabled: ['启用 Native', 'Enable Native'],
   agyAutoApprove: ['执行权限', 'Execution permissions'],
   agyProfileId: ['隔离 Profile ID', 'Isolated Profile ID'],

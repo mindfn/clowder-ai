@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
+import { getCoCreatorDisplay } from '../../../config/co-creator-display.js';
 import { assertMeasurementVerdictActionAllowed } from '../measurement/measurement-bundle-census.js';
 import {
   ensureMeasurementBundleCensusFile,
@@ -191,9 +192,9 @@ export async function handlePublishVerdict(
         const policy = computePublishPolicy(packet, attribution);
         const policyFooter =
           policy.mode === 'evidence_only_interim_pr'
-            ? `\n\n---\n**Cat-owned artifact gate — No operator merge needed.**\n(Interim: keep_observe + no actionable findings. Rollup mechanism deferred to future Phase. See docs/SOP.md § artifact-only-pr-merge-gate for cat merge contract.)`
+            ? `\n\n---\n**Cat-owned artifact gate — No ${getCoCreatorDisplay().role} merge needed.**\n(Interim: keep_observe + no actionable findings. Rollup mechanism deferred to future Phase. See docs/SOP.md § artifact-only-pr-merge-gate for cat merge contract.)`
             : policy.labels.includes('evidence-only')
-              ? `\n\n---\n**Cat-owned artifact gate — No operator merge needed.**\n(Actionable findings present; eval domain owner cat merges per docs/SOP.md § artifact-only-pr-merge-gate.)`
+              ? `\n\n---\n**Cat-owned artifact gate — No ${getCoCreatorDisplay().role} merge needed.**\n(Actionable findings present; eval domain owner cat merges per docs/SOP.md § artifact-only-pr-merge-gate.)`
               : '';
         return {
           // PR-2 R3 P1 (cloud): stage extra paths the generator wrote (cw raw inputs)

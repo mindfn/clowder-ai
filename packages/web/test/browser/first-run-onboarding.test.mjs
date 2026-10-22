@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { mkdir } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
@@ -10,6 +11,8 @@ import { createNextDevTestEnvironment } from './next-dev-test-environment.mjs';
 
 const WEB_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const NEXT_BIN = path.resolve(WEB_ROOT, '../../node_modules/next/dist/bin/next');
+const evidence = process.env.CAT_CAFE_ONBOARDING_EVIDENCE_DIR;
+let proofIndex = 0;
 
 async function freePort() {
   const server = createServer();
@@ -47,7 +50,10 @@ const serverOutput = [];
 
 before(async () => {
   const port = await freePort();
-  testEnvironment = await createNextDevTestEnvironment('onboarding');
+  testEnvironment = await createNextDevTestEnvironment('onboarding', {
+    API_SERVER_PORT: String(await freePort()),
+    NEXT_PUBLIC_API_URL: '',
+  });
   server = spawn(process.execPath, [NEXT_BIN, 'dev', '-H', '127.0.0.1', '-p', String(port)], {
     cwd: WEB_ROOT,
     env: testEnvironment.env,
@@ -84,8 +90,34 @@ after(async () => {
 function mockApi(route, runtimes, writes) {
   const request = route.request(),
     url = new URL(request.url());
+  // The shared home shell registers its window capability when its test socket connects.
+  // Admit only this bootstrap contract; every other POST remains in the no-write assertion.
+  if (url.pathname === '/api/concierge/home/clients' && request.method() === 'POST') {
+    const body = request.postDataJSON();
+    assert.match(body.clientId, /^[0-9a-f-]{36}$/);
+    assert.equal(body.socketId, 'onboarding-fixture');
+    return route.fulfill({ json: { clientToken: body.clientId, expiresAt: Date.now() + 60000 } });
+  }
   if (request.method() === 'POST') writes.push({ path: url.pathname, body: request.postDataJSON() });
   if (url.pathname === '/api/session') return route.fulfill({ json: { userId: 'onboarding-test' } });
+  if (url.pathname === '/api/concierge/config') return route.fulfill({ json: { config: { enabled: false } } });
+  if (url.pathname === '/api/concierge/thread') return route.fulfill({ json: { threadId: null } });
+  if (url.pathname === '/api/concierge/desktop') return route.fulfill({ json: { connected: false } });
+  // Home's shared shell reads this owner diagnostic before the wizard mounts.
+  // Return its actual empty snapshot shape instead of a successful malformed {}.
+  if (url.pathname === '/api/debug/callback-auth')
+    return route.fulfill({
+      json: {
+        reasonCounts: {},
+        toolCounts: {},
+        byCat: {},
+        recentSamples: [],
+        totalFailures: 0,
+        startedAt: 0,
+        uptimeMs: 0,
+        recent24h: { totalFailures: 0, byReason: {}, byTool: {}, byCat: {} },
+      },
+    });
   if (url.pathname === '/api/cats/native-runtimes') return route.fulfill({ json: { runtimes } });
   if (url.pathname === '/api/cats/runtime-models')
     return route.fulfill({
@@ -128,15 +160,39 @@ async function proof(runtimes, run) {
     errors = [];
   page.setDefaultTimeout(15000);
   page.on('pageerror', (error) => errors.push(error.message));
+  await page.routeWebSocket('**/socket.io/**', (socket) => {
+    const sid = 'onboarding-fixture';
+    socket.send(`0${JSON.stringify({ sid, upgrades: [], pingInterval: 300000, pingTimeout: 200000 })}`);
+    socket.onMessage((packet) => {
+      const text = String(packet);
+      if (text.startsWith('40')) socket.send(`40${JSON.stringify({ sid })}`);
+      if (!text.startsWith('42')) return;
+      const bracket = text.indexOf('['),
+        ack = text.slice(2, bracket);
+      const [event, room] = JSON.parse(text.slice(bracket));
+      if (event === 'join_room' && ack) socket.send(`43${ack}${JSON.stringify([{ ok: true, room }])}`);
+    });
+  });
   await page.route('**/api/**', (route) => mockApi(route, runtimes, writes));
+  const index = ++proofIndex;
   try {
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: '重新检测', exact: true }).waitFor();
+    if (evidence) {
+      await mkdir(evidence, { recursive: true });
+      await page.screenshot({ path: path.join(evidence, `${index}-setup.png`), fullPage: true });
+    }
     await run({ page, writes });
     assert.deepEqual(errors, []);
+    if (evidence) await page.screenshot({ path: path.join(evidence, `${index}-result.png`), fullPage: true });
   } catch (error) {
     console.error(
-      JSON.stringify({ url: page.url(), errors, dom: (await page.locator('body').innerText()).slice(0, 12000) }),
+      JSON.stringify({
+        url: page.url(),
+        errors,
+        writes,
+        dom: (await page.locator('body').innerText()).slice(0, 12000),
+      }),
     );
     throw error;
   } finally {
@@ -174,7 +230,16 @@ test('recommends all three installed tools, skips the demo and creates ordinary 
     assert.deepEqual(members[2].acp, { command: 'node', startupArgs: ['dsh.js', '--profile', 'acp'] });
     assert.equal(writes.find((write) => write.path === '/api/threads').body.bootcampState, undefined);
     const drafts = await page.evaluate(() => JSON.parse(sessionStorage.getItem('cat-cafe:thread-drafts')));
-    assert.deepEqual(drafts, [['thread-1', '@codex 把我的阅读计划拆成三步']]);
+    assert.equal(drafts.length, 1);
+    assert.equal(drafts[0][0], 'thread-1');
+    const lines = drafts[0][1].split('\n');
+    assert.equal(lines[0], members.map((member) => member.mentionPatterns[0]).join(' '));
+    assert.equal(lines[1], '把我的阅读计划拆成三步');
+    assert.equal(lines.at(-1), '#execute');
+    for (const [index, member] of members.entries())
+      assert.ok(
+        lines.some((line) => line.startsWith(`${index + 1}. ${member.displayName}（${member.mentionPatterns[0]}）`)),
+      );
   });
 });
 

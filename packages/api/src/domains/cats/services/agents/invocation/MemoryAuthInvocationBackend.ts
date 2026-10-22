@@ -15,6 +15,7 @@ import {
   type VerifyResult,
 } from './InvocationRegistry.js';
 import { normalizeOwnerAuthProvenance } from './owner-auth-provenance.js';
+import { assertCurrentAuthPrincipal } from './retired-auth-authorization.js';
 
 const DEFAULT_MAX_RECORDS = 500;
 const DEFAULT_TOMBSTONE_GC_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -37,8 +38,7 @@ export class MemoryAuthInvocationBackend implements IAuthInvocationBackend {
   }
 
   async create(input: AuthInvocationInput): Promise<void> {
-    if (Object.hasOwn(input, 'pluginTaskBinding') || Object.hasOwn(input, 'publicInvocationBinding'))
-      throw new Error('Unsupported invocation principal');
+    assertCurrentAuthPrincipal(input);
     this.cleanupTerminalTombstones();
     if (this.records.size >= this.maxRecords) throw new AuthInvocationAdmissionError();
 

@@ -71,22 +71,10 @@ function disabledServer(entry: Server, cwd: string): Server {
   throw new Error('Cannot create a valid native MCP denial; refusing workspace trust');
 }
 
-/** Highest-priority project entries close every lower native layer over the host-approved surface. */
-export async function resolveKimiMcpSurface(input: {
-  callbackEnv: Record<string, string>;
-  workingDirectory: string;
-  mcpServerPath: string;
-  nativeDirectory: string;
-}): Promise<Record<string, Server>> {
-  const projectRoot = await kimiProjectRoot(input.workingDirectory);
-  const servers = Object.assign(
-    Object.create(null) as Record<string, Server>,
-    await resolveProviderMcpConfig({ ...input, provider: 'kimi', projectMcpRoot: projectRoot }),
-  );
-  const layers = [
-    { path: join(input.nativeDirectory, 'mcp.json'), cwd: input.workingDirectory },
-    { path: join(projectRoot, '.mcp.json'), cwd: projectRoot },
-  ];
+async function denyUnapprovedNativeServers(
+  servers: Record<string, Server>,
+  layers: ReadonlyArray<{ path: string; cwd: string }>,
+): Promise<void> {
   for (const layer of layers) {
     for (const [name, entry] of Object.entries(await readServers(layer.path))) {
       if (!Object.hasOwn(servers, name) || servers[name]?.enabled === false) {
@@ -94,6 +82,30 @@ export async function resolveKimiMcpSurface(input: {
       }
     }
   }
+}
+
+/** Highest-priority project entries close every lower native layer over the host-approved surface. */
+export async function resolveKimiMcpSurface(input: {
+  callbackEnv: Record<string, string>;
+  workingDirectory: string;
+  mcpServerPath: string;
+  nativeDirectory: string;
+  mcpSupport?: boolean;
+}): Promise<Record<string, Server>> {
+  const projectRoot = await kimiProjectRoot(input.workingDirectory);
+  const servers = Object.create(null) as Record<string, Server>;
+  // A member-wide denial takes precedence over host, project and native sources.
+  if (input.mcpSupport !== false) {
+    Object.assign(servers, await resolveProviderMcpConfig({ ...input, provider: 'kimi', projectMcpRoot: projectRoot }));
+  }
+  const layers = [
+    { path: join(input.nativeDirectory, 'mcp.json'), cwd: input.workingDirectory },
+    { path: join(projectRoot, '.mcp.json'), cwd: projectRoot },
+    ...(input.mcpSupport === false
+      ? [{ path: join(input.workingDirectory, '.mcp.json'), cwd: input.workingDirectory }]
+      : []),
+  ];
+  await denyUnapprovedNativeServers(servers, layers);
   // Approved MCP children inherit callbacks from the invocation, never a file.
   for (const entry of Object.values(servers)) {
     if (entry.env && typeof entry.env === 'object') {

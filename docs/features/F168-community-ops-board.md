@@ -4,7 +4,7 @@ related_features: [F141, F116, F140, F055, F122, F167, F192, F220, F233, F280]
 topics: [community, orchestration, opensource]
 doc_kind: spec
 created: 2026-04-18
-tips_exempt: "C1 withdraws admission of the retired Host external-review transfer tool. This ownership correction does not introduce a user operation or claim plugin runtime activation."
+tips_exempt: "Renewed 2026-10-21: retain the public C1 notice withdrawing the retired Host external-review transfer tool and summarize the existing independent-installation requirement. No new user operation or plugin activation is claimed."
 ---
 
 # F168: Community Operations Board — 社区事务编排引擎
@@ -238,7 +238,7 @@ operator现在是人肉 dispatcher：手动 @ 猫看 issue/PR、手动分配线�
 
 **架构约束**：
 > "未来这个 feat 最后一个阶段就是要允许社区其他小伙伴用你们这套管理他们自己的社区！你们在架构设计上必须是解耦的！"
-> "人家也是用自己家里搭建的Clowder AI呀！不是用这本地这个！但是必须是比如说你的 operator 可以管理 clowder-ai 也能管理其他 operator 的自己的仓"
+社区管理面向各自独立安装的操作者；每个安装实例都应能管理自己的仓库（原意摘要）。
 
 **初版交互策略**：
 > "我建议我们最开始的 A-C 的完整版本，这里的 issue 和 PR 触发别是自动的巡检，而是我手动点击"

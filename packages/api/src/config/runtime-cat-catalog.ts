@@ -20,6 +20,7 @@ import type { AcpVariantConfig } from './cat-config-loader.js';
 import { _resetCachedConfig, loadCatConfig, parseRawCatConfig, toAllCatConfigs } from './cat-config-loader.js';
 import { clearVoiceCache } from './cat-voices.js';
 import { planClaudeAccountBinding } from './claude-account-binding.js';
+import { coCreatorMentionInputSchema } from './co-creator-mention.js';
 import {
   assertCodexMemberMutationReady,
   type CodexBindingSelection,
@@ -182,7 +183,7 @@ function normalizeCoCreatorMentionPatterns(mentionPatterns: readonly string[]): 
   const values = mentionPatterns
     .map((pattern) => pattern.trim())
     .filter((pattern) => pattern.length > 0)
-    .map((pattern) => (pattern.startsWith('@') ? pattern : `@${pattern}`));
+    .map((pattern) => coCreatorMentionInputSchema.parse(pattern));
   return Array.from(new Set(values));
 }
 
@@ -870,6 +871,7 @@ export function updateRuntimeCoCreator(projectRoot: string, patch: RuntimeCoCrea
 
   const normalizedOwner: CoCreatorConfig = {
     name: String(nextOwner.name ?? currentOwner.name),
+    ...(typeof nextOwner.nickname === 'string' ? { nickname: nextOwner.nickname } : {}),
     aliases: Array.isArray(nextOwner.aliases) ? (nextOwner.aliases as string[]) : [...currentOwner.aliases],
     mentionPatterns: Array.isArray(nextOwner.mentionPatterns)
       ? (nextOwner.mentionPatterns as string[])

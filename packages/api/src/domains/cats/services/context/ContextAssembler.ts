@@ -1,3 +1,4 @@
+import { getCoCreatorDisplay } from '../../../../config/co-creator-display.js';
 /**
  * Context Assembler
  * 从 messageStore 历史消息组装上下文字符串，prepend 到猫的 prompt 中。
@@ -54,7 +55,7 @@ export function buildMessageMap(messages: readonly StoredMessage[]): ReadonlyMap
  * For variant cats (e.g. sonnet, opus-45), includes variantLabel to distinguish same-family members.
  */
 export function getSenderName(catId: string | null): string {
-  if (catId === null) return 'co-creator';
+  if (catId === null) return `${getCoCreatorDisplay().nickname}`;
   const entry = catRegistry.tryGet(catId);
   const config = entry?.config;
   if (!config) return catId;
@@ -121,7 +122,7 @@ function getMessageSenderName(
   const from = messageFrom(msg);
   switch (from.kind) {
     case 'user':
-      return 'co-creator';
+      return `${getCoCreatorDisplay().nickname}`;
     case 'agent':
       return `${getSenderName(from.catId)}${servedModelMarker(msg)}`;
     case 'external': {
