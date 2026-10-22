@@ -146,14 +146,14 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     const pkg = instance && snapshot.packages.find((item) => item.packageDigest === instance.packageDigest);
     if (pkg?.manifest === null) {
       await this.beforeStop?.(pluginInstanceId, reason);
-      this.#runtimeContributions.deactivate(pluginInstanceId);
+      await this.#runtimeContributions.deactivate(pluginInstanceId);
       if (removesPluginOwnedResources(reason)) await removeDeclaredStaticResources(pkg.pluginId, this.resources);
       return;
     }
     const admission = await this.#admission(pluginInstanceId);
     const carrier = this.#selectAdmission(admission);
     await this.beforeStop?.(pluginInstanceId, reason);
-    this.#runtimeContributions.deactivate(pluginInstanceId);
+    await this.#runtimeContributions.deactivate(pluginInstanceId);
     await carrier.stop(pluginInstanceId, reason);
     if (removesPluginOwnedResources(reason)) {
       await removeDeclaredStaticResources(admission.packageRecord.pluginId, this.resources);
@@ -195,7 +195,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
       const inventory = await this.inventory.snapshot();
       await Promise.all(inventory.instances.map((instance) => this.beforeStop?.(instance.pluginInstanceId, reason)));
     }
-    this.#runtimeContributions.deactivateAll();
+    await this.#runtimeContributions.deactivateAll();
     const carrierResults = await Promise.allSettled(this.#carriers.map((carrier) => carrier.stopAll(reason)));
     const carrierFailure = carrierResults.find(
       (result): result is PromiseRejectedResult => result.status === 'rejected',
@@ -330,7 +330,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
       rollbackErrors.push(error);
     }
     try {
-      this.#runtimeContributions.deactivate(admission.instance.pluginInstanceId);
+      await this.#runtimeContributions.deactivate(admission.instance.pluginInstanceId);
       await removeDeclaredStaticResources(admission.packageRecord.pluginId, this.resources);
     } catch (error) {
       rollbackErrors.push(error);

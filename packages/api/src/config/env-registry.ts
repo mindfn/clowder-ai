@@ -115,6 +115,24 @@ export const ENV_CATEGORIES: Record<EnvCategory, string> = {
 
 export const ENV_VARS: EnvDefinition[] = [
   {
+    name: 'CAT_CAFE_AGENT_SESSION_CONTRACT',
+    runtimeEditable: false,
+    restartRequired: true,
+    category: 'cli',
+    sensitive: false,
+    description: '会话契约插件接入：plugin（默认，未绑定成员沿用原服务）或 off',
+    defaultValue: 'plugin',
+  },
+  {
+    name: 'CAT_CAFE_AGENT_SESSION_BINDINGS',
+    runtimeEditable: false,
+    restartRequired: true,
+    category: 'cli',
+    sensitive: false,
+    description: '猫成员到插件会话实现的 JSON 绑定',
+    defaultValue: '{}',
+  },
+  {
     name: 'PLUGIN_GIT_MARKETPLACE',
     defaultValue: '(未设置)',
     description:

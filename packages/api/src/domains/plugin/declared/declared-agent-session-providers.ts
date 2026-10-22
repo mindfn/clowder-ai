@@ -1,0 +1,103 @@
+import { open } from 'node:fs/promises';
+import { isDeepStrictEqual } from 'node:util';
+import type { CatId } from '@cat-cafe/shared';
+import {
+  type SessionImplementationRegistry,
+  sessionImplementationKey,
+} from '../../cats/services/agents/session-contract/implementation-registry.js';
+import {
+  AGENT_PROVIDER_DECLARATION_FILE,
+  type AgentProviderDeclaration,
+  parseAgentProviderDeclaration,
+} from '../../cats/services/agents/session-contract/plugin-agent-provider.js';
+import { registerPluginAgentProvider } from '../../cats/services/agents/session-contract/plugin-agent-provider-registration.js';
+import type { RegisteredSessionAgentService } from '../../cats/services/agents/session-contract/registered-session-agent-service.js';
+import type { SessionContractSettings } from '../../cats/services/agents/session-contract/session-contract-settings.js';
+import type { AgentSessionProvider } from '../../cats/services/agents/session-contract/types.js';
+import type { PluginRuntimeAdmission } from '../carrier/runtime-carrier.js';
+import type { VerifiedPluginPackageLocator } from '../external-runtime/types.js';
+import { resolvePackageFile } from './declared-resource-paths.js';
+export interface AgentSessionProviderLifecycle {
+  activate(admission: PluginRuntimeAdmission): Promise<(() => Promise<void>) | undefined>;
+}
+export function declaredAgentSessionProviders(input: {
+  settings: SessionContractSettings;
+  packages: VerifiedPluginPackageLocator;
+  registry: SessionImplementationRegistry;
+  services: ReadonlyMap<string, RegisteredSessionAgentService>;
+  log?: { info(...args: unknown[]): void; warn(...args: unknown[]): void };
+  createProvider(declaration: AgentProviderDeclaration, ctx: { catId: CatId }): AgentSessionProvider;
+}): AgentSessionProviderLifecycle {
+  return {
+    async activate(admission) {
+      if (input.settings.mode === 'off') return;
+      const pluginId = admission.packageRecord.pluginId;
+      let providerId = 'unknown';
+      const log = (result: string, reason?: string) =>
+        input.log?.[result === 'rejected' ? 'warn' : 'info'](
+          { pluginId, providerId, protocol: 'acp', result, ...(reason ? { reason } : {}) },
+          `[session-contract] agent-provider ${result}`,
+        );
+      const located = await input.packages.resolveInstalledPackage(admission.packageRecord.packageDigest);
+      try {
+        if (!isDeepStrictEqual(located.manifest, admission.packageRecord.manifest))
+          throw new Error('Agent provider package authority mismatch');
+        await located.verifyIntegrity();
+        let path: string;
+        try {
+          path = await resolvePackageFile(
+            located.rootDir,
+            AGENT_PROVIDER_DECLARATION_FILE,
+            'Agent provider declaration',
+          );
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+          throw error;
+        }
+        const raw = await readDeclaration(path);
+        await located.verifyIntegrity();
+        providerId = declarationId(raw);
+        const result = parseAgentProviderDeclaration(raw, { packageRoot: located.rootDir });
+        if (!result.ok) throw new Error(`${result.code}: ${result.reason}`);
+        const registration = registerPluginAgentProvider(input.registry, {
+          pluginId: admission.packageRecord.pluginId,
+          declaration: result.declaration,
+          createProvider: input.createProvider,
+        });
+        log('registered');
+        return async () => {
+          registration.unregister();
+          log('unregistered');
+          await Promise.all(
+            [...input.settings.bindings]
+              .filter(([, ref]) => sessionImplementationKey(ref) === registration.key)
+              .map(([catId]) => input.services.get(catId)?.releaseAll('implementation_unregistered')),
+          );
+        };
+      } catch (error) {
+        log('rejected', String(error));
+        throw error;
+      } finally {
+        await located.release();
+      }
+    },
+  };
+}
+
+function declarationId(raw: unknown): string {
+  return raw && typeof raw === 'object' && 'id' in raw && typeof raw.id === 'string' ? raw.id.slice(0, 128) : 'unknown';
+}
+
+async function readDeclaration(path: string): Promise<unknown> {
+  const file = await open(path, 'r');
+  try {
+    const size = (await file.stat()).size;
+    if (size > 65536) throw new Error('Agent provider declaration exceeds 64 KiB');
+    const buffer = Buffer.alloc(65537);
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+    if (bytesRead !== size) throw new Error('Agent provider declaration changed while reading');
+    return JSON.parse(buffer.subarray(0, bytesRead).toString('utf8'));
+  } finally {
+    await file.close();
+  }
+}

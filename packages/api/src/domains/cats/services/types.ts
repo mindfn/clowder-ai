@@ -1044,6 +1044,8 @@ export interface LocalSessionReadInput {
 }
 
 export interface AgentServiceOptions {
+  /** Host logical SessionRecord identity; sessionId remains the native resume id. */
+  hostSessionId?: string;
   /** Binding restored from the canonical SessionRecord, including across API restarts. */
   nativeSessionBinding?: import('@cat-cafe/shared').NativeSessionBinding;
   /** Imported histories must never be silently replaced by a fresh native session. */

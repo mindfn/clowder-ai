@@ -46,6 +46,7 @@ import { PluginRuntimeCarrierRouter } from './carrier/runtime-carrier.js';
 import { ContentEditorPluginRuntime } from './content-editor-runtime/runtime.js';
 import { ContentEditorSemanticWorker } from './content-editor-runtime/semantic-worker.js';
 import type { CloudConversationHostRegistry } from './declared/cloud-conversation-host-registry.js';
+import type { AgentSessionProviderLifecycle } from './declared/declared-agent-session-providers.js';
 import type { DeclaredScheduleTaskRunner } from './declared/declared-runtime-contributions.js';
 import { desktopWindowContribution } from './desktop-window-runtime/admission.js';
 import { OwnerDesktop } from './desktop-window-runtime/owner-desktop.js';
@@ -169,6 +170,7 @@ export interface DormantPluginRuntimeCompositionOptions {
   /** Live Host registries consumed by package-declared runtime contributions. */
   readonly limbRegistry?: LimbRegistry;
   readonly cloudConversationHosts?: CloudConversationHostRegistry;
+  readonly agentSessionProviders?: (packages: VerifiedPluginPackageLocator) => AgentSessionProviderLifecycle;
   readonly taskRunner?: DeclaredScheduleTaskRunner;
   /** Injectable so isolated tests never regenerate a user's CLI configuration. */
   readonly mcpConfigIO?: McpConfigIO;
@@ -543,6 +545,7 @@ export function createDormantPluginRuntimeComposition(
     {
       packages,
       configuration,
+      agentSessionProviders: options.agentSessionProviders?.(packages),
       ...(options.cloudConversationHosts === undefined
         ? {}
         : { cloudConversationHosts: options.cloudConversationHosts }),
