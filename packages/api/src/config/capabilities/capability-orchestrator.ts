@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, 
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, dirname, extname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type {
   CapabilitiesConfig,
   CapabilityConfigUnreadableCause,
@@ -22,6 +23,7 @@ import type {
   McpServerDescriptor,
 } from '@cat-cafe/shared';
 import { catRegistry } from '@cat-cafe/shared';
+import { findMonorepoRoot } from '../../utils/monorepo-root.js';
 import { resolveCatCafeSkillsSource } from '../../utils/skill-source.js';
 import { migrateCapabilitiesV1ToV2 } from '../governance/capabilities-migration.js';
 import {
@@ -933,14 +935,14 @@ const CAT_CAFE_SUPPLEMENTAL_SPLIT_SERVERS = [
  *   2. explicit `catCafeRepoRoot` opt (typically `resolveMainRepoPath()` from
  *      `routes/capabilities.ts`; correct in dev mode but stale in runtime mode
  *      until env overrides)
- *   3. process.cwd() fallback (the API process's cwd is by definition the
- *      binary location when no explicit signal is set)
+ *   3. Workspace containing this executable module (API commonly starts in
+ *      packages/api; neither that cwd nor a thread workspace identifies the Host root)
  */
 export function resolveBinaryRoot(explicit?: string): string {
   const runtimeRoot = process.env.CAT_CAFE_RUNTIME_ROOT?.trim();
   if (runtimeRoot) return runtimeRoot;
   if (explicit) return explicit;
-  return process.cwd();
+  return findMonorepoRoot(dirname(fileURLToPath(import.meta.url)));
 }
 
 function buildCatCafeSplitMcpDescriptors(binaryRoot: string): McpServerDescriptor[] {
