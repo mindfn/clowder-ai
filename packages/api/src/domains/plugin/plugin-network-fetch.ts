@@ -34,8 +34,10 @@ function responseHeaders(values: IncomingHttpHeaders): Headers {
 }
 
 function bridgeResponse(incoming: IncomingMessage, chunks: Buffer[]): Response {
-  return new Response(Buffer.concat(chunks), {
-    status: incoming.statusCode ?? 502,
+  const status = incoming.statusCode ?? 502;
+  const body = status === 204 || status === 205 || status === 304 ? null : Buffer.concat(chunks);
+  return new Response(body, {
+    status,
     statusText: incoming.statusMessage,
     headers: responseHeaders(incoming.headers),
   });
@@ -59,7 +61,13 @@ async function fetchThroughBridge(target: URL, init: RequestInit, config: { endp
         const chunks: Buffer[] = [];
         incoming.on('data', (chunk: Buffer) => chunks.push(chunk));
         incoming.once('error', reject);
-        incoming.once('end', () => resolve(bridgeResponse(incoming, chunks)));
+        incoming.once('end', () => {
+          try {
+            resolve(bridgeResponse(incoming, chunks));
+          } catch (error) {
+            reject(error);
+          }
+        });
       },
     );
     request.once('error', reject);

@@ -78,11 +78,14 @@ async function pipeBoundedResponse(source, response, maxBytes) {
   }
 }
 
-async function fetchAllowedTarget(request, response, policy, netFetch) {
+async function fetchAllowedTarget(request, response, policy, netFetch, activeControllers) {
   const controller = new AbortController();
+  activeControllers.add(controller);
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   timeout.unref?.();
-  request.once('aborted', () => controller.abort());
+  const abort = () => controller.abort();
+  request.once('aborted', abort);
+  response.once('close', abort);
   try {
     const upstream = await netFetch(policy.url.href, {
       headers: {
@@ -94,17 +97,23 @@ async function fetchAllowedTarget(request, response, policy, netFetch) {
     await pipeBoundedResponse(upstream, response, policy.maxBytes);
   } finally {
     clearTimeout(timeout);
+    request.off('aborted', abort);
+    response.off('close', abort);
+    activeControllers.delete(controller);
   }
 }
 
-async function handleBridgeRequest(request, response, token, netFetch) {
+function bridgeRequestRejection(request, token) {
+  if (request.method !== 'POST' || request.url !== '/fetch') return 404;
+  if (request.headers.authorization !== `Bearer ${token}`) return 401;
+  return null;
+}
+
+async function handleBridgeRequest(request, response, token, netFetch, activeControllers, isClosing) {
   response.setHeader('cache-control', 'no-store');
-  if (request.method !== 'POST' || request.url !== '/fetch') {
-    response.writeHead(404).end();
-    return;
-  }
-  if (request.headers.authorization !== `Bearer ${token}`) {
-    response.writeHead(401).end();
+  const rejection = bridgeRequestRejection(request, token);
+  if (rejection !== null) {
+    response.writeHead(rejection).end();
     return;
   }
   try {
@@ -114,22 +123,32 @@ async function handleBridgeRequest(request, response, token, netFetch) {
       response.writeHead(403).end();
       return;
     }
-    await fetchAllowedTarget(request, response, policy, netFetch);
+    if (isClosing()) {
+      response.writeHead(503).end();
+      return;
+    }
+    await fetchAllowedTarget(request, response, policy, netFetch, activeControllers);
   } catch (error) {
+    if (response.destroyed) return;
     if (!response.headersSent) response.writeHead(error?.message === 'REQUEST_TOO_LARGE' ? 413 : 502);
-    response.end();
+    if (!response.writableEnded) response.end();
   }
 }
 
 function createPluginNetworkBridge({ netFetch }) {
   if (typeof netFetch !== 'function') throw new TypeError('Electron net.fetch is required');
   const token = crypto.randomBytes(32).toString('base64url');
+  const activeControllers = new Set();
   let server;
+  let closing = false;
 
   return {
     async start() {
       if (server) throw new Error('Plugin network bridge already started');
-      server = http.createServer((request, response) => handleBridgeRequest(request, response, token, netFetch));
+      closing = false;
+      server = http.createServer((request, response) =>
+        handleBridgeRequest(request, response, token, netFetch, activeControllers, () => closing),
+      );
       await new Promise((resolve, reject) => {
         server.once('error', reject);
         server.listen(0, LOOPBACK_HOST, resolve);
@@ -142,6 +161,9 @@ function createPluginNetworkBridge({ netFetch }) {
       const active = server;
       server = undefined;
       if (!active) return;
+      closing = true;
+      for (const controller of activeControllers) controller.abort();
+      active.closeAllConnections?.();
       await new Promise((resolve, reject) => active.close((error) => (error ? reject(error) : resolve())));
     },
   };

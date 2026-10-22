@@ -135,17 +135,8 @@ export function PluginManagerLiveContent({
     [loadDetail, selectPlugin],
   );
 
-  const loadList = useCallback(
-    async (search: string, afterMutation = false) => {
-      const generation = ++listGeneration.current;
-      let localCommitted = false;
-      try {
-        const localValue = await fetchManagerList(search, afterMutation, true);
-        localCommitted = await commitListSnapshot(localValue, generation, afterMutation, true);
-        if (!localCommitted) return localValue;
-      } catch {
-        // Older Hosts and partially upgraded desktop bundles can still fall through to canonical discovery.
-      }
+  const hydrateRemoteList = useCallback(
+    async (search: string, generation: number, afterMutation: boolean, localCommitted: boolean) => {
       try {
         const value = await fetchManagerList(search, afterMutation);
         await commitListSnapshot(value, generation, afterMutation, false);
@@ -171,6 +162,23 @@ export function PluginManagerLiveContent({
       }
     },
     [commitListSnapshot],
+  );
+
+  const loadList = useCallback(
+    async (search: string, afterMutation = false) => {
+      const generation = ++listGeneration.current;
+      try {
+        const localValue = await fetchManagerList(search, afterMutation, true);
+        const localCommitted = await commitListSnapshot(localValue, generation, afterMutation, true);
+        if (!localCommitted) return localValue;
+        void hydrateRemoteList(search, generation, afterMutation, true);
+        return localValue;
+      } catch {
+        // Older Hosts and partially upgraded desktop bundles can still fall through to canonical discovery.
+        return hydrateRemoteList(search, generation, afterMutation, false);
+      }
+    },
+    [commitListSnapshot, hydrateRemoteList],
   );
 
   useEffect(() => {
