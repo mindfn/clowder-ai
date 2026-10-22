@@ -42,7 +42,6 @@ import {
   resolveForClient,
   validateRuntimeProviderBinding,
 } from './config/account-resolver.js';
-import { resolveBinaryRoot } from './config/capabilities/capability-orchestrator.js';
 import { regenerateStartupCliConfigs } from './config/capabilities/startup-cli-config.js';
 import { resolveBoundAccountRefForCat } from './config/cat-account-binding.js';
 import {
@@ -4808,7 +4807,6 @@ async function main(): Promise<void> {
   const collectiveArtifactOwnerHolder: import('./domains/plugin/host-surface/collective-artifact-owner.js').CollectiveArtifactOwnerHolder =
     {};
   const pluginRuntime = cloudConversations.createRuntime({
-    mcpHostRoot: resolveBinaryRoot(),
     collectiveArtifactOwner: collectiveArtifactOwnerHolder,
     taskArtifactReader: preparedArtifactReader,
     limbRegistry,

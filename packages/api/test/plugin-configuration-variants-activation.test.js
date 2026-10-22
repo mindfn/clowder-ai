@@ -10,10 +10,13 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { afterEach, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { catRegistry } from '@cat-cafe/shared';
 import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 import { fileBasedMcpIO } from '../dist/config/capabilities/capability-mcp-service.js';
 import {
@@ -49,13 +52,12 @@ function fakeTaskRunner() {
   };
 }
 
-function createRuntime(projectRoot, mcpConfigIO, hostRoot = projectRoot) {
+function createRuntime(projectRoot, mcpConfigIO) {
   const limbRegistry = new LimbRegistry();
   return {
     limbRegistry,
     runtime: createDormantPluginRuntimeComposition({
       projectRoot,
-      mcpHostRoot: hostRoot,
       messageStore: new MessageStore(),
       contract: {
         manifestContractRange: '0.1.0 || 0.2.0',
@@ -137,7 +139,7 @@ function feishuManifest() {
   };
 }
 
-async function writeFixturePackage(nativeAction = false) {
+async function writeFixturePackage(nativeAction = false, mcpTools = false) {
   const packageRoot = await tempRoot('cat-cafe-variants-feishu-package-');
   await mkdir(join(packageRoot, 'dist'), { recursive: true });
   const manifest = feishuManifest();
@@ -148,7 +150,23 @@ async function writeFixturePackage(nativeAction = false) {
     'export default { create() { return { start() { return { actions: { "native.run": async input => input }, stop() {} }; } }; } };\n',
     'utf8',
   );
-  await writeFile(join(packageRoot, 'dist/mcp.js'), 'process.exit(0);\n', 'utf8');
+  await writeFile(
+    join(packageRoot, 'dist/mcp.js'),
+    mcpTools
+      ? `import { createInterface } from 'node:readline';
+if (!process.env.CLOWDER_PLUGIN_ACTION_TOKEN) process.exit(2);
+createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  const result = request.method === 'initialize'
+    ? { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'runtime-root-fixture', version: '1' } }
+    : { tools: [{ name: 'fixture_native_action', inputSchema: { type: 'object' } }] };
+  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
+});
+`
+      : 'process.exit(0);\n',
+    'utf8',
+  );
   return packageRoot;
 }
 
@@ -158,14 +176,14 @@ async function installConfigureEnable(updates, roots) {
     (roots?.configOnWorkspace ? roots.workspace : roots?.runtime) ??
     (await tempRoot('cat-cafe-variants-feishu-project-'));
   const configRoot = roots?.workspace ?? projectRoot;
-  const packageRoot = await writeFixturePackage(Boolean(roots));
+  const packageRoot = await writeFixturePackage(Boolean(roots), roots?.mcpTools);
   const io = roots
     ? fileBasedMcpIO(configRoot, {
         google: join(configRoot, '.gemini/settings.json'),
         antigravity: join(configRoot, '.test-antigravity/mcp.json'),
       })
     : undefined;
-  const { runtime } = createRuntime(projectRoot, io, roots?.runtime);
+  const { runtime } = createRuntime(projectRoot, io);
   const composition = createPluginManagerRuntimeComposition({
     runtime,
     catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
@@ -392,3 +410,57 @@ for (const configOnWorkspace of [false, true])
       await ownedRuntime?.shutdown();
     }
   });
+
+test('package API cwd without runtime override reaches MCP tools/list through production composition', async () => {
+  const runtimeRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+  const workspaceRoot = await tempRoot('plugin-api-cwd-policy-');
+  const consumer = await tempRoot('plugin-api-cwd-consumer-');
+  const previousCwd = process.cwd();
+  const saved = Object.fromEntries(
+    ['CAT_CAFE_RUNTIME_ROOT', 'CAT_CAFE_WORKSPACE_ROOT'].map((key) => [key, process.env[key]]),
+  );
+  let ownedRuntime;
+  let client;
+  try {
+    delete process.env.CAT_CAFE_RUNTIME_ROOT;
+    delete process.env.CAT_CAFE_WORKSPACE_ROOT;
+    process.chdir(join(runtimeRoot, 'packages/api'));
+    await writeCapabilitiesConfig(workspaceRoot, { version: 2, capabilities: [] });
+    const f = await installConfigureEnable(
+      [
+        { key: 'connectionMode', value: 'websocket' },
+        { key: 'appId', value: 'cli_1' },
+      ],
+      {
+        runtime: runtimeRoot,
+        workspace: workspaceRoot,
+        configOnWorkspace: true,
+        mcpTools: true,
+      },
+    );
+    ownedRuntime = f.runtime;
+    await writeCapabilitiesConfig(consumer, { version: 2, capabilities: [f.capability] });
+    const servers = await resolveProviderMcpConfig({
+      workingDirectory: consumer,
+      mcpServerPath: join(runtimeRoot, 'packages/mcp-server/dist/index.js'),
+      callbackEnv: { CAT_CAFE_CAT_ID: catRegistry.getAllIds()[0] },
+    });
+    const server = servers[f.capability.id.replaceAll(':', '__')];
+    assert.ok(server, 'an enabled plugin must remain discoverable from the normal packages/api startup cwd');
+    client = new Client({ name: 'api-cwd-acceptance', version: '1' });
+    await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: server.env }));
+    const tools = await client.listTools();
+    assert.deepEqual(
+      tools.tools.map((tool) => tool.name),
+      ['fixture_native_action'],
+    );
+  } finally {
+    await client?.close();
+    await ownedRuntime?.shutdown();
+    process.chdir(previousCwd);
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
