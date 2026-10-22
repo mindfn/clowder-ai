@@ -116,7 +116,7 @@ function createRuntime(
     runtime: createDormantPluginRuntimeComposition({
       projectRoot,
       messageStore: new MessageStore(),
-      contract: { manifestContractVersions: ['0.1.0'], validateEffectiveGrants, validateManifest },
+      contract: { manifestContractRange: '0.1.0', validateEffectiveGrants, validateManifest },
       limbRegistry,
       taskRunner,
       mcpConfigIO: mcpConfigIO ?? {
