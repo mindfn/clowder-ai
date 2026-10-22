@@ -14,6 +14,7 @@
  * rejects a malformed declaration at install time.
  */
 
+import { createRequire } from 'node:module';
 import type { ConfigurationField, PluginManifest } from '@clowder-ai/plugin-contract';
 import {
   buildVariantValidationSchema,
@@ -22,6 +23,9 @@ import {
   resolveConfigurationVariant,
 } from '@clowder-ai/plugin-contract/variant';
 import { Ajv } from 'ajv';
+import type { FormatsPlugin } from 'ajv-formats';
+
+const addFormats = createRequire(import.meta.url)('ajv-formats') as FormatsPlugin;
 
 export type { VariantResolution } from '@clowder-ai/plugin-contract/variant';
 
@@ -68,6 +72,7 @@ export function effectiveConfigurationIsValid(
   let validate = effectiveValidators.get(manifest);
   if (!validate) {
     const ajv = new Ajv({ allErrors: true });
+    addFormats(ajv);
     validate = ajv.compile(buildVariantValidationSchema(manifest)) as ValidateEffective;
     effectiveValidators.set(manifest, validate);
   }

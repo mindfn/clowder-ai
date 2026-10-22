@@ -20,6 +20,7 @@ import {
   ManifestConfigurationProjectionError,
   resolveManifestConfiguration,
 } from '../dist/domains/plugin/manifest-configuration-projection.js';
+import { readPluginConfig, writePluginConfig } from '../dist/domains/plugin/plugin-config-store.js';
 
 const INSTANCE_ID = 'pi-feishu-variants';
 const PLUGIN_ID = 'dev.clowder.feishu';
@@ -259,6 +260,105 @@ describe('§3.1/§3.2 console projection and save readiness', () => {
     });
     return { store, service: new HostPluginConfigurationService({ projectRoot, inventory: store }) };
   }
+
+  test('URL readiness validates persisted nonempty values with the contract URI schema', async (t) => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'variants-uri-readiness-'));
+    t.after(() => rmSync(projectRoot, { recursive: true, force: true }));
+    const base = feishuManifest();
+    const manifest = {
+      ...base,
+      configuration: [
+        ...base.configuration,
+        { key: 'callbackUrl', label: 'Callback URL', kind: 'url', required: true },
+      ],
+    };
+    const { store, service } = serviceWith(manifest, projectRoot);
+    for (const [value, readiness] of [
+      ['https://example.org/callback?mode=webhook', 'ready'],
+      ['not a URL', 'incomplete'],
+      ['/relative/callback', 'incomplete'],
+      ['', 'incomplete'],
+      ['http://example.org/callback', 'ready'],
+    ]) {
+      // Reconcile persisted configuration, including values saved before this
+      // contract version; the configure request's URL validator cannot mask it.
+      writePluginConfig(projectRoot, PLUGIN_ID, [
+        { name: 'appId', value: 'cli_1' },
+        { name: 'callbackUrl', value },
+      ]);
+      await service.reconcile(PLUGIN_ID, INSTANCE_ID);
+      assert.equal((await store.snapshot()).instances[0].configReadiness, readiness, value);
+    }
+  });
+
+  test('required operation readiness comes from scalar targets without a stored operation value', async (t) => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'variants-operation-readiness-'));
+    t.after(() => rmSync(projectRoot, { recursive: true, force: true }));
+    const base = feishuManifest();
+    const manifest = {
+      ...base,
+      configuration: [
+        ...base.configuration,
+        { key: 'callbackUrl', label: 'Callback URL', kind: 'url', required: true },
+        {
+          key: 'connect',
+          label: 'Connect',
+          kind: 'operation',
+          required: true,
+          target: ['appId', 'callbackUrl'],
+          actions: [{ id: 'start', label: 'Start', render: 'button', action: { method: 'connect.start' } }],
+        },
+      ],
+    };
+    const { store, service } = serviceWith(manifest, projectRoot);
+    assert.equal((await service.fields(PLUGIN_ID)).find((field) => field.key === 'connect').configured, false);
+    await service.configureOperationTargets(PLUGIN_ID, INSTANCE_ID, 'connect', {
+      appId: 'cli_1',
+      callbackUrl: 'https://example.org/callback',
+    });
+    await service.reconcile(PLUGIN_ID, INSTANCE_ID);
+    assert.equal((await service.fields(PLUGIN_ID)).find((field) => field.key === 'connect').configured, true);
+    assert.equal((await store.snapshot()).instances[0].configReadiness, 'ready');
+    assert.equal(Object.hasOwn(readPluginConfig(projectRoot, PLUGIN_ID), 'connect'), false);
+  });
+
+  for (const [kind, key] of [
+    ['string', 'appId'],
+    ['secret', 'verificationToken'],
+  ]) {
+    test(`whitespace-only ${kind} keeps variant readiness incomplete without rewriting stored values`, async (t) => {
+      const projectRoot = mkdtempSync(join(tmpdir(), 'variants-whitespace-readiness-'));
+      t.after(() => rmSync(projectRoot, { recursive: true, force: true }));
+      const { store, service } = serviceWith(feishuManifest(), projectRoot);
+      const values = { connectionMode: 'webhook', appId: 'cli_1', verificationToken: 'fixture-token', [key]: ' \t\n' };
+      await service.configure(PLUGIN_ID, INSTANCE_ID, {
+        expectedRevision: 1,
+        updates: Object.entries(values).map(([key, value]) => ({ key, value })),
+      });
+      assert.equal(readPluginConfig(projectRoot, PLUGIN_ID)[key], values[key]);
+      assert.equal((await store.snapshot()).instances[0].configReadiness, 'incomplete');
+    });
+  }
+
+  test('a secret containing non-whitespace characters stays byte-identical in storage and startup projection', async (t) => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'variants-secret-preservation-'));
+    t.after(() => rmSync(projectRoot, { recursive: true, force: true }));
+    const { store, service } = serviceWith(feishuManifest(), projectRoot);
+    const secret = ' \tfixture-token \n';
+    await service.configure(PLUGIN_ID, INSTANCE_ID, {
+      expectedRevision: 1,
+      updates: [
+        { key: 'connectionMode', value: 'webhook' },
+        { key: 'appId', value: 'cli_1' },
+        { key: 'verificationToken', value: secret },
+      ],
+    });
+    const stored = readPluginConfig(projectRoot, PLUGIN_ID);
+    assert.equal(stored.verificationToken, secret);
+    assert.equal((await store.snapshot()).instances[0].configReadiness, 'ready');
+    const projected = await resolveManifestConfiguration(projectionInput({ config: stored, secrets: stored }).input);
+    assert.equal(projected.find((field) => field.key === 'verificationToken').value, secret);
+  });
 
   test('fields() projects the variant declaration onto every field', async (t) => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'feishu-variants-fields-'));

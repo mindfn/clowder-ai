@@ -63,12 +63,14 @@ describe('K-2A contract-native inventory', () => {
   it('pins the consumed contract 0.2.0 archive and preserves older manifest compatibility', () => {
     assert.equal(
       packageJson.dependencies['@clowder-ai/plugin-contract'],
-      'file:vendor/clowder-ai-plugin-contract-0.2.0.tgz',
+      'file:vendor/clowder-ai-plugin-contract-0.2.0-1bcd26e0191a.tgz',
     );
-    const archive = readFileSync(new URL('../vendor/clowder-ai-plugin-contract-0.2.0.tgz', import.meta.url));
+    const archive = readFileSync(
+      new URL('../vendor/clowder-ai-plugin-contract-0.2.0-1bcd26e0191a.tgz', import.meta.url),
+    );
     assert.equal(
       createHash('sha256').update(archive).digest('hex'),
-      '9f8d97bc63647301036cb7b1f37310332cc02b20879352d37fe9c5217bf9c739',
+      '1bcd26e0191a5a04e0a7a2be3832368ed06398cce7a4f5110956e22c5c010d45',
     );
     assert.equal(PLUGIN_CONTRACT_PACKAGE_VERSION, '0.2.0');
     assert.equal(PLUGIN_CONTRACT_VERSION, '0.1.0');
