@@ -1211,7 +1211,9 @@ test('plugin MCP wrapper follows the replacement host credential file instead of
     workingDirectory: credsDir,
     transport: 'stdio',
   };
-  const releaseSource = bindHostPluginMcpSource(credsDir, (id) => (id === declared.id ? live : undefined));
+  const releaseSource = bindHostPluginMcpSource(resolve(dirname(fileURLToPath(import.meta.url)), '../../..'), (id) =>
+    id === declared.id ? live : undefined,
+  );
   declared.mcpServer.env = {};
   writeFileSync(configPath, JSON.stringify(config));
   const previousRoots = Object.fromEntries(
