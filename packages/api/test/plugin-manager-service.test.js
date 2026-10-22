@@ -168,6 +168,66 @@ function installedInventory(overrides = {}) {
 }
 
 describe('F202 terminal Plugin Manager service', () => {
+  it('projects installed plugins without awaiting remote catalog discovery', async () => {
+    let catalogReads = 0;
+    const neverSettles = new Promise(() => {});
+    const manager = new PluginManagerService({
+      catalog: {
+        snapshot: async () => {
+          catalogReads += 1;
+          return neverSettles;
+        },
+      },
+      inventory: { snapshot: async () => emptyInventory },
+      installedPackages: { list: async () => [bundledGithub] },
+    });
+
+    const result = await Promise.race([
+      manager.listLocal(),
+      new Promise((resolve) => setTimeout(() => resolve('remote-blocked-local-state'), 100)),
+    ]);
+
+    assert.notEqual(result, 'remote-blocked-local-state');
+    assert.equal(catalogReads, 0);
+    assert.deepEqual(
+      result.plugins.map((plugin) => plugin.pluginId),
+      ['github'],
+    );
+    assert.deepEqual(result.catalog, {
+      status: 'loading',
+      refreshedAt: null,
+      message: 'Loading available plugins; installed plugins are ready.',
+    });
+  });
+
+  it('operates on installed plugins without awaiting remote catalog discovery', async () => {
+    let catalogReads = 0;
+    const lifecycleCalls = [];
+    const manager = new PluginManagerService({
+      catalog: {
+        snapshot: async () => {
+          catalogReads += 1;
+          return new Promise(() => {});
+        },
+      },
+      inventory: { snapshot: async () => emptyInventory },
+      installedPackages: { list: async () => [bundledGithub] },
+      lifecycle: {
+        setEnabled: async (...args) => lifecycleCalls.push(args),
+        uninstall: async () => {},
+      },
+    });
+
+    const result = await Promise.race([
+      manager.setEnabled('github', { enabled: false, expectedRevision: 1 }),
+      new Promise((resolve) => setTimeout(() => resolve('remote-blocked-operation'), 100)),
+    ]);
+
+    assert.notEqual(result, 'remote-blocked-operation');
+    assert.equal(catalogReads, 0);
+    assert.deepEqual(lifecycleCalls, [['instance:github', false, 1]]);
+  });
+
   it('returns installed package contributions in detail without treating grants as tools', async () => {
     const manager = service({ inventory: installedInventory() });
 

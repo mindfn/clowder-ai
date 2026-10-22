@@ -8,6 +8,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const os = require('node:os');
 const crypto = require('node:crypto');
+const { createPluginNetworkBridge } = require('./plugin-network-bridge');
 
 const POLL_INTERVAL_MS = 500;
 const MAX_WAIT_MS = 120_000;
@@ -91,16 +92,28 @@ function resolveNode(projectRoot) {
 }
 
 class ServiceManager {
-  constructor(projectRoot, { frontendPort, apiPort, onStatus }) {
+  constructor(projectRoot, { frontendPort, apiPort, onStatus, pluginNetworkFetch }) {
     this.root = projectRoot;
     this.frontendPort = frontendPort;
     this.apiPort = apiPort;
     this.onStatus = onStatus || (() => {});
     this.procs = {};
     this.memoryMode = false;
+    this.pluginNetworkFetch = pluginNetworkFetch;
+    this.pluginNetworkBridge = null;
+    this.pluginNetworkBinding = null;
   }
 
   async startAll() {
+    try {
+      return await this._startAll();
+    } catch (error) {
+      await this._stopPluginNetworkBridge();
+      throw error;
+    }
+  }
+
+  async _startAll() {
     log(`=== ServiceManager.startAll() ===`);
     log(`projectRoot: ${this.root}`);
 
@@ -137,6 +150,8 @@ class ServiceManager {
     this.onStatus('Starting Redis...');
     await this._startRedis(userDataDir);
     log(`Redis phase complete. memoryMode=${this.memoryMode}`);
+
+    await this._startPluginNetworkBridge();
 
     // ---- API ----
     this.onStatus('Starting API server...');
@@ -428,7 +443,29 @@ class ServiceManager {
       TTS_CACHE_DIR: path.join(userDataDir, 'data', 'tts-cache'),
       AUDIT_LOG_DIR: path.join(userDataDir, 'data', 'audit-logs'),
       CLI_RAW_ARCHIVE_DIR: path.join(userDataDir, 'data', 'cli-raw-archive'),
+      ...(this.pluginNetworkBinding
+        ? {
+            CAT_CAFE_PLUGIN_NETWORK_BRIDGE_URL: this.pluginNetworkBinding.endpoint,
+            CAT_CAFE_PLUGIN_NETWORK_BRIDGE_TOKEN: this.pluginNetworkBinding.token,
+          }
+        : {}),
     };
+  }
+
+  async _startPluginNetworkBridge() {
+    if (!this.pluginNetworkFetch || this.pluginNetworkBridge) return;
+    const bridge = createPluginNetworkBridge({ netFetch: this.pluginNetworkFetch });
+    const binding = await bridge.start();
+    this.pluginNetworkBridge = bridge;
+    this.pluginNetworkBinding = binding;
+    log('Desktop plugin network bridge ready on loopback');
+  }
+
+  async _stopPluginNetworkBridge() {
+    const bridge = this.pluginNetworkBridge;
+    this.pluginNetworkBridge = null;
+    this.pluginNetworkBinding = null;
+    if (bridge) await bridge.close();
   }
 
   async _startRedis(userDataDir) {
@@ -805,6 +842,7 @@ class ServiceManager {
 
     await Promise.allSettled(killPromises);
     this.procs = {};
+    await this._stopPluginNetworkBridge();
   }
 
   async _killProcessTree(name, proc, timeoutMs) {

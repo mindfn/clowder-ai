@@ -65,6 +65,7 @@
       "mac-install-location.js",
       "preload.js",
       "project-root.js",
+      "plugin-network-bridge.js",
       "renderer-link-policy.js",
       "service-manager.js",
       "update-checker.js",

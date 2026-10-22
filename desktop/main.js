@@ -263,6 +263,7 @@ app.on('ready', async () => {
     frontendPort: FRONTEND_PORT,
     apiPort: API_PORT,
     onStatus: sendSplashStatus,
+    pluginNetworkFetch: net.fetch.bind(net),
   });
   // F273: Initialize updater — check pending upgrade result BEFORE services
   // (spec §3.2: "main.js 早期、服务启动前检测")
@@ -285,7 +286,11 @@ app.on('ready', async () => {
       if (activeServices) await activeServices.stopAll();
     },
     startServices: async () => {
-      services = new ServiceManager(PROJECT_ROOT, { frontendPort: FRONTEND_PORT, apiPort: API_PORT });
+      services = new ServiceManager(PROJECT_ROOT, {
+        frontendPort: FRONTEND_PORT,
+        apiPort: API_PORT,
+        pluginNetworkFetch: net.fetch.bind(net),
+      });
       await services.startAll();
       await refreshRendererLinkOrigins();
     },

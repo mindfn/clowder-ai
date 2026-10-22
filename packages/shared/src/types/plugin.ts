@@ -398,7 +398,7 @@ export interface PluginManagerDetail extends PluginManagerListItem {
 }
 
 export interface PluginManagerCatalogProjection {
-  status: 'fresh' | 'stale' | 'degraded' | 'unavailable';
+  status: 'loading' | 'fresh' | 'stale' | 'degraded' | 'unavailable';
   refreshedAt: number | null;
   message?: string;
 }

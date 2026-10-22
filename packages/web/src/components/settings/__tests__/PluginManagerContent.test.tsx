@@ -229,6 +229,150 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(mockApiFetch.mock.calls.some(([url]) => url === '/api/plugins/personal-chrome')).toBe(false);
   });
 
+  it('renders installed plugins before remote catalog discovery settles, then hydrates available plugins once', async () => {
+    const installed = managerPlugin({ installed: true, pluginId: 'local.github', displayName: 'Installed GitHub' });
+    let resolveRemote: ((value: Response) => void) | undefined;
+    const remote = new Promise<Response>((resolve) => {
+      resolveRemote = resolve;
+    });
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins/local') {
+        return json({
+          plugins: [installed],
+          catalog: { status: 'loading', refreshedAt: null, message: '正在加载可安装插件。' },
+        });
+      }
+      if (url === '/api/plugin-manager/plugins') return remote;
+      if (url === '/api/plugin-manager/plugins/local/local.github') {
+        return json({ ...detail(installed), catalog: { status: 'loading', refreshedAt: null } });
+      }
+      if (url === '/api/plugin-manager/plugins/local.github') return json(detail(installed));
+      if (url === '/api/plugin-manager/plugins/local.github/documentation') return json({});
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+
+    expect(container.textContent).toContain('Installed GitHub');
+    expect(container.textContent).not.toContain('Video Analysis');
+
+    await act(async () => {
+      resolveRemote?.(
+        json({
+          plugins: [installed, managerPlugin()],
+          catalog: { status: 'fresh', refreshedAt: 1_000 },
+        }),
+      );
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain('Installed GitHub');
+    expect(container.textContent).toContain('Video Analysis');
+    expect(mockApiFetch.mock.calls.filter(([url]) => url === '/api/plugin-manager/plugins').length).toBe(1);
+  });
+
+  it('keeps installed plugins usable when the incremental remote catalog read fails', async () => {
+    const installed = managerPlugin({ installed: true, pluginId: 'local.github', displayName: 'Installed GitHub' });
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins/local') {
+        return json({ plugins: [installed], catalog: { status: 'loading', refreshedAt: null } });
+      }
+      if (url === '/api/plugin-manager/plugins') throw new TypeError('network unavailable');
+      if (url === '/api/plugin-manager/plugins/local/local.github') {
+        return json({ ...detail(installed), catalog: { status: 'loading', refreshedAt: null } });
+      }
+      return json({}, 404);
+    });
+
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+
+    expect(container.textContent).toContain('Installed GitHub');
+    expect(container.textContent).toContain('目录暂时不可用；已安装插件仍可管理');
+    expect(container.querySelector('button[aria-label="启用Installed GitHub"]')).not.toBeNull();
+  });
+
+  it('reaches archive confirmation from the live Manager toolbar and refreshes after installation', async () => {
+    let installed = false;
+    const confirmation = {
+      pluginId: 'dev.clowder.video-analysis',
+      pluginInstanceId: 'pi_video',
+      currentPackageDigest: digest,
+      candidatePackageDigest: digest,
+      expectedLifecycleRevision: 7,
+      expectedGrantRevision: 1,
+      candidateEffectiveGrants: [],
+    };
+    mockApiFetch.mockImplementation(async (url, init) => {
+      if (url === '/api/plugin-manager/plugins') return json(response(managerPlugin({ installed })));
+      if (url === '/api/plugin-manager/plugins/dev.clowder.video-analysis')
+        return json(detail(managerPlugin({ installed })));
+      if (url === '/api/plugin-manager/plugins/install/upload') {
+        const body = init?.body as FormData;
+        if (!body.has('replacement'))
+          return json(
+            {
+              code: 'ARCHIVE_REPLACEMENT_CONFIRMATION_REQUIRED',
+              replacement: {
+                confirmation,
+                displayName: 'Video Analysis',
+                currentVersion: '0.1.0',
+                candidateVersion: '0.2.0',
+              },
+            },
+            409,
+          );
+        expect(JSON.parse(body.get('replacement') as string)).toEqual(confirmation);
+        installed = true;
+        return json({ pluginId: confirmation.pluginId, pluginInstanceId: confirmation.pluginInstanceId }, 201);
+      }
+      return json({}, 404);
+    });
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+    const input = container.querySelector<HTMLInputElement>('[data-plugin-manager-toolbar] input[type="file"]');
+    expect(input, 'archive must be reachable from the real live Manager toolbar').not.toBeNull();
+    if (!input) return;
+    Object.defineProperty(input, 'files', { configurable: true, value: [new File(['fixture'], 'plugin.tgz')] });
+    await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('0.1.0 替换为 0.2.0');
+    expect(installed).toBe(false);
+    const confirm = [...container.querySelectorAll('button')].find((button) => button.textContent === '确认替换');
+    expect(confirm).toBeDefined();
+    await act(async () => confirm?.click());
+    await flushEffects();
+    expect(installed).toBe(true);
+    expect(mockApiFetch.mock.calls.filter(([url]) => url === '/api/plugin-manager/plugins').length).toBeGreaterThan(1);
+    expect(container.textContent).toContain('安装成功: dev.clowder.video-analysis');
+  });
+
+  it('keeps a historical installed plugin visible with the existing unknown-origin label in list and detail', async () => {
+    const legacy = {
+      ...managerPlugin({ installed: true, pluginId: 'dev.clowder.genoffice-docx', displayName: 'Installed GenOffice' }),
+      source: { kind: 'unknown', packageName: null, trust: 'unknown' },
+    };
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins') return json(response(legacy));
+      if (url === `/api/plugin-manager/plugins/${legacy.pluginId}`)
+        return json({
+          plugin: { ...legacy, capabilities: legacy.capabilitySummary, configFields: [] },
+          catalog: { status: 'fresh', refreshedAt: 1000 },
+        });
+      return json({}, 404);
+    });
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+    const row = container.querySelector(`[data-plugin-id="${legacy.pluginId}"]`);
+    expect(row).not.toBeNull();
+    expect(row?.querySelector('[data-plugin-source-trust="unknown"]')?.textContent).toContain('缺少安装来源记录');
+    expect(container.querySelector('[data-testid="plugin-manager-detail"]')?.textContent).toContain(
+      'Installed GenOffice',
+    );
+    expect(mockApiFetch.mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true);
+  });
+
   it('preserves manifest colors in repository compatibility rows and their detail cards', async () => {
     window.history.replaceState({}, '', '/settings?s=plugins');
     const repository = {
