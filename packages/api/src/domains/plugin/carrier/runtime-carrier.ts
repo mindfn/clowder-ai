@@ -216,6 +216,10 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     return this.#nativeMcpLaunches.resolve(policy);
   }
 
+  currentNativeMcpLaunch(capabilityId: string): NativeMcpServer | undefined {
+    return this.#nativeMcpLaunches.current(capabilityId);
+  }
+
   async deliver(pluginInstanceId: string, input: PluginDeliveryInput): Promise<PluginDeliveryReceipt> {
     const method = 'host.messaging.deliver';
     if (!isPluginDeliveryInput(input)) {

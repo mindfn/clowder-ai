@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { resolveInvocationMcpServers } from '../dist/config/capabilities/invoke-plugin-mcp.js';
+import { bindHostPluginMcpSource, resolveInvocationMcpServers } from '../dist/config/capabilities/invoke-plugin-mcp.js';
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'plugin-connection-authority-'));
@@ -32,12 +32,26 @@ function fixture(t) {
   host.capabilities[0].mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN = 'current-activation';
   const save = () => writeFileSync(path, JSON.stringify(host));
   save();
+  const release = bindHostPluginMcpSource(root, (id) => {
+    const candidates = host.capabilities.filter((c) => c.id === id && c.pluginId === 'fixture');
+    const c = candidates[0];
+    if (candidates.length !== 1 || !c?.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN) return undefined;
+    return {
+      name: id.replaceAll(':', '__'),
+      command: c.mcpServer.command,
+      args: c.mcpServer.args,
+      env: c.mcpServer.env,
+      workingDirectory: root,
+      transport: 'stdio',
+    };
+  });
+  t.after(release);
   const resolve = () =>
     resolveInvocationMcpServers(project, 'codex-sol', {
       accessScope: 'project',
       capabilitiesProjectRoot: root,
     })[0];
-  return { entry, project, host, path, save, resolve };
+  return { entry, project, host, path, save, resolve, release };
 }
 
 test('Host activation binding preserves project policy and stored bytes', (t) => {
@@ -64,14 +78,14 @@ test('Host activation binding preserves project policy and stored bytes', (t) =>
   assert.equal(f.entry.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN, 'old-activation');
 });
 
-for (const kind of ['removed', 'wrong-owner', 'no-connection', 'unreadable']) {
+for (const kind of ['removed', 'wrong-owner', 'no-connection', 'runtime-unavailable']) {
   test(`a ${kind} Host activation cannot reuse project credentials`, (t) => {
     const f = fixture(t);
     if (kind === 'removed') f.host.capabilities = [];
     if (kind === 'wrong-owner') f.host.capabilities[0].pluginId = 'another-plugin';
     if (kind === 'no-connection') delete f.host.capabilities[0].mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
     f.save();
-    if (kind === 'unreadable') writeFileSync(f.path, '{invalid');
+    if (kind === 'runtime-unavailable') f.release();
     const server = f.resolve();
     assert.equal(server.enabled, false);
     assert.equal(server.env.CLOWDER_PLUGIN_ACTION_TOKEN, undefined);
@@ -128,4 +142,10 @@ test('project environment cannot modify the Host-owned plugin executable environ
   assert.equal(server.env.NODE_OPTIONS, undefined);
   assert.equal(server.env.PLUGIN_CONFIG, 'project-value');
   assert.equal(server.env.CLOWDER_PLUGIN_ACTION_TOKEN, 'current-activation');
+});
+
+test('persisted Host credentials are not read when the live launch is available', (t) => {
+  const f = fixture(t);
+  writeFileSync(f.path, '{invalid');
+  assert.equal(f.resolve().env.CLOWDER_PLUGIN_ACTION_TOKEN, 'current-activation');
 });

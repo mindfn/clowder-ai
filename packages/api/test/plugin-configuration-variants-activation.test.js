@@ -257,7 +257,12 @@ test('variant changes refresh existing project MCP providers while preserving me
   const initial = await entryAt(consumer);
   assert.ok(initial?.mcpServer, 'activation must reach an existing project automatically');
   assert.equal(Object.hasOwn(initial.mcpServer.env ?? {}, 'FEISHU_TOKEN'), false);
-  const initialActionToken = initial.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
+  assert.equal(
+    initial.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN,
+    undefined,
+    'activation credentials must not be persisted',
+  );
+  const initialActionToken = runtime.supervisor.currentNativeMcpLaunch(id).env.CLOWDER_PLUGIN_ACTION_TOKEN;
   assert.ok(initialActionToken);
   const allCats = [...catRegistry.getAllIds()];
   const allowedCat = allCats.find((catId) => catId !== 'codex');
