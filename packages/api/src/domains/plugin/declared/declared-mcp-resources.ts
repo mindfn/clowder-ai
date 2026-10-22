@@ -62,7 +62,15 @@ export async function activateDeclaredMcp(
           }),
         }),
       );
-      await installMcpCapability(host.projectRoot, entry, host.mcpConfigIO, {
+      // Activation credentials live only in the launch snapshot above, never
+      // in the durable Host/project discovery projections.
+      const {
+        CLOWDER_PLUGIN_ACTION_TOKEN: _token,
+        CLOWDER_PLUGIN_ACTION_PATH: _path,
+        ...durableEnv
+      } = server.env ?? {};
+      const durableEntry = { ...entry, mcpServer: { ...server, env: durableEnv } };
+      await installMcpCapability(host.projectRoot, durableEntry, host.mcpConfigIO, {
         userId: `plugin:${admission.packageRecord.pluginId}`,
       });
       installed.push(entry.id);

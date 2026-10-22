@@ -1,53 +1,54 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { CapabilitiesConfig, CapabilityEntry } from '@cat-cafe/shared';
+import type { NativeMcpServer } from '../../domains/plugin/declared/native-mcp-types.js';
 import { resolveServersForCat } from './capability-orchestrator.js';
+import { isSameCapabilityRoot } from './invoke-capability-root.js';
 
+const sources = new Map<string, (capabilityId: string) => NativeMcpServer | undefined>();
 const CONNECTION_KEYS = ['CLOWDER_PLUGIN_ACTION_TOKEN', 'CLOWDER_PLUGIN_ACTION_PATH'] as const;
 
-/** Project files own access policy; a Host activation owns its connection credentials. */
+/** Bind a Host-owned runtime port, not a second copy of its activation state. */
+export function bindHostPluginMcpSource(root: string, source: (id: string) => NativeMcpServer | undefined): () => void {
+  const key = resolve(root);
+  sources.set(key, source);
+  return () => {
+    if (sources.get(key) === source) sources.delete(key);
+  };
+}
+
+/** Project files own access policy; the current Host runtime owns plugin launches. */
 export function resolveInvocationMcpServers(
   config: CapabilitiesConfig,
   catId: string,
   options: { accessScope: 'global' | 'project'; capabilitiesProjectRoot: string },
 ): ReturnType<typeof resolveServersForCat> {
-  const servers = resolveServersForCat(config, catId, options);
-  if (options.accessScope !== 'project') return servers;
-  const connections = servers.filter((server) => server.source === 'plugin' && server.env?.CLOWDER_PLUGIN_ACTION_TOKEN);
-  if (connections.length === 0) return servers;
-  let host: CapabilitiesConfig | undefined;
-  try {
-    const parsed = JSON.parse(
-      readFileSync(join(options.capabilitiesProjectRoot, '.cat-cafe/capabilities.json'), 'utf8'),
-    );
-    if ((parsed?.version === 1 || parsed?.version === 2) && Array.isArray(parsed.capabilities)) host = parsed;
-  } catch {
-    // An unavailable Host registry cannot authorize a cached project connection.
-  }
-  return servers.map((server) => {
-    if (!connections.includes(server)) return server;
-    const projectEntries = config.capabilities.filter((entry) => entry.id === server.capabilityId);
-    const hostEntries = host?.capabilities.filter((entry) => entry.id === server.capabilityId) ?? [];
-    const project = projectEntries[0];
-    const current = hostEntries[0];
+  const source = [...sources].find(([root]) => isSameCapabilityRoot(root, options.capabilitiesProjectRoot))?.[1];
+  return resolveServersForCat(config, catId, options).map((server) => {
+    if (server.source !== 'plugin') return server;
+    const entries = config.capabilities.filter((entry) => entry.id === server.capabilityId);
+    const entry = entries[0];
+    const current = source?.(server.capabilityId ?? '');
     if (
-      host &&
-      projectEntries.length === 1 &&
-      hostEntries.length === 1 &&
-      project?.pluginId &&
-      current?.pluginId === project.pluginId &&
-      project.source === current.source &&
-      current.type === 'mcp' &&
-      !project.mcpServerOverride &&
-      !current.mcpServerOverride &&
-      isDeepStrictEqual(transport(project), transport(current)) &&
-      current.mcpServer?.env?.CLOWDER_PLUGIN_ACTION_TOKEN
+      entries.length === 1 &&
+      entry?.pluginId &&
+      entry.id.startsWith(`plugin:${entry.pluginId}:`) &&
+      (entry.source === 'plugin' || entry.source === 'cat-cafe') &&
+      !entry.mcpServerOverride &&
+      current &&
+      isDeepStrictEqual(transport(entry, current), transportOfLaunch(current))
     ) {
-      // Never attach a Host credential to a project-selected executable or env
-      // (including NODE_OPTIONS/PATH). Only project access policy survives.
-      const trusted = resolveServersForCat({ ...host, capabilities: [current] }, catId)[0];
-      if (trusted) return { ...trusted, enabled: server.enabled };
+      return {
+        name: current.name,
+        capabilityId: entry.id,
+        source: 'plugin',
+        enabled: server.enabled,
+        command: current.command,
+        args: [...current.args],
+        env: { ...current.env },
+        workingDir: current.workingDirectory,
+        transport: current.transport,
+      };
     }
     const env = { ...server.env };
     for (const key of CONNECTION_KEYS) delete env[key];
@@ -55,8 +56,28 @@ export function resolveInvocationMcpServers(
   });
 }
 
-function transport(entry: CapabilityEntry): Omit<NonNullable<CapabilityEntry['mcpServer']>, 'env'> | undefined {
-  if (!entry.mcpServer) return undefined;
-  const { env: _environment, ...definition } = entry.mcpServer;
-  return definition;
+function transport(entry: CapabilityEntry, current: NativeMcpServer) {
+  const s = entry.mcpServer;
+  return (
+    s && {
+      command: s.command,
+      args: s.args ?? [],
+      workingDir: s.workingDir ?? current.workingDirectory,
+      transport: s.transport ?? 'stdio',
+      resolver: s.resolver,
+      url: s.url,
+      headers: s.headers,
+    }
+  );
+}
+function transportOfLaunch(s: NativeMcpServer) {
+  return {
+    command: s.command,
+    args: [...s.args],
+    workingDir: s.workingDirectory,
+    transport: s.transport,
+    resolver: undefined,
+    url: undefined,
+    headers: undefined,
+  };
 }
