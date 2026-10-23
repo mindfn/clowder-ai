@@ -10,6 +10,7 @@ export function Nameplate({
   ink,
   title,
   kind = 'cat',
+  avatarShape = 'round',
 }: {
   readonly id: string;
   readonly name: string;
@@ -18,15 +19,20 @@ export function Nameplate({
   readonly ink: string;
   readonly title?: string;
   readonly kind?: 'cat' | 'human' | 'member';
+  readonly avatarShape?: 'round' | 'rounded-square';
 }) {
   return (
     <span
       data-testid={`${kind}-nameplate`}
       data-cat-id={kind === 'cat' ? id : undefined}
+      data-avatar-shape={avatarShape}
       className="cafe-nameplate"
       style={{ backgroundImage: `linear-gradient(to bottom, ${surface}, transparent)` }}
     >
-      <span data-testid="cat-nameplate-avatar" className="cafe-nameplate-avatar">
+      <span
+        data-testid="cat-nameplate-avatar"
+        className={`cafe-nameplate-avatar ${avatarShape === 'rounded-square' ? 'cafe-nameplate-avatar-square' : ''}`}
+      >
         {avatar}
       </span>
       <AppTooltip label={title ?? name} intent="content" side="top">

@@ -1,7 +1,13 @@
 'use client';
 
-import { type ConnectorSource, decideHoldCancelEntry, readHoldCardCancelability } from '@cat-cafe/shared';
+import {
+  type ConnectorSource,
+  decideHoldCancelEntry,
+  isStaticConnectorId,
+  readHoldCardCancelability,
+} from '@cat-cafe/shared';
 import type { ReactNode } from 'react';
+import type { CatData } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { connectorThemeToken } from '@/lib/connector-theme-token';
 import { resolveMessageSender } from '@/lib/resolve-sender';
@@ -17,6 +23,7 @@ import { MessageActionSlot } from './MessageActionSlot';
 import { MessageBubble } from './MessageBubble';
 import { MessageNameplate } from './MessageNameplate';
 import { ManagedJobCard } from './managed-job/ManagedJobCard';
+import { ReplyPill } from './ReplyPill';
 import { frustrationHistoryCopy } from './rich/frustration-history.shell-copy';
 import { trustedFrustrationMeta, useFrustrationVisibility } from './rich/frustration-visibility';
 import { RichBlocks } from './rich/RichBlocks';
@@ -77,6 +84,8 @@ interface ConnectorBubbleProps {
   threadId?: string;
   timelineMessages?: readonly ChatMessageType[];
   footer?: ReactNode;
+  getCatById?: (id: string) => CatData | undefined;
+  replyPreview?: NonNullable<ChatMessageType['replyPreview']> & { expandedContent?: string };
 }
 
 /**
@@ -84,7 +93,14 @@ interface ConnectorBubbleProps {
  * Specialized hold/job/card bodies stay content-level concerns rather than defining
  * a separate visual identity or navigation surface for the whole message.
  */
-export function ConnectorBubble({ message, threadId, timelineMessages, footer }: ConnectorBubbleProps) {
+export function ConnectorBubble({
+  message,
+  threadId,
+  timelineMessages,
+  footer,
+  getCatById = () => undefined,
+  replyPreview,
+}: ConnectorBubbleProps) {
   const coCreator = useCoCreatorConfig();
   const shellPresentation = useShellPresentation();
   const source: ConnectorSource = message.source ?? { connector: '', label: '', icon: '' };
@@ -113,6 +129,16 @@ export function ConnectorBubble({ message, threadId, timelineMessages, footer }:
   const connId = source.connector;
   const themeToken = connectorThemeToken(connId);
   const sender = resolveMessageSender({ from: message.from, source }, () => undefined, coCreator);
+  const externalPerson =
+    message.from?.kind === 'external' &&
+    Boolean(message.from.sender?.name) &&
+    !isStaticConnectorId(message.from.connectorId);
+  const platform = source.label || (message.from?.kind === 'external' ? message.from.connectorId : source.connector);
+  const senderRole = message.from?.kind === 'plugin' ? 'Plugin' : externalPerson ? `External · ${platform}` : 'Host';
+  const avatarShape = externalPerson ? 'round' : 'rounded-square';
+  const nameplateSender = externalPerson
+    ? { ...sender, color: 'var(--shell-body)', textColor: 'var(--shell-body)' }
+    : sender;
   const pluginColor = message.from?.kind === 'plugin' ? source.themeColor : undefined;
   const nameColor = pluginColor ?? `var(--color-${themeToken}-bubble, var(--cafe-text))`;
   const surfaceColor = pluginColor
@@ -149,13 +175,25 @@ export function ConnectorBubble({ message, threadId, timelineMessages, footer }:
         <MessageNameplate
           id={`connector:${source.connector}`}
           name={displayName}
-          sender={sender}
-          surface={surfaceColor}
-          ink={nameColor}
+          sender={nameplateSender}
+          surface="var(--shell-selected)"
+          ink="var(--shell-body)"
+          avatarShape={avatarShape}
         />
+        <span data-sender-role="" className="shrink-0 text-micro font-medium" style={{ color: 'var(--shell-muted)' }}>
+          {senderRole}
+        </span>
         <span className="text-xs shrink-0" style={{ color: 'var(--shell-muted)' }}>
           {formatTime(message.timestamp)}
         </span>
+        {message.replyTo && replyPreview && (
+          <ReplyPill
+            replyPreview={replyPreview}
+            expandedContent={replyPreview.expandedContent}
+            replyToId={message.replyTo}
+            getCatById={getCatById}
+          />
+        )}
         <MessageActionSlot />
       </div>
     ) : (
@@ -164,6 +202,14 @@ export function ConnectorBubble({ message, threadId, timelineMessages, footer }:
           {displayName}
         </span>
         <span className="text-xs text-cafe-muted">{formatTime(message.timestamp)}</span>
+        {message.replyTo && replyPreview && (
+          <ReplyPill
+            replyPreview={replyPreview}
+            expandedContent={replyPreview.expandedContent}
+            replyToId={message.replyTo}
+            getCatById={getCatById}
+          />
+        )}
         <MessageActionSlot />
       </div>
     );
@@ -175,6 +221,7 @@ export function ConnectorBubble({ message, threadId, timelineMessages, footer }:
       header={header}
       footer={footer}
       presentation={shellPresentation === 'v2' ? 'nameplate' : 'bubble'}
+      railColor={shellPresentation === 'v2' ? 'var(--shell-hairline)' : undefined}
       bubbleStyle={
         shellPresentation === 'v2'
           ? undefined

@@ -13,6 +13,7 @@ interface MessageNameplateProps {
   sender: SenderMeta;
   onClick?: () => void;
   kind?: 'cat' | 'member';
+  avatarShape?: 'round' | 'rounded-square';
 }
 
 /** Shared member identity plate; cats and plugins provide identity, not shell markup. */
@@ -25,6 +26,7 @@ export function MessageNameplate({
   sender,
   onClick,
   kind = 'member',
+  avatarShape = 'round',
 }: MessageNameplateProps) {
   return (
     <Nameplate
@@ -34,7 +36,8 @@ export function MessageNameplate({
       surface={surface}
       ink={ink}
       kind={kind}
-      avatar={<SenderAvatar sender={sender} presentation="nameplate" onClick={onClick} />}
+      avatarShape={avatarShape}
+      avatar={<SenderAvatar sender={sender} presentation="nameplate" shape={avatarShape} onClick={onClick} />}
     />
   );
 }
