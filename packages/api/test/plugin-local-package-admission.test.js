@@ -114,7 +114,6 @@ test('admits a local npm-style archive into immutable Host inventory without exe
   await access(join(packagesRoot, packageDirectoryName(archive.integrity), 'package.tgz'));
   await assert.rejects(access(sideEffect), { code: 'ENOENT' });
   const snapshot = await store.snapshot();
-  assert.deepEqual(snapshot.grants[0].effectiveGrants, []);
   assert.equal(snapshot.packages[0].packageState, 'installed');
   assert.deepEqual(snapshot.packages[0].provenance, {
     kind: 'local-archive',
@@ -292,7 +291,6 @@ test('owner directory reselection upgrades a failed stopped instance without dis
   assert.equal(after.instances[0].installedAt, before.instances[0].installedAt);
   assert.equal(after.instances[0].lifecycleRevision, before.instances[0].lifecycleRevision + 1);
   assert.deepEqual(after.instances[0].lastRuntimeError, error);
-  assert.equal(after.grants[0].grantRevision, before.grants[0].grantRevision + 1);
   assert.ok(after.packages.some((p) => p.packageDigest === first.packageDigest));
   await access(join(packagesRoot, packageDirectoryName(first.packageDigest), 'package.tgz'));
   assert.equal(await readFile(dataFile, 'utf8'), 'retained');
@@ -447,9 +445,6 @@ for (const origin of ['catalog', 'local']) {
       assert.equal(restored.configReadiness, before.instances[0].configReadiness);
       assert.equal(restored.activationState, 'enabled');
       assert.equal(restored.runtimeState, failOld ? 'crashed' : 'healthy');
-      assert.deepEqual(after.grants[0].effectiveGrants, before.grants[0].effectiveGrants);
-      assert.deepEqual(after.grants[0].requestedCapabilities, before.grants[0].requestedCapabilities);
-      assert.ok(after.grants[0].grantRevision > before.grants[0].grantRevision);
       assert.ok(restored.lifecycleRevision > before.instances[0].lifecycleRevision);
       assert.equal(await readFile(retained, 'utf8'), 'owner settings and retained data');
       assert.equal(starts.length, 2);
@@ -508,7 +503,6 @@ for (const enabled of [false, true]) {
     assert.equal(after.instances[0].packageDigest, first.packageDigest);
     assert.equal(after.instances[0].configReadiness, 'ready');
     assert.equal(after.instances[0].activationState, enabled ? 'enabled' : 'disabled');
-    assert.deepEqual(after.grants[0].effectiveGrants, []);
     assert.deepEqual(starts, enabled ? [first.packageDigest] : []);
   });
 }
@@ -538,7 +532,6 @@ test('archive reselection preserves the instance, old package and retained data'
   assert.equal(after.instances.length, 1);
   assert.equal(after.instances[0].installedAt, before.instances[0].installedAt);
   assert.equal(after.instances[0].lifecycleRevision, before.instances[0].lifecycleRevision + 1);
-  assert.equal(after.grants[0].grantRevision, before.grants[0].grantRevision + 1);
   await access(join(packagesRoot, packageDirectoryName(first.packageDigest), 'package.tgz'));
   assert.equal(await readFile(dataFile, 'utf8'), 'retained');
 });

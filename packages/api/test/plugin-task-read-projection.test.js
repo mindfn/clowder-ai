@@ -31,7 +31,6 @@ function fixture(task, options = {}) {
     pluginId: 'neutral',
     ownerUserId: 'owner',
     readThreadStore: { get: async (id) => ({ id, createdBy: 'owner' }) },
-    effectiveGrants: ['task.read'],
     taskStore: store,
     ...options,
   });

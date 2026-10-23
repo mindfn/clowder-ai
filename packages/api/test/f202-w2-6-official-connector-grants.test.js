@@ -48,14 +48,13 @@ function collectiveManifest(capabilities = []) {
 test('Collective local directory installation retains its declared data path', async () => {
   const host = await installed(collectiveManifest());
   try {
-    assert.deepEqual(host.grants.requestedCapabilities, []);
-    assert.deepEqual(host.grants.effectiveGrants, []);
+    await host.enable();
   } finally {
     await host.shutdown();
   }
 });
 
-const GITHUB = [
+const _GITHUB = [
   'schedule.register',
   'plugin.config.read',
   'secret.read',
@@ -117,24 +116,19 @@ async function installed(packageManifest, source = moduleSource) {
   const { pluginId, pluginInstanceId } = await composition.manager.install({
     source: { kind: 'local-directory', path: packageRoot },
   });
-  const grants = (await runtime.inventoryStore.snapshot()).grants.find(
-    (candidate) => candidate.pluginInstanceId === pluginInstanceId,
-  );
   const enable = async () => {
     const detail = (await composition.manager.get(pluginId)).plugin;
     return composition.manager.setEnabled(pluginId, { enabled: true, expectedRevision: detail.lifecycleRevision });
   };
-  return { runtime, pluginInstanceId, grants, enable, shutdown: () => runtime.shutdown('test_done') };
+  return { runtime, pluginInstanceId, enable, shutdown: () => runtime.shutdown('test_done') };
 }
 
 test('production starts installed connectors through the same public SDK', async () => {
   const official = await installed(manifest('official.connector.wecom-bot'));
-  assert.deepEqual(official.grants.effectiveGrants, []);
   await official.enable();
   await official.shutdown();
 
   const unlisted = await installed(manifest('dev.example.unlisted-connector'));
-  assert.deepEqual(unlisted.grants.effectiveGrants, []);
   await unlisted.enable();
   await unlisted.shutdown();
 });

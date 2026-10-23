@@ -6,7 +6,7 @@ import type { PluginInventoryStore } from '../../host-inventory/ports.js';
 export interface PluginTaskAdmissionServices {
   readonly messageStore: Pick<IMessageStore, 'getById' | 'getByIdempotencyKey' | 'appendIdempotent'>;
   isCatAvailable(catId: string): boolean;
-  /** The activation, installed package and granted authority must still be current. */
+  /** The activation, installed package and invocation must still be current. */
   assertCurrent(): Promise<void>;
 }
 export async function createPluginTaskAdmissionServices(deps: {

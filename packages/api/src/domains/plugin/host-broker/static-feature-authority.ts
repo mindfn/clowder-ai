@@ -92,8 +92,6 @@ export class StaticFeatureAuthority {
           activationRevision:
             Math.max(0, ...previous.filter((r) => r.featureId === featureId).map((r) => r.activationRevision)) + 1,
           lifecycleRevision: instance.lifecycleRevision,
-          grantRevision: binding.grantRevision,
-          grantedCapabilities: [],
           connectionId: binding.connectionId,
           brokerSessionId: binding.brokerSessionId,
           runtimeLeaseId: binding.runtimeLeaseId,
@@ -240,7 +238,7 @@ export class StaticFeatureAuthority {
     inventory: PluginInventoryTransaction,
     binding: Pick<
       BrokerCallContext,
-      'pluginInstanceId' | 'connectionId' | 'brokerSessionId' | 'runtimeLeaseId' | 'packageDigest' | 'grantRevision'
+      'pluginInstanceId' | 'connectionId' | 'brokerSessionId' | 'runtimeLeaseId' | 'packageDigest'
     >,
   ) {
     const session = tx.sessions.getByConnectionId(binding.connectionId);
@@ -253,7 +251,6 @@ export class StaticFeatureAuthority {
       session.brokerSessionId !== binding.brokerSessionId ||
       session.pluginInstanceId !== binding.pluginInstanceId ||
       session.packageDigest !== binding.packageDigest ||
-      session.grantRevision !== binding.grantRevision ||
       session.runtimeLeaseId !== binding.runtimeLeaseId ||
       session.activeLeaseExpiresAt === undefined ||
       session.activeLeaseExpiresAt <= this.now() ||
@@ -263,7 +260,6 @@ export class StaticFeatureAuthority {
       runtime.brokerSessionId !== binding.brokerSessionId ||
       runtime.pluginInstanceId !== binding.pluginInstanceId ||
       runtime.packageDigest !== binding.packageDigest ||
-      runtime.grantRevision !== binding.grantRevision ||
       !instance ||
       inventory.instances.getCurrent(instance.pluginId)?.pluginInstanceId !== instance.pluginInstanceId ||
       instance.lifecycleState !== 'installed' ||

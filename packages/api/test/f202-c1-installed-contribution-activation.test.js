@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { promisify } from 'node:util';
 import { catRegistry } from '@cat-cafe/shared';
-import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
+import { validateManifest } from '@clowder-ai/plugin-contract';
 import Fastify from 'fastify';
 import {
   fileBasedMcpIO,
@@ -117,7 +117,7 @@ function createRuntime(
     runtime: createDormantPluginRuntimeComposition({
       projectRoot,
       messageStore: new MessageStore(),
-      contract: { manifestContractRange: '0.1.0', validateEffectiveGrants, validateManifest },
+      contract: { manifestContractRange: '0.1.0', validateManifest },
       limbRegistry,
       taskRunner,
       mcpConfigIO: mcpConfigIO ?? {
@@ -546,7 +546,6 @@ for (const layout of ['external', 'shipped']) {
           installedAt: 1,
           updatedAt: 1,
         },
-        effectiveGrants: [],
       },
       {
         projectRoot,
@@ -638,7 +637,6 @@ test('local archive MCP materialization resolves its verified dependency closure
         installedAt: 1,
         updatedAt: 1,
       },
-      effectiveGrants: [],
     },
     {
       projectRoot,

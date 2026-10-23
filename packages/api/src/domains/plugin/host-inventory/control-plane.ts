@@ -11,7 +11,6 @@ import { normalizePluginInstanceAfterRestart } from './restart-recovery.js';
 import type {
   InventoryMutationResult,
   PackageAdmissionCandidate,
-  PluginGrantRecord,
   PluginInstanceRecord,
   ReinstallPackageInput,
   UpgradePackageInput,
@@ -35,15 +34,6 @@ function assertCurrentInstance(
     throw new PluginInventoryError('STALE_INSTANCE', `plugin instance ${pluginInstanceId} is not current`);
   }
   return instance;
-}
-
-function assertGrantRevision(grants: PluginGrantRecord, expectedGrantRevision: number): void {
-  if (grants.grantRevision !== expectedGrantRevision) {
-    throw new PluginInventoryError(
-      'STALE_GRANT_REVISION',
-      `expected grant revision ${expectedGrantRevision}, current ${grants.grantRevision}`,
-    );
-  }
 }
 
 function assertLifecycleRevision(instance: PluginInstanceRecord, expectedLifecycleRevision: number): void {
@@ -121,16 +111,6 @@ function createInstance(
   };
 }
 
-function createGrant(pluginInstanceId: string, verified: VerifiedPackageAdmission, now: number): PluginGrantRecord {
-  return {
-    pluginInstanceId,
-    requestedCapabilities: verified.requestedCapabilities,
-    effectiveGrants: verified.effectiveGrants,
-    grantRevision: 1,
-    updatedAt: now,
-  };
-}
-
 export class HostInventoryControlPlane {
   constructor(
     readonly store: PluginInventoryStore,
@@ -158,8 +138,7 @@ export class HostInventoryControlPlane {
       transaction.instances.put(
         createInstance(pluginInstanceId, verified.package.pluginId, input.computedPackageDigest, now),
       );
-      transaction.grants.put(createGrant(pluginInstanceId, verified, now));
-      return { pluginInstanceId, packageDigest: input.computedPackageDigest, grantRevision: 1 };
+      return { pluginInstanceId, packageDigest: input.computedPackageDigest };
     });
   }
 
@@ -175,9 +154,6 @@ export class HostInventoryControlPlane {
           'upgrade package does not belong to the current instance',
         );
       }
-      const grants = transaction.grants.get(current.pluginInstanceId);
-      if (!grants) throw new PluginInventoryError('INVENTORY_INVARIANT', 'current instance has no grant record');
-      assertGrantRevision(grants, input.expectedGrantRevision);
       if (
         !['stopped', 'crashed'].includes(current.runtimeState) ||
         current.activationState === 'enabling' ||
@@ -195,19 +171,9 @@ export class HostInventoryControlPlane {
         lifecycleRevision: current.lifecycleRevision + 1,
         updatedAt: now,
       });
-      // The package manifest is the authority basis, so every upgrade advances the grant fence.
-      const grantRevision = grants.grantRevision + 1;
-      transaction.grants.put({
-        ...grants,
-        requestedCapabilities: verified.requestedCapabilities,
-        effectiveGrants: verified.effectiveGrants,
-        grantRevision,
-        updatedAt: now,
-      });
       return {
         pluginInstanceId: current.pluginInstanceId,
         packageDigest: input.computedPackageDigest,
-        grantRevision,
       };
     });
   }
@@ -238,8 +204,7 @@ export class HostInventoryControlPlane {
         updatedAt: now,
       });
       transaction.instances.put(createInstance(nextInstanceId, current.pluginId, input.computedPackageDigest, now));
-      transaction.grants.put(createGrant(nextInstanceId, verified, now));
-      return { pluginInstanceId: nextInstanceId, packageDigest: input.computedPackageDigest, grantRevision: 1 };
+      return { pluginInstanceId: nextInstanceId, packageDigest: input.computedPackageDigest };
     });
   }
 

@@ -77,7 +77,6 @@ export interface PluginMessagingHostDeps {
   readonly pluginId: string;
   readonly pluginInstanceId: string;
   readonly ownerUserId: string;
-  readonly effectiveGrants: readonly string[];
   readonly manifest: PluginManifest;
   readonly threadStore: IThreadStore;
   readonly messageStore?: Pick<IMessageStore, 'getById'>;

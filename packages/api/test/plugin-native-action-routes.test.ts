@@ -73,7 +73,6 @@ test('native route authenticates separately, captures optional source, and refus
         ],
       },
     },
-    effectiveGrants: [],
   };
   const validation = validateManifest(authority.packageRecord.manifest);
   assert.equal(validation.valid, true, JSON.stringify(validation.errors));

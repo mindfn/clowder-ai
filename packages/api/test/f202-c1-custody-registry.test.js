@@ -66,7 +66,6 @@ function nativeFixture() {
         ],
       },
     },
-    effectiveGrants: [],
   };
   const validation = validateManifest(admission.packageRecord.manifest);
   assert.equal(validation.valid, true, JSON.stringify(validation));

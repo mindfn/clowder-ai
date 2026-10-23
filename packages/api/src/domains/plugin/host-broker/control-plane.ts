@@ -11,7 +11,7 @@ import {
   type WireMethodName,
 } from '@clowder-ai/plugin-contract';
 import type { PluginInventoryStore, PluginInventoryTransaction } from '../host-inventory/ports.js';
-import type { PluginGrantRecord, PluginInstanceRecord, PluginPackageRecord } from '../host-inventory/types.js';
+import type { PluginInstanceRecord, PluginPackageRecord } from '../host-inventory/types.js';
 import {
   type BrokerConnection,
   type BrokerConnectionController,
@@ -49,7 +49,6 @@ export interface HostBrokerControlPlaneOptions {
 interface CurrentAuthority {
   readonly instance: PluginInstanceRecord;
   readonly packageRecord: PluginPackageRecord;
-  readonly grants: PluginGrantRecord;
 }
 
 type CallLedgerDecision =
@@ -213,17 +212,23 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
 
     const now = this.now();
     const bindingNonce = this.options.createBindingNonce?.() ?? `nonce_${randomUUID()}`;
-    const binding: SessionBinding = {
+    const binding = {
       pluginId: authority.instance.pluginId,
       packageDigest: authority.instance.packageDigest,
       contractVersion: authority.packageRecord.contractVersion,
       wireVersion: WIRE_VERSION,
       pluginInstanceId: authority.instance.pluginInstanceId,
       brokerSessionId: session.brokerSessionId,
-      grantRevision: authority.grants.grantRevision,
-      // Older SDKs read this ABI field; it carries declarations, not a Host API permission decision.
-      effectiveGrants: [...authority.grants.requestedCapabilities],
       bindingNonce,
+      // Legacy SessionBinding ABI only; no Host eligibility or persisted grant state.
+      grantRevision: 1,
+      effectiveGrants: [
+        ...new Set(
+          authority.packageRecord.manifest!.features.flatMap((feature) =>
+            'capabilities' in feature && Array.isArray(feature.capabilities) ? feature.capabilities : [],
+          ),
+        ),
+      ],
     };
     if (!validateSessionBinding(binding)) {
       await this.rejectHandshake(connectionId, 'AUTHORITY_VIOLATION', 'Host produced an invalid session binding');
@@ -237,8 +242,6 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
         ...current,
         phase: 'host_bound',
         candidate: structuredClone(candidate),
-        grantRevision: binding.grantRevision,
-        effectiveGrants: [...binding.effectiveGrants],
         bindingNonce,
         updatedAt: now,
       });
@@ -281,7 +284,6 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
         brokerSessionId: current.brokerSessionId,
         pluginInstanceId: current.pluginInstanceId,
         packageDigest: current.packageDigest,
-        grantRevision: authority.grants.grantRevision,
         state: 'live',
         expiresAt,
         updatedAt: now,
@@ -327,7 +329,6 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
         runtimeLeaseId: context.runtimeLeaseId,
         pluginInstanceId: context.pluginInstanceId,
         packageDigest: context.packageDigest,
-        grantRevision: context.grantRevision,
         method,
         settlementKey,
         inputDigest,
@@ -350,7 +351,7 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
     return this.authorizeConnection(pluginInstanceId);
   }
 
-  /** Host Manager only: intrinsic lifecycle binding grants no plugin effect API. */
+  /** Host Manager only: intrinsic binding for the current static feature lifecycle. */
   async authorizeStaticFeature(pluginInstanceId: string): Promise<BrokerCallContext> {
     return this.authorizeConnection(pluginInstanceId);
   }
@@ -384,8 +385,7 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
         session.runtimeLeaseId === context.runtimeLeaseId &&
         lease?.brokerSessionId === context.brokerSessionId &&
         lease.pluginInstanceId === context.pluginInstanceId &&
-        lease.packageDigest === context.packageDigest &&
-        lease.grantRevision === context.grantRevision;
+        lease.packageDigest === context.packageDigest;
       if (
         session.phase !== 'active' ||
         session.activeLeaseExpiresAt === undefined ||
@@ -573,8 +573,6 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
       pluginId: session.pluginId,
       packageDigest: session.packageDigest,
       contractVersion: session.contractVersion,
-      grantRevision: lease.grantRevision,
-      effectiveGrants: [...authority.grants.requestedCapabilities],
     };
   }
 
@@ -695,7 +693,6 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
       brokerSessionId: requested.brokerSessionId,
       runtimeLeaseId: requested.runtimeLeaseId,
       packageDigest: requested.packageDigest,
-      grantRevision: requested.grantRevision,
       phase: 'claimed',
       revision: existing.revision + 1,
       updatedAt: this.now(),
@@ -755,13 +752,12 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
     const packageRecord = snapshot.packages.find(
       (candidate) => candidate.packageDigest === instance.packageDigest && candidate.packageState === 'installed',
     );
-    const grants = snapshot.grants.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
-    if (!packageRecord || !grants) {
+    if (!packageRecord) {
       throw new HostBrokerError('BROKER_INVARIANT', `${pluginInstanceId} has incomplete inventory authority`);
     }
     if (packageRecord.manifest === null)
       throw new HostBrokerError('INSTANCE_NOT_READY', 'Plugin version is incompatible');
-    return { instance, packageRecord, grants };
+    return { instance, packageRecord };
   }
 
   private candidateMismatch(

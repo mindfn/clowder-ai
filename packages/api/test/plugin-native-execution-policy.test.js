@@ -45,7 +45,6 @@ function admission(id = 'instance') {
         })),
       },
     },
-    effectiveGrants: [],
   };
 }
 

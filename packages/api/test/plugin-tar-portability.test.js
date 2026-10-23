@@ -71,7 +71,6 @@ test('local directory admission packages and verifies real bytes with the select
     const snapshot = await store.snapshot();
     assert.equal(snapshot.instances.length, 1);
     assert.equal(snapshot.instances[0].runtimeState, 'stopped');
-    assert.deepEqual(snapshot.grants[0].effectiveGrants, ['messaging.send']);
     const bytes = await readFile(join(packagesRoot, packageDirectoryName(result.packageDigest), 'package.tgz'));
     assert.equal(result.packageDigest, `sha512-${createHash('sha512').update(bytes).digest('base64')}`);
     assert.equal(await readFile(join(source, 'dist', 'entrypoint.js'), 'utf8'), entrypoint);

@@ -49,7 +49,7 @@ export class HostControlBehaviorAdapter {
     this.replayEvents = structuredClone(given.state.replayEvents ?? []);
   }
 
-  async #setupDelivery(given) {
+  async #setupDelivery(_given) {
     const packageRoot = await mkdtemp(join(resolve('.'), '.m0d-host-control-'));
     const hostRoot = await mkdtemp(join(tmpdir(), 'cat-cafe-m0d-delivery-'));
     this.#roots.push(packageRoot, hostRoot);
@@ -64,7 +64,6 @@ export class HostControlBehaviorAdapter {
     const harness = await createExternalRuntimeHarness({
       rootDir: hostRoot,
       manifest,
-      effectiveGrants: given.grants,
       packageDigest,
     });
     this.store = harness.inventory;

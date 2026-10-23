@@ -270,7 +270,7 @@ async function mcpEnvironment(
   const fields = new Map((admission.packageRecord.manifest.configuration ?? []).map((field) => [field.key, field]));
   // Variant-declared manifests (design §3.4): resolve the branch once per
   // contribution. Non-selected resolutions refuse the launch (fail-closed);
-  // inactive-branch bindings are silently skipped (no grant demand, no error),
+  // inactive-branch bindings are silently skipped (no config read or error),
   // and inactive-branch stores are never read.
   const variants = admission.packageRecord.manifest.configurationVariants;
   let variantActiveKeys: ReadonlySet<string> | undefined;

@@ -1,11 +1,7 @@
 import { createModuleLogger } from '../../../infrastructure/logger.js';
 import { MessagingError } from '../../messaging/contract/host-types.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
-import {
-  PluginInventoryError,
-  type PluginRuntimeErrorDetail,
-  type PluginRuntimeErrorRecord,
-} from '../host-inventory/types.js';
+import { PluginInventoryError, type PluginRuntimeErrorRecord } from '../host-inventory/types.js';
 import { ManifestConfigurationProjectionError } from '../manifest-configuration-projection.js';
 import { type HostErrorRecognition, type SafeErrorProjection, safeErrorProjection } from './safe-error-projection.js';
 
@@ -96,7 +92,6 @@ export function logPluginStartFailure(report: PluginStartFailureReport): void {
 /** Records a runtime start failure without retaining plugin-provided text. */
 export function startFailureRecord(occurredAt: number): {
   readonly record: PluginRuntimeErrorRecord;
-  readonly detail?: PluginRuntimeErrorDetail;
 } {
   return { record: { code: 'UNEXPECTED_RUNTIME_FAILURE', exitCode: null, signal: null, occurredAt } };
 }

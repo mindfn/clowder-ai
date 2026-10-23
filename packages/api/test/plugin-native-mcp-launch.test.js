@@ -56,8 +56,7 @@ async function fixture(t) {
     configReadiness: 'ready',
   };
   const packageRecord = { pluginId: manifest.pluginId, packageDigest: digest, packageState: 'installed', manifest };
-  const grant = { pluginInstanceId: instance.pluginInstanceId, effectiveGrants: ['task.write'], grantRevision: 1 };
-  const snapshot = { instances: [instance], packages: [packageRecord], grants: [grant] };
+  const snapshot = { instances: [instance], packages: [packageRecord] };
   let config = { version: 1, capabilities: [] };
   let beforeSnapshot = async () => {};
   let beforeConfigWrite = async () => {};
@@ -101,7 +100,6 @@ async function fixture(t) {
     router,
     instance,
     packageRecord,
-    grant,
     snapshot,
     config: () => config,
     pauseSnapshot: (fn) => {
@@ -164,7 +162,6 @@ test('native launch rejects inventory lifecycle and package drift from its activ
   const restore = () => {
     Object.assign(f.instance, structuredClone(baseline.instances[0]));
     Object.assign(f.packageRecord, structuredClone(baseline.packages[0]));
-    Object.assign(f.grant, structuredClone(baseline.grants[0]));
   };
   for (const mutate of [
     () => {
@@ -199,7 +196,6 @@ test('native launch binds same-plugin instances to distinct Host tokens and neve
   const f = await fixture(t);
   const first = await f.ready();
   f.snapshot.instances.push({ ...f.instance, pluginInstanceId: 'instance-b' });
-  f.snapshot.grants.push({ ...f.grant, pluginInstanceId: 'instance-b' });
   await f.router.start('instance-b');
   const second = await f.router.resolveNativeMcpLaunch(policy({ pluginInstanceId: 'instance-b' }));
   assert.notEqual(first.env.CLOWDER_PLUGIN_ACTION_TOKEN, second.env.CLOWDER_PLUGIN_ACTION_TOKEN);

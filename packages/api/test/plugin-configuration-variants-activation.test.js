@@ -15,7 +15,7 @@ import { dirname, join, resolve } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { catRegistry } from '@cat-cafe/shared';
-import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
+import { validateManifest } from '@clowder-ai/plugin-contract';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
@@ -62,7 +62,6 @@ function createRuntime(projectRoot, mcpConfigIO) {
       messageStore: new MessageStore(),
       contract: {
         manifestContractRange: '0.1.0 || 0.2.0',
-        validateEffectiveGrants,
         validateManifest,
       },
       limbRegistry,

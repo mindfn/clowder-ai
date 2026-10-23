@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
-import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
+import { validateManifest } from '@clowder-ai/plugin-contract';
 import Fastify from 'fastify';
 
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
@@ -40,7 +40,7 @@ async function harness({
   const entry = catalogEntry(archive.integrity, {
     pluginId: packageManifest.pluginId,
     version: packageManifest.version,
-    ...(effectiveGrants ? { effectiveGrants } : {}),
+    ...(effectiveGrants ? {} : {}),
     ...(machinePresentation
       ? {
           presentation: {
@@ -97,7 +97,6 @@ async function harness({
 function contributionContractRuntime() {
   return {
     manifestContractRange: '0.1.0',
-    validateEffectiveGrants,
     validateManifest,
   };
 }
@@ -125,7 +124,6 @@ describe('F202 Plugin Manager runtime composition', () => {
       const inventory = await runtime.inventoryStore.snapshot();
       assert.deepEqual(inventory.packages, []);
       assert.deepEqual(inventory.instances, []);
-      assert.deepEqual(inventory.grants, []);
     } finally {
       await runtime.shutdown('empty_host_test');
     }
@@ -141,9 +139,6 @@ describe('F202 Plugin Manager runtime composition', () => {
       [entry.pluginId],
     );
     assert.equal(before.plugins[0].actions.install, true);
-    assert.deepEqual(before.plugins[0].capabilitySummary, [
-      { id: 'messaging.send', kind: 'messaging', name: 'Source', active: false },
-    ]);
 
     const installed = await composition.manager.install({
       source: { kind: 'catalog', catalogId: entry.catalogId },
@@ -267,7 +262,6 @@ export default { create() { return { async start(host) {
     const { composition, entry, runtime } = await harness({
       packageManifest,
       contract: contributionContractRuntime(),
-      effectiveGrants: ['plugin.config.read'],
       extraFiles: { 'dist/entrypoint.js': entrypoint },
     });
     const manager = composition.manager;
@@ -683,7 +677,6 @@ export default { create() { return { async start() {
         const after = await runtime.inventoryStore.snapshot();
         assert.equal(after.instances[0].packageDigest, before.instances[0].packageDigest);
         assert.equal(after.instances[0].pluginInstanceId, before.instances[0].pluginInstanceId);
-        assert.deepEqual(after.grants[0].effectiveGrants, before.grants[0].effectiveGrants);
         const current = (await composition.manager.get(entry.pluginId)).plugin;
         assert.equal(current.intent, 'enabled');
         assert.equal(current.live, failOld ? 'crashed' : 'running');
@@ -822,7 +815,6 @@ export default { create() { return { async start() {
       kind: 'local-archive',
       packageName: '@clowder-ai/official-test-source',
     });
-    assert.deepEqual(snapshot.grants[0].effectiveGrants, []);
     assert.deepEqual(listed.plugin.source, {
       kind: 'local-archive',
       packageName: '@clowder-ai/official-test-source',
@@ -870,10 +862,9 @@ export default { create() { return { async start() {
     const snapshot = await runtime.inventoryStore.snapshot();
     assert.equal(snapshot.instances[0].lifecycleState, 'installed');
     assert.equal(snapshot.instances[0].lifecycleRevision, 2);
-    assert.equal(snapshot.grants.length, 1);
   });
 
-  it('projects runtime-less declared MCP capabilities from the canonical capability state', async () => {
+  it('projects runtime-less declared MCP contributions from the canonical registration state', async () => {
     let catalogOffline = false;
     const packageManifest = manifest({
       runtime: { transport: 'builtin' },
@@ -920,9 +911,6 @@ export default { create() { return { async start() {
 
     const running = (await composition.manager.get(entry.pluginId)).plugin;
     assert.equal(running.live, 'running');
-    assert.deepEqual(running.capabilitySummary, [
-      { id: 'messaging.send', kind: 'messaging', name: 'Source', active: true },
-    ]);
     assert.equal(
       (await runtime.mcpConfigIO.readConfig()).capabilities.find(
         (capability) => capability.id === `plugin:${entry.pluginId}:fixture-tools`,
@@ -933,16 +921,10 @@ export default { create() { return { async start() {
     catalogOffline = true;
     const degraded = await composition.manager.list();
     assert.equal(degraded.catalog.status, 'unavailable');
-    assert.deepEqual(degraded.plugins[0].capabilitySummary, [
-      { id: 'messaging.send', kind: 'messaging', name: 'Source', active: true },
-    ]);
     catalogOffline = false;
 
     await composition.manager.setEnabled(entry.pluginId, { enabled: false, expectedRevision: 4 });
     const stopped = (await composition.manager.get(entry.pluginId)).plugin;
     assert.equal(stopped.live, 'stopped');
-    assert.deepEqual(stopped.capabilitySummary, [
-      { id: 'messaging.send', kind: 'messaging', name: 'Source', active: false },
-    ]);
   });
 });

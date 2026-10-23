@@ -80,7 +80,6 @@ export interface PluginTaskHostDeps {
   readonly admission?: PluginTaskAdmissionServices;
   readonly pluginInstanceId?: string;
   readonly pluginId: string;
-  readonly effectiveGrants: readonly string[];
   readonly taskStore: ITaskStore | undefined;
   readonly threadStore?: Pick<IThreadStore, 'get'>;
   readonly readThreadStore?: Pick<IThreadStore, 'get'> & Partial<Pick<IThreadStore, 'ensureOwnedThread'>>;

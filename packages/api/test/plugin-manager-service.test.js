@@ -20,7 +20,7 @@ const published = {
   capabilities: [{ id: 'messaging.send', kind: 'messaging', name: 'Scene events' }],
 };
 
-const emptyInventory = { schemaVersion: 1, packages: [], instances: [], grants: [] };
+const emptyInventory = { schemaVersion: 1, packages: [], instances: [] };
 
 const bundledGithub = {
   pluginId: 'github',
@@ -153,15 +153,6 @@ function installedInventory(overrides = {}) {
         installedAt: 1_000,
         updatedAt: 1_000,
         ...overrides,
-      },
-    ],
-    grants: [
-      {
-        pluginInstanceId: 'pi_video',
-        requestedCapabilities: ['messaging.send'],
-        effectiveGrants: ['messaging.send'],
-        grantRevision: 1,
-        updatedAt: 1_000,
       },
     ],
   };

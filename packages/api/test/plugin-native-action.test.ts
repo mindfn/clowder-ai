@@ -40,7 +40,6 @@ const admission = (id = 'instance') => ({
       ],
     },
   },
-  effectiveGrants: ['task.write'],
 });
 const caller = () => ({
   catId: 'cat',
@@ -190,7 +189,6 @@ test('SDK task mutation checks the invoking turn after provider work without rel
   const tasks = createPluginTaskHost({
     pluginId: 'instance',
     pluginInstanceId: 'instance',
-    effectiveGrants: ['task.write'],
     taskStore: {
       create: async () => {
         writes++;

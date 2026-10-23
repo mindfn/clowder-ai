@@ -71,7 +71,6 @@ test('projects canonical machine catalog release truth', async () => {
       distribution: 'registry',
       archiveUrl: 'https://registry.npmjs.org/@clowder-ai/video-analysis/-/video-analysis-0.1.0-alpha.0.tgz',
       packageDigest: digest,
-      effectiveGrants: [],
       presentation: {
         displayName: 'Video Analysis',
         description: {
@@ -101,7 +100,6 @@ test('projects canonical machine catalog release truth', async () => {
     publisher: 'Clowder AI',
     ownerAuthRequired: false,
     compatibleReplacement: false,
-    capabilities: [],
   });
 });
 
@@ -157,10 +155,8 @@ test('fails closed when catalog validation fails but discovers valid entries wit
   assert.equal(discovered.checkedAt, 3_000);
   assert.equal(discovered.entries.length, 1);
   assert.equal(discovered.entries[0].pluginId, 'dev.clowder.video-analysis');
-  assert.deepEqual(discovered.entries[0].effectiveGrants, []);
   const manager = await new OfficialPluginManagerCatalogAdapter(missingPolicy, []).snapshot();
   assert.equal(manager.candidates[0].pluginId, 'dev.clowder.video-analysis');
-  assert.deepEqual(manager.candidates[0].capabilities, []);
 });
 
 test('retains the last canonical machine catalog when a later read fails', async () => {

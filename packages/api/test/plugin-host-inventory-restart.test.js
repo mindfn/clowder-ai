@@ -57,7 +57,6 @@ describe('K-2A persisted restart normalization', () => {
     assert.equal(recovered.packages[0].manifest, null);
     assert.deepEqual(recovered.packages[0].incompatibleManifest, before.packages[0].manifest);
     assert.deepEqual(recovered.instances, before.instances);
-    assert.deepEqual(recovered.grants, before.grants);
     assert.equal(readFileSync(path, 'utf8'), bytes);
 
     admitted.manifest.contractVersion = '0.2.0';
@@ -172,7 +171,6 @@ describe('K-2A persisted restart normalization', () => {
 
     assert.equal(changed, 1);
     assert.deepEqual(after.packages, before.packages);
-    assert.deepEqual(after.grants, before.grants);
     assert.equal(after.instances[0].pluginInstanceId, 'pi_restart');
     assert.equal(after.instances[0].configReadiness, 'ready');
     assert.equal(after.instances[0].activationState, 'error');
@@ -226,23 +224,6 @@ describe('K-2A persisted restart normalization', () => {
     assert.equal(recovered.lifecycleRevision, 1);
   });
 
-  it('rejects persisted grants that were not requested by the referenced package manifest', async () => {
-    const root = mkdtempSync(join(os.tmpdir(), 'plugin-inventory-forged-grant-'));
-    const path = join(root, 'inventory.json');
-    const store = new FilePluginInventoryStore(path);
-    const controlPlane = new HostInventoryControlPlane(store, { createInstanceId: () => 'pi_restart' });
-    await controlPlane.installPackage(candidate());
-    const snapshot = await store.snapshot();
-    snapshot.grants[0].requestedCapabilities = ['onMessage'];
-    snapshot.grants[0].effectiveGrants = ['onMessage'];
-    writeFileSync(path, JSON.stringify(snapshot));
-
-    await assert.rejects(
-      () => new FilePluginInventoryStore(path).snapshot(),
-      (error) => error?.code === 'CORRUPT_SNAPSHOT',
-    );
-  });
-
   it('rejects runtime diagnostics with unrecognized fields instead of persisting raw detail', async () => {
     const root = mkdtempSync(join(os.tmpdir(), 'plugin-inventory-runtime-diagnostic-'));
     const path = join(root, 'inventory.json');
@@ -292,7 +273,6 @@ describe('K-2A persisted restart normalization', () => {
     assert.equal(recovered.packages[0].manifest, null);
     assert.deepEqual(recovered.packages[0].incompatibleManifest, snapshot.packages[0].manifest);
     assert.deepEqual(recovered.instances, snapshot.instances);
-    assert.deepEqual(recovered.grants, snapshot.grants);
   });
 
   it('rejects a current installed instance backed by a quarantined package', async () => {

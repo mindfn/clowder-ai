@@ -77,7 +77,7 @@ describe('K-2A contract-native inventory', () => {
     assert.equal(PLUGIN_MANIFEST_CONTRACT_RANGE, `>=0.1.0-beta.13 <=${PLUGIN_CONTRACT_PACKAGE_VERSION}`);
   });
 
-  it('rejects a traversal entrypoint before admitting any package, instance, or grant', async () => {
+  it('rejects a traversal entrypoint before admitting any package or instance', async () => {
     const { store, controlPlane } = harness();
     await assert.rejects(
       controlPlane.installPackage(
@@ -88,10 +88,9 @@ describe('K-2A contract-native inventory', () => {
     const snapshot = await store.snapshot();
     assert.deepEqual(snapshot.packages, []);
     assert.deepEqual(snapshot.instances, []);
-    assert.deepEqual(snapshot.grants, []);
   });
 
-  it('installs package, instance, and grants atomically with orthogonal initial state', async () => {
+  it('installs package and instance atomically with orthogonal initial state', async () => {
     const { store, controlPlane } = harness();
     const installed = await controlPlane.installPackage(candidate());
     const snapshot = await store.snapshot();
@@ -99,7 +98,6 @@ describe('K-2A contract-native inventory', () => {
     assert.equal(installed.pluginInstanceId, 'pi_1');
     assert.equal(snapshot.packages.length, 1);
     assert.equal(snapshot.instances.length, 1);
-    assert.equal(snapshot.grants.length, 1);
     assert.deepEqual(snapshot.instances[0], {
       pluginInstanceId: 'pi_1',
       pluginId: 'dev.clowder.echo',
@@ -112,9 +110,6 @@ describe('K-2A contract-native inventory', () => {
       installedAt: 1_000,
       updatedAt: 1_000,
     });
-    assert.deepEqual(snapshot.grants[0].requestedCapabilities, ['messaging.send', 'onMessage']);
-    assert.deepEqual(snapshot.grants[0].effectiveGrants, ['messaging.send']);
-    assert.equal(snapshot.grants[0].grantRevision, 1);
   });
 
   it('admits the installed beta.20, beta.21, beta.22 and beta.24 lines and the consumed beta.25 line', async () => {
@@ -144,7 +139,7 @@ describe('K-2A contract-native inventory', () => {
     '0.1.0-beta.19',
     '0.1.0-beta.20',
   ]) {
-    it(`restores an admitted ${contractVersion} inventory without changing its identity or grants`, async () => {
+    it(`restores an admitted ${contractVersion} inventory without changing its identity`, async () => {
       const { store, controlPlane } = harness();
       await controlPlane.installPackage(candidate({ manifest: manifest({ contractVersion }) }));
       const saved = await store.snapshot();
@@ -187,7 +182,7 @@ describe('K-2A contract-native inventory', () => {
     assert.deepEqual((await store.snapshot()).packages, []);
   });
 
-  it('can bind admission to an exact newer contract runtime without bypassing Host policy', async () => {
+  it('can bind admission to an exact newer contract runtime using the selected contract runtime', async () => {
     const exactManifest = manifest({
       contractVersion: '0.1.0-beta.13',
       features: [
@@ -222,7 +217,6 @@ describe('K-2A contract-native inventory', () => {
 
     const snapshot = await store.snapshot();
     assert.equal(snapshot.packages[0].contractVersion, '0.1.0-beta.13');
-    assert.deepEqual(snapshot.grants[0].effectiveGrants, ['plugin.config.read', 'secret.read']);
   });
 
   it('upgrades the current installation without changing its identity', async () => {
@@ -254,15 +248,11 @@ describe('K-2A contract-native inventory', () => {
     });
     const snapshot = await store.snapshot();
     const instance = snapshot.instances.find((item) => item.pluginInstanceId === upgraded.pluginInstanceId);
-    const grants = snapshot.grants.find((item) => item.pluginInstanceId === upgraded.pluginInstanceId);
 
     assert.equal(upgraded.pluginInstanceId, installed.pluginInstanceId);
     assert.equal(instance.configReadiness, 'ready');
     assert.equal(instance.activationState, 'enabled');
     assert.equal(instance.runtimeState, 'stopped');
-    assert.equal(grants.grantRevision, 2);
-    assert.deepEqual(grants.requestedCapabilities, ['messaging.send']);
-    assert.deepEqual(grants.effectiveGrants, ['messaging.send']);
   });
 
   it('reinstall mints a fresh namespace and retires the prior instance', async () => {
@@ -280,7 +270,5 @@ describe('K-2A contract-native inventory', () => {
     assert.equal(oldInstance.lifecycleState, 'retired');
     assert.equal(oldInstance.runtimeState, 'stopped');
     assert.equal(newInstance.lifecycleState, 'installed');
-    assert.equal(snapshot.grants.find((item) => item.pluginInstanceId === 'pi_1').grantRevision, 1);
-    assert.equal(snapshot.grants.find((item) => item.pluginInstanceId === 'pi_2').grantRevision, 1);
   });
 });

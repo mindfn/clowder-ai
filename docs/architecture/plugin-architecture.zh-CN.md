@@ -11,7 +11,7 @@ plugin 的*管理*与 plugin 的*实现*分处于不同的仓库中，由契约�
 | **`clowder-ai`**（核心） | plugin 的发现与安装、管理 UI、授权、运行 plugins 的 **Host Broker**、编排、审计，以及核心线程、消息与 Task 数据。 |
 | **`clowder-ai-plugins`** | plugin **契约**、plugin 侧的 **SDK** 与独立运行时、脚手架、官方 plugins、插件私有业务数据，以及一致性测试夹具（fixtures）。 |
 
-插件仓负责实现和发布包，Host 负责安装集成。支持的来源是经过入库审核的官方仓，以及用户团队自行维护和管理的仓库。SDK 定义双向公共接口；Host 自动注册已启用插件声明的 MCP，复用既有插件 token 与调用上下文转发调用，不再维护另一份逐插件 SDK API 权限名单。旧 `capabilities`、`effectiveGrants` 字段保留可读形状，作为兼容元数据，不再作为公共 SDK 方法的资格判断。
+插件仓负责实现和发布包，Host 负责安装集成。支持的来源是经过入库审核的官方仓，以及用户团队自行维护和管理的仓库。SDK 定义双向公共接口；Host 自动注册已启用插件声明的 MCP，复用既有插件 token 与调用上下文转发调用，不再维护另一份逐插件 SDK API 权限名单。库存只持久化包与实例；旧快照的 API grant 字段在读取时忽略。仅旧 SDK 的 hello 响应从原 manifest 投影其必需的两个 wire 字段；内部 session、runtime lease 和 API 准入不携带 grant 状态。
 
 ## 契约
 

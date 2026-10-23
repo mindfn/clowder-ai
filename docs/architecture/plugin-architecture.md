@@ -11,7 +11,7 @@ Plugin *management* and plugin *implementation* live in separate repositories, c
 | **`clowder-ai`** (core) | Plugin discovery and install, the management UI, authorization, the **Host Broker** that runs plugins, orchestration, audit, and core thread/message/task data. |
 | **`clowder-ai-plugins`** | The plugin **contract**, the plugin-side **SDK** and standalone runtime, scaffolding, official plugins, plugin-owned business data and conformance fixtures. |
 
-The plugin repository implements and publishes packages; Host installs and integrates them. Supported sources are the reviewed official repository and repositories managed by a user’s own team. The SDK defines the bidirectional public interface. Host automatically registers an enabled plugin’s declared MCP and routes its calls using the existing plugin token and invocation context. It does not maintain a second per-plugin SDK API permission list. Legacy `capabilities` and `effectiveGrants` fields remain readable as compatibility metadata; they do not gate public SDK methods.
+The plugin repository implements and publishes packages; Host installs and integrates them. Supported sources are the reviewed official repository and repositories managed by a user’s own team. The SDK defines the bidirectional public interface. Host automatically registers an enabled plugin’s declared MCP and routes its calls using the existing plugin token and invocation context. It does not maintain a second per-plugin SDK API permission list. Inventory persists packages and instances only. Historical API grant fields are ignored on snapshot input; only the legacy SDK hello response projects its two required wire fields from the original manifest. Internal sessions, runtime leases and API admission do not carry grant state.
 
 ## The contract
 
@@ -147,14 +147,14 @@ Catalog packages retain their own registry integrity validation.
 One bounded, cancellable operation covers inspection, graph construction, sealing and packing. Source
 members, metadata, resolution and lock are rechecked before publication; aggregate graph work and archive
 size have explicit limits. Cancellation stops scheduling new work and awaits active filesystem operations
-before cleanup. Validation failures precede grant/inventory writes. Standalone directories without
+before cleanup. Validation failures precede inventory writes. Standalone directories without
 package.json retain the existing bounded copy path. Git installation can prepare a source through its
 existing declared build workflow; direct admission does not run source install/build scripts.
 
 ## Verification boundaries
 
 Exercise package admission and lifecycle against isolated data, including invalid archives, revoked
-grants, config refresh, stop/restart, failed replacement and retained data. Verify terminal message
+config refresh, stop/restart, failed replacement and retained data. Verify terminal message
 publication for successful and failed member responses; processing placeholders are not deliveries.
 For UI identity, exercise persisted message → history and reply projection → the common member avatar.
 Only manifest presentation supplies plugin images/colors; old records without presentation use the

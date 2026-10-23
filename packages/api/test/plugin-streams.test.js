@@ -13,7 +13,7 @@ test('stream readers return bytes, release on cancellation and allow reading the
   const expected = Buffer.alloc(150000, 7);
   const reference = await ledger.register(expected);
   const service = new PluginMediaReadService({ ledger, entitlements: { isEntitled: async () => true } });
-  const context = { pluginInstanceId: 'fixture', effectiveGrants: ['streams.read'] };
+  const context = { pluginInstanceId: 'fixture' };
   const first = service.stream(context, reference)[Symbol.asyncIterator]();
   assert.ok((await first.next()).value instanceof Uint8Array);
   await first.return();

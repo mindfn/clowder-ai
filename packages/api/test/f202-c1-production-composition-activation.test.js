@@ -96,7 +96,6 @@ describe('F202 C1 Core cutover gate — production-composition activation prereq
       computedPackageDigest: EXTERNAL_PACKAGE_DIGEST,
       expectedPackageDigest: EXTERNAL_PACKAGE_DIGEST,
       packagePluginId: EXTERNAL_PLUGIN_ID,
-      effectiveGrants: ['messaging.send', 'secret.read'],
       signalSchemas: {
         'schemas/external.signal.v1.schema.json': {
           type: 'object',

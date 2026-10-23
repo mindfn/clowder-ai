@@ -54,7 +54,6 @@ export interface PluginThreadHostDeps extends PluginThreadProjectionDeps {
   readonly pluginId: string;
   readonly ownerUserId: string;
   readonly projectPath: string;
-  readonly effectiveGrants: readonly string[];
   readonly threadStore: IThreadStore;
   readonly assertCurrent?: () => void;
 }

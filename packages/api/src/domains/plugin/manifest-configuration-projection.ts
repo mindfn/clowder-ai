@@ -48,7 +48,6 @@ export class ManifestConfigurationProjectionError extends Error {
 export interface ManifestConfigurationProjectionInput {
   readonly pluginInstanceId: string;
   readonly manifest: PluginManifest;
-  readonly effectiveGrants: readonly string[];
   readonly configuration: PluginRuntimeConfigurationPort;
 }
 

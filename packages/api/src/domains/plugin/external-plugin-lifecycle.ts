@@ -173,7 +173,7 @@ export class ExternalPluginLifecycleService {
         } else {
           try {
             await this.options.supervisor.configRefresh?.(input.instanceId);
-          } catch (error) {
+          } catch (_error) {
             try {
               await this.options.supervisor.stop(input.instanceId, 'configuration_refresh_failed');
             } finally {
@@ -360,7 +360,7 @@ export class ExternalPluginLifecycleService {
         return;
       }
       transaction.instances.put({
-        ...withRuntimeFailure(current, failure.record, failure.detail),
+        ...withRuntimeFailure(current, failure.record),
         activationState: 'error',
         runtimeState: 'stopped',
         lifecycleRevision: current.lifecycleRevision + 1,
@@ -405,7 +405,7 @@ export class ExternalPluginLifecycleService {
       const current = currentInstance(transaction, instanceId);
       assertRevision(current, expectedRevision);
       const base = options.failure
-        ? withRuntimeFailure(current, options.failure.record, options.failure.detail)
+        ? withRuntimeFailure(current, options.failure.record)
         : options.clearRuntimeError
           ? withoutRuntimeFailure(current)
           : current;

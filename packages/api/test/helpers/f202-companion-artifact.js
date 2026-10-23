@@ -54,8 +54,6 @@ export async function companionHarness(t) {
   const record = (await store.snapshot()).packages.find((row) => row.packageDigest === installed.packageDigest);
   assert.equal(record.provenance.dependencyClosure, 'shipped');
   assert.equal(record.manifest.version, COMPANION_ARTIFACT.version);
-  const grant = (await store.snapshot()).grants.find((row) => row.pluginInstanceId === instanceId);
-  assert.deepEqual(grant.effectiveGrants, []);
   const packages = new FilesystemVerifiedPluginPackageLocator(packagesRoot);
   const configuration = { readConfig: async () => undefined, readSecret: async () => undefined };
   const logs = [];

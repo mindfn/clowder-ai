@@ -3,14 +3,13 @@ import { test } from 'node:test';
 import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
 import { createPluginThreadHost } from '../dist/domains/plugin/host-surface/plugin-thread-host.js';
 
-function fixture(grants = ['thread.write', 'thread.readContent', 'thread.listMetadata']) {
+function fixture() {
   const store = new ThreadStore();
   let active = true;
   const host = createPluginThreadHost({
     pluginId: 'fixture',
     ownerUserId: 'owner',
     projectPath: '/isolated',
-    effectiveGrants: grants,
     threadDeepLinkUrl: (id) => `https://example.test/thread/${id}`,
     threadStore: store,
     assertCurrent: () => {

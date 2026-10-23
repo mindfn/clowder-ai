@@ -112,7 +112,6 @@ export async function installConnectorInstance(composition, projectRoot, overrid
     computedPackageDigest: EXTERNAL_PACKAGE_DIGEST,
     expectedPackageDigest: EXTERNAL_PACKAGE_DIGEST,
     packagePluginId: EXTERNAL_PLUGIN_ID,
-    effectiveGrants: overrides.effectiveGrants ?? ['messaging.send', 'secret.read'],
   });
   const configuration = new HostPluginConfigurationService({
     projectRoot,

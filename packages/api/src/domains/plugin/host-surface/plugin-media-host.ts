@@ -9,7 +9,6 @@ export interface PluginStreams {
 
 export interface MediaReadContext {
   readonly pluginInstanceId: string;
-  readonly effectiveGrants: readonly string[];
 }
 
 const DENIED_MESSAGE = 'Media access denied';
@@ -21,7 +20,7 @@ export class PluginMediaReadService {
       readonly ledger: Pick<FileMessagingMediaLedger, 'readChunk'> &
         Partial<Pick<FileMessagingMediaLedger, 'openVerifiedStream'>>;
       readonly entitlements: Pick<MediaEntitlementLedger, 'isEntitled'>;
-      readonly onRejected?: (reason: 'capability' | 'entitlement' | 'range') => void;
+      readonly onRejected?: (reason: 'entitlement' | 'range') => void;
     },
   ) {}
 

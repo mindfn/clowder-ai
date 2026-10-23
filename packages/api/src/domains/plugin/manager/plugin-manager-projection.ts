@@ -4,7 +4,6 @@ import type {
   PluginManagerActions,
   PluginManagerArtifactState,
   PluginManagerAuthState,
-  PluginManagerCapability,
   PluginManagerConfigState,
   PluginManagerContribution,
   PluginManagerIntentState,
@@ -12,7 +11,7 @@ import type {
   PluginManagerLiveState,
   PluginManagerPackageSource,
 } from '@cat-cafe/shared';
-import type { Capability, PluginManifest } from '@clowder-ai/plugin-contract';
+import type { PluginManifest } from '@clowder-ai/plugin-contract';
 import { pluginRuntimeDiagnostic } from '../diagnostics/plugin-runtime-diagnostic.js';
 import type { PluginInstanceRecord, PluginInventorySnapshot, PluginPackageRecord } from '../host-inventory/types.js';
 import { sourceSemver } from './local-directory-semver.js';
@@ -34,7 +33,6 @@ export interface PluginManagerCatalogCandidate {
   readonly iconBg?: string;
   readonly publisher?: string;
   readonly ownerAuthRequired: boolean;
-  readonly capabilities: readonly Omit<PluginManagerCapability, 'active'>[];
   readonly contributions?: readonly PluginManagerContribution[];
 }
 
@@ -45,8 +43,6 @@ export interface PluginManagerProjectionOverrides {
   readonly configState?: PluginManagerConfigState;
   /** Desired intent reader override for lifecycle error states where activationState is ambiguous. */
   readonly intentState?: PluginManagerIntentState;
-  /** Capability registry truth. A grant or visible label alone does not make a capability active. */
-  readonly activeCapabilityIds?: readonly string[];
 }
 
 export interface DerivePluginManagerActionsInput {
@@ -55,31 +51,6 @@ export interface DerivePluginManagerActionsInput {
   readonly auth: PluginManagerAuthState;
   readonly intent: PluginManagerIntentState;
   readonly activationTransition: boolean;
-}
-
-function capabilityKind(capability: Capability): PluginManagerCapability['kind'] {
-  if (capability.startsWith('messaging.') || capability === 'onMessage') return 'messaging';
-  if (capability.startsWith('schedule.')) return 'schedule';
-  if (capability.startsWith('windows.') || capability.startsWith('whisper.')) return 'identity';
-  return 'service';
-}
-
-export function pluginManagerCapabilitiesFromManifest(
-  manifest: PluginManifest,
-): readonly Omit<PluginManagerCapability, 'active'>[] {
-  const capabilities = new Map<Capability, Omit<PluginManagerCapability, 'active'>>();
-  for (const feature of manifest.features) {
-    for (const capability of feature.capabilities) {
-      if (!capabilities.has(capability)) {
-        capabilities.set(capability, {
-          id: capability,
-          kind: capabilityKind(capability),
-          name: feature.name,
-        });
-      }
-    }
-  }
-  return [...capabilities.values()];
 }
 
 type ManifestContribution = NonNullable<PluginManifest['contributions']>[number];
@@ -108,7 +79,7 @@ function contributionName(contribution: ManifestContribution): string {
   }
 }
 
-/** Projects verified package contributions without relabeling Host permission grants as user-facing tools. */
+/** Projects verified package contributions as the user-facing installed integration surface. */
 export function pluginManagerContributionsFromManifest(manifest: PluginManifest): readonly PluginManagerContribution[] {
   return (manifest.contributions ?? []).map((contribution) => ({
     id: contribution.id,
@@ -271,17 +242,6 @@ function projectionState(
   return { artifact, config, auth, intent, live, activationTransition };
 }
 
-function projectCapabilities(
-  capabilities: readonly Omit<PluginManagerCapability, 'active'>[],
-  activeCapabilityIds: readonly string[],
-) {
-  const active = new Set(activeCapabilityIds);
-  return capabilities.map((capability) => ({
-    ...capability,
-    active: active.has(capability.id),
-  }));
-}
-
 function runtimeDiagnostic(instance: PluginInstanceRecord | undefined) {
   const diagnostic = pluginRuntimeDiagnostic(instance);
   return diagnostic === undefined ? {} : { diagnostic };
@@ -303,10 +263,6 @@ export function projectPluginManagerCatalogCandidate(
     instance,
     packageRecord,
     overrides,
-  );
-  const capabilitySummary = projectCapabilities(
-    installedManifest ? pluginManagerCapabilitiesFromManifest(installedManifest) : candidate.capabilities,
-    overrides.activeCapabilityIds ?? [],
   );
 
   const newerCompatible =
@@ -332,7 +288,7 @@ export function projectPluginManagerCatalogCandidate(
     live: incompatible ? 'stopped' : live,
     ...(instance?.activationState === 'error' ? { activationFailed: true } : {}),
     lifecycleRevision: instance?.lifecycleRevision ?? null,
-    capabilitySummary: incompatible ? [] : capabilitySummary,
+    capabilitySummary: [],
     actions: incompatible
       ? {
           install: newerCompatible,

@@ -137,7 +137,6 @@ function projectEntry(plugin: ValidatedMachineCatalog['plugins'][number]): Offic
     distribution: 'registry',
     archiveUrl: release.artifact.tarballUrl,
     packageDigest: release.artifact.integrity,
-    effectiveGrants: [],
     presentation: {
       displayName: plugin.name,
       description: plugin.description,

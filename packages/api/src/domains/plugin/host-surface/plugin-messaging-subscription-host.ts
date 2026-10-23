@@ -27,7 +27,6 @@ export interface PluginMessagingSubscriptionSessionDeps {
   readonly pluginId: string;
   readonly pluginInstanceId: string;
   readonly ownerUserId: string;
-  readonly effectiveGrants: readonly string[];
   readonly threadStore: IThreadStore;
   readonly assertCurrent?: () => void;
   readonly messaging: MessagingService;
@@ -102,8 +101,7 @@ export function createPluginMessagingSubscriptionSession(
           threadId: input.threadId,
           userId: deps.ownerUserId,
           scope: {
-            // Subscription identity must not rotate merely because an unrelated send grant
-            // changed; the durable cursor is indexed by this deterministic handle.
+            // The durable cursor is indexed by this deterministic installation/thread handle.
             canSend: false,
             canSubscribe: true,
           },

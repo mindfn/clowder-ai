@@ -79,7 +79,6 @@ export interface PluginStorageHost {
 
 export function createPluginStorageHost(input: {
   readonly pluginId: string;
-  readonly effectiveGrants: readonly string[];
   readonly storage?: PluginPrivateStoragePort;
 }): PluginStorageHost {
   const requireService = () => {

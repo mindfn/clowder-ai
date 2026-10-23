@@ -44,11 +44,10 @@ function port({ config = {}, secrets = {} } = {}) {
   };
 }
 
-function input({ configuration, grants, store }) {
+function input({ configuration, store }) {
   return {
     pluginInstanceId: INSTANCE_ID,
     manifest: manifestWith(configuration),
-    effectiveGrants: grants,
     configuration: port(store),
   };
 }
@@ -65,7 +64,6 @@ describe('F202 C1 — carrier-neutral configuration authority', () => {
         { key: 'login', label: 'Sign in', kind: 'operation', required: true, target: ['token'], actions: [] },
         { key: 'token', label: 'Token', kind: 'secret', required: false },
       ]),
-      effectiveGrants: ['secret.read'],
       configuration: {
         async readConfig(_id, key) {
           reads.push(key);
@@ -88,7 +86,6 @@ describe('F202 C1 — carrier-neutral configuration authority', () => {
     const resolved = await resolveManifestConfiguration(
       input({
         configuration: [BOT_TOKEN, API_BASE],
-        grants: ['secret.read', 'plugin.config.read'],
         store: { secrets: { BOT_TOKEN: 'tok-1' }, config: { API_BASE: 'https://example.test' } },
       }),
     );
@@ -106,7 +103,6 @@ describe('F202 C1 — carrier-neutral configuration authority', () => {
   test('env projection is exactly the resolution flattened — the stdio carrier does not move', async () => {
     const args = input({
       configuration: [BOT_TOKEN, API_BASE],
-      grants: ['secret.read', 'plugin.config.read'],
       store: { secrets: { BOT_TOKEN: 'tok-1' }, config: { API_BASE: 'https://example.test' } },
     });
 
@@ -120,7 +116,6 @@ describe('F202 C1 — carrier-neutral configuration authority', () => {
   test('rule 1 refuses the Host protocol namespace at the manifest level, for every carrier', async () => {
     const args = input({
       configuration: [{ key: 'CLOWDER_PLUGIN_ID', label: 'Identity', kind: 'string', required: false }],
-      grants: ['plugin.config.read'],
       store: {},
     });
 
@@ -136,7 +131,7 @@ describe('F202 C1 — carrier-neutral configuration authority', () => {
 
   test('required field that has no effective value', async () => {
     await assert.rejects(
-      resolveManifestConfiguration(input({ configuration: [BOT_TOKEN], grants: ['secret.read'], store: {} })),
+      resolveManifestConfiguration(input({ configuration: [BOT_TOKEN], store: {} })),
       (error) => error instanceof ManifestConfigurationProjectionError && error.failure.reason === 'value_unavailable',
     );
   });
@@ -153,16 +148,13 @@ describe('F202 C1 — carrier-neutral configuration authority', () => {
       },
     ];
     await assert.rejects(
-      resolveManifestConfiguration(
-        input({ configuration: fields, grants: ['plugin.config.read', 'secret.read'], store: {} }),
-      ),
+      resolveManifestConfiguration(input({ configuration: fields, store: {} })),
       (error) => error instanceof ManifestConfigurationProjectionError && error.failure.reason === 'value_unavailable',
     );
     assert.deepEqual(
       await resolveManifestConfiguration(
         input({
           configuration: fields,
-          grants: ['plugin.config.read'],
           store: { config: { mode: 'polling' } },
         }),
       ),
@@ -182,14 +174,13 @@ describe('F202 C1 — carrier-neutral configuration authority', () => {
       },
     ];
     await assert.rejects(
-      resolveManifestConfiguration(input({ configuration: fields, grants: ['plugin.config.read'], store: {} })),
+      resolveManifestConfiguration(input({ configuration: fields, store: {} })),
       (error) => error instanceof ManifestConfigurationProjectionError && error.failure.reason === 'value_unavailable',
     );
     assert.deepEqual(
       await resolveManifestConfiguration(
         input({
           configuration: fields,
-          grants: ['plugin.config.read'],
           store: { config: { enabled: true } },
         }),
       ),

@@ -93,15 +93,9 @@ export class ConnectorSettingsService {
       typeof declaration.label !== 'string'
     )
       throw new ConnectorSettingsError(404, 'Group settings are not declared by this installed plugin');
-    const grant = snapshot.grants.find((item) => item.pluginInstanceId === instance.pluginInstanceId);
     if (!this.options.storage) throw new ConnectorSettingsError(503, 'Group settings storage is unavailable');
     return {
-      fence: JSON.stringify([
-        instance.pluginInstanceId,
-        instance.packageDigest,
-        instance.lifecycleRevision,
-        grant?.grantRevision,
-      ]),
+      fence: JSON.stringify([instance.pluginInstanceId, instance.packageDigest, instance.lifecycleRevision]),
       storage: this.options.storage,
     };
   }

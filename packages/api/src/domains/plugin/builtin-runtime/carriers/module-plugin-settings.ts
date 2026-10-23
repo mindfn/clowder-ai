@@ -39,7 +39,6 @@ export interface ModulePluginSettingsDefinition {
 export interface PluginSettingsInvocationInput {
   readonly pluginInstanceId: string;
   readonly packageRecord: ExecutablePluginPackageRecord;
-  readonly effectiveGrants: readonly string[];
   readonly method: string;
   readonly params: unknown;
   readonly assertCurrent: () => Promise<void>;
@@ -118,7 +117,7 @@ export async function invokeModuleSettings(
 
 /** Shared dormant client for settings and uninstall; never activates plugin business resources. */
 export async function createModuleSettingsHost(
-  input: Pick<PluginSettingsInvocationInput, 'pluginInstanceId' | 'packageRecord' | 'effectiveGrants'>,
+  input: Pick<PluginSettingsInvocationInput, 'pluginInstanceId' | 'packageRecord'>,
   options: {
     configuration: PluginRuntimeConfigurationPort;
     storage?: PluginPrivateStoragePort;
@@ -137,7 +136,6 @@ export async function createModuleSettingsHost(
   current: () => Promise<void>,
 ): Promise<ModulePluginSettingsHost> {
   const record = snapshotModuleAuthority(input.packageRecord);
-  const grants = snapshotModuleAuthority(input.effectiveGrants);
   const variantRuntime = options.variantMode === 'runtime' && declaresConfigurationVariants(record.manifest);
   let variantResolutionPromise: Promise<ReturnType<typeof resolveVariant>> | undefined;
   const variantResolution = () => {
@@ -190,7 +188,6 @@ export async function createModuleSettingsHost(
   };
   const storage = createPluginStorageHost({
     pluginId: record.pluginId,
-    effectiveGrants: grants,
     ...(options.storage ? { storage: options.storage } : {}),
   });
   const scoped = Object.fromEntries(
@@ -208,7 +205,6 @@ export async function createModuleSettingsHost(
   const dataPath = await preparePluginDataDirectory({
     parent: options.dataDirectoryParent,
     manifest: record.manifest,
-    effectiveGrants: grants,
   });
   await current();
   return {

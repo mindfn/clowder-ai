@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
+import { validateManifest } from '@clowder-ai/plugin-contract';
 import {
   readCapabilitiesConfig,
   withCapabilityLock,
@@ -55,7 +55,7 @@ test(
         projectRoot: root,
         redis,
         messageStore: new MessageStore(),
-        contract: { manifestContractRange: '0.1.0', validateEffectiveGrants, validateManifest },
+        contract: { manifestContractRange: '0.1.0', validateManifest },
         limbRegistry,
         mcpConfigIO: {
           readConfig: () => readCapabilitiesConfig(root),

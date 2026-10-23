@@ -61,7 +61,7 @@ async function expectNoWrites(store, action, code) {
 }
 
 describe('K-2A fail-closed inventory writes', () => {
-  it('invalid contract manifest writes no package, instance, or grant state', async () => {
+  it('invalid contract manifest writes no package or instance state', async () => {
     const store = new MemoryPluginInventoryStore();
     await expectNoWrites(
       store,
@@ -90,21 +90,12 @@ describe('K-2A fail-closed inventory writes', () => {
     );
   });
 
-  it('package identity mismatch writes no package, instance, or grant state', async () => {
+  it('package identity mismatch writes no package or instance state', async () => {
     const store = new MemoryPluginInventoryStore();
     await expectNoWrites(
       store,
       () => service(store).installPackage(candidate({ packagePluginId: 'dev.clowder.other' })),
       'PACKAGE_ID_MISMATCH',
-    );
-  });
-
-  it('unknown or unrequested effective grant writes nothing', async () => {
-    const store = new MemoryPluginInventoryStore();
-    await expectNoWrites(
-      store,
-      () => service(store).installPackage(candidate({ effectiveGrants: ['thread.readContent'] })),
-      'INVALID_GRANT',
     );
   });
 
@@ -182,7 +173,6 @@ describe('K-2A fail-closed inventory writes', () => {
 
     assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
     assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
-    assert.equal(snapshot.grants[0].grantRevision, 2);
     assert.equal(snapshot.instances[0].packageDigest, upgradedCandidate().computedPackageDigest);
   });
 
@@ -202,7 +192,6 @@ describe('K-2A fail-closed inventory writes', () => {
       schemaVersion: 1,
       packages: [],
       instances: [],
-      grants: [],
     });
   });
 });

@@ -25,11 +25,7 @@ export interface BundledPluginRuntime {
    * manifest reads the Host's admitted truth instead of re-deriving one that could have
    * drifted since the fence was taken.
    */
-  start(
-    pluginInstanceId: string,
-    packageRecord: ExecutablePluginPackageRecord,
-    effectiveGrants: readonly string[],
-  ): Promise<void>;
+  start(pluginInstanceId: string, packageRecord: ExecutablePluginPackageRecord): Promise<void>;
   readStream?(
     pluginInstanceId: string,
     reference: string,
@@ -37,11 +33,7 @@ export interface BundledPluginRuntime {
   ): AsyncIterable<Uint8Array>;
   stop(pluginInstanceId: string, reason: string): Promise<void>;
   configRefresh?(pluginInstanceId: string): Promise<void>;
-  uninstall?(
-    pluginInstanceId: string,
-    packageRecord: ExecutablePluginPackageRecord,
-    effectiveGrants: readonly string[],
-  ): Promise<void>;
+  uninstall?(pluginInstanceId: string, packageRecord: ExecutablePluginPackageRecord): Promise<void>;
   invoke?(pluginInstanceId: string, method: string, params: unknown): Promise<unknown>;
   /**
    * F202 W2-3 h3b: invoke, also saying whether the package's action was entered when it fails.
@@ -61,7 +53,6 @@ export interface BundledPluginRuntimeCarrierOptions {
 interface RuntimeAuthority {
   readonly instance: PluginInstanceRecord;
   readonly packageRecord: ExecutablePluginPackageRecord;
-  readonly effectiveGrants: readonly string[];
 }
 
 interface ActiveBundled {
@@ -136,7 +127,7 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     try {
       await this.setBundledRuntimeState(authority, 'starting');
       try {
-        await runtime.start(pluginInstanceId, authority.packageRecord, authority.effectiveGrants);
+        await runtime.start(pluginInstanceId, authority.packageRecord);
       } catch (error) {
         packageFailed = true;
         throw error;
@@ -212,7 +203,7 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     }
     if (reason === 'owner_uninstalled') {
       const runtime = this.#runtimeFor(authority.packageRecord);
-      await runtime?.uninstall?.(pluginInstanceId, authority.packageRecord, authority.effectiveGrants);
+      await runtime?.uninstall?.(pluginInstanceId, authority.packageRecord);
     }
   }
 
@@ -325,7 +316,6 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     const packageRecord = instance
       ? snapshot.packages.find((candidate) => candidate.packageDigest === instance.packageDigest)
       : undefined;
-    const grants = snapshot.grants.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
     const activationAllowed =
       instance?.activationState === 'enabled' ||
       (allowStopping && ['disabling', 'error', 'disabled'].includes(instance?.activationState ?? ''));
@@ -346,7 +336,6 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     return {
       instance,
       packageRecord,
-      effectiveGrants: grants?.effectiveGrants ?? [],
     };
   }
 
@@ -370,7 +359,7 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
         );
       }
       const base = failure
-        ? withRuntimeFailure(current, failure.record, failure.detail)
+        ? withRuntimeFailure(current, failure.record)
         : runtimeState === 'starting'
           ? withoutRuntimeFailure(current)
           : current;

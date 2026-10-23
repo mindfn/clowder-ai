@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
-import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
+import { validateManifest } from '@clowder-ai/plugin-contract';
 
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { TaskStore } from '../dist/domains/cats/services/stores/ports/TaskStore.js';
@@ -74,7 +74,6 @@ async function writeTaskFixture(capabilities = ['task.read', 'task.write']) {
 test('task calls report unavailable Host storage', async () => {
   const unavailable = createPluginTaskHost({
     pluginId: 'dev.clowder.authorized',
-    effectiveGrants: ['task.read'],
     taskStore: undefined,
   });
   await assert.rejects(() => unavailable.get({ id: 'task-1' }), /Host task store is unavailable/);
@@ -91,7 +90,7 @@ test('module plugins create, read, and update ordinary tasks through the Host ta
     taskStore,
     threadStore,
     threadOwnerUserId: 'owner',
-    contract: { manifestContractRange: '0.1.0', validateEffectiveGrants, validateManifest },
+    contract: { manifestContractRange: '0.1.0', validateManifest },
   });
   const composition = createPluginManagerRuntimeComposition({
     runtime,

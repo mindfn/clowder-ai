@@ -49,8 +49,7 @@ async function failedInstall() {
   const current = async () => {
     const snapshot = await store.snapshot();
     const instance = snapshot.instances.find((candidate) => candidate.lifecycleState === 'installed');
-    const grant = snapshot.grants.find((candidate) => candidate.pluginInstanceId === instance.pluginInstanceId);
-    return { instance, grant, diagnostic: pluginRuntimeDiagnostic(instance) };
+    return { instance, diagnostic: pluginRuntimeDiagnostic(instance) };
   };
   const updater = (next) =>
     new OfficialPluginPackageInstaller({
@@ -76,7 +75,6 @@ test('after an update to a version that no longer uses it, the old refusal is no
 
   const after = await current();
   assert.notEqual(after.instance.packageDigest, before.instance.packageDigest, 'the package was swapped');
-  assert.deepEqual(after.grant.requestedCapabilities, ['messaging.send']);
   assert.equal(after.instance.lastRuntimeErrorDetail, undefined, 'the reason did not survive the swap');
   assert.equal(after.diagnostic.capability, undefined);
   assert.doesNotMatch(after.diagnostic.message, /thread\.listMetadata|defect/u);
