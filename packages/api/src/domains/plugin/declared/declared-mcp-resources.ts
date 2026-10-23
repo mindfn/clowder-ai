@@ -17,6 +17,7 @@ import { hostCapabilityRefusal } from '../host-surface/host-capability-refusal.j
 import { effectivePluginConfigurationValue } from '../manager/plugin-configuration-values.js';
 import { pluginResourceRoot, resolvePackageFile } from './declared-resource-paths.js';
 import type { DeclaredStaticResourceHost } from './declared-static-resources.js';
+import { grantedMcpContributionIds } from './granted-mcp-contributions.js';
 import type { DeclaredMcpLaunch } from './native-mcp-launches.js';
 
 const MCP_MARKER = '.clowder-mcp-resource.json';
@@ -26,8 +27,10 @@ export async function activateDeclaredMcp(
   admission: PluginRuntimeAdmission,
   host: DeclaredStaticResourceHost | undefined,
 ): Promise<readonly DeclaredMcpLaunch[]> {
+  const allowed = grantedMcpContributionIds(admission.packageRecord.manifest, admission.effectiveGrants);
   const contributions = (admission.packageRecord.manifest.contributions ?? []).filter(
-    (contribution): contribution is McpContribution => contribution.type === 'mcp',
+    (contribution): contribution is McpContribution =>
+      contribution.type === 'mcp' && (!contribution.actions?.length || allowed.has(contribution.id)),
   );
   if (contributions.length === 0) return Object.freeze([]);
   if (!host) {
