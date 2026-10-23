@@ -15,12 +15,14 @@ import { HoldBallCancelButton } from './HoldBallCancelButton';
 import { MarkdownContent } from './MarkdownContent';
 import { MessageActionSlot } from './MessageActionSlot';
 import { MessageBubble } from './MessageBubble';
+import { MessageNameplate } from './MessageNameplate';
 import { ManagedJobCard } from './managed-job/ManagedJobCard';
 import { frustrationHistoryCopy } from './rich/frustration-history.shell-copy';
 import { trustedFrustrationMeta, useFrustrationVisibility } from './rich/frustration-visibility';
 import { RichBlocks } from './rich/RichBlocks';
 import { SenderAvatar } from './SenderAvatar';
 import { useShellCopy } from './shell/shell-copy';
+import { useShellPresentation } from './shell/shell-presentation';
 
 function formatTime(ts: number): string {
   const d = new Date(ts);
@@ -78,11 +80,13 @@ interface ConnectorBubbleProps {
 }
 
 /**
- * F97: Connector message bubble for external information sources (GitHub Review, etc.)
- * Uses MessageBubble for shared layout; adds connector-specific avatar, header, and actions.
+ * Renders connector-owned content inside the same message shell used by members.
+ * Specialized hold/job/card bodies stay content-level concerns rather than defining
+ * a separate visual identity or navigation surface for the whole message.
  */
 export function ConnectorBubble({ message, threadId, timelineMessages, footer }: ConnectorBubbleProps) {
   const coCreator = useCoCreatorConfig();
+  const shellPresentation = useShellPresentation();
   const source: ConnectorSource = message.source ?? { connector: '', label: '', icon: '' };
   const t = useShellCopy(frustrationHistoryCopy);
   const visibility = useFrustrationVisibility(message.extra?.rich?.blocks ?? [], source?.connector);
@@ -120,8 +124,6 @@ export function ConnectorBubble({ message, threadId, timelineMessages, footer }:
     .map(({ block, signal }) =>
       signal && block.kind === 'card' ? { ...block, meta: { ...block.meta, signalType: signal } } : block,
     );
-  const rawUrl = source.url;
-  const srcUrl = rawUrl && /^https?:\/\//.test(rawUrl) ? rawUrl : undefined;
   const sourceCatId = typeof source.meta?.catId === 'string' ? source.meta.catId : undefined;
   const holdCards = collectHoldCards(message, timelineMessages);
   const holdStatusRefreshKey = getHoldStatusRefreshKey(holdCards, message);
@@ -140,27 +142,31 @@ export function ConnectorBubble({ message, threadId, timelineMessages, footer }:
 
   const avatar = <SenderAvatar sender={sender} presentation="message" />;
 
-  const header = (
-    <div className="flex items-center gap-2 mb-1">
-      {srcUrl ? (
-        <a
-          href={srcUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-xs font-semibold hover:underline"
-          style={{ color: nameColor }}
-        >
-          {withdrawnFeedback ? t.title : sender.label}
-        </a>
-      ) : (
-        <span className="text-xs font-semibold" style={{ color: nameColor }}>
-          {withdrawnFeedback ? t.title : sender.label}
+  const displayName = withdrawnFeedback ? t.title : sender.label;
+  const header =
+    shellPresentation === 'v2' ? (
+      <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-4 min-w-0" data-message-author-row="">
+        <MessageNameplate
+          id={`connector:${source.connector}`}
+          name={displayName}
+          sender={sender}
+          surface={surfaceColor}
+          ink={nameColor}
+        />
+        <span className="text-xs shrink-0" style={{ color: 'var(--shell-muted)' }}>
+          {formatTime(message.timestamp)}
         </span>
-      )}
-      <span className="text-xs text-cafe-muted">{formatTime(message.timestamp)}</span>
-      <MessageActionSlot />
-    </div>
-  );
+        <MessageActionSlot />
+      </div>
+    ) : (
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-xs font-semibold" style={{ color: nameColor }}>
+          {displayName}
+        </span>
+        <span className="text-xs text-cafe-muted">{formatTime(message.timestamp)}</span>
+        <MessageActionSlot />
+      </div>
+    );
 
   return (
     <MessageBubble
@@ -168,10 +174,12 @@ export function ConnectorBubble({ message, threadId, timelineMessages, footer }:
       avatar={avatar}
       header={header}
       footer={footer}
-      bubbleStyle={{
-        backgroundColor: surfaceColor,
-        color: 'var(--cat-msg-text, var(--cafe-text))',
-      }}
+      presentation={shellPresentation === 'v2' ? 'nameplate' : 'bubble'}
+      bubbleStyle={
+        shellPresentation === 'v2'
+          ? undefined
+          : { backgroundColor: surfaceColor, color: 'var(--cat-msg-text, var(--cafe-text))' }
+      }
     >
       {jobId && taskId ? (
         <ManagedJobCard

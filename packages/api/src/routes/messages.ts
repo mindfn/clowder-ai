@@ -1118,7 +1118,6 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
                 label: source.label,
                 icon: source.icon,
                 ...(source.themeColor ? { themeColor: source.themeColor } : {}),
-                ...(source.url ? { url: source.url } : {}),
                 ...(source.meta ? { meta: source.meta } : {}),
                 ...(source.sender ? { sender: source.sender } : {}),
               },

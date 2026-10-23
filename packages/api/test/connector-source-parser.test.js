@@ -8,7 +8,7 @@ import {
 } from '../dist/domains/cats/services/stores/redis/redis-message-parsers.js';
 
 describe('safeParseConnectorSource (F97)', () => {
-  it('parses valid ConnectorSource JSON', () => {
+  it('rejects the retired implicit navigation URL instead of keeping a Host compatibility path', () => {
     const raw = JSON.stringify({
       connector: 'github-review',
       label: 'GitHub Review',
@@ -16,11 +16,7 @@ describe('safeParseConnectorSource (F97)', () => {
       url: 'https://github.com/org/repo/pull/42',
     });
     const result = safeParseConnectorSource(raw);
-    assert.ok(result);
-    assert.strictEqual(result.connector, 'github-review');
-    assert.strictEqual(result.label, 'GitHub Review');
-    assert.strictEqual(result.icon, '🔔');
-    assert.strictEqual(result.url, 'https://github.com/org/repo/pull/42');
+    assert.strictEqual(result, undefined);
   });
 
   it('returns undefined for undefined input', () => {
@@ -56,7 +52,7 @@ describe('safeParseConnectorSource (F97)', () => {
     assert.strictEqual(safeParseConnectorSource(raw), undefined);
   });
 
-  it('preserves optional url field when absent', () => {
+  it('parses a current source when optional fields are absent', () => {
     const raw = JSON.stringify({
       connector: 'github-review',
       label: 'GitHub Review',
@@ -64,7 +60,7 @@ describe('safeParseConnectorSource (F97)', () => {
     });
     const result = safeParseConnectorSource(raw);
     assert.ok(result);
-    assert.strictEqual(result.url, undefined);
+    assert.strictEqual(Object.hasOwn(result, 'url'), false);
   });
 });
 

@@ -1057,7 +1057,8 @@ export function safeParseConnectorSource(raw: string | undefined): ConnectorSour
       parsed !== null &&
       typeof parsed.connector === 'string' &&
       typeof parsed.label === 'string' &&
-      typeof parsed.icon === 'string'
+      typeof parsed.icon === 'string' &&
+      Object.keys(parsed).every((key) => ['connector', 'label', 'icon', 'themeColor', 'meta', 'sender'].includes(key))
     ) {
       return parsed as ConnectorSource;
     }

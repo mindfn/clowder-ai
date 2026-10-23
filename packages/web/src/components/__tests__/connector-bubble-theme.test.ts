@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { ChatMessage } from '@/stores/chat-types';
 import { apiFetch } from '@/utils/api-client';
 import { ConnectorBubble } from '../ConnectorBubble';
+import { ShellPresentationContext } from '../shell/shell-presentation';
 
 vi.mock('@/utils/api-client', () => ({
   API_URL: 'http://api.test',
@@ -72,6 +73,40 @@ describe('ConnectorBubble theme', () => {
       },
     };
   }
+
+  it('uses the common v2 member shell and ignores legacy hidden source links', () => {
+    const message: ChatMessage = {
+      id: 'm-common-shell',
+      type: 'connector',
+      content: '[owner/repo#42](https://github.com/owner/repo/pull/42)',
+      timestamp: Date.now(),
+      from: { kind: 'plugin', instanceId: 'github' },
+      source: {
+        connector: 'github-wait',
+        label: 'GitHub',
+        icon: 'github',
+        themeColor: '#778899',
+        url: 'https://github.com/owner/repo/pull/42',
+      } as ChatMessage['source'] & { url: string },
+    };
+
+    act(() =>
+      root.render(
+        React.createElement(
+          ShellPresentationContext.Provider,
+          { value: 'v2' },
+          React.createElement(ConnectorBubble, { message }),
+        ),
+      ),
+    );
+
+    expect(container.querySelector('[data-testid="member-nameplate"]')).not.toBeNull();
+    expect(container.querySelector('a[href="https://github.com/owner/repo/pull/42"]')).not.toBeNull();
+    expect(container.querySelectorAll('a[href="https://github.com/owner/repo/pull/42"]')).toHaveLength(1);
+    expect(container.querySelector('[data-testid="message-bubble"]')?.getAttribute('style') ?? '').not.toContain(
+      'background-color',
+    );
+  });
 
   for (const type of ['text_frustration', 'retry_burst']) {
     it(`withdraws the complete trusted ${type} presentation without deleting its message anchor`, async () => {
@@ -371,7 +406,6 @@ describe('ConnectorBubble theme', () => {
         connector: 'github-review',
         label: 'GitHub Review',
         icon: 'github',
-        url: 'https://github.com/zts212653/clowder-ai/pull/97',
       },
     };
     act(() => root.render(React.createElement(ConnectorBubble, { message })));
@@ -391,7 +425,6 @@ describe('ConnectorBubble theme', () => {
         connector: 'github-ci',
         label: 'GitHub CI/CD',
         icon: 'github',
-        url: 'https://github.com/zts212653/clowder-ai/actions/runs/123',
       },
     };
     act(() => root.render(React.createElement(ConnectorBubble, { message })));
@@ -438,7 +471,6 @@ describe('ConnectorBubble theme', () => {
         connector: 'github-issue-comment',
         label: 'Issue Comment',
         icon: 'github',
-        url: 'https://github.com/zts212653/clowder-ai/issues/861',
       },
     };
 

@@ -17,11 +17,11 @@ export function Nameplate({
   readonly surface: string;
   readonly ink: string;
   readonly title?: string;
-  readonly kind?: 'cat' | 'human';
+  readonly kind?: 'cat' | 'human' | 'member';
 }) {
   return (
     <span
-      data-testid={kind === 'cat' ? 'cat-nameplate' : 'human-nameplate'}
+      data-testid={`${kind}-nameplate`}
       data-cat-id={kind === 'cat' ? id : undefined}
       className="cafe-nameplate"
       style={{ backgroundImage: `linear-gradient(to bottom, ${surface}, transparent)` }}

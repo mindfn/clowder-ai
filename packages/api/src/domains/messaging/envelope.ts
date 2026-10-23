@@ -348,13 +348,12 @@ export function parsePluginMessageExtra(raw: unknown): PluginMessageExtra | null
       typeof raw.presentation.label !== 'string' ||
       typeof raw.presentation.icon !== 'string' ||
       (raw.presentation.themeColor !== undefined && typeof raw.presentation.themeColor !== 'string') ||
-      (raw.presentation.url !== undefined && typeof raw.presentation.url !== 'string') ||
       (raw.presentation.meta !== undefined && !isRecord(raw.presentation.meta)) ||
       (raw.presentation.sender !== undefined &&
         (!isRecord(raw.presentation.sender) ||
           typeof raw.presentation.sender.id !== 'string' ||
           (raw.presentation.sender.name !== undefined && typeof raw.presentation.sender.name !== 'string'))) ||
-      !hasOnlyKeys(raw.presentation, ['connector', 'label', 'icon', 'themeColor', 'url', 'sender', 'meta']))
+      !hasOnlyKeys(raw.presentation, ['connector', 'label', 'icon', 'themeColor', 'sender', 'meta']))
   )
     return null;
   if (!isBoundedString(raw.instanceId, 256)) return null;
