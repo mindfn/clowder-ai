@@ -28,17 +28,31 @@ export async function activateDeclaredMcp(
   host: DeclaredStaticResourceHost | undefined,
 ): Promise<readonly DeclaredMcpLaunch[]> {
   const allowed = grantedMcpContributionIds(admission.packageRecord.manifest, admission.effectiveGrants);
-  const contributions = (admission.packageRecord.manifest.contributions ?? []).filter(
-    (contribution): contribution is McpContribution =>
-      contribution.type === 'mcp' && (!contribution.actions?.length || allowed.has(contribution.id)),
+  const declared = (admission.packageRecord.manifest.contributions ?? []).filter(
+    (contribution): contribution is McpContribution => contribution.type === 'mcp',
   );
-  if (contributions.length === 0) return Object.freeze([]);
+  if (declared.length === 0) return Object.freeze([]);
   if (!host) {
     throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host static-resource activation is unavailable');
   }
   if (!host.mcpConfigIO) {
     throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host MCP capability activation is unavailable');
   }
+  // Updates and Host shutdown retain durable registrations. Withdraw denied
+  // action MCPs through the normal owned-resource removal/cascade pipeline.
+  for (const contribution of declared) {
+    if (contribution.actions?.length && !allowed.has(contribution.id)) {
+      await removeMcp(
+        admission.packageRecord.pluginId,
+        `plugin:${admission.packageRecord.pluginId}:${contribution.id}`,
+        host,
+      );
+    }
+  }
+  const contributions = declared.filter(
+    (contribution) => !contribution.actions?.length || allowed.has(contribution.id),
+  );
+  if (contributions.length === 0) return Object.freeze([]);
   if (contributions.some((contribution) => contribution.runtime.transport !== 'stdio')) {
     throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Only stdio MCP contributions are supported');
   }

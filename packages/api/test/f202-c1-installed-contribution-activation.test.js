@@ -18,6 +18,7 @@ import {
   withCapabilityLock,
   writeCapabilitiesConfig,
 } from '../dist/config/capabilities/capability-orchestrator.js';
+import { writeMcpConfigFile } from '../dist/domains/cats/services/agents/providers/kimi-config.js';
 import { resolveProviderMcpConfig } from '../dist/domains/cats/services/agents/providers/provider-mcp-config.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { LimbRegistry } from '../dist/domains/limb/LimbRegistry.js';
@@ -322,6 +323,108 @@ test('an optional migration feature does not block or share authority with the b
   await disable(composition, installed.pluginId);
   await assert.rejects(actions.call(token, 'basic.run', {}, caller), { statusCode: 401 });
 });
+
+for (const phase of ['package replacement', 'restart recovery']) {
+  test(`${phase} withdraws a retained native MCP when its feature is no longer granted`, async () => {
+    const projectRoot = await tempRoot('mcp-retained-grants-home-');
+    const consumer = await tempRoot('mcp-retained-grants-project-');
+    await writeCapabilitiesConfig(projectRoot, { version: 2, capabilities: [] });
+    await writeCapabilitiesConfig(consumer, { version: 2, capabilities: [] });
+    await writeFile(
+      join(projectRoot, '.cat-cafe/governance-registry.json'),
+      JSON.stringify({ entries: [{ projectPath: consumer }] }),
+    );
+    const native = {
+      type: 'mcp',
+      id: 'native',
+      runtime: { transport: 'stdio', entrypoint: 'dist/mcp.js' },
+      actions: [{ method: 'native.run' }],
+    };
+    const plain = { type: 'mcp', id: 'plain', runtime: native.runtime };
+    const packageRoot = await writeFixturePackage({
+      pluginId: 'dev.clowder.retained-grants',
+      contribution: native,
+      contributions: [native, plain],
+      features: [
+        {
+          id: 'native',
+          name: 'Native',
+          resources: [],
+          contributions: [{ type: 'mcp', id: 'native' }],
+          capabilities: phase === 'package replacement' ? [] : ['task.read', 'task.write'],
+        },
+        { id: 'plain', name: 'Plain', resources: [], contributions: [{ type: 'mcp', id: 'plain' }], capabilities: [] },
+      ],
+      actions: "{ 'native.run': async () => ({ ok: true }) }",
+      files: { 'dist/mcp.js': 'process.exit(0);\n' },
+    });
+    const cli = join(projectRoot, '.test-cli/google.json');
+    const io = fileBasedMcpIO(projectRoot, { google: cli, antigravity: join(projectRoot, '.test-cli/agy.json') });
+    const { runtime } = createRuntime(projectRoot, { mcpConfigIO: io });
+    let activeRuntime = runtime;
+    try {
+      const { composition, installed } = await installAndEnable(runtime, packageRoot);
+      const id = `plugin:${installed.pluginId}:native`;
+      const name = id.replaceAll(':', '__');
+      if (phase === 'package replacement') {
+        assert.ok((await readCapabilitiesConfig(consumer)).capabilities.some((entry) => entry.id === id));
+        const manifestPath = join(packageRoot, 'manifest.json');
+        const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+        manifest.version = '1.1.0';
+        manifest.features[0].capabilities = ['task.read', 'task.write'];
+        await writeFile(manifestPath, JSON.stringify(manifest));
+        await composition.manager.install({ source: { kind: 'local-directory', path: packageRoot } });
+      } else {
+        // This is the durable output of the old publisher: tool present, no action environment.
+        await installMcpCapability(
+          projectRoot,
+          {
+            id,
+            type: 'mcp',
+            source: 'plugin',
+            pluginId: installed.pluginId,
+            enabled: true,
+            mcpServer: { command: process.execPath, args: ['obsolete.js'], env: {} },
+          },
+          io,
+        );
+        await runtime.shutdown();
+        assert.ok((await readCapabilitiesConfig(consumer)).capabilities.some((entry) => entry.id === id));
+        const restarted = createRuntime(projectRoot, { mcpConfigIO: io }).runtime;
+        activeRuntime = restarted;
+        const recovery = await restarted.recoverAfterRestart();
+        assert.equal(recovery.resumeRequested, 1);
+        await restarted.lifecycle.drainRestartRecovery();
+      }
+      for (const root of [projectRoot, consumer]) {
+        const entries = (await readCapabilitiesConfig(root)).capabilities;
+        assert.equal(
+          entries.some((entry) => entry.id === id),
+          false,
+          `${phase}: remove denied native registration`,
+        );
+        assert.ok(entries.some((entry) => entry.id === `plugin:${installed.pluginId}:plain`));
+      }
+      const injected = await resolveProviderMcpConfig({
+        callbackEnv: { CAT_CAFE_CAT_ID: 'codex' },
+        workingDirectory: consumer,
+        mcpServerPath: join(projectRoot, 'packages/mcp-server/dist/index.js'),
+        provider: 'codex',
+      });
+      assert.equal(injected[name], undefined);
+      const rendered = await writeMcpConfigFile(consumer, join(projectRoot, 'packages/mcp-server/dist/index.js'), {
+        CAT_CAFE_CAT_ID: 'codex',
+      });
+      try {
+        assert.equal(JSON.parse(await readFile(rendered, 'utf8')).mcpServers[name], undefined);
+      } finally {
+        await rm(rendered);
+      }
+    } finally {
+      await activeRuntime.shutdown();
+    }
+  });
+}
 
 test('installed native MCP receives its scoped action token without exposing a public direct tool', async (t) => {
   const projectRoot = await tempRoot('cat-cafe-f202-native-action-project-');
