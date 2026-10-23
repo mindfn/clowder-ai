@@ -18,8 +18,7 @@ function behaviorCase(id) {
 }
 
 test('a stopped runtime rejects delivery without auto-starting or writing a delivery frame', async () => {
-  const contractCase = behaviorCase('denied-on-message-rejected');
-  contractCase.given.grants = ['onMessage'];
+  const contractCase = behaviorCase('on-message-delivery');
   const adapter = new HostControlBehaviorAdapter(contractCase);
   try {
     await adapter.setup(contractCase.given);

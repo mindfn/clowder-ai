@@ -55,7 +55,6 @@ export class HostControlBehaviorAdapter {
     this.#roots.push(packageRoot, hostRoot);
     const packagesRoot = join(packageRoot, 'packages');
     const manifest = externalManifest();
-    manifest.features[0].capabilities = [...new Set([...manifest.features[0].capabilities, 'onMessage'])];
     const runtime = await import('../dist/domains/plugin/external-runtime/index.js');
     const { archivePath, packageDigest } = await stageAcceptancePackage(packageRoot, this.behaviorCase, manifest);
     this.packageDigest = packageDigest;
@@ -118,9 +117,20 @@ export class HostControlBehaviorAdapter {
   async #deliverOnMessage(input) {
     try {
       await this.supervisor.deliver(this.pluginInstanceId, {
-        deliveryId: 'm0d-denied-delivery',
-        threadHandle: { kind: 'thread_handle', handle: input.threadHandle },
-        envelope: input.envelope,
+        deliveryId: 'm0d-delivery',
+        kind: 'message',
+        threadId: input.envelope.threadId,
+        envelope: {
+          ...input.envelope,
+          revision: 1,
+          actor: { kind: 'plugin', id: this.pluginInstanceId },
+          audience: { kind: 'public' },
+          occurredAt: '2026-10-23T00:00:00.000Z',
+          payload: {
+            provenance: { origin: { kind: 'plugin', instanceId: this.pluginInstanceId }, epistemicStatus: 'inference' },
+            elements: [{ elementId: 'm0d-delivery-text', kind: 'text', payload: { text: 'fixture delivery' } }],
+          },
+        },
       });
       return { status: 'success' };
     } catch (caught) {

@@ -79,7 +79,7 @@ test('installs an in-range declaration absent from the previous release list', a
   assert.equal(snapshot.packages[0].packageDigest, archive.integrity);
 });
 
-for (const contractVersion of ['0.1.0-beta.12', '0.2.1-beta.1', '0.2.1']) {
+for (const contractVersion of ['0.1.0-beta.12', '0.3.1-beta.1', '0.3.1']) {
   test(`quarantines ${contractVersion} outside the Host supported contract range`, async () => {
     const packageManifest = manifest({ contractVersion });
     const archive = await packageArchive({ packageManifest });

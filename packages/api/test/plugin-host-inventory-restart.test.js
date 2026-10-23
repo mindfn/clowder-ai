@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
+import { validateManifest } from '@clowder-ai/plugin-contract';
 import {
   FilePluginInventoryStore,
   HostInventoryControlPlane,
@@ -29,7 +29,6 @@ function candidate() {
     computedPackageDigest,
     expectedPackageDigest: computedPackageDigest,
     packagePluginId: 'dev.clowder.restart',
-    effectiveGrants: ['messaging.send'],
   };
 }
 
@@ -48,7 +47,6 @@ describe('K-2A persisted restart normalization', () => {
     const contract = {
       manifestContractRange: '>=0.1.0-beta.13 <0.1.1 || >=0.2.0 <=0.2.0',
       validateManifest,
-      validateEffectiveGrants,
     };
     const store = new FilePluginInventoryStore(path, { contract });
     const current = new HostInventoryControlPlane(store, { contract });
@@ -72,7 +70,6 @@ describe('K-2A persisted restart normalization', () => {
     const previousContract = {
       manifestContractRange: '0.1.1',
       validateManifest,
-      validateEffectiveGrants,
     };
     const firstStore = new FilePluginInventoryStore(path, { contract: previousContract });
     const first = new HostInventoryControlPlane(firstStore, {
@@ -105,11 +102,10 @@ describe('K-2A persisted restart normalization', () => {
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const path = join(root, 'inventory.json');
     // Public Host b1fe2966 admitted these exact versions before the beta.16 bump.
-    // Keep real manifest/grant validators; only the historical version policy differs.
+    // Keep real manifest validators; only the historical version policy differs.
     const previousContract = {
       manifestContractRange: '0.1.0 || 0.1.0-beta.13 || 0.1.0-beta.15',
       validateManifest,
-      validateEffectiveGrants,
     };
     const previousStore = new FilePluginInventoryStore(path, { contract: previousContract });
     const previousHost = new HostInventoryControlPlane(previousStore, {
@@ -184,7 +180,7 @@ describe('K-2A persisted restart normalization', () => {
     const corruptPath = join(root, 'corrupt.json');
     const futurePath = join(root, 'future.json');
     writeFileSync(corruptPath, '{not-json');
-    writeFileSync(futurePath, JSON.stringify({ schemaVersion: 99, packages: [], instances: [], grants: [] }));
+    writeFileSync(futurePath, JSON.stringify({ schemaVersion: 99, packages: [], instances: [] }));
 
     await assert.rejects(
       () => new FilePluginInventoryStore(corruptPath).snapshot(),

@@ -1,5 +1,3 @@
-import type { PluginManifest } from '@clowder-ai/plugin-contract';
-
 /** Frozen manifest-only registrations preceding archive releases. Never derive these from a newer release. */
 export const LEGACY_BUNDLED_MANIFESTS = [
   {
@@ -66,4 +64,4 @@ export const LEGACY_BUNDLED_MANIFESTS = [
       transport: 'builtin',
     },
   },
-] as const satisfies readonly PluginManifest[];
+] as const;

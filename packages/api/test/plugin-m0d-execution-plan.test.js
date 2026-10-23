@@ -14,7 +14,7 @@ function row(id, execution) {
   return { id, execution };
 }
 
-test('published beta.12 fixture supplies the complete signed execution plan', async () => {
+test('published protocol fixture supplies the complete signed execution plan', async () => {
   const published = await loadM0dBehaviorFixture();
   const plan = loadM0dExecutionPlan(published);
 
@@ -30,7 +30,8 @@ test('published beta.12 fixture supplies the complete signed execution plan', as
     ),
     {
       'host-control': 2,
-      'plugin-to-host-wire': 8,
+      'host-to-plugin-delivery': 1,
+      'plugin-to-host-wire': 7,
       'wire-admission': 2,
     },
   );

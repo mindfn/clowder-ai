@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
+import { validateManifest } from '@clowder-ai/plugin-contract';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
 import {
@@ -25,20 +25,8 @@ async function tempRoot(prefix) {
   return root;
 }
 
-const CONNECTOR = [
-  'streams.read',
-  'message.event.subscribe',
-  'messaging.send',
-  'plugin.config.read',
-  'plugin.state.get',
-  'plugin.state.set',
-  'secret.read',
-  'thread.listMetadata',
-  'thread.readContent',
-  'thread.write',
-];
-function collectiveManifest(capabilities = []) {
-  const value = manifest('official.collective-connector', capabilities);
+function collectiveManifest() {
+  const value = manifest('official.collective-connector');
   value.runtime.dataDirectory = 'collective';
   value.features[0].contributions = [];
   value.contributions = [];
@@ -54,24 +42,13 @@ test('Collective local directory installation retains its declared data path', a
   }
 });
 
-const _GITHUB = [
-  'schedule.register',
-  'plugin.config.read',
-  'secret.read',
-  'plugin.state.get',
-  'plugin.state.set',
-  'thread.listMetadata',
-  'thread.write',
-  'messaging.send',
-];
-
-function manifest(pluginId, capabilities = CONNECTOR) {
+function manifest(pluginId) {
   return {
     pluginId,
     version: '0.1.0',
     contractVersion: '0.1.0',
     name: 'W2-6 connector fixture',
-    features: [{ id: 'messaging', name: 'Messaging', resources: [], capabilities }],
+    features: [{ id: 'messaging', name: 'Messaging', resources: [] }],
     runtime: { transport: 'builtin', entrypoint: 'dist/plugin.js' },
   };
 }
@@ -106,7 +83,7 @@ async function installed(packageManifest, source = moduleSource) {
     threadStore: new ThreadStore(),
     threadBindingStore: new MemoryConnectorThreadBindingStore(),
     threadOwnerUserId: 'owner-1',
-    contract: { manifestContractRange: '0.1.0', validateEffectiveGrants, validateManifest },
+    contract: { manifestContractRange: '0.1.0', validateManifest },
   });
   const composition = createPluginManagerRuntimeComposition({
     runtime,
@@ -134,7 +111,7 @@ test('production starts installed connectors through the same public SDK', async
 });
 
 test('Collective config carrier reads its declared loopback port', async () => {
-  const current = collectiveManifest(['plugin.config.read', 'secret.read']);
+  const current = collectiveManifest();
   current.configuration = [
     { key: 'servicePort', kind: 'string', label: 'Service port', required: false, default: '5813' },
     { key: 'privateToken', kind: 'secret', label: 'Private token', required: false },

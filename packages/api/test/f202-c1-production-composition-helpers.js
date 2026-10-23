@@ -10,7 +10,6 @@ import './helpers/setup-cat-registry.js';
  * The per-case source coordinates for every gap live in the plan
  * (docs/architecture/plugin-architecture.md), not in these headers.
  */
-import { WIRE_METHOD_REGISTRY } from '@clowder-ai/plugin-contract';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js';
 import { AgentRegistry } from '../dist/domains/cats/services/agents/registry/AgentRegistry.js';
@@ -85,7 +84,6 @@ export function connectorManifest(overrides = {}) {
           { type: 'connector', id: CONNECTOR_ID },
           { type: 'identity', id: CONNECTOR_IDENTITY_ID },
         ],
-        capabilities: overrides.capabilities ?? [...BASE_GRANTS, ...checkpointGrants()],
       },
     ],
     runtime: { transport: 'stdio', entrypoint: 'dist/plugin.js' },
@@ -136,7 +134,7 @@ export async function installConnectorInstance(composition, projectRoot, overrid
  * Opens an AUTHENTICATED external Broker connection: the same three-stage path a migrated stdio
  * package uses (openExternalConnection → hello → ready). Calls made through the returned
  * connection go through HostBrokerControlPlane.call(), which enforces wire-registry membership,
- * handler registration, live lease, and grant possession before any Host code runs.
+ * handler registration and the live lease before any Host code runs.
  */
 export async function authenticatedConnection(composition, pluginInstanceId) {
   const connection = await composition.broker.openExternalConnection(pluginInstanceId);
@@ -231,31 +229,6 @@ export async function waitForSpec(processes, timeoutMs = 2_000) {
  * The PROPOSED gap-E wire rows. Spelling stays provisional until §7.2 item 5 is signed; what the
  * gate pins is the requirement, not the name.
  */
-export const CHECKPOINT_COMMIT = 'connector.checkpoint.commit';
-export const CHECKPOINT_READ = 'connector.checkpoint.read';
-
-/** Grants a migrated connector already holds for reasons that have nothing to do with checkpoints. */
-export const BASE_GRANTS = ['messaging.send', 'secret.read'];
-
-/**
- * Reserved-but-unwired capability names: both appear in the manifest Capability enum of
- * @clowder-ai/plugin-contract@0.1.0-beta.15, yet `plugin.state.get` / `plugin.state.set` have
- * ZERO references anywhere in packages/api/src. They are the pre-signature stand-in only.
- */
-export const RESERVED_CHECKPOINT_GRANTS = ['plugin.state.set', 'plugin.state.get'];
-
-/**
- * A checkpoint row's required grant is defined BY THE ROW — control-plane.ts:322 feeds
- * `row.grant` into currentCallContext(), which throws CAPABILITY_DENIED when the instance does
- * not hold it. Deriving the grant from the registry makes the gate self-adapt to whatever §7.2
- * signs instead of hard-coding a name the maintainer has not chosen yet.
- */
-export function checkpointGrants() {
-  const rows = [WIRE_METHOD_REGISTRY[CHECKPOINT_COMMIT], WIRE_METHOD_REGISTRY[CHECKPOINT_READ]];
-  const declared = rows.filter(Boolean).map((row) => row.grant);
-  return declared.length === rows.length ? [...new Set(declared)] : [...RESERVED_CHECKPOINT_GRANTS];
-}
-
 /**
  * Produces a REAL Host-accepted delivery and returns the Host's own SendReceipt.
  *

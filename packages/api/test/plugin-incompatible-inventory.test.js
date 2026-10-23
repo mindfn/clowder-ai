@@ -8,11 +8,11 @@ import { FilePluginInventoryStore, HostInventoryControlPlane } from '../dist/dom
 import { parsePluginInventorySnapshot } from '../dist/domains/plugin/host-inventory/snapshot.js';
 
 const digest = (text) => `sha512-${createHash('sha512').update(text).digest('base64')}`;
-// Published @clowder-ai/feishu-meeting-intake@0.1.0-alpha.9 manifest.
+// Preserve an installed package whose declared contract is newer than this Host.
 const oldManifest = {
   pluginId: 'official.feishu-meeting-intake',
   version: '0.1.0-alpha.9',
-  contractVersion: '0.1.0',
+  contractVersion: '9.0.0',
   name: 'Feishu Meeting Intake',
   features: [
     {
@@ -51,7 +51,7 @@ function oldSnapshot() {
         packageDigest: digest('old'),
         pluginId: oldManifest.pluginId,
         version: oldManifest.version,
-        contractVersion: '0.1.0',
+        contractVersion: '9.0.0',
         manifest: oldManifest,
         signalSchemas: {},
         packageState: 'installed',
@@ -89,6 +89,7 @@ function replacement() {
   const manifest = {
     ...current,
     version: '0.1.0-alpha.11',
+    contractVersion: '0.1.0',
     features: [{ id: 'messages', name: 'Messages', resources: [], capabilities: ['messaging.send'] }],
   };
   return {
@@ -96,7 +97,6 @@ function replacement() {
     packagePluginId: manifest.pluginId,
     computedPackageDigest: digest('new'),
     expectedPackageDigest: digest('new'),
-    effectiveGrants: ['messaging.send'],
   };
 }
 test('incompatible old manifest remains durable but is not exposed as an executable manifest', async () => {
@@ -119,9 +119,9 @@ test('invalid replacement leaves old authority intact; compatible upgrade replac
   await writeFile(path, JSON.stringify(oldSnapshot()));
   const store = new FilePluginInventoryStore(path);
   const host = new HostInventoryControlPlane(store, { now: () => 5 });
-  const fence = { pluginInstanceId: 'old-instance', expectedLifecycleRevision: 1, expectedGrantRevision: 1 };
+  const fence = { pluginInstanceId: 'old-instance', expectedLifecycleRevision: 1 };
   await assert.rejects(host.upgradePackage({ ...replacement(), manifest: oldManifest, ...fence }), {
-    code: 'INVALID_MANIFEST',
+    code: 'CONTRACT_VERSION_MISMATCH',
   });
   assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), oldSnapshot());
   await host.upgradePackage({ ...replacement(), ...fence });

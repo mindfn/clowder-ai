@@ -1,18 +1,7 @@
 import { INVALID_PARAMS_CODE, WIRE_METHOD_REGISTRY } from '@clowder-ai/plugin-contract';
 import { M0C_BEHAVIOR_CASE_IDS } from '@clowder-ai/plugin-contract/conformance';
 
-// The locked legacy archive includes retired grant controls; execute the current SDK protocol cases.
-export const M0D_PROTOCOL_CASE_IDS = M0C_BEHAVIOR_CASE_IDS.filter(
-  (id) =>
-    ![
-      'preset-l2-rejected',
-      'preset-visible-revocable',
-      'permission-matrix-complete',
-      'append-without-grant-rejected',
-      'denied-on-message-rejected',
-      'snapshot-without-grant-rejected',
-    ].includes(id),
-);
+export const M0D_PROTOCOL_CASE_IDS = M0C_BEHAVIOR_CASE_IDS;
 
 export class M0dExecutionPlanError extends Error {
   constructor(message) {

@@ -181,7 +181,8 @@ test('published M0 behavior catalog passes all signed execution planes through r
     ),
     {
       'host-control': 2,
-      'plugin-to-host-wire': 8,
+      'host-to-plugin-delivery': 1,
+      'plugin-to-host-wire': 7,
       'wire-admission': 2,
     },
   );
