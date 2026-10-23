@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import type { Capability } from '@clowder-ai/plugin-contract';
 import { isHostReservedDataDirectoryName, requestedDataDirectoryName } from './data-directory-name.js';
 import {
   type PackageAdmissionContractRuntime,
@@ -15,7 +14,6 @@ import type {
   PluginGrantRecord,
   PluginInstanceRecord,
   ReinstallPackageInput,
-  RevokeGrantInput,
   UpgradePackageInput,
 } from './types.js';
 import { PluginInventoryError } from './types.js';
@@ -242,24 +240,6 @@ export class HostInventoryControlPlane {
       transaction.instances.put(createInstance(nextInstanceId, current.pluginId, input.computedPackageDigest, now));
       transaction.grants.put(createGrant(nextInstanceId, verified, now));
       return { pluginInstanceId: nextInstanceId, packageDigest: input.computedPackageDigest, grantRevision: 1 };
-    });
-  }
-
-  async revokeGrant(input: RevokeGrantInput): Promise<number> {
-    return this.store.transaction((transaction) => {
-      assertCurrentInstance(transaction, input.pluginInstanceId);
-      const grants = transaction.grants.get(input.pluginInstanceId);
-      if (!grants) throw new PluginInventoryError('INVENTORY_INVARIANT', 'current instance has no grant record');
-      assertGrantRevision(grants, input.expectedGrantRevision);
-      if (!grants.requestedCapabilities.includes(input.capability as Capability)) {
-        throw new PluginInventoryError('INVALID_GRANT', `${input.capability} is not requested by this plugin`);
-      }
-      if (!grants.effectiveGrants.includes(input.capability as Capability)) return grants.grantRevision;
-      const now = this.now();
-      const effectiveGrants = grants.effectiveGrants.filter((capability) => capability !== input.capability);
-      const grantRevision = grants.grantRevision + 1;
-      transaction.grants.put({ ...grants, effectiveGrants, grantRevision, updatedAt: now });
-      return grantRevision;
     });
   }
 

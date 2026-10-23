@@ -145,12 +145,6 @@ export interface ReinstallPackageInput extends PackageAdmissionCandidate {
   readonly previousPluginInstanceId: string;
 }
 
-export interface RevokeGrantInput {
-  readonly pluginInstanceId: string;
-  readonly capability: string;
-  readonly expectedGrantRevision: number;
-}
-
 export interface InventoryMutationResult {
   readonly pluginInstanceId: string;
   readonly packageDigest: string;

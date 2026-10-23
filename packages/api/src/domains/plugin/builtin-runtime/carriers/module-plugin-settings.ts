@@ -100,7 +100,7 @@ export async function invokeModuleSettings(
       input.method,
       undefined,
       // Settings has no runtime activation. The issued authority checks the
-      // installed instance/grant/request fence, also used by the later Host commit.
+      // installed instance/request fence, also used by the later Host commit.
       () => {},
       async (owner) => action.call(actions, structuredClone(input.params), undefined, owner),
     );

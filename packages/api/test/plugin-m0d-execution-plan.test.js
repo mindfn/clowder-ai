@@ -29,10 +29,9 @@ test('published beta.12 fixture supplies the complete signed execution plan', as
         .map((plane) => [plane, plan.filter(({ execution }) => execution.plane === plane).length]),
     ),
     {
-      'host-control': 5,
-      'host-to-plugin-delivery': 1,
-      'plugin-to-host-wire': 9,
-      'wire-admission': 3,
+      'host-control': 2,
+      'plugin-to-host-wire': 8,
+      'wire-admission': 2,
     },
   );
 });
