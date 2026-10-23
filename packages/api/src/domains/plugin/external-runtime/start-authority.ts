@@ -30,7 +30,7 @@ import { ExternalPluginRuntimeError } from './types.js';
 export interface RunnableAuthority {
   readonly instance: PluginInstanceRecord;
   readonly packageRecord: ExecutablePluginPackageRecord;
-  /** F202 C1 gap C: the grant set a config/secret projection must be checked against. */
+  /** F202 C1 gap C: legacy ABI metadata passed to older carriers. */
   readonly grants: PluginGrantRecord | undefined;
 }
 
@@ -92,15 +92,13 @@ export async function assertAuthorityUnchanged(
   const snapshot = await deps.inventory.snapshot();
   const pluginInstanceId = authority.instance.pluginInstanceId;
   const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
-  const grants = snapshot.grants.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
   if (
     !instance ||
     instance.lifecycleState !== 'installed' ||
     instance.packageDigest !== authority.instance.packageDigest ||
     instance.activationState !== 'enabled' ||
     instance.configReadiness !== 'ready' ||
-    instance.runtimeState !== runtimeState ||
-    grants?.grantRevision !== authority.grants?.grantRevision
+    instance.runtimeState !== runtimeState
   ) {
     throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', `${pluginInstanceId} authority changed during start`);
   }

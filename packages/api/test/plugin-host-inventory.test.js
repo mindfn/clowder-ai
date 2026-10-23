@@ -283,29 +283,4 @@ describe('K-2A contract-native inventory', () => {
     assert.equal(snapshot.grants.find((item) => item.pluginInstanceId === 'pi_1').grantRevision, 1);
     assert.equal(snapshot.grants.find((item) => item.pluginInstanceId === 'pi_2').grantRevision, 1);
   });
-
-  it('revokes one grant at the exact revision without mutating other axes', async () => {
-    const { store, controlPlane } = harness();
-    const installed = await controlPlane.installPackage(
-      candidate({ effectiveGrants: ['messaging.send', 'onMessage'] }),
-    );
-    await store.transaction((tx) => {
-      const current = tx.instances.get(installed.pluginInstanceId);
-      tx.instances.put({ ...current, activationState: 'enabled', runtimeState: 'healthy' });
-    });
-    const before = await store.snapshot();
-
-    const revision = await controlPlane.revokeGrant({
-      pluginInstanceId: installed.pluginInstanceId,
-      capability: 'onMessage',
-      expectedGrantRevision: 1,
-    });
-    const after = await store.snapshot();
-
-    assert.equal(revision, 2);
-    assert.deepEqual(after.packages, before.packages);
-    assert.equal(after.instances[0].activationState, 'enabled');
-    assert.equal(after.instances[0].runtimeState, 'healthy');
-    assert.deepEqual(after.grants[0].effectiveGrants, ['messaging.send']);
-  });
 });

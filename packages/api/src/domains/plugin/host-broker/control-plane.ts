@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import {
-  type Capability,
   type HandshakeRejectReason,
   hasHandshakeAuthorityInjection,
   type SessionBinding,
@@ -85,13 +84,6 @@ function sessionForConnection(transaction: HostBrokerTransaction, connectionId: 
   return session;
 }
 
-function sameGrants(left: readonly string[], right: readonly string[]): boolean {
-  if (left.length !== right.length) return false;
-  const sortedLeft = [...left].sort();
-  const sortedRight = [...right].sort();
-  return sortedLeft.every((grant, index) => grant === sortedRight[index]);
-}
-
 function authorityChanged(
   session: BrokerSessionRecord,
   lease: BrokerRuntimeLeaseRecord,
@@ -100,12 +92,9 @@ function authorityChanged(
   return (
     authority.instance.runtimeState !== 'healthy' ||
     authority.instance.packageDigest !== session.packageDigest ||
-    authority.grants.grantRevision !== session.grantRevision ||
-    authority.grants.grantRevision !== lease.grantRevision ||
     lease.pluginInstanceId !== session.pluginInstanceId ||
     lease.packageDigest !== session.packageDigest ||
-    lease.brokerSessionId !== session.brokerSessionId ||
-    !sameGrants(authority.grants.effectiveGrants, session.effectiveGrants ?? [])
+    lease.brokerSessionId !== session.brokerSessionId
   );
 }
 
@@ -232,7 +221,8 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
       pluginInstanceId: authority.instance.pluginInstanceId,
       brokerSessionId: session.brokerSessionId,
       grantRevision: authority.grants.grantRevision,
-      effectiveGrants: [...authority.grants.effectiveGrants],
+      // Older SDKs read this ABI field; it carries declarations, not a Host API permission decision.
+      effectiveGrants: [...authority.grants.requestedCapabilities],
       bindingNonce,
     };
     if (!validateSessionBinding(binding)) {
@@ -268,11 +258,7 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
       return this.rejectHandshake(connectionId, 'BINDING_REPLAY', 'ready binding nonce is invalid or already used');
     }
     const authority = await this.currentAuthority(session.pluginInstanceId, true);
-    if (
-      authority.instance.packageDigest !== session.packageDigest ||
-      authority.grants.grantRevision !== session.grantRevision ||
-      !sameGrants(authority.grants.effectiveGrants, session.effectiveGrants ?? [])
-    ) {
+    if (authority.instance.packageDigest !== session.packageDigest) {
       await this.rejectHandshake(connectionId, 'AUTHORITY_VIOLATION', 'Host authority changed during handshake');
     }
 
@@ -317,7 +303,7 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
     }
     const handler = this.methods.get(method);
     if (!handler) throw new HostBrokerError('METHOD_NOT_REGISTERED', `Host has no handler for ${method}`);
-    const context = await this.currentCallContext(connectionId, row.grant);
+    const context = await this.currentCallContext(connectionId);
     const validated = handler.validateInput(input);
     if (!validated.valid) throw new HostBrokerError('INVALID_CALL_INPUT', `${method} input is invalid`);
     if (handler.settlementAuthority === 'domain') {
@@ -357,26 +343,19 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
 
   /** Authorize a queued Host delivery without requiring a live runtime session. */
   async authorizeHostDelivery(pluginInstanceId: string): Promise<void> {
-    const authority = await this.currentAuthority(pluginInstanceId, true);
-    const requiredGrant = WIRE_METHOD_REGISTRY['host.messaging.deliver'].grant;
-    if (!authority.grants.effectiveGrants.includes(requiredGrant)) {
-      throw new HostBrokerError('CAPABILITY_DENIED', `${pluginInstanceId} lacks required grant ${requiredGrant}`);
-    }
+    await this.currentAuthority(pluginInstanceId, true);
   }
 
-  async authorizeHostCall(pluginInstanceId: string, requiredGrant: Capability): Promise<BrokerCallContext> {
-    return this.authorizeConnection(pluginInstanceId, requiredGrant);
+  async authorizeHostCall(pluginInstanceId: string): Promise<BrokerCallContext> {
+    return this.authorizeConnection(pluginInstanceId);
   }
 
   /** Host Manager only: intrinsic lifecycle binding grants no plugin effect API. */
   async authorizeStaticFeature(pluginInstanceId: string): Promise<BrokerCallContext> {
-    return this.authorizeConnection(pluginInstanceId, 'protocol-intrinsic');
+    return this.authorizeConnection(pluginInstanceId);
   }
 
-  private async authorizeConnection(
-    pluginInstanceId: string,
-    requiredGrant: Capability | 'protocol-intrinsic',
-  ): Promise<BrokerCallContext> {
+  private async authorizeConnection(pluginInstanceId: string): Promise<BrokerCallContext> {
     const sessions = (await this.options.store.snapshot()).sessions.filter(
       (candidate) => candidate.pluginInstanceId === pluginInstanceId && candidate.phase === 'active',
     );
@@ -386,11 +365,11 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
     if (sessions.length !== 1) {
       throw new HostBrokerError('BROKER_INVARIANT', `${pluginInstanceId} has multiple active Broker sessions`);
     }
-    return this.currentCallContext(sessions[0].connectionId, requiredGrant);
+    return this.currentCallContext(sessions[0].connectionId);
   }
 
   async renewRuntimeLease(connectionId: string): Promise<number> {
-    const context = await this.currentCallContext(connectionId, 'protocol-intrinsic');
+    const context = await this.currentCallContext(connectionId);
     const now = this.now();
     const expiresAt = now + this.activeLeaseTtlMs;
     const decision = await this.options.store.transaction<RuntimeLeaseRenewalDecision>((transaction) => {
@@ -557,10 +536,7 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
     return session;
   }
 
-  private async currentCallContext(
-    connectionId: string,
-    requiredGrant: Capability | 'protocol-intrinsic',
-  ): Promise<BrokerCallContext> {
+  private async currentCallContext(connectionId: string): Promise<BrokerCallContext> {
     const brokerSnapshot = await this.options.store.snapshot();
     const session = brokerSnapshot.sessions.find((candidate) => candidate.connectionId === connectionId);
     if (!session) throw new HostBrokerError('SESSION_NOT_FOUND', `unknown Broker connection ${connectionId}`);
@@ -587,10 +563,7 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
     }
     if (authorityChanged(session, lease, authority)) {
       await this.close(connectionId, 'authority_changed').catch(() => undefined);
-      throw new HostBrokerError('AUTHORITY_CHANGED', `${connectionId} grant or package authority changed`);
-    }
-    if (requiredGrant !== 'protocol-intrinsic' && !authority.grants.effectiveGrants.includes(requiredGrant)) {
-      throw new HostBrokerError('CAPABILITY_DENIED', `${connectionId} lacks required grant ${requiredGrant}`);
+      throw new HostBrokerError('AUTHORITY_CHANGED', `${connectionId} runtime or package authority changed`);
     }
     return {
       connectionId,
@@ -600,8 +573,8 @@ export class HostBrokerControlPlane implements BrokerConnectionController {
       pluginId: session.pluginId,
       packageDigest: session.packageDigest,
       contractVersion: session.contractVersion,
-      grantRevision: authority.grants.grantRevision,
-      effectiveGrants: [...authority.grants.effectiveGrants],
+      grantRevision: lease.grantRevision,
+      effectiveGrants: [...authority.grants.requestedCapabilities],
     };
   }
 

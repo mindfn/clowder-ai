@@ -185,12 +185,11 @@ async function writeFixturePackage({
   return packageRoot;
 }
 
-async function installAndEnable(runtime, packageRoot, localGrantPolicy = () => []) {
+async function installAndEnable(runtime, packageRoot) {
   const composition = createPluginManagerRuntimeComposition({
     runtime,
     catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
     catalogManifests: [],
-    localGrantPolicy,
   });
   const installed = await composition.manager.install({ source: { kind: 'local-directory', path: packageRoot } });
   const beforeEnable = (await composition.manager.get(installed.pluginId)).plugin;
@@ -239,44 +238,7 @@ test('an installed package activates and removes its declared MCP capability', a
   );
 });
 
-for (const featureGranted of [false, true]) {
-  test(`MCP registration agrees with its feature grant state: ${featureGranted}`, async () => {
-    const projectRoot = await tempRoot('mcp-feature-grants-');
-    const baseGrants = [
-      'schedule.register',
-      'plugin.config.read',
-      'secret.read',
-      'plugin.state.get',
-      'plugin.state.set',
-      'thread.listMetadata',
-      'thread.write',
-      'messaging.send',
-    ];
-    const packageRoot = await writeFixturePackage({
-      pluginId: 'dev.clowder.feature-grants',
-      contribution: {
-        type: 'mcp',
-        id: 'native',
-        runtime: { transport: 'stdio', entrypoint: 'dist/mcp.js' },
-        actions: [{ method: 'native.run' }],
-      },
-      capabilities: featureGranted ? baseGrants : [...baseGrants, 'task.read', 'task.write'],
-      actions: "{ 'native.run': async () => ({ ok: true }) }",
-      files: { 'dist/mcp.js': 'process.exit(0);\n' },
-    });
-    const { runtime } = createRuntime(projectRoot);
-    const { composition, installed } = await installAndEnable(runtime, packageRoot, () => baseGrants);
-    const entries = (await readCapabilitiesConfig(projectRoot))?.capabilities ?? [];
-    const registered = entries.filter((entry) => entry.type === 'mcp' && entry.pluginId === installed.pluginId);
-    const native = runtime.supervisor.nativeActions.environment(installed.pluginInstanceId, 'native');
-    assert.equal(Boolean(native.CLOWDER_PLUGIN_ACTION_TOKEN), featureGranted);
-    assert.equal(registered.length, featureGranted ? 1 : 0);
-    if (featureGranted) assert.match(registered[0].mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN, /^\$\{[A-Z0-9_]+\}$/);
-    await disable(composition, installed.pluginId);
-  });
-}
-
-test('an optional migration feature does not block or share authority with the basic native MCP', async () => {
+test('each declared MCP dispatches its own methods through the same installed plugin', async () => {
   const projectRoot = await tempRoot('mcp-independent-features-');
   const contributions = ['basic', 'migration'].map((id) => ({
     type: 'mcp',
@@ -299,18 +261,18 @@ test('an optional migration feature does not block or share authority with the b
     files: { 'dist/mcp.js': 'process.exit(0);\n' },
   });
   const { runtime } = createRuntime(projectRoot);
-  const { composition, installed } = await installAndEnable(runtime, packageRoot, () => ['plugin.state.get']);
+  const { composition, installed } = await installAndEnable(runtime, packageRoot);
   const registered = (await readCapabilitiesConfig(projectRoot)).capabilities.filter(
     (entry) => entry.type === 'mcp' && entry.pluginId === installed.pluginId,
   );
   assert.deepEqual(
     registered.map((entry) => entry.id),
-    [`plugin:${installed.pluginId}:basic`],
+    [`plugin:${installed.pluginId}:basic`, `plugin:${installed.pluginId}:migration`],
   );
   const actions = runtime.supervisor.nativeActions;
   const token = actions.environment(installed.pluginInstanceId, 'basic').CLOWDER_PLUGIN_ACTION_TOKEN;
   assert.ok(token);
-  assert.deepEqual(actions.environment(installed.pluginInstanceId, 'migration'), {});
+  assert.ok(actions.environment(installed.pluginInstanceId, 'migration').CLOWDER_PLUGIN_ACTION_TOKEN);
   const caller = {
     userId: 'owner',
     catId: 'codex',
@@ -325,7 +287,7 @@ test('an optional migration feature does not block or share authority with the b
 });
 
 for (const phase of ['package replacement', 'restart recovery']) {
-  test(`${phase} withdraws a retained native MCP when its feature is no longer granted`, async () => {
+  test(`${phase} refreshes retained native and static MCP registrations`, async () => {
     const projectRoot = await tempRoot('mcp-retained-grants-home-');
     const consumer = await tempRoot('mcp-retained-grants-project-');
     await writeCapabilitiesConfig(projectRoot, { version: 2, capabilities: [] });
@@ -400,8 +362,8 @@ for (const phase of ['package replacement', 'restart recovery']) {
         const entries = (await readCapabilitiesConfig(root)).capabilities;
         assert.equal(
           entries.some((entry) => entry.id === id),
-          false,
-          `${phase}: remove denied native registration`,
+          true,
+          `${phase}: refresh native registration`,
         );
         assert.ok(entries.some((entry) => entry.id === `plugin:${installed.pluginId}:plain`));
       }
@@ -411,12 +373,12 @@ for (const phase of ['package replacement', 'restart recovery']) {
         mcpServerPath: join(projectRoot, 'packages/mcp-server/dist/index.js'),
         provider: 'codex',
       });
-      assert.equal(injected[name], undefined);
+      assert.ok(injected[name]?.env?.CLOWDER_PLUGIN_ACTION_TOKEN);
       const rendered = await writeMcpConfigFile(consumer, join(projectRoot, 'packages/mcp-server/dist/index.js'), {
         CAT_CAFE_CAT_ID: 'codex',
       });
       try {
-        assert.equal(JSON.parse(await readFile(rendered, 'utf8')).mcpServers[name], undefined);
+        assert.ok(JSON.parse(await readFile(rendered, 'utf8')).mcpServers[name]);
       } finally {
         await rm(rendered);
       }
@@ -868,54 +830,6 @@ test('an installed package schedules its declared action and unregisters on disa
   assert.equal(taskRunner.tasks.size, 0);
 });
 
-test('a declared schedule without schedule.register fails activation and rolls back static resources', async () => {
-  const projectRoot = await tempRoot('cat-cafe-f202-schedule-grant-project-');
-  const mcp = {
-    type: 'mcp',
-    id: 'schedule-grant-mcp',
-    runtime: { transport: 'stdio', entrypoint: 'dist/mcp.js' },
-  };
-  const schedule = {
-    type: 'schedule',
-    id: 'schedule-grant-denied',
-    schedule: { kind: 'interval', everyMs: 60_000 },
-    action: { method: 'fixture.tick' },
-    policy: { overlap: 'skip', timeoutMs: 5_000 },
-  };
-  const packageRoot = await writeFixturePackage({
-    pluginId: 'dev.clowder.schedule-grant-fixture',
-    contribution: schedule,
-    contributions: [mcp, schedule],
-    capabilities: ['schedule.register'],
-    files: { 'dist/mcp.js': 'process.exit(0);\n' },
-    actions: "{ 'fixture.tick': async () => ({ ok: true }) }",
-  });
-  const taskRunner = fakeTaskRunner();
-  const { runtime } = createRuntime(projectRoot, { taskRunner });
-  const composition = createPluginManagerRuntimeComposition({
-    runtime,
-    catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
-    catalogManifests: [],
-  });
-  const installed = await composition.manager.install({ source: { kind: 'local-directory', path: packageRoot } });
-  const beforeEnable = (await composition.manager.get(installed.pluginId)).plugin;
-
-  await assert.rejects(
-    composition.manager.setEnabled(installed.pluginId, {
-      enabled: true,
-      expectedRevision: beforeEnable.lifecycleRevision,
-    }),
-    /runtime failed to start/,
-  );
-  assert.equal(taskRunner.tasks.size, 0);
-  assert.equal(
-    (await readCapabilitiesConfig(projectRoot))?.capabilities.some(
-      (candidate) => candidate.pluginId === installed.pluginId,
-    ),
-    false,
-  );
-});
-
 test('an installed package exposes declared cat tools through the shared contribution entrypoint', async () => {
   const projectRoot = await tempRoot('cat-cafe-f202-tool-project-');
   const tool = {
@@ -1026,7 +940,6 @@ test('a runtime-contribution startup failure rolls back static and live registra
     runtime,
     catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
     catalogManifests: [],
-    localGrantPolicy: () => ['schedule.register'],
   });
   const installed = await composition.manager.install({ source: { kind: 'local-directory', path: packageRoot } });
   const beforeEnable = (await composition.manager.get(installed.pluginId)).plugin;

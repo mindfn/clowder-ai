@@ -52,7 +52,7 @@ test('Host-bundled dot remains discoverable when the external package catalog is
       throw new Error('offline');
     },
     validateCatalog: () => ({ valid: true, catalog: { plugins: [] } }),
-    hostPolicies: [],
+
     bundledEntries: [dot],
   });
   const snapshot = await catalog.snapshot();

@@ -12,8 +12,8 @@
  *
  * So the fail-closed decision is separated from its *delivery*:
  *   - `resolveManifestConfiguration` answers the carrier-neutral question — which declared fields
- *     may this instance actually read, with which kind, at which value — and applies all three
- *     rules (protocol namespace / grant / required-value).
+ *     may this instance actually read, with which kind, at which value — and applies the same
+ *     rules (protocol namespace / required-value).
  *   - `projectManifestConfigurationEnv` stays exactly what it was: that resolution flattened into
  *     the child's environment. The stdio carrier's observable behavior must not move, which is
  *     what the parity case below pins.
@@ -36,7 +36,7 @@ function manifestWith(configuration) {
   return { configuration };
 }
 
-/** A configuration port backed by two plain maps, so a test can separate store from grant. */
+/** A configuration port backed by two plain maps, for configuration and secret resolution. */
 function port({ config = {}, secrets = {} } = {}) {
   return {
     readConfig: async (_instanceId, key) => config[key],
@@ -134,31 +134,7 @@ describe('F202 C1 — carrier-neutral configuration authority', () => {
     );
   });
 
-  test('rule 2 omits an ungranted optional field even when a value is stored', async () => {
-    const resolved = await resolveManifestConfiguration(
-      input({
-        configuration: [API_BASE],
-        grants: [],
-        store: { config: { API_BASE: 'https://example.test' } },
-      }),
-    );
-
-    assert.deepEqual(resolved, [], 'no grant means the value is never read into any carrier');
-  });
-
-  test('rule 3 outranks rule 2: an ungranted required field refuses rather than starting blind', async () => {
-    await assert.rejects(
-      resolveManifestConfiguration(
-        input({ configuration: [BOT_TOKEN], grants: [], store: { secrets: { BOT_TOKEN: 'tok-1' } } }),
-      ),
-      (error) =>
-        error instanceof ManifestConfigurationProjectionError &&
-        error.failure.reason === 'grant_unavailable' &&
-        error.failure.grant === 'secret.read',
-    );
-  });
-
-  test('rule 3 refuses a granted required field that has no effective value', async () => {
+  test('required field that has no effective value', async () => {
     await assert.rejects(
       resolveManifestConfiguration(input({ configuration: [BOT_TOKEN], grants: ['secret.read'], store: {} })),
       (error) => error instanceof ManifestConfigurationProjectionError && error.failure.reason === 'value_unavailable',
@@ -181,10 +157,6 @@ describe('F202 C1 — carrier-neutral configuration authority', () => {
         input({ configuration: fields, grants: ['plugin.config.read', 'secret.read'], store: {} }),
       ),
       (error) => error instanceof ManifestConfigurationProjectionError && error.failure.reason === 'value_unavailable',
-    );
-    await assert.rejects(
-      resolveManifestConfiguration(input({ configuration: fields, grants: ['plugin.config.read'], store: {} })),
-      (error) => error instanceof ManifestConfigurationProjectionError && error.failure.reason === 'grant_unavailable',
     );
     assert.deepEqual(
       await resolveManifestConfiguration(

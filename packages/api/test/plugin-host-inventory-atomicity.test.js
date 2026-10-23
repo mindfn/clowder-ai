@@ -108,45 +108,6 @@ describe('K-2A fail-closed inventory writes', () => {
     );
   });
 
-  it('stale grant revision is rejected with the entire snapshot unchanged', async () => {
-    const store = new MemoryPluginInventoryStore();
-    const controlPlane = service(store);
-    await controlPlane.installPackage(candidate());
-    await expectNoWrites(
-      store,
-      () =>
-        controlPlane.revokeGrant({
-          pluginInstanceId: 'pi_atomic',
-          capability: 'onMessage',
-          expectedGrantRevision: 0,
-        }),
-      'STALE_GRANT_REVISION',
-    );
-  });
-
-  it('stale upgrade cannot restore a grant revoked after its expected revision', async () => {
-    const store = new MemoryPluginInventoryStore();
-    const controlPlane = service(store);
-    await controlPlane.installPackage(candidate());
-    await controlPlane.revokeGrant({
-      pluginInstanceId: 'pi_atomic',
-      capability: 'onMessage',
-      expectedGrantRevision: 1,
-    });
-
-    await expectNoWrites(
-      store,
-      () =>
-        controlPlane.upgradePackage({
-          pluginInstanceId: 'pi_atomic',
-          expectedLifecycleRevision: 1,
-          expectedGrantRevision: 1,
-          ...upgradedCandidate(),
-        }),
-      'STALE_GRANT_REVISION',
-    );
-  });
-
   it('stale lifecycle revision cannot update a package behind an owner action', async () => {
     const store = new MemoryPluginInventoryStore();
     const controlPlane = service(store);
@@ -196,76 +157,6 @@ describe('K-2A fail-closed inventory writes', () => {
     );
   });
 
-  it('serializes upgrade versus revoke so exactly one revision-1 mutation commits', async () => {
-    for (const firstOperation of ['upgrade', 'revoke']) {
-      const store = new MemoryPluginInventoryStore();
-      const baselineStore = new MemoryPluginInventoryStore();
-      const controlPlane = service(store);
-      const baseline = service(baselineStore);
-      await controlPlane.installPackage(candidate());
-      await baseline.installPackage(candidate());
-
-      const operations = {
-        upgrade: (target) =>
-          target.upgradePackage({
-            pluginInstanceId: 'pi_atomic',
-            expectedLifecycleRevision: 1,
-            expectedGrantRevision: 1,
-            ...upgradedCandidate(),
-          }),
-        revoke: (target) =>
-          target.revokeGrant({
-            pluginInstanceId: 'pi_atomic',
-            capability: 'onMessage',
-            expectedGrantRevision: 1,
-          }),
-      };
-      const secondOperation = firstOperation === 'upgrade' ? 'revoke' : 'upgrade';
-      const results = await Promise.allSettled([
-        operations[firstOperation](controlPlane),
-        operations[secondOperation](controlPlane),
-      ]);
-      const winnerIndex = results.findIndex((result) => result.status === 'fulfilled');
-      const loser = results.find((result) => result.status === 'rejected');
-
-      assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
-      assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
-      assert.equal(loser.reason?.code, 'STALE_GRANT_REVISION');
-
-      const winner = winnerIndex === 0 ? firstOperation : secondOperation;
-      await operations[winner](baseline);
-      assert.deepEqual(await store.snapshot(), await baselineStore.snapshot());
-    }
-  });
-
-  it('serializes concurrent grant CAS so exactly one revision-1 mutation commits', async () => {
-    const store = new MemoryPluginInventoryStore();
-    const controlPlane = service(store);
-    await controlPlane.installPackage(candidate());
-
-    const results = await Promise.allSettled([
-      controlPlane.revokeGrant({
-        pluginInstanceId: 'pi_atomic',
-        capability: 'messaging.send',
-        expectedGrantRevision: 1,
-      }),
-      controlPlane.revokeGrant({
-        pluginInstanceId: 'pi_atomic',
-        capability: 'onMessage',
-        expectedGrantRevision: 1,
-      }),
-    ]);
-    const fulfilled = results.filter((result) => result.status === 'fulfilled');
-    const rejected = results.filter((result) => result.status === 'rejected');
-    const snapshot = await store.snapshot();
-
-    assert.equal(fulfilled.length, 1);
-    assert.equal(rejected.length, 1);
-    assert.equal(rejected[0].reason?.code, 'STALE_GRANT_REVISION');
-    assert.equal(snapshot.grants[0].grantRevision, 2);
-    assert.equal(snapshot.grants[0].effectiveGrants.length, 1);
-  });
-
   it('shares the durable CAS fence across file-store objects for one path', async () => {
     const root = mkdtempSync(join(os.tmpdir(), 'plugin-inventory-cas-'));
     const path = join(root, 'inventory.json');
@@ -274,14 +165,16 @@ describe('K-2A fail-closed inventory writes', () => {
     await first.installPackage(candidate());
 
     const results = await Promise.allSettled([
-      first.revokeGrant({
+      first.upgradePackage({
+        ...upgradedCandidate(),
         pluginInstanceId: 'pi_atomic',
-        capability: 'messaging.send',
+        expectedLifecycleRevision: 1,
         expectedGrantRevision: 1,
       }),
-      second.revokeGrant({
+      second.upgradePackage({
+        ...upgradedCandidate(),
         pluginInstanceId: 'pi_atomic',
-        capability: 'onMessage',
+        expectedLifecycleRevision: 1,
         expectedGrantRevision: 1,
       }),
     ]);
@@ -290,7 +183,7 @@ describe('K-2A fail-closed inventory writes', () => {
     assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
     assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
     assert.equal(snapshot.grants[0].grantRevision, 2);
-    assert.equal(snapshot.grants[0].effectiveGrants.length, 1);
+    assert.equal(snapshot.instances[0].packageDigest, upgradedCandidate().computedPackageDigest);
   });
 
   it('failed file commit leaves no partially durable inventory', async () => {

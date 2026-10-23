@@ -1,4 +1,3 @@
-import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
@@ -6,6 +5,7 @@ import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocat
 import { AgentRegistry } from '../dist/domains/cats/services/agents/registry/AgentRegistry.js';
 import { AgentRouter } from '../dist/domains/cats/services/agents/routing/AgentRouter.js';
 import { createPluginConversationDelivery } from '../dist/domains/plugin/host-surface/plugin-conversation-delivery.js';
+import './helpers/setup-cat-registry.js';
 
 let createMessagingDomain;
 let createPluginMessagingHost;
@@ -457,9 +457,7 @@ describe('F202 C1 — generic messaging.get', () => {
     assert.notEqual((await f.host.get(message.id)).sourceRevision, value.sourceRevision);
   });
 
-  test('uses existing content grant, owner and thread readability', async () => {
-    const noGrant = await fixture();
-    await assert.rejects(() => noGrant.host.get('unknown'), /thread.readContent/);
+  test('uses existing owner and thread readability', async () => {
     const f = await fixture({ grants: ['thread.readContent'] });
     const foreign = await f.threads.create('foreign', 'Foreign');
     const message = await f.messages.append({

@@ -26,10 +26,6 @@ test('stream readers return bytes, release on cancellation and allow reading the
     for await (const _ of service.stream(context, reference, { signal: abort.signal })) {
     }
   }, /abort/i);
-  await assert.rejects(async () => {
-    for await (const _ of service.stream({ ...context, effectiveGrants: [] }, reference)) {
-    }
-  }, /streams.read/);
 });
 
 const { HostMediaSourceImporter } = await import('../dist/domains/plugin/media-source-importer.js');

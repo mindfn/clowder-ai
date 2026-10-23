@@ -1,5 +1,6 @@
 /** Stable module dataPath, declared directory admission and uninstall stop-failure behavior.
  * Directory allocation is lifecycle context and requires no additional grant. */
+
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
@@ -225,7 +226,6 @@ test('the production composition gives a granted module its directory under the 
     runtime,
     catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
     catalogManifests: [],
-    localGrantPolicy: (candidate) => candidate.features.flatMap((feature) => feature.capabilities),
   });
 
   const installed = await composition.manager.install({ source: { kind: 'local-directory', path: packageRoot } });

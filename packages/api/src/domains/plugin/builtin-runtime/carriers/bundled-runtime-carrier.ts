@@ -1,5 +1,3 @@
-import { isDeepStrictEqual } from 'node:util';
-import { WIRE_METHOD_REGISTRY } from '@clowder-ai/plugin-contract';
 import {
   attemptPluginAction,
   invocationNotStarted,
@@ -61,7 +59,6 @@ export interface BundledPluginRuntimeCarrierOptions {
 }
 
 interface RuntimeAuthority {
-  readonly grantRevision: number;
   readonly instance: PluginInstanceRecord;
   readonly packageRecord: ExecutablePluginPackageRecord;
   readonly effectiveGrants: readonly string[];
@@ -176,11 +173,9 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
         // Retain the invalid activation and unresolved closed handle for an explicit stop retry.
         throw new AggregateError([error, cleanupError], 'builtin start and cleanup failed');
       }
-      await this.setBundledRuntimeState(
-        authority,
-        'stopped',
-        packageFailed ? this.#startFailure(error, authority.instance.packageDigest) : undefined,
-      ).catch(() => undefined);
+      await this.setBundledRuntimeState(authority, 'stopped', packageFailed ? this.#startFailure() : undefined).catch(
+        () => undefined,
+      );
       if (this.#active.get(pluginInstanceId) === active) this.#active.delete(pluginInstanceId);
     }
     active.resolveClosed();
@@ -265,19 +260,10 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
    * `not_started`; past them, the runtime reports where its call failed.
    */
   async attemptInvoke(pluginInstanceId: string, method: string, params: unknown): Promise<PluginInvocationOutcome> {
-    let authority: RuntimeAuthority;
     try {
-      authority = await this.authority(pluginInstanceId);
+      await this.authority(pluginInstanceId);
     } catch (error) {
       return invocationNotStarted(error);
-    }
-    if (
-      method === 'host.messaging.deliver' &&
-      !authority.effectiveGrants.includes(WIRE_METHOD_REGISTRY['host.messaging.deliver'].grant)
-    ) {
-      return invocationNotStarted(
-        new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginInstanceId} lacks Host delivery authority`),
-      );
     }
     const active = this.#active.get(pluginInstanceId);
     if (!active?.valid) {
@@ -318,11 +304,10 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
    * honestly null. What the owner needs is the same thing the process carrier gives them:
    * a durable record that this start attempt failed, so a plugin that throws while loading
    * is recoverable by disabling or uninstalling it rather than silently not running
-   * (F202 Train C1 terminal contract, clause 6). When the Host refused the package a capability,
-   * the record says which (F202 W2-6b).
+   * (F202 Train C1 terminal contract, clause 6).
    */
-  #startFailure(error: unknown, packageDigest: string): ReturnType<typeof startFailureRecord> {
-    return startFailureRecord(error, this.#now(), packageDigest);
+  #startFailure(): ReturnType<typeof startFailureRecord> {
+    return startFailureRecord(this.#now());
   }
 
   #runtimeFor(packageRecord: Pick<ExecutablePluginPackageRecord, 'manifest'>): BundledPluginRuntime | undefined {
@@ -362,7 +347,6 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
       instance,
       packageRecord,
       effectiveGrants: grants?.effectiveGrants ?? [],
-      grantRevision: grants?.grantRevision ?? 0,
     };
   }
 

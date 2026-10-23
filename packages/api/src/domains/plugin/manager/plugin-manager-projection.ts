@@ -273,22 +273,17 @@ function projectionState(
 
 function projectCapabilities(
   capabilities: readonly Omit<PluginManagerCapability, 'active'>[],
-  effectiveGrants: readonly string[],
   activeCapabilityIds: readonly string[],
 ) {
-  const granted = new Set(effectiveGrants);
   const active = new Set(activeCapabilityIds);
   return capabilities.map((capability) => ({
     ...capability,
-    active: active.has(capability.id) && granted.has(capability.id),
+    active: active.has(capability.id),
   }));
 }
 
-function runtimeDiagnostic(
-  instance: PluginInstanceRecord | undefined,
-  grant: Parameters<typeof pluginRuntimeDiagnostic>[1],
-) {
-  const diagnostic = pluginRuntimeDiagnostic(instance, grant);
+function runtimeDiagnostic(instance: PluginInstanceRecord | undefined) {
+  const diagnostic = pluginRuntimeDiagnostic(instance);
   return diagnostic === undefined ? {} : { diagnostic };
 }
 
@@ -303,9 +298,6 @@ export function projectPluginManagerCatalogCandidate(
   const packageRecord = candidatePackage(candidate, snapshot, instance);
   const installedManifest = instance ? (packageRecord?.manifest ?? undefined) : undefined;
   const incompatible = packageRecord?.manifest === null;
-  const grant = instance
-    ? snapshot.grants.find((item) => item.pluginInstanceId === instance.pluginInstanceId)
-    : undefined;
   const { artifact, config, auth, intent, live, activationTransition } = projectionState(
     candidate,
     instance,
@@ -314,7 +306,6 @@ export function projectPluginManagerCatalogCandidate(
   );
   const capabilitySummary = projectCapabilities(
     installedManifest ? pluginManagerCapabilitiesFromManifest(installedManifest) : candidate.capabilities,
-    grant?.effectiveGrants ?? [],
     overrides.activeCapabilityIds ?? [],
   );
 
@@ -364,6 +355,6 @@ export function projectPluginManagerCatalogCandidate(
             revision: instance?.lifecycleRevision ?? null,
           },
         }
-      : runtimeDiagnostic(instance, grant)),
+      : runtimeDiagnostic(instance)),
   };
 }

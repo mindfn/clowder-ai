@@ -214,11 +214,7 @@ for (const requiresConfig of [false, true])
 
 test('the zero-capability GenOffice default remains discoverable in the official catalog', async () => {
   const { MachineOfficialPluginCatalog } = await import('../dist/domains/plugin/manager/machine-catalog-provider.js');
-  const { OFFICIAL_PLUGIN_HOST_POLICIES } = await import(
-    '../dist/domains/plugin/manager/official-plugin-host-policies.js'
-  );
   const catalog = new MachineOfficialPluginCatalog({
-    hostPolicies: OFFICIAL_PLUGIN_HOST_POLICIES,
     validateCatalog: (value) => ({ valid: true, catalog: value }),
     loadCatalog: async () => ({
       plugins: [

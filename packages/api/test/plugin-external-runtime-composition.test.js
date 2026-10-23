@@ -288,15 +288,10 @@ test('production composition constructs and recovers K-2D but exposes no startup
   assert.match(catalogSource, /new MachineOfficialPluginCatalog\(\{/);
   assert.match(catalogSource, /validateCatalog: validatePluginCatalog/);
   assert.match(catalogSource, /loadMachinePluginCatalog\(OFFICIAL_PLUGIN_CATALOG_URL\)/);
-  assert.match(catalogSource, /\.\.\.OFFICIAL_PLUGIN_HOST_POLICIES/);
   assert.doesNotMatch(source, /weixinMpHandlers/);
   assert.doesNotMatch(source, /limbAdapterRegistry/);
   const callbackRoutes = readFileSync(new URL('../src/routes/callbacks.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(callbackRoutes, /registerCallback(?:WeCom|Lark)ActionRoutes/);
-  assert.match(
-    source,
-    /localGrantPolicy:\s*\(manifest\)\s*=>\s*resolveLocalPluginEffectiveGrants\(pluginManagerHostPolicies, manifest\)/,
-  );
   assert.doesNotMatch(source, /repositoryPluginManagerCompatibility|resolveRepositoryReplacementPluginIds/);
   assert.doesNotMatch(source, /ensureOfficialPluginSignalRoutes|OfficialPluginHistoryImportService/);
   assert.match(source, /registerPluginManagerRoutes\(managerApp/);

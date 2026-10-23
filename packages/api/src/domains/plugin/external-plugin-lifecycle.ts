@@ -3,7 +3,6 @@ import {
   logPluginStartFailure,
   type PluginStartPhase,
   pluginStartFailureReport,
-  startFailedMessage,
   startFailureRecord,
 } from './diagnostics/plugin-start-failure.js';
 import {
@@ -328,8 +327,7 @@ export class ExternalPluginLifecycleService {
       } catch (error) {
         const failedAt = this.now();
         this.reportStartFailure(current, 'restart_resume', error, failedAt);
-        if (!this.restartRecoveryStopped)
-          await this.projectResumeFailure(instanceId, startFailureRecord(error, failedAt, current.packageDigest));
+        if (!this.restartRecoveryStopped) await this.projectResumeFailure(instanceId, startFailureRecord(failedAt));
       }
     });
   }
@@ -439,14 +437,14 @@ export class ExternalPluginLifecycleService {
     } catch (error) {
       const failedAt = this.now();
       this.reportStartFailure(enabled, phase, error, failedAt);
-      const failure = startFailureRecord(error, failedAt, enabled.packageDigest);
+      const failure = startFailureRecord(failedAt);
       await this.advance(
         instanceId,
         enabled.lifecycleRevision,
         { activationState: 'error', runtimeState: 'stopped' },
         { failure, at: failedAt },
       );
-      throw new PluginLifecycleError('START_FAILED', startFailedMessage(failure.detail));
+      throw new PluginLifecycleError('START_FAILED', 'official plugin runtime failed to start');
     }
     return this.readCurrent(instanceId);
   }

@@ -11,17 +11,17 @@ Plugin *management* and plugin *implementation* live in separate repositories, c
 | **`clowder-ai`** (core) | Plugin discovery and install, the management UI, authorization, the **Host Broker** that runs plugins, orchestration, audit, and core thread/message/task data. |
 | **`clowder-ai-plugins`** | The plugin **contract**, the plugin-side **SDK** and standalone runtime, scaffolding, official plugins, plugin-owned business data and conformance fixtures. |
 
-The plugins repo is **not** a plugin manager. Official plugins are built and published there independently; the host downloads or receives a plugin artifact, validates its manifest and digest, obtains the user's authorization, and only then installs, enables, and runs it through the Host Broker. **First-party and third-party plugins use the same SDK and the same authorization channel** — there is no privileged side door.
+The plugin repository implements and publishes packages; Host installs and integrates them. Supported sources are the reviewed official repository and repositories managed by a user’s own team. The SDK defines the bidirectional public interface. Host automatically registers an enabled plugin’s declared MCP and routes its calls using the existing plugin token and invocation context. It does not maintain a second per-plugin SDK API permission list. Legacy `capabilities` and `effectiveGrants` fields remain readable as compatibility metadata; they do not gate public SDK methods.
 
 ## The contract
 
-`@clowder-ai/plugin-contract` is the machine-readable source of truth both sides consume — JSON Schema, generated types, a capability table, and conformance fixtures. It defines three things:
+`@clowder-ai/plugin-contract` is the machine-readable source of truth both sides consume — JSON Schema, generated types, operation metadata, and conformance fixtures. It defines three things:
 
 - **The input envelope** — every input a plugin receives is described on two axes: its **origin** (where it came from) and its **epistemic status** (how settled or trusted that information is).
 - **Ordinary operations and results** — messages, task data, actions, delivery receipts and byte streams.
-- **The manifest and capability types** — what a plugin declares it owns and is allowed to do.
+- **The manifest and capability types** — the resources and operations a plugin integrates.
 
-Host and plugins consume the same versioned contract. Package validation and conformance checks verify their declared capabilities and operation shapes.
+Host and plugins consume the same versioned contract. Package validation and conformance checks verify package declarations and operation shapes.
 
 ## The SDK
 

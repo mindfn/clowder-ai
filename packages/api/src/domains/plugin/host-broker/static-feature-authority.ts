@@ -4,12 +4,7 @@ import type { PluginInventoryStore, PluginInventoryTransaction } from '../host-i
 import type { HostBrokerControlPlane } from './control-plane.js';
 import type { HostBrokerStore, HostBrokerTransaction } from './ports.js';
 import { containStaticFeatureEpoch, revokeStaticFeatures, type StaticFeatureLease } from './static-feature-ledger.js';
-import {
-  matchesStaticFeatureGrants,
-  type StaticFeatureAdmission,
-  staticFeatureDeclarations,
-  staticFeatureGrants,
-} from './static-feature-policy.js';
+import { type StaticFeatureAdmission, staticFeatureDeclarations } from './static-feature-policy.js';
 import type { BrokerCallContext } from './types.js';
 import { HostBrokerError } from './types.js';
 
@@ -42,7 +37,7 @@ export class StaticFeatureAuthority {
   async begin(pluginInstanceId: string, featureId: string): Promise<StaticFeatureLease> {
     const binding =
       this.admission === 'desktop-companion'
-        ? await this.options.broker.authorizeHostCall(pluginInstanceId, 'windows.create')
+        ? await this.options.broker.authorizeHostCall(pluginInstanceId)
         : await this.options.broker.authorizeStaticFeature(pluginInstanceId);
     const decision = await this.options.store.transaction((tx) =>
       this.options.inventory.transaction(async (inventory): Promise<Decision<StaticFeatureLease>> => {
@@ -98,7 +93,7 @@ export class StaticFeatureAuthority {
             Math.max(0, ...previous.filter((r) => r.featureId === featureId).map((r) => r.activationRevision)) + 1,
           lifecycleRevision: instance.lifecycleRevision,
           grantRevision: binding.grantRevision,
-          grantedCapabilities: staticFeatureGrants(this.admission),
+          grantedCapabilities: [],
           connectionId: binding.connectionId,
           brokerSessionId: binding.brokerSessionId,
           runtimeLeaseId: binding.runtimeLeaseId,
@@ -210,8 +205,6 @@ export class StaticFeatureAuthority {
             packageDigest: record.packageRevision,
           });
           this.declarations(manifest, record.featureId);
-          if (!matchesStaticFeatureGrants(this.admission, record.grantedCapabilities))
-            throw denied('feature belongs to a different Host admission class');
           const desired = ledger.preferences.find(
             (r) => r.pluginInstanceId === record.pluginInstanceId && r.featureId === record.featureId,
           );
@@ -254,7 +247,6 @@ export class StaticFeatureAuthority {
     const runtime = tx.runtimeLeases.get(binding.runtimeLeaseId);
     const instance = inventory.instances.get(binding.pluginInstanceId);
     const pkg = instance && inventory.packages.get(instance.packageDigest);
-    const grants = inventory.grants.get(binding.pluginInstanceId);
     if (
       !session ||
       session.phase !== 'active' ||
@@ -280,9 +272,7 @@ export class StaticFeatureAuthority {
       instance.runtimeState !== 'healthy' ||
       instance.packageDigest !== binding.packageDigest ||
       pkg?.packageState !== 'installed' ||
-      pkg.manifest === null ||
-      grants?.grantRevision !== binding.grantRevision ||
-      !matchesStaticFeatureGrants(this.admission, grants.effectiveGrants)
+      pkg.manifest === null
     ) {
       throw denied('static feature has no current Host authority');
     }

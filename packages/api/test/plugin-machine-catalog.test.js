@@ -5,7 +5,6 @@ import {
   loadMachinePluginCatalog,
   MachineOfficialPluginCatalog,
   OfficialPluginManagerCatalogAdapter,
-  resolveLocalPluginEffectiveGrants,
 } from '../dist/domains/plugin/index.js';
 
 const digest = `sha512-${Buffer.alloc(64, 7).toString('base64')}`;
@@ -52,16 +51,11 @@ function canonicalValidator(value) {
   return { valid: true, catalog: value, errors: [] };
 }
 
-test('projects canonical machine catalog release truth while Host policy remains authoritative', async () => {
+test('projects canonical machine catalog release truth', async () => {
   const provider = new MachineOfficialPluginCatalog({
     loadCatalog: async () => rawCatalog(),
     validateCatalog: canonicalValidator,
-    hostPolicies: [
-      {
-        pluginId: 'dev.clowder.video-analysis',
-        effectiveGrants: ['messaging.send'],
-      },
-    ],
+
     now: () => 1_000,
   });
 
@@ -77,7 +71,7 @@ test('projects canonical machine catalog release truth while Host policy remains
       distribution: 'registry',
       archiveUrl: 'https://registry.npmjs.org/@clowder-ai/video-analysis/-/video-analysis-0.1.0-alpha.0.tgz',
       packageDigest: digest,
-      effectiveGrants: ['messaging.send'],
+      effectiveGrants: [],
       presentation: {
         displayName: 'Video Analysis',
         description: {
@@ -111,45 +105,6 @@ test('projects canonical machine catalog release truth while Host policy remains
   });
 });
 
-test('uses the same Host-owned grants for local development archives as catalog releases', () => {
-  const policies = [
-    {
-      pluginId: 'official.weixin-mp',
-      effectiveGrants: ['plugin.config.read', 'secret.read'],
-    },
-    {
-      pluginId: 'dev.clowder.video-generation',
-      effectiveGrants: ['plugin.config.read', 'secret.read'],
-    },
-    {
-      pluginId: 'dev.clowder.video-analysis',
-      effectiveGrants: ['plugin.config.read', 'secret.read'],
-    },
-  ];
-
-  // The package's request bounds the grant too (F202 W2-6): less than the entry gets less, more gets no more.
-  const requesting = (pluginId, ...capabilities) => ({ pluginId, features: [{ capabilities }] });
-  assert.deepEqual(
-    resolveLocalPluginEffectiveGrants(policies, requesting('official.weixin-mp', 'plugin.config.read', 'secret.read')),
-    ['plugin.config.read', 'secret.read'],
-  );
-  assert.deepEqual(
-    resolveLocalPluginEffectiveGrants(
-      policies,
-      requesting('dev.clowder.video-generation', 'plugin.config.read', 'secret.read', 'messaging.send'),
-    ),
-    ['plugin.config.read', 'secret.read'],
-  );
-  assert.deepEqual(
-    resolveLocalPluginEffectiveGrants(policies, requesting('untrusted.local', 'plugin.config.read', 'secret.read')),
-    [],
-  );
-  assert.deepEqual(
-    resolveLocalPluginEffectiveGrants(policies, requesting('dev.clowder.video-analysis', 'secret.read')),
-    ['secret.read'],
-  );
-});
-
 test('selects the newest validated release independently of catalog array order', async () => {
   const catalog = rawCatalog();
   catalog.plugins[0].versions = [
@@ -168,7 +123,7 @@ test('selects the newest validated release independently of catalog array order'
   const provider = new MachineOfficialPluginCatalog({
     loadCatalog: async () => catalog,
     validateCatalog: canonicalValidator,
-    hostPolicies: [{ pluginId: 'dev.clowder.video-analysis', effectiveGrants: [] }],
+
     now: () => 1_500,
   });
 
@@ -181,7 +136,7 @@ test('fails closed when catalog validation fails but discovers valid entries wit
   const invalid = new MachineOfficialPluginCatalog({
     loadCatalog: async () => rawCatalog(),
     validateCatalog: () => ({ valid: false, errors: [{ message: 'invalid' }] }),
-    hostPolicies: [],
+
     now: () => 2_000,
   });
   assert.deepEqual(await invalid.snapshot(), {
@@ -194,7 +149,7 @@ test('fails closed when catalog validation fails but discovers valid entries wit
   const missingPolicy = new MachineOfficialPluginCatalog({
     loadCatalog: async () => rawCatalog(),
     validateCatalog: canonicalValidator,
-    hostPolicies: [],
+
     now: () => 3_000,
   });
   const discovered = await missingPolicy.snapshot();
@@ -217,12 +172,7 @@ test('retains the last canonical machine catalog when a later read fails', async
       return rawCatalog();
     },
     validateCatalog: canonicalValidator,
-    hostPolicies: [
-      {
-        pluginId: 'dev.clowder.video-analysis',
-        effectiveGrants: [],
-      },
-    ],
+
     refreshTtlMs: 0,
     now: () => now,
   });
@@ -252,12 +202,7 @@ test('coalesces concurrent refreshes and reuses catalog truth within the refresh
       return rawCatalog();
     },
     validateCatalog: canonicalValidator,
-    hostPolicies: [
-      {
-        pluginId: 'dev.clowder.video-analysis',
-        effectiveGrants: [],
-      },
-    ],
+
     refreshTtlMs: 1_000,
     now: () => now,
   });
@@ -369,7 +314,7 @@ for (const [name, mutate, code] of [
     const provider = new MachineOfficialPluginCatalog({
       loadCatalog: async () => raw,
       validateCatalog: canonicalValidator,
-      hostPolicies: [],
+
       refreshTtlMs: 1,
       now: () => now,
     });
@@ -393,7 +338,7 @@ test('continuity retains historical digest bindings across upgrades and temporar
   const provider = new MachineOfficialPluginCatalog({
     loadCatalog: async () => raw,
     validateCatalog: canonicalValidator,
-    hostPolicies: [],
+
     refreshTtlMs: 0,
   });
   await provider.snapshot();

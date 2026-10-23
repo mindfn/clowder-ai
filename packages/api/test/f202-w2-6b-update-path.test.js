@@ -1,5 +1,5 @@
 /**
- * F202 W2-6b — a refusal explains the package version it happened to, never the next one (astra's
+ * Runtime failure continuity — a refusal explains the package version it happened to, never the next one (astra's
  * review of `b9bbbf5c3a`, Host thread …000100, P2).
  *
  * The reason is bound to the failing package. Updating the instance to another version — here through
@@ -11,9 +11,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { pluginRuntimeDiagnostic } from '../dist/domains/plugin/diagnostics/plugin-runtime-diagnostic.js';
 import { startFailureRecord } from '../dist/domains/plugin/diagnostics/plugin-start-failure.js';
-import { ExternalPluginRuntimeError } from '../dist/domains/plugin/external-runtime/types.js';
 import { withRuntimeFailure } from '../dist/domains/plugin/host-inventory/runtime-failure-record.js';
-import { hostCapabilityRefusal } from '../dist/domains/plugin/host-surface/host-capability-refusal.js';
 import { OfficialPluginPackageInstaller } from '../dist/domains/plugin/official-package-installer.js';
 import {
   catalogEntry,
@@ -45,18 +43,14 @@ async function failedInstall() {
   await installer.install(first.entry.catalogId, releaseFence(first.entry));
   await store.transaction((transaction) => {
     const [instance] = transaction.instances.list();
-    const refusal = hostCapabilityRefusal(
-      new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${instance.pluginId} lacks thread.listMetadata`),
-      'thread.listMetadata',
-    );
-    const { record, detail } = startFailureRecord(refusal, 20_000, instance.packageDigest);
-    transaction.instances.put({ ...withRuntimeFailure(instance, record, detail), activationState: 'error' });
+    const { record } = startFailureRecord(20_000);
+    transaction.instances.put({ ...withRuntimeFailure(instance, record), activationState: 'error' });
   });
   const current = async () => {
     const snapshot = await store.snapshot();
     const instance = snapshot.instances.find((candidate) => candidate.lifecycleState === 'installed');
     const grant = snapshot.grants.find((candidate) => candidate.pluginInstanceId === instance.pluginInstanceId);
-    return { instance, grant, diagnostic: pluginRuntimeDiagnostic(instance, grant) };
+    return { instance, grant, diagnostic: pluginRuntimeDiagnostic(instance) };
   };
   const updater = (next) =>
     new OfficialPluginPackageInstaller({
@@ -67,14 +61,6 @@ async function failedInstall() {
     });
   return { current, updater };
 }
-
-test('before any update, the refusal explains the version that failed', async () => {
-  const { current } = await failedInstall();
-  const { diagnostic } = await current();
-  assert.equal(diagnostic.code, 'CAPABILITY_NOT_GRANTED');
-  assert.equal(diagnostic.capability, 'thread.listMetadata');
-  assert.match(diagnostic.message, /current Host policy does not grant it/u);
-});
 
 test('after an update to a version that no longer uses it, the old refusal is not blamed on the new version', async () => {
   const { current, updater } = await failedInstall();

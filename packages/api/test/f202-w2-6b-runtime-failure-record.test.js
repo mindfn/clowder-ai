@@ -6,6 +6,7 @@
  * inventory (its instance parser keeps only the fields it knows). The detail is checked strictly by
  * this Host, bound to the failure it explains, and written and cleared with it everywhere.
  */
+
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
@@ -19,7 +20,6 @@ import {
   withRuntimeFailure,
 } from '../dist/domains/plugin/host-inventory/runtime-failure-record.js';
 import { parsePluginInventorySnapshot } from '../dist/domains/plugin/host-inventory/snapshot.js';
-import { hostCapabilityRefusal } from '../dist/domains/plugin/host-surface/host-capability-refusal.js';
 import {
   BundledPluginRuntimeCarrier,
   HostInventoryControlPlane,
@@ -217,8 +217,7 @@ test('the in-Host carrier records the reason with its own failure write, and a n
       {
         claims: () => true,
         async start() {
-          if (refuse)
-            throw new Error('bind failed', { cause: hostCapabilityRefusal(new Error('lacks'), 'thread.write') });
+          if (refuse) throw new Error('bind failed');
         },
         async stop() {},
       },
@@ -234,44 +233,5 @@ test('the in-Host carrier records the reason with its own failure write, and a n
   refuse = true;
   await assert.rejects(carrier.start('pi_w26b'), /bind failed/u);
   assert.equal((await current()).lastRuntimeError.code, 'UNEXPECTED_RUNTIME_FAILURE');
-  assert.deepEqual((await current()).lastRuntimeErrorDetail, {
-    kind: 'capability_not_granted',
-    capability: 'thread.write',
-    occurredAt: 9_000,
-    packageDigest: DIGEST,
-  });
-});
-
-test('the owner is told what was refused, without being told to upgrade or to edit a policy', async () => {
-  const [base] = (await (await inventory()).snapshot()).instances;
-  const failed = withRuntimeFailure(base, FAILURE, DETAIL);
-
-  const declared = pluginRuntimeDiagnostic(failed, {
-    requestedCapabilities: ['thread.listMetadata'],
-    effectiveGrants: [],
-  });
-  assert.equal(declared.code, 'CAPABILITY_NOT_GRANTED');
-  assert.equal(declared.capability, 'thread.listMetadata');
-  assert.equal(declared.occurredAt, 5_000);
-  assert.match(declared.message, /uses thread\.listMetadata, which the current Host policy does not grant it/u);
-  assert.match(declared.message, /compatible with this Host, or contact the plugin maintainer/u);
-  assert.doesNotMatch(declared.message, /upgrade|update/iu);
-
-  const undeclared = pluginRuntimeDiagnostic(failed, { requestedCapabilities: [], effectiveGrants: [] });
-  assert.match(undeclared.message, /uses thread\.listMetadata without declaring it, which is a defect in the plugin/u);
-
-  // Granted since the failure — say so, not that the policy refuses it.
-  const grantedNow = pluginRuntimeDiagnostic(failed, {
-    requestedCapabilities: ['thread.listMetadata'],
-    effectiveGrants: ['thread.listMetadata'],
-  });
-  assert.equal(grantedNow.capability, 'thread.listMetadata');
-  assert.match(grantedNow.message, /refused this plugin version thread\.listMetadata when it last started/u);
-  assert.match(grantedNow.message, /granted now, so enable the plugin again/u);
-  assert.doesNotMatch(grantedNow.message, /does not grant/u);
-
-  const stale = pluginRuntimeDiagnostic({ ...failed, lastRuntimeErrorDetail: { ...DETAIL, occurredAt: 1 } }, undefined);
-  assert.equal(stale.code, 'UNEXPECTED_RUNTIME_FAILURE');
-  const otherVersion = pluginRuntimeDiagnostic({ ...failed, packageDigest: OTHER_DIGEST }, undefined);
-  assert.equal(otherVersion.code, 'UNEXPECTED_RUNTIME_FAILURE', 'never read against another version');
+  assert.equal((await current()).lastRuntimeErrorDetail, undefined);
 });

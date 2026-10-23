@@ -142,7 +142,6 @@ test('module plugins receive isolated persistent storage with revision-fenced co
     runtime,
     catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
     catalogManifests: [],
-    localGrantPolicy: (manifest) => manifest.features.flatMap((feature) => feature.capabilities),
   });
   const first = await composition.manager.install({
     source: { kind: 'local-directory', path: await writeStorageFixture('dev.clowder.storage-first') },
@@ -306,50 +305,3 @@ test(
     }
   },
 );
-
-test('module plugin storage fails closed when the package lacks the matching grant', async () => {
-  const projectRoot = await tempRoot('cat-cafe-f202-storage-grant-project-');
-  const runtime = createDormantPluginRuntimeComposition({
-    projectRoot,
-    messageStore: new MessageStore(),
-    redis: new FakeStorageRedis(),
-    contract: { manifestContractRange: '0.1.0', validateEffectiveGrants, validateManifest },
-  });
-  const composition = createPluginManagerRuntimeComposition({
-    runtime,
-    catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
-    catalogManifests: [],
-    localGrantPolicy: () => [],
-  });
-  const installed = await composition.manager.install({
-    source: { kind: 'local-directory', path: await writeStorageFixture('dev.clowder.storage-ungranted', []) },
-  });
-  const detail = (await composition.manager.get(installed.pluginId)).plugin;
-  await composition.manager.setEnabled(installed.pluginId, {
-    enabled: true,
-    expectedRevision: detail.lifecycleRevision,
-  });
-
-  await assert.rejects(
-    runtime.supervisor.invoke(installed.pluginInstanceId, 'fixture.storage', {
-      operation: 'get',
-      key: 'cursor',
-    }),
-    /lacks plugin\.state\.get/,
-  );
-  await assert.rejects(
-    runtime.supervisor.invoke(installed.pluginInstanceId, 'fixture.storage', {
-      operation: 'set',
-      key: 'cursor',
-      value: 1,
-    }),
-    /lacks plugin\.state\.set/,
-  );
-  await assert.rejects(
-    runtime.supervisor.invoke(installed.pluginInstanceId, 'fixture.storage', {
-      operation: 'delete',
-      key: 'cursor',
-    }),
-    /lacks plugin\.state\.set/,
-  );
-});

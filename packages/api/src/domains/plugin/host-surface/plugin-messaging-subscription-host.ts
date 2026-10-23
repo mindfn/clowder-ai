@@ -4,7 +4,6 @@ import { MessagingError } from '../../messaging/contract/host-types.js';
 import type { MessagingService } from '../../messaging/messaging-service.js';
 import type { SubscriptionDelivery } from '../../messaging/subscription-delivery.js';
 import { removesPluginOwnedResources } from '../external-plugin-lifecycle-types.js';
-import { hostCapabilityRefusal } from './host-capability-refusal.js';
 
 const SUBSCRIBE_KEYS = new Set(['threadId', 'method', 'includeOwnMessages']);
 
@@ -41,15 +40,6 @@ function boundedString(value: unknown, field: string, maximum: number): string {
     throw new MessagingError('VALIDATION', `${field} must be 1..${maximum} non-whitespace-trimmed characters`);
   }
   return value;
-}
-
-function requireGrant(deps: PluginMessagingSubscriptionSessionDeps): void {
-  if (!deps.effectiveGrants.includes('message.event.subscribe')) {
-    throw hostCapabilityRefusal(
-      new MessagingError('PERMISSION', `${deps.pluginId} lacks message.event.subscribe`),
-      'message.event.subscribe',
-    );
-  }
 }
 
 function subscribeInput(value: PluginMessagingSubscribeInput): PluginMessagingSubscribeInput {
@@ -105,7 +95,6 @@ export function createPluginMessagingSubscriptionSession(
     host: {
       async subscribe(raw) {
         assertCurrent();
-        requireGrant(deps);
         const input = subscribeInput(raw);
         await requireThread(input.threadId);
         const { handleId } = await deps.messaging.ensureThreadHandle({
@@ -151,7 +140,6 @@ export function createPluginMessagingSubscriptionSession(
       },
       async unsubscribe(raw) {
         assertCurrent();
-        requireGrant(deps);
         if (
           !raw ||
           typeof raw !== 'object' ||

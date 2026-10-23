@@ -157,7 +157,7 @@ test('native launch rejects wrong instance, contribution, undeclared methods and
   }
 });
 
-test('native launch rejects inventory lifecycle, package and grant drift from its activation', async (t) => {
+test('native launch rejects inventory lifecycle and package drift from its activation', async (t) => {
   const f = await fixture(t);
   await f.ready();
   const baseline = structuredClone(f.snapshot);
@@ -178,12 +178,6 @@ test('native launch rejects inventory lifecycle, package and grant drift from it
     },
     () => {
       f.instance.packageDigest = 'other';
-    },
-    () => {
-      f.grant.effectiveGrants = [];
-    },
-    () => {
-      f.grant.grantRevision++;
     },
     () => {
       f.packageRecord.packageState = 'quarantined';
