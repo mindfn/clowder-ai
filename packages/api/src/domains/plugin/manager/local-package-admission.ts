@@ -4,7 +4,7 @@ import { constants as fsConstants } from 'node:fs';
 import { type FileHandle, lstat, mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import type { Capability, PluginManifest } from '@clowder-ai/plugin-contract';
+import type { PluginManifest } from '@clowder-ai/plugin-contract';
 import type { ExternalPluginLifecycleService } from '../external-plugin-lifecycle.js';
 import { FilesystemVerifiedPluginPackageLocator } from '../external-runtime/filesystem-package-locator.js';
 import type { PluginManifestValidator } from '../external-runtime/package-staging.js';
@@ -53,8 +53,6 @@ export interface LocalPluginPackageAdmissionOptions {
   readonly lifecycle?: Pick<ExternalPluginLifecycleService, 'runWithRuntimeSuspended'>;
   readonly reconcileConfiguration?: (pluginId: string, instanceId: string) => Promise<void>;
   readonly packagesRoot: string;
-  /** Host-owned policy. Package declarations are requests, never grants. */
-  readonly grantPolicy: (manifest: PluginManifest) => Promise<readonly Capability[]> | readonly Capability[];
   readonly tarBin?: string;
   readonly npmBin?: string;
   readonly validateManifest?: PluginManifestValidator;
@@ -431,7 +429,6 @@ export class LocalPluginPackageAdmission {
         );
       }
       const signalSchemas = await readSignalSchemas(located.rootDir, located.manifest);
-      const effectiveGrants = await this.options.grantPolicy(located.manifest);
       const packageMetadata = await readPackageMetadata(located.rootDir);
       if (
         fence.expectedPackage &&
@@ -448,7 +445,7 @@ export class LocalPluginPackageAdmission {
         computedPackageDigest: digest,
         expectedPackageDigest: digest,
         packagePluginId: located.manifest.pluginId,
-        effectiveGrants,
+        effectiveGrants: [],
         signalSchemas,
         provenance: admittedProvenance,
       });
@@ -461,7 +458,7 @@ export class LocalPluginPackageAdmission {
     }
   }
 
-  /** Internal Host seam: catalog callers have already verified release bytes and Host grant policy. */
+  /** Internal Host seam: catalog callers have already verified release bytes. */
   async admitVerifiedCatalogCandidate(
     inventoryAtRequest: PluginInventorySnapshot,
     candidate: PackageAdmissionCandidate,

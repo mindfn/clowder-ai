@@ -73,7 +73,6 @@ export async function invokeModuleSettings(
   },
 ): Promise<PluginSettingsInvocationResult> {
   const record = snapshotModuleAuthority(input.packageRecord);
-  const grants = snapshotModuleAuthority(input.effectiveGrants);
   let settings: ModulePluginSettingsDefinition | undefined;
   let disposed = false;
   const current = async () => {
@@ -148,11 +147,8 @@ export async function createModuleSettingsHost(
       const discriminatorField = record.manifest.configuration?.find(
         (item) => item.key === variants.discriminator && item.kind !== 'operation',
       );
-      const capability = discriminatorField?.kind === 'secret' ? 'secret.read' : 'plugin.config.read';
       let stored: unknown;
-      // The grant discipline the projection uses: no grant, no store read —
-      // the contract then falls back to the discriminator field's default.
-      if (discriminatorField && grants.includes(capability)) {
+      if (discriminatorField) {
         stored =
           discriminatorField.kind === 'secret'
             ? await options.configuration.readSecret(input.pluginInstanceId, variants.discriminator)
@@ -182,9 +178,7 @@ export async function createModuleSettingsHost(
       // read, no error, just absence — mirroring the startup projection.
       if (claimedByBranch && !(branch?.fields.includes(key) ?? false)) return undefined;
     }
-    const capability = secret ? 'secret.read' : 'plugin.config.read';
-    if (!grants.includes(capability))
-      throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `Settings lacks ${capability}`);
+
     const value = secret
       ? await options.configuration.readSecret(input.pluginInstanceId, key)
       : await options.configuration.readConfig(input.pluginInstanceId, key);

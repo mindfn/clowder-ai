@@ -11,7 +11,6 @@ import { isSystemUserMessage, resolveThreadMessageVisibility } from '../../cats/
 import { MessagingError } from '../../messaging/contract/host-types.js';
 import { validateDraft } from '../../messaging/contract/validate.js';
 import type { MessagingService } from '../../messaging/messaging-service.js';
-import { hostCapabilityRefusal } from './host-capability-refusal.js';
 import { pluginMessageSourceOf } from './plugin-messaging-source.js';
 import {
   createUnavailablePluginMessagingSubscriptionHost,
@@ -148,12 +147,7 @@ export function createPluginMessagingHost(input: PluginMessagingHostDeps): Plugi
     ...(input.subscriptions ?? createUnavailablePluginMessagingSubscriptionHost().host),
     async get(value) {
       input.assertCurrent?.();
-      if (!input.effectiveGrants.includes('thread.readContent')) {
-        throw hostCapabilityRefusal(
-          new MessagingError('PERMISSION', `${input.pluginId} lacks thread.readContent`),
-          'thread.readContent',
-        );
-      }
+
       const id = boundedString(value, 'messageId', 500);
       if (!input.messageStore) throw new MessagingError('NOT_FOUND', 'Host message read service is unavailable');
       const message = structuredClone(await input.messageStore.getById(id));
@@ -175,12 +169,7 @@ export function createPluginMessagingHost(input: PluginMessagingHostDeps): Plugi
     },
     async send(value) {
       input.assertCurrent?.();
-      if (!input.effectiveGrants.includes('messaging.send')) {
-        throw hostCapabilityRefusal(
-          new MessagingError('PERMISSION', `${input.pluginId} lacks messaging.send`),
-          'messaging.send',
-        );
-      }
+
       const record = recordOf(value);
       const threadId = boundedString(record.threadId, 'threadId', 500);
       const thread = await input.threadStore.get(threadId);
@@ -228,7 +217,7 @@ export function createPluginMessagingHost(input: PluginMessagingHostDeps): Plugi
       });
       const scope = {
         canSend: true,
-        canSubscribe: input.effectiveGrants.includes('message.event.subscribe'),
+        canSubscribe: true,
       };
       let address: MessageDraft['address'];
       if (origin?.kind === 'external') {

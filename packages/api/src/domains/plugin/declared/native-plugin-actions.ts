@@ -1,9 +1,7 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
-import { isDeepStrictEqual } from 'node:util';
 import type { PluginNativeActionTarget } from '../../cats/services/types.js';
 import { type PluginCallContext, withPluginCallContext } from '../carrier/plugin-call-context.js';
 import type { PluginRuntimeAdmission } from '../carrier/runtime-carrier.js';
-import { grantedMcpContributionIds } from './granted-mcp-contributions.js';
 
 export class NativePluginActionError extends Error {
   constructor(
@@ -48,10 +46,9 @@ export class NativePluginActions {
     if (generation !== this.generation(instanceId) || this.#bindings.has(instanceId)) {
       throw new NativePluginActionError(409, 'Plugin activation changed during startup');
     }
-    const allowed = grantedMcpContributionIds(admission.packageRecord.manifest, admission.effectiveGrants);
     const connections = new Map<string, { token: string; methods: ReadonlySet<string> }>();
     for (const contribution of admission.packageRecord.manifest.contributions ?? []) {
-      if (contribution.type === 'mcp' && allowed.has(contribution.id) && contribution.actions?.length) {
+      if (contribution.type === 'mcp' && contribution.actions?.length) {
         connections.set(contribution.id, {
           token: createHmac('sha256', this.#hostSecret)
             .update(JSON.stringify([instanceId, contribution.id]))
@@ -149,8 +146,7 @@ export class NativePluginActions {
         current.instance.activationState !== 'enabled' ||
         current.instance.lifecycleState !== 'installed' ||
         current.instance.configReadiness !== 'ready' ||
-        current.instance.packageDigest !== binding.admission.instance.packageDigest ||
-        !isDeepStrictEqual([...current.effectiveGrants].sort(), [...binding.admission.effectiveGrants].sort())
+        current.instance.packageDigest !== binding.admission.instance.packageDigest
       )
         throw new NativePluginActionError(409, 'Plugin call is no longer current');
       await checkCaller();

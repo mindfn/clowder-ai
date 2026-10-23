@@ -7,6 +7,7 @@
  * install → configure → enable path against a feishu-shaped fixture package and read the actual
  * materialized MCP capability env, so no consumer can silently regress while unit tests stay green.
  */
+
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -188,7 +189,6 @@ async function installConfigureEnable(updates, roots) {
     runtime,
     catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
     catalogManifests: [],
-    localGrantPolicy: (manifest) => manifest.features.flatMap((feature) => [...feature.capabilities]),
   });
   const installed = await composition.manager.install({ source: { kind: 'local-directory', path: packageRoot } });
   const beforeConfigure = (await composition.manager.get(installed.pluginId)).plugin;
@@ -260,7 +260,6 @@ test('variant changes refresh existing project MCP providers while preserving me
     runtime,
     catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
     catalogManifests: [],
-    localGrantPolicy: (manifest) => manifest.features.flatMap((feature) => [...feature.capabilities]),
   });
   const installed = await composition.manager.install({
     source: { kind: 'local-directory', path: await writeFixturePackage(true) },

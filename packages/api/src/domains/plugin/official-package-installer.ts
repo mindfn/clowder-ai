@@ -7,7 +7,6 @@ import { FilesystemVerifiedPluginPackageLocator, type VerifiedPluginPackage } fr
 import type { PluginManifestValidator } from './external-runtime/package-staging.js';
 import { reportPackageArchiveFailure } from './external-runtime/package-staging-diagnostics.js';
 import { snapshotPluginSurfaceAssets } from './external-runtime/package-surface-assets.js';
-import { grantsWithinRequest } from './host-inventory/contract-policy.js';
 import type { HostInventoryControlPlane } from './host-inventory/control-plane.js';
 import { requireExecutableManifest } from './host-inventory/stored-manifest.js';
 import {
@@ -378,9 +377,7 @@ export class OfficialPluginPackageInstaller {
           (feature) => feature.contributions?.some((item) => item.type === 'desktop-window') === true,
         );
       if (declaresStaticEditor || declaresDesktopWindow) {
-        const admitted = declaresDesktopWindow
-          ? desktopWindow !== undefined && entry.effectiveGrants.every((grant) => grant === 'windows.create')
-          : staticEditors.length > 0 && entry.effectiveGrants.length === 0;
+        const admitted = declaresDesktopWindow ? desktopWindow !== undefined : staticEditors.length > 0;
         if (!admitted) {
           throw new OfficialPluginInstallError(
             'UNSUPPORTED_TRANSPORT',
@@ -390,7 +387,7 @@ export class OfficialPluginPackageInstaller {
         // Static builtin admission still consumes the exact archive and public
         // manifest. Validate renderer bytes now; admission never starts a server.
         await snapshotPluginSurfaceAssets(located, desktopWindow ? [desktopWindow] : staticEditors);
-        if (desktopWindow && entry.effectiveGrants.includes('windows.create')) {
+        if (desktopWindow) {
           try {
             await this.options.prepareDesktopComponent?.();
           } catch (error) {
@@ -409,7 +406,7 @@ export class OfficialPluginPackageInstaller {
         computedPackageDigest: entry.packageDigest,
         expectedPackageDigest: entry.packageDigest,
         packagePluginId: entry.pluginId,
-        effectiveGrants: grantsWithinRequest(entry.effectiveGrants, located.manifest),
+        effectiveGrants: [],
         signalSchemas,
         provenance: {
           kind: 'catalog',
@@ -452,7 +449,7 @@ export class OfficialPluginPackageInstaller {
       computedPackageDigest: entry.packageDigest,
       expectedPackageDigest: entry.packageDigest,
       packagePluginId: entry.pluginId,
-      effectiveGrants: grantsWithinRequest(entry.effectiveGrants, manifest),
+      effectiveGrants: [],
       signalSchemas: {},
       provenance: { kind: 'catalog', catalogId: entry.catalogId, packageName: entry.packageName },
     });

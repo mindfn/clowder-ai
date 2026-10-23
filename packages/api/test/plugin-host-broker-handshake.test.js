@@ -62,24 +62,6 @@ describe('K-2B Host Broker handshake', () => {
     assert.equal(inventorySnapshot.instances[0].runtimeState, 'healthy');
   });
 
-  it('treats reordered effective grants as the same Host authority', async () => {
-    const { connection, inventory, store } = await harness({
-      inventoryOptions: { effectiveGrants: ['messaging.send', 'message.event.subscribe'] },
-    });
-
-    const binding = await connection.hello(candidateHello());
-    await inventory.transaction((transaction) => {
-      const grants = transaction.grants.get(INSTANCE_ID);
-      transaction.grants.put({
-        ...grants,
-        effectiveGrants: ['message.event.subscribe', 'messaging.send'],
-      });
-    });
-
-    assert.equal(await connection.ready({ bindingNonce: binding.bindingNonce }), null);
-    assert.equal((await store.snapshot()).sessions[0].phase, 'active');
-  });
-
   it('fails closed when candidate identity differs from the exact installed package', async () => {
     const { connection, inventory, store } = await harness();
 
@@ -162,8 +144,8 @@ describe('K-2B Host Broker handshake', () => {
     const binding = await connection.hello(candidateHello());
     await connection.ready({ bindingNonce: binding.bindingNonce });
     await inventory.transaction((transaction) => {
-      const grants = transaction.grants.get(INSTANCE_ID);
-      transaction.grants.put({ ...grants, grantRevision: grants.grantRevision + 1 });
+      const instance = transaction.instances.get(INSTANCE_ID);
+      transaction.instances.put({ ...instance, runtimeState: 'stopped' });
     });
 
     await assert.rejects(

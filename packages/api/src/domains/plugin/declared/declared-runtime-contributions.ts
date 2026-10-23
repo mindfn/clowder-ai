@@ -13,7 +13,6 @@ import { type InvokeContext, PluginLimbAdapter } from '../../limb/PluginLimbAdap
 import { withPluginOwnerWebhook } from '../carrier/plugin-owner-request-context.js';
 import type { PluginRuntimeAdmission } from '../carrier/runtime-carrier.js';
 import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from '../external-runtime/types.js';
-import { hostCapabilityRefusal } from '../host-surface/host-capability-refusal.js';
 import { effectivePluginConfigurationValue } from '../manager/plugin-configuration-values.js';
 import type { PluginRuntimeConfigurationPort } from '../manifest-configuration-projection.js';
 import type { CloudConversationHostLease, CloudConversationHostRegistry } from './cloud-conversation-host-registry.js';
@@ -109,15 +108,6 @@ export class DeclaredRuntimeContributions {
     const cloudHostLeases: CloudConversationHostLease[] = [];
     const cloudHostRegistry = this.host.cloudConversationHosts;
     try {
-      if (schedules.length > 0 && !admission.effectiveGrants.includes('schedule.register')) {
-        throw hostCapabilityRefusal(
-          new ExternalPluginRuntimeError(
-            'DELIVERY_REJECTED',
-            `${admission.packageRecord.pluginId} lacks schedule.register`,
-          ),
-          'schedule.register',
-        );
-      }
       if (schedules.length > 0 && !this.host.taskRunner) {
         throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host task runner is unavailable');
       }
@@ -316,8 +306,6 @@ async function configurationSnapshot(
 ): Promise<Record<string, string>> {
   const values: Record<string, string> = {};
   for (const field of admission.packageRecord.manifest.configuration ?? []) {
-    const grant = field.kind === 'secret' ? 'secret.read' : 'plugin.config.read';
-    if (!admission.effectiveGrants.includes(grant)) continue;
     const raw =
       field.kind === 'secret'
         ? await configuration.readSecret(admission.instance.pluginInstanceId, field.key)

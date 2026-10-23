@@ -170,7 +170,6 @@ test('restart and Manager isolate old installs while a normal package remains us
   const { createDormantPluginRuntimeComposition, createPluginManagerRuntimeComposition } = await import(
     '../dist/domains/plugin/index.js'
   );
-  const { reconcileOfficialPluginGrants } = await import('../dist/domains/plugin/manager/official-plugin-grants.js');
   const root = await mkdtemp(join(tmpdir(), 'plugin-incompatible-manager-'));
   const hostRoot = join(root, '.cat-cafe/plugin-host');
   await mkdir(hostRoot, { recursive: true });
@@ -186,14 +185,6 @@ test('restart and Manager isolate old installs while a normal package remains us
   good.packagePluginId = good.manifest.pluginId;
   good.provenance = { kind: 'local-archive' };
   const normal = await runtime.inventory.installPackage(good);
-  assert.deepEqual(
-    await reconcileOfficialPluginGrants({
-      store: runtime.inventoryStore,
-      inventory: runtime.inventory,
-      hostPolicies: [{ pluginId: oldManifest.pluginId, effectiveGrants: ['messaging.send'] }],
-    }),
-    [],
-  );
   assert.equal((await runtime.recoverAfterRestart()).resumeRequested, 0);
   const { manager } = createPluginManagerRuntimeComposition({
     runtime,

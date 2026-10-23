@@ -69,19 +69,16 @@ test('installed contract rejects MCP action params, extra fields and duplicate m
   }
 });
 
-test('MCP actions stay private to their contribution and require the owning feature grants', async () => {
+test('MCP dispatch retains contribution identity and declared methods', async () => {
   const authority = admission();
-  authority.packageRecord.manifest.features.push(
-    { id: 'other', name: 'Other', resources: [], capabilities: [], contributions: [{ type: 'mcp', id: 'other' }] },
-    {
-      id: 'denied',
-      name: 'Denied',
-      resources: [],
-      capabilities: ['secret.read'],
-      contributions: [{ type: 'mcp', id: 'denied' }],
-    },
-  );
-  for (const id of ['other', 'denied'])
+  authority.packageRecord.manifest.features.push({
+    id: 'other',
+    name: 'Other',
+    resources: [],
+    capabilities: [],
+    contributions: [{ type: 'mcp', id: 'other' }],
+  });
+  for (const id of ['other'])
     authority.packageRecord.manifest.contributions.push({
       type: 'mcp',
       id,
@@ -98,7 +95,6 @@ test('MCP actions stay private to their contribution and require the owning feat
   const otherToken = actions.environment('instance', 'other').CLOWDER_PLUGIN_ACTION_TOKEN!;
   assert.notEqual(otherToken, token);
   assert.equal(await actions.call(otherToken, 'other.run', {}, caller()), 'other.run');
-  assert.deepEqual(actions.environment('instance', 'denied'), {});
   assert.deepEqual(actions.environment('instance', 'undeclared'), {});
   const declared = new DeclaredRuntimeContributions({} as never);
   await declared.activate(authority as never, async () => {
@@ -167,7 +163,7 @@ test('late startup cannot create a connection after stop intent', () => {
   assert.throws(() => actions.activate(authority as never, generation, async () => {}));
 });
 
-for (const change of ['grant', 'disabled', 'package', 'caller'] as const) {
+for (const change of ['disabled', 'package', 'caller'] as const) {
   test(`refuses ${change} changes before entering package action`, async () => {
     const { actions, authority } = fixture();
     let calls = 0;
@@ -176,7 +172,6 @@ for (const change of ['grant', 'disabled', 'package', 'caller'] as const) {
     });
     const token = actions.environment('instance', 'example').CLOWDER_PLUGIN_ACTION_TOKEN!;
     const identity = caller();
-    if (change === 'grant') authority.effectiveGrants = [];
     if (change === 'disabled') authority.instance.activationState = 'disabled';
     if (change === 'package') authority.instance.packageDigest = 'other-package';
     if (change === 'caller')

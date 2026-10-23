@@ -45,7 +45,7 @@ async function writeLocalPackage(root, packageManifest = manifest(), entrypoint 
   );
 }
 
-async function harness({ quarantine = false, grantPolicy } = {}) {
+async function harness({ quarantine = false } = {}) {
   const packagesRoot = await tempRoot('cat-cafe-f202-local-packages-');
   const store = new MemoryPluginInventoryStore();
   const inventory = new HostInventoryControlPlane(store, {
@@ -58,9 +58,7 @@ async function harness({ quarantine = false, grantPolicy } = {}) {
   const admission = new LocalPluginPackageAdmission({
     inventory,
     packagesRoot,
-    grantPolicy:
-      grantPolicy ??
-      (async (packageManifest) => packageManifest.features.flatMap((feature) => [...feature.capabilities])),
+
     ...(quarantineStore ? { quarantine: quarantineStore } : {}),
   });
   return { admission, inventory, packagesRoot, store, quarantines: quarantineStore };
@@ -116,7 +114,7 @@ test('admits a local npm-style archive into immutable Host inventory without exe
   await access(join(packagesRoot, packageDirectoryName(archive.integrity), 'package.tgz'));
   await assert.rejects(access(sideEffect), { code: 'ENOENT' });
   const snapshot = await store.snapshot();
-  assert.deepEqual(snapshot.grants[0].effectiveGrants, ['messaging.send', 'task.admitEntrusted']);
+  assert.deepEqual(snapshot.grants[0].effectiveGrants, []);
   assert.equal(snapshot.packages[0].packageState, 'installed');
   assert.deepEqual(snapshot.packages[0].provenance, {
     kind: 'local-archive',
@@ -142,26 +140,6 @@ test('copies a local directory into an immutable canonical archive before invent
   await access(join(packagesRoot, packageDirectoryName(result.packageDigest), 'package.tgz'));
   await assert.rejects(access(sideEffect), { code: 'ENOENT' });
   assert.equal((await store.snapshot()).instances.length, 1);
-});
-
-test('quarantines a local package rejected by Host grant admission', async () => {
-  const archive = await packageArchive();
-  const archivePath = join(await tempRoot('cat-cafe-f202-local-invalid-grant-'), 'plugin.tgz');
-  await writeFile(archivePath, archive.bytes);
-  const { admission, store, quarantines } = await harness({
-    quarantine: true,
-    grantPolicy: async () => ['secret.read'],
-  });
-
-  await assert.rejects(
-    admission.install({ kind: 'local-archive', path: archivePath }),
-    (error) => error?.code === 'INVENTORY_REJECTED',
-  );
-
-  assert.equal((await store.snapshot()).instances.length, 0);
-  const [rejected] = await quarantines.list();
-  assert.equal(rejected.packageDigest, archive.integrity);
-  assert.equal(rejected.failure.code, 'INVALID_GRANT');
 });
 
 test('rejects a traversal archive before publishing bytes or mutating inventory', async () => {
@@ -341,34 +319,6 @@ test('directory reselection cannot replace a running instance', async () => {
   assert.deepEqual(await store.snapshot(), before);
 });
 
-test('directory update retains the request-start grant fence while source verification is in flight', async () => {
-  const sourceRoot = await tempRoot('cat-cafe-local-update-grant-');
-  await writeLocalPackage(sourceRoot);
-  let revoke = false;
-  const h = await harness({
-    grantPolicy: async () => {
-      if (revoke)
-        await h.inventory.revokeGrant({
-          pluginInstanceId: 'pi_local',
-          capability: 'messaging.send',
-          expectedGrantRevision: 1,
-        });
-      return ['messaging.send'];
-    },
-  });
-  const first = await h.admission.install({ kind: 'local-directory', path: sourceRoot });
-  revoke = true;
-  await writeFile(join(sourceRoot, 'dist/entrypoint.js'), '// update\n');
-  await assert.rejects(
-    h.admission.install({ kind: 'local-directory', path: sourceRoot }),
-    (error) => error.code === 'INVENTORY_REJECTED' && error.cause?.code === 'STALE_GRANT_REVISION',
-  );
-  const after = await h.store.snapshot();
-  assert.equal(after.instances[0].packageDigest, first.packageDigest);
-  assert.equal(after.grants[0].grantRevision, 2);
-  assert.deepEqual(after.grants[0].effectiveGrants, []);
-});
-
 test('explicit directory installation replaces an installed catalog identity while preserving the instance and data', async () => {
   const sourceRoot = await tempRoot('cat-cafe-local-update-origin-');
   await writeLocalPackage(sourceRoot, manifest({ version: '0.1.0-alpha.2' }));
@@ -419,7 +369,7 @@ test('directory replacement suspends and resumes the same enabled instance throu
   const admission = new LocalPluginPackageAdmission({
     inventory: h.inventory,
     packagesRoot: h.packagesRoot,
-    grantPolicy: () => [],
+
     lifecycle,
   });
   await writeFile(join(directory, 'dist/entrypoint.js'), '// replacement');
@@ -477,7 +427,7 @@ for (const origin of ['catalog', 'local']) {
       const admission = new LocalPluginPackageAdmission({
         inventory: h.inventory,
         packagesRoot: h.packagesRoot,
-        grantPolicy: () => [],
+
         lifecycle,
         reconcileConfiguration: async () =>
           h.store.transaction((tx) => {
@@ -514,57 +464,6 @@ for (const origin of ['catalog', 'local']) {
   }
 }
 
-test('replacement rollback does not resurrect a grant revoked while the new runtime starts', async () => {
-  const directory = await tempRoot('cat-cafe-rollback-revocation-');
-  await writeLocalPackage(directory);
-  const h = await harness();
-  const first = await h.admission.install({ kind: 'local-directory', path: directory });
-  await h.store.transaction((tx) =>
-    tx.instances.put({
-      ...tx.instances.get(first.pluginInstanceId),
-      activationState: 'enabled',
-      runtimeState: 'healthy',
-      configReadiness: 'ready',
-    }),
-  );
-  let starts = 0;
-  const lifecycle = new ExternalPluginLifecycleService({
-    store: h.store,
-    onStartFailure: () => {},
-    supervisor: {
-      stop: async () => {},
-      start: async () => {
-        starts += 1;
-        const grant = (await h.store.snapshot()).grants[0];
-        await h.inventory.revokeGrant({
-          pluginInstanceId: first.pluginInstanceId,
-          capability: 'messaging.send',
-          expectedGrantRevision: grant.grantRevision,
-        });
-        throw new Error('revoked during start');
-      },
-    },
-  });
-  const admission = new LocalPluginPackageAdmission({
-    inventory: h.inventory,
-    packagesRoot: h.packagesRoot,
-    grantPolicy: () => ['messaging.send'],
-    lifecycle,
-  });
-  await writeFile(join(directory, 'dist/entrypoint.js'), '// replacement');
-  await assert.rejects(
-    admission.install({ kind: 'local-directory', path: directory }),
-    (error) => error.code === 'UPDATE_ROLLBACK_RESUME_FAILED',
-  );
-  const after = await h.store.snapshot();
-  assert.equal(starts, 1);
-  assert.deepEqual(after.grants[0].effectiveGrants, []);
-  assert.equal(after.grants[0].grantRevision, 3);
-  assert.notEqual(after.instances[0].packageDigest, first.packageDigest);
-  assert.equal(after.instances[0].activationState, 'enabled');
-  assert.equal(after.instances[0].runtimeState, 'crashed');
-});
-
 for (const enabled of [false, true]) {
   test(`failed configuration reconciliation rolls back admitted package and readiness (enabled: ${enabled})`, async () => {
     const directory = await tempRoot('cat-cafe-rollback-readiness-');
@@ -590,7 +489,7 @@ for (const enabled of [false, true]) {
     const admission = new LocalPluginPackageAdmission({
       inventory: h.inventory,
       packagesRoot: h.packagesRoot,
-      grantPolicy: () => [],
+
       ...(enabled ? { lifecycle } : {}),
       reconcileConfiguration: async () => {
         await h.store.transaction((tx) => {
@@ -609,7 +508,7 @@ for (const enabled of [false, true]) {
     assert.equal(after.instances[0].packageDigest, first.packageDigest);
     assert.equal(after.instances[0].configReadiness, 'ready');
     assert.equal(after.instances[0].activationState, enabled ? 'enabled' : 'disabled');
-    assert.deepEqual(after.grants[0].effectiveGrants, ['messaging.send']);
+    assert.deepEqual(after.grants[0].effectiveGrants, []);
     assert.deepEqual(starts, enabled ? [first.packageDigest] : []);
   });
 }
@@ -660,31 +559,6 @@ test('archive reselection refuses a running instance without changing inventory'
     (error) => error.code === 'INVENTORY_REJECTED' && error.cause?.code === 'RUNTIME_NOT_STOPPED',
   );
   assert.deepEqual(await store.snapshot(), before);
-});
-
-test('archive reselection retains the request-start grant revision', async () => {
-  let revoke = false;
-  const h = await harness({
-    grantPolicy: async () => {
-      if (revoke)
-        await h.inventory.revokeGrant({
-          pluginInstanceId: 'pi_local',
-          capability: 'messaging.send',
-          expectedGrantRevision: 1,
-        });
-      return ['messaging.send'];
-    },
-  });
-  const first = await h.admission.install(await archiveSource('// first'));
-  revoke = true;
-  await assert.rejects(
-    h.admission.install(await archiveSource('// updated')),
-    (error) => error.code === 'INVENTORY_REJECTED' && error.cause?.code === 'STALE_GRANT_REVISION',
-  );
-  const after = await h.store.snapshot();
-  assert.equal(after.instances[0].packageDigest, first.packageDigest);
-  assert.equal(after.grants[0].grantRevision, 2);
-  assert.deepEqual(after.grants[0].effectiveGrants, []);
 });
 
 test('archive reselection cannot switch package identity or source kind', async () => {

@@ -67,7 +67,6 @@ test(
         runtime,
         catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
         catalogManifests: [],
-        localGrantPolicy: () => ['plugin.state.get', 'plugin.state.set'],
       });
       const installed = await composition.manager.install({
         source: { kind: 'local-archive', path: process.env.F202_READER_ARCHIVE },

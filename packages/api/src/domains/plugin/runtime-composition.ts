@@ -935,7 +935,6 @@ export interface PluginManagerRuntimeCompositionOptions {
   /** Catalog authority used by the pre-Manager official routes during Train B compatibility. */
   readonly officialRouteCatalogProvider?: OfficialPluginCatalogProvider;
   readonly catalogManifests: readonly unknown[];
-  readonly localGrantPolicy?: (manifest: PluginManifest) => Promise<readonly Capability[]> | readonly Capability[];
   readonly fetchOfficialArchive?: (entry: OfficialPluginCatalogEntry) => Promise<Uint8Array>;
   readonly prepareDesktopComponent?: () => Promise<void>;
   readonly now?: () => number;
@@ -1007,7 +1006,6 @@ export function createPluginManagerRuntimeComposition(
     lifecycle: options.runtime.lifecycle,
     reconcileConfiguration: (pluginId, instanceId) => configuration.reconcile(pluginId, instanceId),
     packagesRoot: options.runtime.paths.packagesRoot,
-    grantPolicy: options.localGrantPolicy ?? (() => []),
     ...(options.runtime.contract === undefined ? {} : { validateManifest: options.runtime.contract.validateManifest }),
     quarantine: quarantines,
   });

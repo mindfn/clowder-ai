@@ -1,4 +1,3 @@
-import type { Capability } from '@clowder-ai/plugin-contract';
 import { createModuleLogger } from '../../../infrastructure/logger.js';
 import { MessagingError } from '../../messaging/contract/host-types.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
@@ -7,7 +6,6 @@ import {
   type PluginRuntimeErrorDetail,
   type PluginRuntimeErrorRecord,
 } from '../host-inventory/types.js';
-import { refusedHostCapability, registeredRefusal } from '../host-surface/host-capability-refusal.js';
 import { ManifestConfigurationProjectionError } from '../manifest-configuration-projection.js';
 import { type HostErrorRecognition, type SafeErrorProjection, safeErrorProjection } from './safe-error-projection.js';
 
@@ -21,7 +19,6 @@ export type PluginStartPhase =
 
 /** What the Host can vouch for about a failed start; anything else stays unclassified. */
 export type PluginStartFailureCategory =
-  | { readonly kind: 'capability_not_granted'; readonly capability: Capability }
   | { readonly kind: 'host_runtime_error'; readonly code: string }
   | { readonly kind: 'unclassified' };
 
@@ -57,7 +54,7 @@ function hostErrorCode(error: unknown): string | undefined {
   }
 }
 
-const HOST_RECOGNITION: HostErrorRecognition = { refusal: registeredRefusal, hostCode: hostErrorCode };
+const HOST_RECOGNITION: HostErrorRecognition = { hostCode: hostErrorCode };
 
 function hostRuntimeErrorCode(error: unknown): string | undefined {
   try {
@@ -68,8 +65,6 @@ function hostRuntimeErrorCode(error: unknown): string | undefined {
 }
 
 export function classifyStartFailure(error: unknown): PluginStartFailureCategory {
-  const capability = refusedHostCapability(error);
-  if (capability !== undefined) return { kind: 'capability_not_granted', capability };
   const code = hostRuntimeErrorCode(error);
   return code === undefined ? { kind: 'unclassified' } : { kind: 'host_runtime_error', code };
 }
@@ -98,31 +93,10 @@ export function logPluginStartFailure(report: PluginStartFailureReport): void {
   log.error({ ...report }, 'plugin runtime failed to start');
 }
 
-/**
- * The failure a start of the package `packageDigest` leaves on the instance. Its code stays
- * `UNEXPECTED_RUNTIME_FAILURE`, which a Host from before W2-6b can read; when the Host refused a
- * capability, the detail beside it says which one, and for which package.
- */
-export function startFailureRecord(
-  error: unknown,
-  occurredAt: number,
-  packageDigest: string,
-): { readonly record: PluginRuntimeErrorRecord; readonly detail?: PluginRuntimeErrorDetail } {
-  const record: PluginRuntimeErrorRecord = {
-    code: 'UNEXPECTED_RUNTIME_FAILURE',
-    exitCode: null,
-    signal: null,
-    occurredAt,
-  };
-  const capability = refusedHostCapability(error);
-  return capability === undefined
-    ? { record }
-    : { record, detail: { kind: 'capability_not_granted', capability, occurredAt, packageDigest } };
-}
-
-/** What an owner's enable request is told; the plugin's detail card says what to do about it. */
-export function startFailedMessage(detail: PluginRuntimeErrorDetail | undefined): string {
-  return detail === undefined
-    ? 'official plugin runtime failed to start'
-    : `official plugin runtime failed to start: the Host refused it ${detail.capability}`;
+/** Records a runtime start failure without retaining plugin-provided text. */
+export function startFailureRecord(occurredAt: number): {
+  readonly record: PluginRuntimeErrorRecord;
+  readonly detail?: PluginRuntimeErrorDetail;
+} {
+  return { record: { code: 'UNEXPECTED_RUNTIME_FAILURE', exitCode: null, signal: null, occurredAt } };
 }

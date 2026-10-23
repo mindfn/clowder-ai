@@ -65,12 +65,9 @@ test('thread creation validates parent and participants before writing', async (
   assert.equal((await f.store.list('owner')).length, 0);
 });
 
-test('interface grants and stopped instances still reject ordinary operations', async () => {
+test('stopped instances reject ordinary operations', async () => {
   const f = fixture(['thread.readContent']);
   const thread = await f.store.create('owner', 'Existing');
-  await assert.rejects(() => f.host.create({ title: 'Denied' }), /thread.write/);
-  await assert.rejects(() => f.host.update(thread.id, { title: 'Denied' }), /thread.write/);
-  await assert.rejects(() => f.host.addParticipants({ threadId: thread.id, catIds: ['a'] }), /thread.write/);
   f.stop();
   await assert.rejects(() => f.host.get(thread.id), /stopped/);
 });

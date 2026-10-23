@@ -61,9 +61,7 @@ export class NativeMcpLaunches {
       current.packageRecord.packageState !== 'installed' ||
       current.instance.pluginId !== original.instance.pluginId ||
       current.instance.packageDigest !== original.instance.packageDigest ||
-      current.grantRevision !== original.grantRevision ||
-      !isDeepStrictEqual(current.packageRecord, original.packageRecord) ||
-      !isDeepStrictEqual([...current.effectiveGrants].sort(), [...original.effectiveGrants].sort())
+      !isDeepStrictEqual(current.packageRecord, original.packageRecord)
     )
       throw unavailable();
 
