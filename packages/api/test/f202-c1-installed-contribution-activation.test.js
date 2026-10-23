@@ -18,6 +18,7 @@ import {
   withCapabilityLock,
   writeCapabilitiesConfig,
 } from '../dist/config/capabilities/capability-orchestrator.js';
+import { writeMcpConfigFile } from '../dist/domains/cats/services/agents/providers/kimi-config.js';
 import { resolveProviderMcpConfig } from '../dist/domains/cats/services/agents/providers/provider-mcp-config.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { LimbRegistry } from '../dist/domains/limb/LimbRegistry.js';
@@ -143,6 +144,7 @@ async function writeFixturePackage({
   contribution,
   contributions,
   capabilities = [],
+  features,
   files = {},
   actions = '{}',
   runtime = { transport: 'builtin', entrypoint: 'dist/plugin.js' },
@@ -156,7 +158,7 @@ async function writeFixturePackage({
     contractVersion: '0.1.0',
     name: `${contribution.type} fixture`,
     contributions: declared,
-    features: [
+    features: features ?? [
       {
         id: 'main',
         name: 'Main',
@@ -236,6 +238,193 @@ test('an installed package activates and removes its declared MCP capability', a
     false,
   );
 });
+
+for (const featureGranted of [false, true]) {
+  test(`MCP registration agrees with its feature grant state: ${featureGranted}`, async () => {
+    const projectRoot = await tempRoot('mcp-feature-grants-');
+    const baseGrants = [
+      'schedule.register',
+      'plugin.config.read',
+      'secret.read',
+      'plugin.state.get',
+      'plugin.state.set',
+      'thread.listMetadata',
+      'thread.write',
+      'messaging.send',
+    ];
+    const packageRoot = await writeFixturePackage({
+      pluginId: 'dev.clowder.feature-grants',
+      contribution: {
+        type: 'mcp',
+        id: 'native',
+        runtime: { transport: 'stdio', entrypoint: 'dist/mcp.js' },
+        actions: [{ method: 'native.run' }],
+      },
+      capabilities: featureGranted ? baseGrants : [...baseGrants, 'task.read', 'task.write'],
+      actions: "{ 'native.run': async () => ({ ok: true }) }",
+      files: { 'dist/mcp.js': 'process.exit(0);\n' },
+    });
+    const { runtime } = createRuntime(projectRoot);
+    const { composition, installed } = await installAndEnable(runtime, packageRoot, () => baseGrants);
+    const entries = (await readCapabilitiesConfig(projectRoot))?.capabilities ?? [];
+    const registered = entries.filter((entry) => entry.type === 'mcp' && entry.pluginId === installed.pluginId);
+    const native = runtime.supervisor.nativeActions.environment(installed.pluginInstanceId, 'native');
+    assert.equal(Boolean(native.CLOWDER_PLUGIN_ACTION_TOKEN), featureGranted);
+    assert.equal(registered.length, featureGranted ? 1 : 0);
+    if (featureGranted) assert.match(registered[0].mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN, /^\$\{[A-Z0-9_]+\}$/);
+    await disable(composition, installed.pluginId);
+  });
+}
+
+test('an optional migration feature does not block or share authority with the basic native MCP', async () => {
+  const projectRoot = await tempRoot('mcp-independent-features-');
+  const contributions = ['basic', 'migration'].map((id) => ({
+    type: 'mcp',
+    id,
+    runtime: { transport: 'stdio', entrypoint: 'dist/mcp.js' },
+    actions: [{ method: `${id}.run` }],
+  }));
+  const packageRoot = await writeFixturePackage({
+    pluginId: 'dev.clowder.independent-features',
+    contribution: contributions[0],
+    contributions,
+    features: contributions.map((item) => ({
+      id: item.id,
+      name: item.id,
+      resources: [],
+      contributions: [{ type: 'mcp', id: item.id }],
+      capabilities: item.id === 'basic' ? ['plugin.state.get'] : ['task.read', 'task.write'],
+    })),
+    actions: "{ 'basic.run': async () => ({ ok: true }), 'migration.run': async () => ({ migrated: true }) }",
+    files: { 'dist/mcp.js': 'process.exit(0);\n' },
+  });
+  const { runtime } = createRuntime(projectRoot);
+  const { composition, installed } = await installAndEnable(runtime, packageRoot, () => ['plugin.state.get']);
+  const registered = (await readCapabilitiesConfig(projectRoot)).capabilities.filter(
+    (entry) => entry.type === 'mcp' && entry.pluginId === installed.pluginId,
+  );
+  assert.deepEqual(
+    registered.map((entry) => entry.id),
+    [`plugin:${installed.pluginId}:basic`],
+  );
+  const actions = runtime.supervisor.nativeActions;
+  const token = actions.environment(installed.pluginInstanceId, 'basic').CLOWDER_PLUGIN_ACTION_TOKEN;
+  assert.ok(token);
+  assert.deepEqual(actions.environment(installed.pluginInstanceId, 'migration'), {});
+  const caller = {
+    userId: 'owner',
+    catId: 'codex',
+    threadId: 'thread',
+    invocationId: 'inv',
+    assertCurrent: async () => {},
+  };
+  assert.deepEqual(await actions.call(token, 'basic.run', {}, caller), { ok: true });
+  await assert.rejects(actions.call(token, 'migration.run', {}, caller), { statusCode: 403 });
+  await disable(composition, installed.pluginId);
+  await assert.rejects(actions.call(token, 'basic.run', {}, caller), { statusCode: 401 });
+});
+
+for (const phase of ['package replacement', 'restart recovery']) {
+  test(`${phase} withdraws a retained native MCP when its feature is no longer granted`, async () => {
+    const projectRoot = await tempRoot('mcp-retained-grants-home-');
+    const consumer = await tempRoot('mcp-retained-grants-project-');
+    await writeCapabilitiesConfig(projectRoot, { version: 2, capabilities: [] });
+    await writeCapabilitiesConfig(consumer, { version: 2, capabilities: [] });
+    await writeFile(
+      join(projectRoot, '.cat-cafe/governance-registry.json'),
+      JSON.stringify({ entries: [{ projectPath: consumer }] }),
+    );
+    const native = {
+      type: 'mcp',
+      id: 'native',
+      runtime: { transport: 'stdio', entrypoint: 'dist/mcp.js' },
+      actions: [{ method: 'native.run' }],
+    };
+    const plain = { type: 'mcp', id: 'plain', runtime: native.runtime };
+    const packageRoot = await writeFixturePackage({
+      pluginId: 'dev.clowder.retained-grants',
+      contribution: native,
+      contributions: [native, plain],
+      features: [
+        {
+          id: 'native',
+          name: 'Native',
+          resources: [],
+          contributions: [{ type: 'mcp', id: 'native' }],
+          capabilities: phase === 'package replacement' ? [] : ['task.read', 'task.write'],
+        },
+        { id: 'plain', name: 'Plain', resources: [], contributions: [{ type: 'mcp', id: 'plain' }], capabilities: [] },
+      ],
+      actions: "{ 'native.run': async () => ({ ok: true }) }",
+      files: { 'dist/mcp.js': 'process.exit(0);\n' },
+    });
+    const cli = join(projectRoot, '.test-cli/google.json');
+    const io = fileBasedMcpIO(projectRoot, { google: cli, antigravity: join(projectRoot, '.test-cli/agy.json') });
+    const { runtime } = createRuntime(projectRoot, { mcpConfigIO: io });
+    let activeRuntime = runtime;
+    try {
+      const { composition, installed } = await installAndEnable(runtime, packageRoot);
+      const id = `plugin:${installed.pluginId}:native`;
+      const name = id.replaceAll(':', '__');
+      if (phase === 'package replacement') {
+        assert.ok((await readCapabilitiesConfig(consumer)).capabilities.some((entry) => entry.id === id));
+        const manifestPath = join(packageRoot, 'manifest.json');
+        const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+        manifest.version = '1.1.0';
+        manifest.features[0].capabilities = ['task.read', 'task.write'];
+        await writeFile(manifestPath, JSON.stringify(manifest));
+        await composition.manager.install({ source: { kind: 'local-directory', path: packageRoot } });
+      } else {
+        // This is the durable output of the old publisher: tool present, no action environment.
+        await installMcpCapability(
+          projectRoot,
+          {
+            id,
+            type: 'mcp',
+            source: 'plugin',
+            pluginId: installed.pluginId,
+            enabled: true,
+            mcpServer: { command: process.execPath, args: ['obsolete.js'], env: {} },
+          },
+          io,
+        );
+        await runtime.shutdown();
+        assert.ok((await readCapabilitiesConfig(consumer)).capabilities.some((entry) => entry.id === id));
+        const restarted = createRuntime(projectRoot, { mcpConfigIO: io }).runtime;
+        activeRuntime = restarted;
+        const recovery = await restarted.recoverAfterRestart();
+        assert.equal(recovery.resumeRequested, 1);
+        await restarted.lifecycle.drainRestartRecovery();
+      }
+      for (const root of [projectRoot, consumer]) {
+        const entries = (await readCapabilitiesConfig(root)).capabilities;
+        assert.equal(
+          entries.some((entry) => entry.id === id),
+          false,
+          `${phase}: remove denied native registration`,
+        );
+        assert.ok(entries.some((entry) => entry.id === `plugin:${installed.pluginId}:plain`));
+      }
+      const injected = await resolveProviderMcpConfig({
+        callbackEnv: { CAT_CAFE_CAT_ID: 'codex' },
+        workingDirectory: consumer,
+        mcpServerPath: join(projectRoot, 'packages/mcp-server/dist/index.js'),
+        provider: 'codex',
+      });
+      assert.equal(injected[name], undefined);
+      const rendered = await writeMcpConfigFile(consumer, join(projectRoot, 'packages/mcp-server/dist/index.js'), {
+        CAT_CAFE_CAT_ID: 'codex',
+      });
+      try {
+        assert.equal(JSON.parse(await readFile(rendered, 'utf8')).mcpServers[name], undefined);
+      } finally {
+        await rm(rendered);
+      }
+    } finally {
+      await activeRuntime.shutdown();
+    }
+  });
+}
 
 test('installed native MCP receives its scoped action token without exposing a public direct tool', async (t) => {
   const projectRoot = await tempRoot('cat-cafe-f202-native-action-project-');

@@ -17,6 +17,7 @@ import { hostCapabilityRefusal } from '../host-surface/host-capability-refusal.j
 import { effectivePluginConfigurationValue } from '../manager/plugin-configuration-values.js';
 import { pluginResourceRoot, resolvePackageFile } from './declared-resource-paths.js';
 import type { DeclaredStaticResourceHost } from './declared-static-resources.js';
+import { grantedMcpContributionIds } from './granted-mcp-contributions.js';
 import type { DeclaredMcpLaunch } from './native-mcp-launches.js';
 
 const MCP_MARKER = '.clowder-mcp-resource.json';
@@ -26,16 +27,32 @@ export async function activateDeclaredMcp(
   admission: PluginRuntimeAdmission,
   host: DeclaredStaticResourceHost | undefined,
 ): Promise<readonly DeclaredMcpLaunch[]> {
-  const contributions = (admission.packageRecord.manifest.contributions ?? []).filter(
+  const allowed = grantedMcpContributionIds(admission.packageRecord.manifest, admission.effectiveGrants);
+  const declared = (admission.packageRecord.manifest.contributions ?? []).filter(
     (contribution): contribution is McpContribution => contribution.type === 'mcp',
   );
-  if (contributions.length === 0) return Object.freeze([]);
+  if (declared.length === 0) return Object.freeze([]);
   if (!host) {
     throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host static-resource activation is unavailable');
   }
   if (!host.mcpConfigIO) {
     throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host MCP capability activation is unavailable');
   }
+  // Updates and Host shutdown retain durable registrations. Withdraw denied
+  // action MCPs through the normal owned-resource removal/cascade pipeline.
+  for (const contribution of declared) {
+    if (contribution.actions?.length && !allowed.has(contribution.id)) {
+      await removeMcp(
+        admission.packageRecord.pluginId,
+        `plugin:${admission.packageRecord.pluginId}:${contribution.id}`,
+        host,
+      );
+    }
+  }
+  const contributions = declared.filter(
+    (contribution) => !contribution.actions?.length || allowed.has(contribution.id),
+  );
+  if (contributions.length === 0) return Object.freeze([]);
   if (contributions.some((contribution) => contribution.runtime.transport !== 'stdio')) {
     throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Only stdio MCP contributions are supported');
   }
