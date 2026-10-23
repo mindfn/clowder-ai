@@ -66,7 +66,8 @@ export function verifyPackageAdmission(
       pluginId: validation.manifest.pluginId,
       version: validation.manifest.version,
       contractVersion: validation.manifest.contractVersion,
-      manifest: structuredClone(validation.manifest),
+      // The validated original declaration is also the input of the package's own SDK.
+      manifest: structuredClone(candidate.manifest) as PluginManifest,
       signalSchemas: structuredClone(signalSchemas),
       ...(candidate.provenance === undefined ? {} : { provenance: structuredClone(candidate.provenance) }),
       packageState: 'installed',

@@ -199,7 +199,8 @@ function parsePackage(value: unknown, index: number, contract: PackageAdmissionC
     pluginId: string(raw.pluginId, `packages[${index}].pluginId`),
     version: string(raw.version, `packages[${index}].version`),
     contractVersion: string(raw.contractVersion, `packages[${index}].contractVersion`),
-    manifest: compatible && validation.valid ? structuredClone(validation.manifest) : null,
+    manifest:
+      compatible && validation.valid ? (structuredClone(persistedManifest) as PluginPackageRecord['manifest']) : null,
     ...(!compatible ? { incompatibleManifest: stored } : {}),
     signalSchemas: signalSchemaCatalog(raw.signalSchemas ?? {}, `packages[${index}].signalSchemas`),
     ...(raw.provenance === undefined
