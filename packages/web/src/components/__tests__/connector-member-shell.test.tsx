@@ -119,6 +119,17 @@ describe('plugin and external messages use the truthful member shell', () => {
     expect(avatar.style.color).toBe('var(--shell-body)');
   });
 
+  it('preserves an external sender ID when the platform provides no display name', () => {
+    render(
+      external({
+        from: { kind: 'external', connectorId: 'feishu', sender: { id: 'ou-id-only' } },
+      }),
+    );
+    expect(container.querySelector('[data-testid="cat-nameplate-name"]')?.textContent).toBe('ou-id-only');
+    expect(container.querySelector('[data-sender-role]')?.textContent).toBe('External · Feishu');
+    expect(container.textContent).not.toContain('Host');
+  });
+
   it('labels a connector-owned Host message by purpose', () => {
     render(
       external({

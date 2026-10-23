@@ -131,7 +131,7 @@ export function ConnectorBubble({
   const sender = resolveMessageSender({ from: message.from, source }, () => undefined, coCreator);
   const externalPerson =
     message.from?.kind === 'external' &&
-    Boolean(message.from.sender?.name) &&
+    Boolean(message.from.sender?.id) &&
     !isStaticConnectorId(message.from.connectorId);
   const platform = source.label || (message.from?.kind === 'external' ? message.from.connectorId : source.connector);
   const senderRole = message.from?.kind === 'plugin' ? 'Plugin' : externalPerson ? `External · ${platform}` : 'Host';

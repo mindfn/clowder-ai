@@ -68,7 +68,9 @@ export function resolveMessageSender(
   const definition = connectorId ? getConnectorDefinition(connectorId) : undefined;
   const sourceName = source?.label || definition?.displayName || connectorId;
   const externalActorName =
-    from?.kind === 'external' && !isStaticConnectorId(from.connectorId) ? from.sender?.name : undefined;
+    from?.kind === 'external' && !isStaticConnectorId(from.connectorId)
+      ? (from.sender?.name ?? from.sender?.id)
+      : undefined;
   const pluginActorName = from?.kind === 'plugin' ? source?.sender?.name : undefined;
   const label = externalActorName
     ? externalActorName

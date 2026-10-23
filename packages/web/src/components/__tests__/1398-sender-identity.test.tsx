@@ -283,6 +283,12 @@ describe('1398 canonical sender identity across Queue and reply surfaces', () =>
       label: 'Alice',
     },
     {
+      name: 'id-only external actor',
+      from: { kind: 'external', connectorId: 'custom', sender: { id: 'actor-id' } },
+      source: { connector: 'custom', label: 'Team Room', icon: '🧩' },
+      label: 'actor-id',
+    },
+    {
       name: 'custom source',
       from: { kind: 'external', connectorId: 'custom' },
       source: { connector: 'custom', label: 'Custom Feed', icon: '🧩' },
