@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } fr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
+import { validateManifest } from '@clowder-ai/plugin-contract';
 import {
   readCapabilitiesConfig,
   withCapabilityLock,
@@ -39,7 +39,6 @@ async function fixture(t, deployment) {
         id: 'main',
         name: 'Main',
         resources: [],
-        capabilities: [],
         contributions: [
           { type: 'mcp', id: 'native' },
           { type: 'skill', id: 'guide' },
@@ -51,7 +50,6 @@ async function fixture(t, deployment) {
         type: 'mcp',
         id: 'native',
         runtime: { transport: 'stdio', entrypoint: 'dist/mcp.js' },
-        actions: [{ method: 'native.read' }],
       },
       { type: 'skill', id: 'guide', path: 'skills/guide' },
     ],
@@ -101,7 +99,7 @@ async function fixture(t, deployment) {
       projectRoot,
       capabilityProjectRoot,
       messageStore: {},
-      contract: { manifestContractRange: '0.1.0', validateEffectiveGrants, validateManifest },
+      contract: { manifestContractRange: '0.1.0', validateManifest },
       mcpConfigIO: {
         readConfig: () => readCapabilitiesConfig(capabilityProjectRoot),
         withLock: (operation) => withCapabilityLock(capabilityProjectRoot, operation),
@@ -150,7 +148,6 @@ test('Alpha activation, refresh, disable and uninstall leave shared capabilities
     mode: 'plugin_native',
     pluginInstanceId: f.installed.pluginInstanceId,
     contributionId: 'native',
-    actionMethods: ['native.read'],
   });
   assert.ok(launch.workingDirectory.startsWith(f.projectRoot), 'Alpha retains its own verified native launch');
   await access(launch.args[0]);

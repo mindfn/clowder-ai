@@ -78,7 +78,6 @@ test('composition recovers both durable stores and resumes enabled owner intent 
     computedPackageDigest: EXTERNAL_PACKAGE_DIGEST,
     expectedPackageDigest: EXTERNAL_PACKAGE_DIGEST,
     packagePluginId: externalCandidate().pluginId,
-    effectiveGrants: ['messaging.send'],
     signalSchemas: {
       'schemas/external.signal.v1.schema.json': {
         type: 'object',
@@ -124,8 +123,6 @@ test('composition recovers both durable stores and resumes enabled owner intent 
 test('dormant composition binds messaging routes to its single K-1 domain', async () => {
   const projectRoot = await mkdtemp(resolve(tmpdir(), 'cat-cafe-m0-composition-messaging-'));
   const manifest = externalManifest();
-  const grants = ['messaging.send', 'messaging.appendElements', 'message.event.subscribe'];
-  manifest.features[0].capabilities = grants;
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
     messageStore: new MessageStore(),
@@ -136,7 +133,6 @@ test('dormant composition binds messaging routes to its single K-1 domain', asyn
     computedPackageDigest: EXTERNAL_PACKAGE_DIGEST,
     expectedPackageDigest: EXTERNAL_PACKAGE_DIGEST,
     packagePluginId: externalCandidate().pluginId,
-    effectiveGrants: grants,
     signalSchemas: {
       'schemas/external.signal.v1.schema.json': {
         type: 'object',
@@ -193,7 +189,6 @@ test('production handshake policy covers verified external source readiness with
     computedPackageDigest: EXTERNAL_PACKAGE_DIGEST,
     expectedPackageDigest: EXTERNAL_PACKAGE_DIGEST,
     packagePluginId: externalCandidate().pluginId,
-    effectiveGrants: ['messaging.send'],
     signalSchemas: {
       'schemas/external.signal.v1.schema.json': {
         type: 'object',
@@ -288,15 +283,10 @@ test('production composition constructs and recovers K-2D but exposes no startup
   assert.match(catalogSource, /new MachineOfficialPluginCatalog\(\{/);
   assert.match(catalogSource, /validateCatalog: validatePluginCatalog/);
   assert.match(catalogSource, /loadMachinePluginCatalog\(OFFICIAL_PLUGIN_CATALOG_URL\)/);
-  assert.match(catalogSource, /\.\.\.OFFICIAL_PLUGIN_HOST_POLICIES/);
   assert.doesNotMatch(source, /weixinMpHandlers/);
   assert.doesNotMatch(source, /limbAdapterRegistry/);
   const callbackRoutes = readFileSync(new URL('../src/routes/callbacks.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(callbackRoutes, /registerCallback(?:WeCom|Lark)ActionRoutes/);
-  assert.match(
-    source,
-    /localGrantPolicy:\s*\(manifest\)\s*=>\s*resolveLocalPluginEffectiveGrants\(pluginManagerHostPolicies, manifest\)/,
-  );
   assert.doesNotMatch(source, /repositoryPluginManagerCompatibility|resolveRepositoryReplacementPluginIds/);
   assert.doesNotMatch(source, /ensureOfficialPluginSignalRoutes|OfficialPluginHistoryImportService/);
   assert.match(source, /registerPluginManagerRoutes\(managerApp/);

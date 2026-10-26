@@ -48,7 +48,6 @@ test(
       computedPackageDigest: pin.digest,
       expectedPackageDigest: pin.digest,
       packagePluginId: manifest.pluginId,
-      effectiveGrants: [],
       ...(pin.version === '0.1.0-alpha.6'
         ? {
             provenance: {
