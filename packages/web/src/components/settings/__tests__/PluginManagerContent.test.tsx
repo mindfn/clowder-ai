@@ -345,7 +345,6 @@ describe('F202 live Plugin Manager Console wiring', () => {
       currentPackageDigest: digest,
       candidatePackageDigest: digest,
       expectedLifecycleRevision: 7,
-      ,
     };
     mockApiFetch.mockImplementation(async (url, init) => {
       if (url === '/api/plugin-manager/plugins') return json(response(managerPlugin({ installed })));

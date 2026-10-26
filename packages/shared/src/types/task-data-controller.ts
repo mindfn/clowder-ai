@@ -35,7 +35,8 @@ export const entrustedTaskDataControllerReceiptV1Schema = z.discriminatedUnion('
     .object({
       ...receiptBase,
       kind: z.literal('bind'),
-      controller: entrustedTaskDataControllerCoordinatesV1Schema,
+      // Historical input is immutable evidence, never current API authority.
+      controller: entrustedTaskDataControllerCoordinatesV1Schema.extend({ grantRevision: revision.optional() }),
     })
     .strict(),
   z
@@ -74,7 +75,8 @@ export const entrustedTaskDataControllerV1Schema = z
     );
     if (
       !bindingReceipt ||
-      JSON.stringify(bindingReceipt.controller) !== JSON.stringify(stripBindingReceipt(value.binding))
+      JSON.stringify(entrustedTaskDataControllerCoordinatesV1Schema.parse(bindingReceipt.controller)) !==
+        JSON.stringify(stripBindingReceipt(value.binding))
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

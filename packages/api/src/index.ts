@@ -26,17 +26,17 @@ import { declaredAgentSessionProviders } from './domains/plugin/declared/declare
 import { PLUGIN_HOST_ENTRIES, pluginHostRoot } from './domains/plugin/host-inventory/plugin-host-layout.js';
 import { createPluginConversationDelivery } from './domains/plugin/host-surface/plugin-conversation-delivery.js';
 import { catRegistryMentionPatterns } from './infrastructure/connectors/mention-parser.js';
-
 /**
  * Clowder AI API Server
  * 后端 API 入口
  */
 
+// 必须最先 import：Node 24.16 undici setTypeOfService EINVAL 崩溃防护（见文件头注释）
+import './settos-guard.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-// 必须最先 import：Node 24.16 undici setTypeOfService EINVAL 崩溃防护（见文件头注释）
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   type CatConfig,
   type CatId,
@@ -45,6 +45,7 @@ import {
   createCatId,
   deploymentDefaults,
   type EventMemoryRecord,
+  type ILimbNode,
 } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { createRedisClient, SessionStore } from '@cat-cafe/shared/utils';
@@ -61,6 +62,7 @@ import {
   getAcpConfig,
   getCoCreatorConfig,
   getConfigSessionStrategy,
+  getDefaultCatId,
   isCatAvailable,
   toAllCatConfigs,
 } from './config/cat-config-loader.js';
@@ -106,6 +108,7 @@ import { createEntityProposalStore } from './domains/approval-hub/stores/factori
 import { createActionSuccessorRecoveryCycle } from './domains/ball-custody/ActionSuccessorRecoveryCycle.js';
 import { classifyApprovedActionCarrier } from './domains/ball-custody/ActionSuccessorRecoverySweep.js';
 import { CustodyEventInspector } from './domains/ball-custody/CustodyEventInspector.js';
+import { EventWaitDispositionService } from './domains/ball-custody/EventWaitDispositionService.js';
 import { createSqliteHoldQuotaStore, type IHoldQuotaStore } from './domains/ball-custody/hold-quota-store.js';
 import { RedisHoldQuotaStore } from './domains/ball-custody/hold-quota-store-redis.js';
 import type { ManagedCommandWakeRecoverySweep } from './domains/ball-custody/ManagedCommandWakeRecoverySweep.js';
@@ -115,7 +118,6 @@ import { createManagedWakeAdmittedNotifier } from './domains/ball-custody/manage
 import { RedisWaitTerminationStore } from './domains/ball-custody/RedisWaitTerminationStore.js';
 import { WaitTerminationService } from './domains/ball-custody/WaitTerminationService.js';
 import { agentSessionMutex } from './domains/cats/services/agents/invocation/AgentSessionMutex.js';
-import './settos-guard.js';
 // F297 Phase B: Sidebar C10 production source — domain-owned composition shared by
 // queue / active-execution / Sidebar 三个 consumer（PR #3748 R3 P2-1）。
 import {
@@ -257,7 +259,10 @@ import { initVoiceBlockSynthesizer } from './domains/cats/services/tts/VoiceBloc
 import type { AgentService, ClaudeCompactionHooksFactory } from './domains/cats/services/types.js';
 import { EntrustedWorkHumanTerminalService } from './domains/growing/EntrustedWorkHumanTerminalService.js';
 import { EntrustedWorkLifecycleService } from './domains/growing/EntrustedWorkLifecycleService.js';
-import { EntrustedWorkOwnerReadService } from './domains/growing/EntrustedWorkOwnerReadService.js';
+import {
+  EntrustedWorkOwnerReadService,
+  type PreparedArtifactReader,
+} from './domains/growing/EntrustedWorkOwnerReadService.js';
 import { EntrustedWorkTaskExecutionService } from './domains/growing/EntrustedWorkTaskExecutionService.js';
 import { F232PreparedArtifactReader } from './domains/growing/F232PreparedArtifactReader.js';
 import { F290CollectiveWorkResultPluginAdapter } from './domains/growing/F290CollectiveWorkResultPluginAdapter.js';
@@ -569,6 +574,7 @@ import { registerPersonMemoryDecisionRoutes } from './routes/person-memory-decis
 import { personMemoryOwnerReadRoutes } from './routes/person-memory-owner-read.js';
 import { previewRoutes } from './routes/preview.js';
 import { profileMemoryOwnerRoutes } from './routes/profile-memory-owner.js';
+import { resolveActiveInvocations } from './routes/queue.js';
 import { runtimeDeploymentRoutes } from './routes/runtime-deployment-routes.js';
 import { createSessionCompactionSurface } from './routes/session-compaction-surface.js';
 import { createSealOnPreCompact } from './routes/session-seal-handler.js';

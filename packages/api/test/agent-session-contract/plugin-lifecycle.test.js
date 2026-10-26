@@ -98,7 +98,7 @@ async function lifecycle(t, raw = declaration, mode, createProvider) {
   const packagesRoot = join(root, 'packages');
   const store = new MemoryPluginInventoryStore();
   const inventory = new HostInventoryControlPlane(store);
-  const installer = new LocalPluginPackageAdmission({ inventory, packagesRoot, grantPolicy: async () => [] });
+  const installer = new LocalPluginPackageAdmission({ inventory, packagesRoot });
   await installer.install({ kind: 'local-directory', path: packageRoot });
   const snapshot = await store.snapshot();
   const pkg = snapshot.packages[0];

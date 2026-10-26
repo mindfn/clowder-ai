@@ -67,7 +67,6 @@ const replacement = {
     currentPackageDigest: `sha512-${'A'.repeat(86)}==`,
     candidatePackageDigest: `sha512-${'B'.repeat(85)}A==`,
     expectedLifecycleRevision: 8,
-    ,
   },
 };
 
