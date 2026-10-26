@@ -119,7 +119,7 @@ test('preflight admission cannot survive concurrent config or installation chang
           else
             await inventory.transaction((tx) => {
               const current = tx.instances.get(instance.pluginInstanceId);
-              tx.instances.put({ ...current, activationState: 'disabled' });
+              tx.instances.put({ ...current, lifecycleRevision: current.lifecycleRevision + 1 });
             });
           return input.operation(instance);
         },
