@@ -18,6 +18,7 @@ import {
   withCapabilityLock,
   writeCapabilitiesConfig,
 } from '../dist/config/capabilities/capability-orchestrator.js';
+import { prepareKimiMcpConfig } from '../dist/domains/cats/services/agents/providers/kimi-mcp-config.js';
 import { resolveProviderMcpConfig } from '../dist/domains/cats/services/agents/providers/provider-mcp-config.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { LimbRegistry } from '../dist/domains/limb/LimbRegistry.js';
@@ -369,14 +370,25 @@ for (const phase of ['package replacement', 'restart recovery']) {
         mcpServerPath: join(projectRoot, 'packages/mcp-server/dist/index.js'),
         provider: 'codex',
       });
-      assert.ok(injected[name]?.env?.CLOWDER_PLUGIN_ACTION_TOKEN);
-      const rendered = await writeMcpConfigFile(consumer, join(projectRoot, 'packages/mcp-server/dist/index.js'), {
-        CAT_CAFE_CAT_ID: 'codex',
+      assert.ok(injected[name]);
+      const { upstream, proxyEnv } = secretMcpContract(injected[name]);
+      const currentToken = activeRuntime.supervisor.nativeActions.environment(
+        installed.pluginInstanceId,
+        'native',
+      ).CLOWDER_PLUGIN_ACTION_TOKEN;
+      assert.ok(currentToken);
+      assert.ok(upstream.env.CLOWDER_PLUGIN_ACTION_TOKEN === currentToken);
+      assert.equal(proxyEnv.CLOWDER_PLUGIN_ACTION_TOKEN, undefined);
+      const lease = await prepareKimiMcpConfig({
+        workingDirectory: consumer,
+        mcpServerPath: join(projectRoot, 'packages/mcp-server/dist/index.js'),
+        callbackEnv: { CAT_CAFE_CAT_ID: 'codex' },
       });
       try {
-        assert.ok(JSON.parse(await readFile(rendered, 'utf8')).mcpServers[name]);
+        const rendered = JSON.parse(await readFile(join(consumer, '.kimi-code/mcp.json'), 'utf8'));
+        assert.ok(rendered.mcpServers[name]);
       } finally {
-        await rm(rendered);
+        await lease.dispose();
       }
     } finally {
       await activeRuntime.shutdown();
