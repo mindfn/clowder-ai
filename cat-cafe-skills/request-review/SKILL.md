@@ -106,6 +106,8 @@ Feature 以 canonical `docs/features/F*.md` + 该文件最后一次内容变更�
 
 - `Original Requirements`：≤5 行原话 + 真相源路径；
 - `Architecture Ownership`：cell / map delta / why；
+- `Invariant Matrix`：仅跨层状态同步或级联变更需要，列核心不变量与真相源读写关系；简单、单层变更不新增此项；
+- `E2E User Path Evidence`：仅用户可感知且存在端到端风险时引用 quality-gate 的既有实际路径证据；已有适用豁免时保持豁免；
 - 技术 OQ 与价值 OQ 分开；价值 OQ 才附 Decision Packet；
 - 验证命令、输出与 frontend preview 证据；
 - `Review-Target-ID`（需要 review sandbox 时用于 `/tmp/cat-cafe-review/{id}/{reviewer}`）。
