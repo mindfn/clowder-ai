@@ -35,7 +35,7 @@ async function harness(t, grants = ['plugin.config.read']) {
     path: source,
   });
   const snapshot = await store.snapshot();
-  const admission = { instance: snapshot.instances[0], packageRecord: snapshot.packages[0], effectiveGrants: grants };
+  const admission = { instance: snapshot.instances[0], packageRecord: snapshot.packages[0] };
   const packages = new FilesystemVerifiedPluginPackageLocator(packagesRoot);
   const registry = new SessionImplementationRegistry();
   let clients = [

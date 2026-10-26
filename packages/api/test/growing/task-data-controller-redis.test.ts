@@ -41,7 +41,6 @@ const baseController = {
   pluginInstanceId: 'pi-current',
   moduleRef: 'plugin:official.collective-connector',
   lifecycleRevision: 8,
-  grantRevision: 3,
 };
 
 async function fixture() {

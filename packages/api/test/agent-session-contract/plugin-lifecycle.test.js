@@ -136,7 +136,7 @@ async function lifecycle(t, raw = declaration, mode, createProvider) {
       }),
   });
   const runtime = new DeclaredRuntimeContributions({ packages, configuration: {}, agentSessionProviders: host });
-  const admission = { instance, packageRecord: pkg, effectiveGrants: [] };
+  const admission = { instance, packageRecord: pkg };
   return { runtime, admission, registry, service, created, packagesRoot, logs };
 }
 function assertLifecycleLog(line, result, level, providerId = 'agent') {

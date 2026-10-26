@@ -5,21 +5,18 @@ const revision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const timestamp = z.number().int().nonnegative().finite();
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
-export const entrustedTaskDataControllerCoordinatesV1Schema = z
-  .object({
-    userId: ref,
-    catId: ref,
-    threadId: ref,
-    subjectKey: ref,
-    firstSourceRef: ref,
-    admissionAuthorityRef: ref,
-    pluginId: ref,
-    pluginInstanceId: ref,
-    moduleRef: ref,
-    lifecycleRevision: revision,
-    grantRevision: revision,
-  })
-  .strict();
+export const entrustedTaskDataControllerCoordinatesV1Schema = z.object({
+  userId: ref,
+  catId: ref,
+  threadId: ref,
+  subjectKey: ref,
+  firstSourceRef: ref,
+  admissionAuthorityRef: ref,
+  pluginId: ref,
+  pluginInstanceId: ref,
+  moduleRef: ref,
+  lifecycleRevision: revision,
+});
 
 const receiptBase = {
   receiptRef: ref.regex(/^task-data-controller:[a-f0-9]{64}$/),
@@ -56,11 +53,9 @@ export const entrustedTaskDataControllerV1Schema = z
   .object({
     bindingRevision: revision,
     state: z.enum(['active', 'revoked']),
-    binding: entrustedTaskDataControllerCoordinatesV1Schema
-      .extend({
-        ownerOperationReceiptRef: receiptBase.receiptRef,
-      })
-      .strict(),
+    binding: entrustedTaskDataControllerCoordinatesV1Schema.extend({
+      ownerOperationReceiptRef: receiptBase.receiptRef,
+    }),
     receipts: z.array(entrustedTaskDataControllerReceiptV1Schema).min(1).max(256),
     revocationReceiptRef: receiptBase.receiptRef.optional(),
   })

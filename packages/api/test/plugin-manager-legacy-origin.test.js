@@ -63,9 +63,6 @@ function installation(pluginId, index, recordedOrigin) {
     },
     grant: {
       pluginInstanceId,
-      requestedCapabilities: ['messaging.send'],
-      effectiveGrants: index === 0 ? [] : ['messaging.send'],
-      grantRevision: 2,
       updatedAt: 1000,
     },
   };

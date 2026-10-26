@@ -17,7 +17,6 @@ const controller = {
   pluginInstanceId: 'pi-current',
   moduleRef: 'plugin:official.collective-connector',
   lifecycleRevision: 8,
-  grantRevision: 3,
 };
 
 const operation = {
@@ -177,7 +176,7 @@ test('a confirmed current installation can replace the same module binding from 
   const { store, admitted } = fixture();
   const first = await store.transitionEntrustedTaskDataController(bind(admitted.id));
   assert.equal(first.kind, 'bound');
-  const nextController = { ...controller, pluginInstanceId: 'pi-reinstalled', lifecycleRevision: 1, grantRevision: 1 };
+  const nextController = { ...controller, pluginInstanceId: 'pi-reinstalled', lifecycleRevision: 1 };
   const rebound = await store.transitionEntrustedTaskDataController({
     ...bind(admitted.id, 2),
     operationId: 'owner-operation:adopt-reinstalled-instance',

@@ -58,7 +58,6 @@ async function desktopManager(
   const entry = catalogEntry(archive.integrity, {
     pluginId: manifest.pluginId,
     version: manifest.version,
-    effectiveGrants: ['windows.create'],
   });
   const observed = { prepared: 0, opens: 0, closes: 0 };
   const runtime = createDormantPluginRuntimeComposition({

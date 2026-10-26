@@ -21,7 +21,6 @@ export interface EntrustedTaskDataControllerAuthority {
   readonly pluginInstanceId: string;
   readonly moduleRef: string;
   readonly lifecycleRevision: number;
-  readonly grantRevision: number;
 }
 
 export interface EntrustedTaskDataControllerOwnerOperation {
@@ -239,8 +238,7 @@ function controllerMatches(
     binding.pluginId === controller.pluginId &&
     binding.pluginInstanceId === controller.pluginInstanceId &&
     binding.moduleRef === controller.moduleRef &&
-    binding.lifecycleRevision === controller.lifecycleRevision &&
-    binding.grantRevision === controller.grantRevision
+    binding.lifecycleRevision === controller.lifecycleRevision
   );
 }
 
@@ -255,8 +253,7 @@ function staleControllerCanRebind(
     binding.pluginId === controller.pluginId &&
     binding.moduleRef === controller.moduleRef &&
     (binding.pluginInstanceId !== controller.pluginInstanceId ||
-      binding.lifecycleRevision !== controller.lifecycleRevision ||
-      binding.grantRevision !== controller.grantRevision)
+      binding.lifecycleRevision !== controller.lifecycleRevision)
   );
 }
 
