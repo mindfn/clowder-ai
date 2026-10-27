@@ -1349,6 +1349,7 @@ export type {
   PluginManagerPackageSource,
   PluginManagerPublicOperation,
   PluginManagerSetEnabledRequest,
+  PluginManagerSkillConflict,
   PluginManagerUninstallRequest,
   PluginManifest,
   PluginMarketplaceSelection,

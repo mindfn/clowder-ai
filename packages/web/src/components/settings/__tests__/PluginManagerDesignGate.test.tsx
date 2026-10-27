@@ -104,8 +104,10 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     expect(container.textContent).toContain('Video Generation');
   });
 
-  it('keeps row actions and the detail enable toggle without an installation badge', async () => {
-    await act(async () => root.render(<PluginManagerContent fixtures={PLUGIN_MANAGER_DESIGN_FIXTURES} />));
+  it('keeps lifecycle controls reachable in the list and selected detail', async () => {
+    await act(async () =>
+      root.render(<PluginManagerContent fixtures={PLUGIN_MANAGER_DESIGN_FIXTURES} onUninstall={vi.fn()} />),
+    );
     await act(async () => button(container, '飞书会议纪要')?.click());
 
     const row = container.querySelector('[data-plugin-id="feishu-meeting-intake"]');
@@ -115,7 +117,7 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     expect(row?.querySelector('button[aria-pressed]')).not.toBeNull();
     expect(row?.querySelector('button[aria-label^="卸载"]')).not.toBeNull();
     expect(detail?.querySelector('button[aria-pressed]')).not.toBeNull();
-    expect(detail?.querySelector('button[aria-label^="卸载"]')).toBeNull();
+    expect(detail?.querySelector('button[aria-label^="卸载"]')).not.toBeNull();
     expect(detail?.textContent).not.toContain('已安装');
     expect(detail?.textContent).not.toContain('未安装');
     expect(detail?.textContent).not.toContain('事件输入');
