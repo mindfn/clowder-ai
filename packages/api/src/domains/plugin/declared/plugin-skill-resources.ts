@@ -10,6 +10,7 @@ import {
 import { readMountRules } from '../../../config/mount/mount-rules-store.js';
 import { addSkill } from '../../../skills/skill-manage.js';
 import { activeMountTargets } from '../../../skills/skill-mount-ops.js';
+import { withSkillMountRollback } from '../../../skills/skill-source-switch.js';
 import { classifyMountPath } from '../../../skills/skill-sync-engine.js';
 import { createSkillSymlink } from '../../../utils/skill-mount.js';
 import { packageDirectoryName } from '../external-runtime/filesystem-package-locator.js';
@@ -24,6 +25,48 @@ export interface ResolvePluginSkillConflict {
 }
 
 export class PluginSkillConflictChangedError extends Error {}
+
+async function inspectMountConflict(
+  root: string,
+  name: string,
+  mountPointId: string,
+  dir: string,
+  source: string,
+): Promise<PluginManagerSkillConflict | undefined> {
+  const blocked = (fingerprint: unknown): PluginManagerSkillConflict => ({
+    skillName: name,
+    mountPointId,
+    path: relative(root, dir),
+    source: 'Mount directory is blocked',
+    canResolve: false,
+    revision: createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex'),
+  });
+  try {
+    const directory = await lstat(dir);
+    if (!directory.isDirectory() || directory.isSymbolicLink()) {
+      return blocked([directory.dev, directory.ino, directory.mtimeMs]);
+    }
+    const path = join(dir, name);
+    if ((await classifyMountPath(path, source, name)) !== 'conflict') return undefined;
+    const stat = await lstat(path);
+    const link = stat.isSymbolicLink() ? await readlink(path) : '';
+    return {
+      skillName: name,
+      mountPointId,
+      path: relative(root, path),
+      source: link ? `Existing link: ${link}` : 'Local file or directory',
+      canResolve: (await realpath(dir)) === resolve(await realpath(root), relative(root, dir)),
+      revision: createHash('sha256')
+        .update(JSON.stringify([stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs, link]))
+        .digest('hex'),
+    };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return undefined;
+    if (['ENOTDIR', 'EACCES', 'EPERM'].includes(code ?? '')) return blocked([dir, code]);
+    throw error;
+  }
+}
 
 /** Reads the existing skill registry and mount paths; no parallel durable resource registry. */
 export class PluginSkillResources {
@@ -40,7 +83,8 @@ export class PluginSkillResources {
     for (const skill of pkg.manifest.contributions ?? []) {
       if (skill.type !== 'skill') continue;
       const name = basename(skill.path);
-      const existing = config?.capabilities.find((c) => c.type === 'skill' && c.id === name);
+      const entries = config?.capabilities.filter((c) => c.type === 'skill' && c.id === name) ?? [];
+      const existing = entries.find((c) => c.pluginId !== pkg.pluginId) ?? entries[0];
       const source = resolve(
         pluginResourceRoot(this.host, pkg.pluginId),
         packageDirectoryName(pkg.packageDigest),
@@ -74,40 +118,8 @@ export class PluginSkillResources {
       for (const target of activeMountTargets(root, rules)) {
         if (existing.mountPaths && !existing.mountPaths.includes(target.id)) continue;
         for (const dir of target.dirs) {
-          const directory = await lstat(dir).catch((error: NodeJS.ErrnoException) => {
-            if (error.code === 'ENOENT') return undefined;
-            throw error;
-          });
-          if (!directory) continue;
-          if (!directory.isDirectory() || directory.isSymbolicLink()) {
-            conflicts.push({
-              skillName: name,
-              mountPointId: target.id,
-              path: relative(root, dir),
-              source: 'Mount directory is blocked',
-              canResolve: false,
-              revision: createHash('sha256')
-                .update(JSON.stringify([directory.dev, directory.ino, directory.mtimeMs]))
-                .digest('hex'),
-            });
-            continue;
-          }
-          const path = join(dir, name);
-          if ((await classifyMountPath(path, source, name)) !== 'conflict') continue;
-          const stat = await lstat(path);
-          const link = stat.isSymbolicLink() ? await readlink(path) : '';
-          const writable = (await realpath(dir)) === resolve(await realpath(root), relative(root, dir));
-          const revision = createHash('sha256')
-            .update(JSON.stringify([stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs, link]))
-            .digest('hex');
-          conflicts.push({
-            skillName: name,
-            mountPointId: target.id,
-            path: relative(root, path),
-            source: link ? `Existing link: ${link}` : 'Local file or directory',
-            canResolve: writable,
-            revision,
-          });
+          const conflict = await inspectMountConflict(root, name, target.id, dir, source);
+          if (conflict) conflicts.push(conflict);
         }
       }
     }
@@ -147,13 +159,23 @@ export class PluginSkillResources {
           skillsSource: oldSource,
           ...(existing?.mountPaths ? { mountPaths: existing.mountPaths } : {}),
         });
-        await writeCapabilitiesConfig(root, next);
+        const mountRules = await readMountRules(root, root);
         try {
-          await addSkill(root, request.skillName, source, {
-            pluginId: pkg.pluginId,
-            skillsSource: relative(root, source),
-            mountRules: await readMountRules(root, root),
-          });
+          await withSkillMountRollback(
+            root,
+            request.skillName,
+            resolve(root, oldSource),
+            source,
+            mountRules,
+            async () => {
+              await writeCapabilitiesConfig(root, next);
+              await addSkill(root, request.skillName, source, {
+                pluginId: pkg.pluginId,
+                skillsSource: relative(root, source),
+                mountRules,
+              });
+            },
+          );
         } catch (error) {
           await writeCapabilitiesConfig(root, previous);
           throw error;
