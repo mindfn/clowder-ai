@@ -48,7 +48,7 @@ test(
       computedPackageDigest: pin.digest,
       expectedPackageDigest: pin.digest,
       packagePluginId: manifest.pluginId,
-      ...(pin.version === '0.1.0-alpha.6'
+      ...(['0.1.0-alpha.6', '0.1.0-alpha.7'].includes(pin.version)
         ? {
             provenance: {
               kind: 'catalog',

@@ -133,6 +133,8 @@ export interface DormantPluginRuntimeCompositionOptions {
   /** Persistent capability authority used by native invocations and Settings;
    * package/config/inventory storage retains its existing projectRoot. */
   readonly capabilityProjectRoot?: string;
+  /** Executable checkout used to distinguish a development worktree from its persistent config root. */
+  readonly binaryProjectRoot?: string;
   readonly paths?: PluginRuntimePersistencePaths;
   readonly messageStore: IMessageStore;
   readonly lifecyclePresentation?: LifecycleDeliveryDeps['presentation'];
@@ -536,7 +538,10 @@ export function createDormantPluginRuntimeComposition(
     inventoryStore,
     {
       projectRoot: capabilityProjectRoot,
-      persistCapabilities: allowsImplicitCapabilityWrites(),
+      persistCapabilities: allowsImplicitCapabilityWrites(
+        process.env,
+        options.binaryProjectRoot ?? options.projectRoot,
+      ),
       packages,
       mcpPackages: builtinPackages,
       resourcesRoot: resolve(dirname(paths.inventorySnapshotPath), PLUGIN_HOST_ENTRIES.resources),
