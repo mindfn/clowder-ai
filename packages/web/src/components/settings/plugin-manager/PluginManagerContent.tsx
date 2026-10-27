@@ -71,7 +71,7 @@ export function PluginManagerContent({
   onMarketplaceChange,
   onDirectoryInstall,
   onSetEnabled,
-  onRepair,
+  onRestart,
   onRequestEnable,
   onUninstall,
   onConfigure,
@@ -102,7 +102,7 @@ export function PluginManagerContent({
   onMarketplaceChange?: () => Promise<void>;
   onDirectoryInstall?: (path: string) => Promise<void>;
   onSetEnabled?: (pluginId: string, enabled: boolean) => void;
-  onRepair?: (pluginId: string) => void;
+  onRestart?: (pluginId: string) => void;
   onRequestEnable?: (pluginId: string) => void | Promise<void>;
   onUninstall?: (pluginId: string) => void;
   onConfigure?: (pluginId: string, updates: readonly { key: string; value: string | null }[]) => void;
@@ -189,7 +189,7 @@ export function PluginManagerContent({
             : undefined
         }
         onInstall={() => onInstall?.(plugin.id)}
-        onRepair={onRepair ? () => onRepair(plugin.id) : undefined}
+        onRestart={onRestart ? () => onRestart(plugin.id) : undefined}
         onSetEnabled={(enabled) => onSetEnabled?.(plugin.id, enabled)}
         onBlockedToggle={() => requestEnable(plugin)}
         onUninstall={() => onUninstall?.(plugin.id)}
@@ -327,7 +327,7 @@ export function PluginManagerContent({
                   locale={locale}
                   busy={busyPluginId === selected.id}
                   onInstall={onInstall ? () => onInstall(selected.id) : undefined}
-                  onRepair={onRepair ? () => onRepair(selected.id) : undefined}
+                  onRestart={onRestart ? () => onRestart(selected.id) : undefined}
                   onUninstall={onUninstall ? () => onUninstall(selected.id) : undefined}
                   onSetEnabled={onSetEnabled ? (enabled) => onSetEnabled(selected.id, enabled) : undefined}
                   onBlockedToggle={() => requestEnable(selected)}

@@ -21,6 +21,7 @@ import type { getDeletedCallbackThreadGuard } from './callback-scope-helpers.js'
 import { pluginAccessError, requirePluginWriteAccess } from './plugin-access-guards.js';
 import { captureDirectToolCaller } from './plugin-direct-tool-caller.js';
 import { registerPluginManagerConfigurationRoute } from './plugin-manager-configuration-route.js';
+import { registerPluginManagerLifecycleRoutes } from './plugin-manager-lifecycle-routes.js';
 import { registerPluginManagerReadRoutes } from './plugin-manager-read-routes.js';
 import {
   appendContributionCallAudit,
@@ -56,7 +57,7 @@ type PluginManagerRouteService = Pick<
 
 export interface PluginManagerRouteOptions {
   readonly manager: PluginManagerRouteService &
-    Partial<Pick<PluginManagerService, 'configureBootstrapRoot' | 'repair'>>;
+    Partial<Pick<PluginManagerService, 'configureBootstrapRoot' | 'repair' | 'restart' | 'resolveSkillConflict'>>;
   readonly contributions?: Pick<PluginRuntimeCarrierRouter, 'listPluginTools' | 'callPluginTool'>;
   readonly bindings?: Pick<PluginManagerBindings, 'list' | 'disconnect'>;
   readonly asset?: PluginManagerPackageAssetPort;
@@ -76,6 +77,7 @@ export function registerPluginManagerRoutes(app: FastifyInstance, options: Plugi
   const accessOptions = { allowVerifiedCallbackPrincipal: true } as const;
 
   registerPluginManagerReadRoutes(app, options);
+  registerPluginManagerLifecycleRoutes(app, options, auditLog);
 
   app.post<{ Params: { pluginId: string } }>(
     '/api/plugin-manager/plugins/:pluginId/contributions/call',

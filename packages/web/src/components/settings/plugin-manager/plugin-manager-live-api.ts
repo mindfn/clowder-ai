@@ -43,6 +43,7 @@ function fixtureDetail(detail: ConsolePluginManagerDetail | undefined): Partial<
           })),
         }),
     readme: detail.readme,
+    ...(detail.skillConflicts === undefined ? {} : { skillConflicts: detail.skillConflicts }),
     ...(detail.setupSteps === undefined ? {} : { setupSteps: detail.setupSteps }),
     ...(detail.permissions === undefined ? {} : { permissions: detail.permissions }),
     ...(detail.steps === undefined ? {} : { steps: detail.steps }),
@@ -114,6 +115,7 @@ export function designFixture(
     ...fixtureDetail(detail),
     ...(plugin.diagnostic === undefined ? {} : { diagnostic: plugin.diagnostic.message }),
     actions: plugin.actions,
+    lifecycleRevision: plugin.lifecycleRevision,
   };
 }
 

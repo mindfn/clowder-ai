@@ -64,11 +64,12 @@ export function pluginMainAction(
   plugin: PluginManagerDesignFixture,
   locale: string,
   onInstall?: () => void,
-  onRepair?: () => void,
+  onRestart?: () => void,
 ) {
   const t = pluginManagerText(locale);
   const installed = plugin.artifact === 'installed';
-  if (installed && plugin.actions?.repair && onRepair) return { kind: 'repair', label: t.repair, onClick: onRepair };
+  if (installed && plugin.actions?.restart && (plugin.activationFailed || plugin.live === 'crashed') && onRestart)
+    return { kind: 'restart', label: t.retryStart, onClick: onRestart };
   if ((plugin.actions?.install ?? !installed) && onInstall)
     return { kind: installed ? 'update' : 'install', label: installed ? t.update : t.install, onClick: onInstall };
   return undefined;
@@ -121,7 +122,7 @@ export function PluginRowActions({
   busy,
   locked = false,
   onInstall,
-  onRepair,
+  onRestart,
   onSetEnabled,
   onBlockedToggle,
   onUninstall,
@@ -133,7 +134,7 @@ export function PluginRowActions({
   busy: boolean;
   locked?: boolean;
   onInstall?: (() => void) | undefined;
-  onRepair?: (() => void) | undefined;
+  onRestart?: (() => void) | undefined;
   onSetEnabled?: ((enabled: boolean) => void) | undefined;
   onBlockedToggle?: (() => void) | undefined;
   onUninstall?: (() => void) | undefined;
@@ -145,9 +146,9 @@ export function PluginRowActions({
   const action =
     installed && plugin.config !== 'ready' && onConfigure
       ? { kind: 'configure', label: locale.startsWith('en') ? 'Configure' : '去填写', onClick: onConfigure }
-      : pluginMainAction(plugin, locale, onInstall, onRepair);
+      : pluginMainAction(plugin, locale, onInstall, onRestart);
   const canUninstall = plugin.actions?.uninstall ?? installed;
-  const secondaryUpdate = action?.kind === 'repair' && plugin.actions?.install && onInstall;
+  const secondaryUpdate = action?.kind === 'restart' && plugin.actions?.install && onInstall;
   const subject = plugin.id === 'official.chatgpt-dot' && !locale.startsWith('en') ? 'dot协作' : plugin.displayName;
   return (
     <>
