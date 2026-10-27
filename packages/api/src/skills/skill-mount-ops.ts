@@ -35,6 +35,12 @@ export function activeMountTargets(projectRoot: string, rules: MountRules) {
   return buildProjectSkillMountTargets(projectRoot, homedir(), rules);
 }
 
+export function allMountDirs(projectRoot: string, rules: MountRules): string[] {
+  return buildProjectSkillMountDirs(projectRoot, homedir(), rules, {
+    includeDisabledStandardMountPoints: true,
+  });
+}
+
 /** Retire only generated links to a removed built-in skill during its move into a plugin. */
 export async function migrateLegacyPluginSkillMounts(
   projectRoot: string,
@@ -49,15 +55,13 @@ export async function migrateLegacyPluginSkillMounts(
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
   const realRoot = await realpath(projectRoot);
-  for (const dir of buildProjectSkillMountDirs(projectRoot, homedir(), rules, {
-    includeDisabledStandardMountPoints: true,
-  })) {
+  for (const dir of allMountDirs(projectRoot, rules)) {
     try {
       if ((await realpath(dir)) !== resolve(realRoot, relative(projectRoot, dir))) continue;
       const link = join(dir, skillName);
       if ((await classifyMountPath(link, builtInSkillsSource, skillName)) === 'managed') await rm(link);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if (!['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
     }
   }
 }
@@ -155,9 +159,16 @@ export async function unmountSkillSymlinks(
       continue;
     }
     const linkPath = join(dir, skillName);
-    if ((await classifyMountPath(linkPath, skillsSource, skillName)) === 'managed') {
-      await rm(linkPath);
-      result.unmounted.push({ skillName, mountPointId: 'cleanup', path: linkPath });
+    try {
+      if ((await classifyMountPath(linkPath, skillsSource, skillName)) === 'managed') {
+        await rm(linkPath);
+        result.unmounted.push({ skillName, mountPointId: 'cleanup', path: linkPath });
+      }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') continue;
+      if (!['ENOTDIR', 'EACCES', 'EPERM'].includes(code ?? '')) throw error;
+      result.conflicts.push({ skillName, mountPointId: 'cleanup', path: linkPath });
     }
   }
   return result;
