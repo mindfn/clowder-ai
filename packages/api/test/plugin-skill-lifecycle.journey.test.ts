@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { chmod, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { pluginSkillLifecycleFixture } from './helpers/plugin-skill-lifecycle-fixture.js';
@@ -45,3 +45,49 @@ test('real Manager install → enable with conflict → choose source → restar
     await f.close();
   }
 });
+
+test('a blocked mount ancestor remains diagnostic and does not prevent uninstall', async () => {
+  const f = await pluginSkillLifecycleFixture();
+  try {
+    let current = (await f.manager.getLocal(f.pluginId)).plugin;
+    await f.manager.setEnabled(f.pluginId, { enabled: true, expectedRevision: current.lifecycleRevision! });
+    await rename(join(f.root, '.codex'), join(f.root, 'preserved-codex'));
+    await writeFile(join(f.root, '.codex'), 'user-owned blocker');
+    current = (await f.manager.getLocal(f.pluginId)).plugin;
+    assert.equal(current.activationFailed, undefined);
+    assert.equal(
+      current.skillConflicts?.some((c) => c.mountPointId === 'codex' && !c.canResolve),
+      true,
+    );
+    await f.manager.uninstall(f.pluginId, { expectedRevision: current.lifecycleRevision! });
+    assert.equal(await readFile(join(f.root, '.codex'), 'utf8'), 'user-owned blocker');
+    assert.equal(
+      await readFile(join(f.root, 'preserved-codex/skills/guide/user.md'), 'utf8'),
+      'User-owned content must survive.',
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test(
+  'an unreadable mount is diagnostic and does not prevent uninstall',
+  { skip: process.platform === 'win32' || process.getuid?.() === 0 },
+  async () => {
+    const f = await pluginSkillLifecycleFixture();
+    try {
+      let current = (await f.manager.getLocal(f.pluginId)).plugin;
+      await f.manager.setEnabled(f.pluginId, { enabled: true, expectedRevision: current.lifecycleRevision! });
+      await chmod(join(f.root, '.codex/skills'), 0o000);
+      current = (await f.manager.getLocal(f.pluginId)).plugin;
+      assert.equal(
+        current.skillConflicts?.some((c) => c.mountPointId === 'codex' && !c.canResolve),
+        true,
+      );
+      await f.manager.uninstall(f.pluginId, { expectedRevision: current.lifecycleRevision! });
+    } finally {
+      await chmod(join(f.root, '.codex/skills'), 0o755);
+      await f.close();
+    }
+  },
+);

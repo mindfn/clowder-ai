@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { lstat, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -228,4 +228,75 @@ test('legacy source=plugin metadata reports its real owner and requires an expli
     (await readCapabilitiesConfig(f.root))!.capabilities.find((c) => c.id === 'guide')?.pluginId,
     f.manifest.pluginId,
   );
+});
+
+test(
+  'failed registration switch restores both the previous owner and exact mount state',
+  { skip: process.platform === 'win32' || process.getuid?.() === 0 },
+  async (t) => {
+    const f = await fixture(t);
+    await f.activate();
+    const oldSource = join(f.root, 'old-plugin');
+    await mkdir(join(oldSource, 'guide'), { recursive: true });
+    await writeFile(join(oldSource, 'guide/SKILL.md'), '# Previous guide');
+    const previous = (await readCapabilitiesConfig(f.root))!;
+    const entry = previous.capabilities.find((c) => c.id === 'guide')!;
+    Object.assign(entry, { pluginId: 'fixture.old', skillsSource: oldSource, mountPaths: ['claude', 'codex'] });
+    await writeCapabilitiesConfig(f.root, previous);
+    for (const client of f.clients) await rm(join(f.root, `.${client}/skills/guide`));
+    await symlink(join(oldSource, 'guide'), join(f.root, '.claude/skills/guide'));
+    const [conflict] = await f.resources.read(f.pkg);
+    await chmod(join(f.root, '.codex/skills'), 0o555);
+    try {
+      await assert.rejects(f.resources.resolve(f.pkg, conflict), { code: 'EACCES' });
+      assert.deepEqual(await readCapabilitiesConfig(f.root), previous);
+      assert.equal(await readFile(join(f.root, '.claude/skills/guide/SKILL.md'), 'utf8'), '# Previous guide');
+      for (const client of ['codex', 'kimi'])
+        await assert.rejects(lstat(join(f.root, `.${client}/skills/guide`)), { code: 'ENOENT' });
+    } finally {
+      await chmod(join(f.root, '.codex/skills'), 0o755);
+    }
+  },
+);
+
+test(
+  'failed registration switch also removes newly created mounts that were absent before',
+  { skip: process.platform === 'win32' || process.getuid?.() === 0 },
+  async (t) => {
+    const f = await fixture(t);
+    await f.activate();
+    const oldSource = join(f.root, 'old-plugin');
+    await mkdir(join(oldSource, 'guide'), { recursive: true });
+    await writeFile(join(oldSource, 'guide/SKILL.md'), '# Previous guide');
+    const previous = (await readCapabilitiesConfig(f.root))!;
+    const entry = previous.capabilities.find((c) => c.id === 'guide')!;
+    Object.assign(entry, { pluginId: 'fixture.old', skillsSource: oldSource, mountPaths: ['claude', 'codex'] });
+    await writeCapabilitiesConfig(f.root, previous);
+    for (const client of f.clients) await rm(join(f.root, `.${client}/skills/guide`));
+
+    const [conflict] = await f.resources.read(f.pkg);
+    await chmod(join(f.root, '.codex/skills'), 0o555);
+    try {
+      await assert.rejects(f.resources.resolve(f.pkg, conflict), { code: 'EACCES' });
+      assert.deepEqual(await readCapabilitiesConfig(f.root), previous);
+      await assert.rejects(lstat(join(f.root, '.claude/skills/guide')), { code: 'ENOENT' });
+      for (const client of ['codex', 'kimi'])
+        await assert.rejects(lstat(join(f.root, `.${client}/skills/guide`)), { code: 'ENOENT' });
+    } finally {
+      await chmod(join(f.root, '.codex/skills'), 0o755);
+    }
+  },
+);
+
+test('legacy duplicate registration is reported even when the plugin row appears first', async (t) => {
+  const f = await fixture(t);
+  await f.activate();
+  const config = (await readCapabilitiesConfig(f.root))!;
+  config.capabilities.push({ id: 'guide', type: 'skill', source: 'cat-cafe', enabled: true });
+  await writeCapabilitiesConfig(f.root, config);
+  const [conflict] = await f.resources.read(f.pkg);
+  assert.equal(conflict.mountPointId, 'registration');
+  await f.resources.resolve(f.pkg, conflict);
+  assert.equal((await readCapabilitiesConfig(f.root))!.capabilities.filter((c) => c.id === 'guide').length, 1);
+  assert.deepEqual(await f.resources.read(f.pkg), []);
 });
