@@ -6,9 +6,9 @@
  * for per-mount-point toggle reconciliation.
  */
 
-import { lstat, mkdir, rm } from 'node:fs/promises';
+import { lstat, mkdir, realpath, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 
 import { type MountRules, STANDARD_MOUNT_POINT_IDS } from '@cat-cafe/shared';
 import {
@@ -55,6 +55,31 @@ function allMountDirs(projectRoot: string, rules: MountRules): string[] {
     .filter((t) => t.kind === 'custom')
     .flatMap((t) => t.candidates);
   return [...new Set([...standardDirs, ...customDirs])];
+}
+
+/** Retire only generated links to a removed built-in skill during its move into a plugin. */
+export async function migrateLegacyPluginSkillMounts(
+  projectRoot: string,
+  skillName: string,
+  builtInSkillsSource: string,
+  rules: MountRules,
+): Promise<void> {
+  try {
+    await lstat(join(builtInSkillsSource, skillName));
+    return; // A live (or independently linked) source remains authoritative.
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  const realRoot = await realpath(projectRoot);
+  for (const dir of allMountDirs(projectRoot, rules)) {
+    try {
+      if ((await realpath(dir)) !== resolve(realRoot, relative(projectRoot, dir))) continue;
+      const link = join(dir, skillName);
+      if ((await classifyMountPath(link, builtInSkillsSource, skillName)) === 'managed') await rm(link);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
 }
 
 // ────────── Public API ──────────

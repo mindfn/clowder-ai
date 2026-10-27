@@ -16,6 +16,7 @@ import { type HostErrorRecognition, type SafeErrorProjection, safeErrorProjectio
 export type PluginStartPhase =
   | 'enable'
   | 'repair'
+  | 'restart'
   | 'restart_resume'
   | 'maintenance_resume'
   | 'maintenance_rollback_resume';

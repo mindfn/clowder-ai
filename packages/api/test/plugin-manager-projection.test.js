@@ -219,7 +219,7 @@ describe('F202 terminal Plugin Manager projection', () => {
     assert.equal(projected.live, 'stopped');
   });
 
-  it('joins an installed instance without an update or repair affordance', () => {
+  it('joins a running instance with restart but without an update or repair affordance', () => {
     const projected = projectPluginManagerCatalogCandidate(candidate, installedSnapshot(), {
       authState: 'not-required',
       activeCapabilityIds: ['messaging.send'],
@@ -233,6 +233,7 @@ describe('F202 terminal Plugin Manager projection', () => {
     assert.equal(projected.capabilitySummary[0].active, true);
     assert.deepEqual(projected.actions, {
       install: false,
+      restart: true,
       setEnabled: true,
       uninstall: true,
       blockingReasons: [],
