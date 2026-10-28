@@ -13,17 +13,12 @@ import { pluginManagerText } from './controls/plugin-manager.shell-copy';
 import { PluginManagerDetailCard } from './PluginManagerDetailCard';
 import { PluginListRow, PluginListSection } from './PluginManagerList';
 import { PluginManagerNotices } from './PluginManagerNotices';
-import { installedPluginGroups, type PluginManagerPresentation } from './plugin-manager-attention';
+import {
+  installedPluginGroups,
+  type PluginManagerPresentation,
+  pluginBlockedEnableReason,
+} from './plugin-manager-attention';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
-
-function blockedEnableReason(plugin: PluginManagerDesignFixture, locale: string) {
-  if (plugin.actions?.blockingReasons.includes('package-incompatible'))
-    return pluginManagerText(locale).incompatibleHint;
-  if (plugin.id !== 'official.chatgpt-dot') return '请先完成右侧配置或连接，再启用。';
-  return plugin.auth === 'connected'
-    ? '还在等待 dot 读原文并回帖；两处都完成后才能开启。'
-    : '请先完成订阅和两处往返验证，再启用 dot。';
-}
 
 function matchesSearch(plugin: PluginManagerDesignFixture, query: string): boolean {
   const normalized = query.trim().toLocaleLowerCase();
@@ -82,7 +77,7 @@ export function PluginManagerContent({
   onMarketplaceChange,
   onDirectoryInstall,
   onSetEnabled,
-  onRepair,
+  onRestart,
   onRequestEnable,
   onUninstall,
   onConfigure,
@@ -110,7 +105,7 @@ export function PluginManagerContent({
   onMarketplaceChange?: () => Promise<void>;
   onDirectoryInstall?: (path: string) => Promise<void>;
   onSetEnabled?: (pluginId: string, enabled: boolean) => void;
-  onRepair?: (pluginId: string) => void;
+  onRestart?: (pluginId: string) => void;
   onRequestEnable?: (pluginId: string) => void | Promise<void>;
   onUninstall?: (pluginId: string) => void;
   onConfigure?: (pluginId: string, updates: readonly { key: string; value: string | null }[]) => void;
@@ -168,14 +163,14 @@ export function PluginManagerContent({
           setMobileDetailOpen(true);
         }}
         onInstall={() => onInstall?.(plugin.id)}
-        onRepair={onRepair ? () => onRepair(plugin.id) : undefined}
+        onRestart={onRestart ? () => onRestart(plugin.id) : undefined}
         onSetEnabled={(enabled) => onSetEnabled?.(plugin.id, enabled)}
         onBlockedToggle={() => requestEnable(plugin)}
         onUninstall={() => onUninstall?.(plugin.id)}
         busy={busyPluginId === plugin.id}
         enableBlockedReason={
           configurationValidation.pluginId === plugin.id && plugin.actions?.setEnabled === false
-            ? blockedEnableReason(plugin, locale)
+            ? pluginBlockedEnableReason(plugin, locale, presentation)
             : undefined
         }
       />
@@ -315,7 +310,7 @@ export function PluginManagerContent({
                   locale={locale}
                   busy={busyPluginId === selected.id}
                   onInstall={onInstall ? () => onInstall(selected.id) : undefined}
-                  onRepair={onRepair ? () => onRepair(selected.id) : undefined}
+                  onRestart={onRestart ? () => onRestart(selected.id) : undefined}
                   onUninstall={onUninstall ? () => onUninstall(selected.id) : undefined}
                   onSetEnabled={onSetEnabled ? (enabled) => onSetEnabled(selected.id, enabled) : undefined}
                   onBlockedToggle={() => requestEnable(selected)}

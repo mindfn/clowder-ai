@@ -7,8 +7,14 @@ import { SettingsText } from '../primitives/SettingsText';
 import { PluginRowActions } from './controls/PluginManagerActions';
 import { pluginManagerText } from './controls/plugin-manager.shell-copy';
 import { PluginSourceLabel } from './PluginSourceLabel';
+import { PluginStatusDot } from './PluginStatusDot';
 import { PluginVisual } from './PluginVisual';
-import { type PluginManagerPresentation, pluginAttentionReason, pluginHasUpdate } from './plugin-manager-attention';
+import {
+  type PluginManagerPresentation,
+  pluginAttentionReason,
+  pluginAttentionTone,
+  pluginHasUpdate,
+} from './plugin-manager-attention';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
 
 export function PluginListSection({
@@ -51,7 +57,7 @@ export function PluginListRow({
   onSelect,
   onInstall,
   onSetEnabled,
-  onRepair,
+  onRestart,
   onBlockedToggle,
   onUninstall,
   busy,
@@ -64,7 +70,7 @@ export function PluginListRow({
   onSelect: () => void;
   onInstall?: () => void;
   onSetEnabled?: (enabled: boolean) => void;
-  onRepair?: () => void;
+  onRestart?: () => void;
   onBlockedToggle?: () => void;
   onUninstall?: () => void;
   busy: boolean;
@@ -144,12 +150,16 @@ export function PluginListRow({
                 className="mt-0.5 flex min-w-0 items-center gap-1.5 text-compact text-cafe-secondary [@container(max-width:23rem)]:pr-8"
               >
                 {(reason || pluginHasUpdate(plugin)) && (
-                  <span
-                    aria-hidden="true"
-                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${reason ? 'bg-conn-amber-text' : 'bg-cafe-muted'}`}
-                  />
+                  <PluginStatusDot tone={reason ? pluginAttentionTone(plugin) : 'update'} />
                 )}
-                <span className="truncate" title={plugin.diagnostic && reason ? plugin.diagnostic : summary}>
+                <span
+                  className={
+                    reason
+                      ? 'min-w-0 truncate [@container(max-width:23rem)]:whitespace-normal [@container(max-width:23rem)]:overflow-visible [@container(max-width:23rem)]:text-clip'
+                      : 'truncate'
+                  }
+                  title={plugin.diagnostic && reason ? plugin.diagnostic : summary}
+                >
                   {summary}
                 </span>
               </span>
@@ -177,7 +187,7 @@ export function PluginListRow({
           locale={locale}
           busy={busy}
           onInstall={onInstall}
-          onRepair={onRepair}
+          onRestart={onRestart}
           onSetEnabled={onSetEnabled}
           onBlockedToggle={onBlockedToggle}
           onUninstall={onUninstall}
