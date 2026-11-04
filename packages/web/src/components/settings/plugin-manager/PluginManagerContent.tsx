@@ -71,6 +71,7 @@ export function PluginManagerContent({
   onMarketplaceChange,
   onDirectoryInstall,
   onSetEnabled,
+  onRepair,
   onRestart,
   onRequestEnable,
   onUninstall,
@@ -102,6 +103,7 @@ export function PluginManagerContent({
   onMarketplaceChange?: () => Promise<void>;
   onDirectoryInstall?: (path: string) => Promise<void>;
   onSetEnabled?: (pluginId: string, enabled: boolean) => void;
+  onRepair?: (pluginId: string) => void;
   onRestart?: (pluginId: string) => void;
   onRequestEnable?: (pluginId: string) => void | Promise<void>;
   onUninstall?: (pluginId: string) => void;
@@ -189,6 +191,7 @@ export function PluginManagerContent({
             : undefined
         }
         onInstall={() => onInstall?.(plugin.id)}
+        onRepair={onRepair ? () => onRepair(plugin.id) : undefined}
         onRestart={onRestart ? () => onRestart(plugin.id) : undefined}
         onSetEnabled={(enabled) => onSetEnabled?.(plugin.id, enabled)}
         onBlockedToggle={() => requestEnable(plugin)}

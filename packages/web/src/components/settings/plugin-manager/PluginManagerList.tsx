@@ -66,6 +66,7 @@ export function PluginListRow({
   onConfigure,
   progress,
   onSetEnabled,
+  onRepair,
   onRestart,
   onBlockedToggle,
   onUninstall,
@@ -82,6 +83,7 @@ export function PluginListRow({
   onConfigure?: () => void;
   progress?: PluginBatchResult;
   onSetEnabled?: (enabled: boolean) => void;
+  onRepair?: () => void;
   onRestart?: () => void;
   onBlockedToggle?: () => void;
   onUninstall?: () => void;
@@ -204,6 +206,7 @@ export function PluginListRow({
           busy={busy}
           locked={locked}
           onInstall={onInstall}
+          onRepair={onRepair}
           onRestart={onRestart}
           onSetEnabled={onSetEnabled}
           onBlockedToggle={onBlockedToggle}
