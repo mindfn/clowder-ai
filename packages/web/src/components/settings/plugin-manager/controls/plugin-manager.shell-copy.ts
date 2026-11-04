@@ -5,6 +5,7 @@ export const pluginManagerCopy = defineShellCopy(
     zh: {
       restart: '重启插件',
       retryStart: '重试启动',
+      repair: '修复',
       update: '更新',
       install: '安装',
       working: '处理中…',
@@ -73,6 +74,7 @@ export const pluginManagerCopy = defineShellCopy(
     en: {
       restart: 'Restart plugin',
       retryStart: 'Retry start',
+      repair: 'Repair',
       update: 'Update',
       install: 'Install',
       working: 'Working…',
