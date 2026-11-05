@@ -136,8 +136,24 @@ export function useGlobalArtifacts(
     return () => abortRef.current?.abort();
   }, [enabled, refetch, worksView]);
 
-  // The paged Works view re-reads the whole owner catalogue, so host-thread changes are coalesced.
-  useWorksSourceRefresh(hostThreadId, enabled && query !== undefined, worksView ? paged.scheduleRefresh : refetch);
+  const refreshSource = useCallback(
+    (source?: { threadId: string }) => {
+      if (!worksView) {
+        void refetch();
+        return;
+      }
+      if (!source) {
+        paged.scheduleRefresh();
+        return;
+      }
+      const title = useChatStore.getState().threads.find((thread) => thread.id === source.threadId)?.title ?? undefined;
+      paged.refreshThread(source.threadId, title);
+    },
+    [paged.refreshThread, paged.scheduleRefresh, refetch, worksView],
+  );
+
+  // Known source changes replace one thread slice; only unscoped invalidations restart the owner walk.
+  useWorksSourceRefresh(hostThreadId, enabled && query !== undefined, refreshSource);
 
   return worksView
     ? paged

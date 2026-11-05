@@ -51,7 +51,7 @@ export function createContentModificationIntegration(deps: {
   queue?: Pick<InvocationQueue, 'getEntrySnapshot' | 'getDurableEntriesForMessages'>;
   project?: { projects: VideoProjectReadPort; authority: VideoProjectMessageAuthority };
   delivery?: PersistedQueueDeliveryPort;
-  changed: (userId: string) => void;
+  changed: (userId: string, threadId?: string) => void;
   sourceChanged?: (ownerUserId: string, threadId: string, messageId: string) => void;
   receiptChanged?: (ownerUserId: string, threadId: string, messageId: string) => void;
   onError: (error: unknown) => void;

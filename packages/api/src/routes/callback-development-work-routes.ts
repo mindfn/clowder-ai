@@ -157,6 +157,7 @@ async function handleDevelopmentWorkRequest(request: FastifyRequest, reply: Fast
     if ('task' in result && result.result !== 'resume_required') {
       deps.socketManager.emitToUser(actor.userId, 'entrusted_work_projection_invalidated', {
         ownerUserId: actor.userId,
+        threadId: actor.threadId,
       });
       deps.socketManager.broadcastToRoom(
         `thread:${actor.threadId}`,

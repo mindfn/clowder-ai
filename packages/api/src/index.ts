@@ -1042,7 +1042,10 @@ async function main(): Promise<void> {
     onAppend: (msg) => {
       appendListener?.(msg);
       if (userMentionEvent(msg) || hasRecentWorkPublication(msg))
-        socketManager?.emitToUser(msg.userId, 'entrusted_work_projection_invalidated', { ownerUserId: msg.userId });
+        socketManager?.emitToUser(msg.userId, 'entrusted_work_projection_invalidated', {
+          ownerUserId: msg.userId,
+          threadId: msg.threadId,
+        });
       custodyOpportunityObservation?.notifySourceChanged(msg);
     },
   });
@@ -1767,6 +1770,7 @@ async function main(): Promise<void> {
     if (userMentionEvent(message) || message.mentionsUser || hasRecentWorkPublication(message))
       socketManager?.emitToUser(message.userId, 'entrusted_work_projection_invalidated', {
         ownerUserId: message.userId,
+        threadId: message.threadId,
       });
   };
 
@@ -5365,7 +5369,10 @@ async function main(): Promise<void> {
     onTaskDataChanged: (task) => {
       socketManager?.broadcastToRoom(`thread:${task.threadId}`, 'task_updated', task);
       if (task.userId)
-        socketManager?.emitToUser(task.userId, 'entrusted_work_projection_invalidated', { ownerUserId: task.userId });
+        socketManager?.emitToUser(task.userId, 'entrusted_work_projection_invalidated', {
+          ownerUserId: task.userId,
+          threadId: task.threadId,
+        });
     },
     members: {
       listCats: () =>
@@ -6298,8 +6305,11 @@ async function main(): Promise<void> {
       socketManager?.emitToUser(ownerUserId, 'content_modification_source_saved', { threadId, messageId }),
     receiptChanged: (ownerUserId, threadId, messageId) =>
       socketManager?.emitToUser(ownerUserId, 'content_modification_source_saved', { threadId, messageId }),
-    changed: (ownerUserId) =>
-      socketManager?.emitToUser(ownerUserId, 'entrusted_work_projection_invalidated', { ownerUserId }),
+    changed: (ownerUserId, threadId) =>
+      socketManager?.emitToUser(ownerUserId, 'entrusted_work_projection_invalidated', {
+        ownerUserId,
+        ...(threadId ? { threadId } : {}),
+      }),
     onError: (error) => app.log.warn({ err: error }, '[content-modification] request remains pending'),
   });
   acceptedWorkspaceArtifactsHolder.current = modifications.workspaceArtifacts;
@@ -6457,8 +6467,11 @@ async function main(): Promise<void> {
     tracker: invocationTracker,
     ...(taskApprovedDelegateProvider ? { taskApprovedDelegateProvider } : {}),
   });
-  const invalidateEntrustedWorkProjection = (ownerUserId: string) =>
-    socketManager?.emitToUser(ownerUserId, 'entrusted_work_projection_invalidated', { ownerUserId });
+  const invalidateEntrustedWorkProjection = (ownerUserId: string, threadId?: string) =>
+    socketManager?.emitToUser(ownerUserId, 'entrusted_work_projection_invalidated', {
+      ownerUserId,
+      ...(threadId ? { threadId } : {}),
+    });
   const entrustedWorkHumanTerminal = new EntrustedWorkHumanTerminalService({
     tasks: taskStore,
     lifecycle: new EntrustedWorkLifecycleService(taskStore, {

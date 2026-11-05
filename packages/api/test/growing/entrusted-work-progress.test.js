@@ -267,7 +267,11 @@ test('callback progress requires the exact owner invocation and thread and rejec
   assert.equal(response.json().task.entrustedWork.revision, 2);
   assert.equal(events.length, 1);
   assert.deepEqual(ownerEvents, [
-    ['owner-progress', 'entrusted_work_projection_invalidated', { ownerUserId: 'owner-progress' }],
+    [
+      'owner-progress',
+      'entrusted_work_projection_invalidated',
+      { ownerUserId: 'owner-progress', threadId: 'thread-progress' },
+    ],
   ]);
   assert.deepEqual(
     custodyEvents.map((event) => event.kind),
