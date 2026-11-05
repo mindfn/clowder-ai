@@ -8,7 +8,7 @@ import { projectThreadWorks, type ThreadArtifactDTO, type ThreadArtifactsRespons
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import { apiFetch } from '../utils/api-client';
-import { selectThreadMessagesRaw, useThreadLiveness } from './useThreadScopedSelectors';
+import { selectThreadMessagesRaw } from './useThreadScopedSelectors';
 
 const EMPTY_ARTIFACTS: ThreadArtifactDTO[] = [];
 
@@ -41,24 +41,32 @@ function sourceCoverage(result: ThreadArtifactsResponse, view?: 'works') {
   };
 }
 
-/** Refresh original source projections on material/completion and owner changes, never streamed text tokens. */
-export function useWorksSourceRefresh(threadId: string | undefined, enabled: boolean, refetch: () => void) {
-  // Display ordering can also change with the activity clock before lifecycle hydration.
+export interface WorksSourceChange {
+  threadId: string;
+}
+
+const WORK_BLOCK_KINDS = new Set(['media_gallery', 'file', 'diff', 'audio', 'html_widget', 'interactive']);
+
+function messageWorkMaterial(message: ReturnType<typeof selectThreadMessagesRaw>[number]) {
+  const rich = message.extra?.rich?.blocks.filter((block) => WORK_BLOCK_KINDS.has(block.kind)) ?? [];
+  const content = message.contentBlocks?.filter((block) => block.type === 'image' || block.type === 'file') ?? [];
+  const receipt =
+    message.extra?.systemKind === 'content_modification_receipt'
+      ? message.extra.contentModificationReceiptV1
+      : undefined;
+  return rich.length || content.length || receipt ? [message.id, rich, content, receipt] : null;
+}
+
+/** Refresh original source projections only when their artifact-bearing material changes. */
+export function useWorksSourceRefresh(
+  threadId: string | undefined,
+  enabled: boolean,
+  refetch: (source?: WorksSourceChange) => void,
+) {
   const messages = useChatStore((state) => selectThreadMessagesRaw(state, enabled ? (threadId ?? null) : null));
-  const { hasActive } = useThreadLiveness(enabled ? (threadId ?? null) : null);
   const materialKey = useMemo(
-    () =>
-      JSON.stringify([
-        hasActive,
-        messages.map((message) => [
-          message.id,
-          // Stream activity advances timestamp on every token; it does not change works.
-          message.isStreaming,
-          message.extra?.rich,
-          message.contentBlocks?.filter((block) => block.type !== 'text'),
-        ]),
-      ]),
-    [messages, hasActive],
+    () => JSON.stringify(messages.map(messageWorkMaterial).filter((value) => value !== null)),
+    [messages],
   );
   const previous = useRef({ threadId, materialKey, enabled });
   useEffect(() => {
@@ -67,13 +75,20 @@ export function useWorksSourceRefresh(threadId: string | undefined, enabled: boo
       previous.current.threadId === threadId &&
       previous.current.materialKey !== materialKey;
     previous.current = { threadId, materialKey, enabled };
-    if (enabled && changed) refetch();
+    if (enabled && changed) refetch(threadId ? { threadId } : undefined);
   }, [enabled, materialKey, threadId, refetch]);
   useEffect(() => {
     if (!enabled) return;
-    window.addEventListener('cat-cafe:entrusted-work-projection-invalidated', refetch);
-    return () => window.removeEventListener('cat-cafe:entrusted-work-projection-invalidated', refetch);
-  }, [enabled, refetch]);
+    const invalidate = (event: Event) => {
+      const detail = (event as CustomEvent<{ ownerUserId?: string; threadId?: string }>).detail;
+      // Browser-local actions belong to the mounted host thread. A server event without a
+      // thread coordinate stays global so a background-thread revocation cannot be hidden.
+      const changedThreadId = detail?.threadId ?? (detail?.ownerUserId ? undefined : threadId);
+      refetch(changedThreadId ? { threadId: changedThreadId } : undefined);
+    };
+    window.addEventListener('cat-cafe:entrusted-work-projection-invalidated', invalidate);
+    return () => window.removeEventListener('cat-cafe:entrusted-work-projection-invalidated', invalidate);
+  }, [enabled, refetch, threadId]);
 }
 
 export function useThreadArtifacts(threadId: string | undefined, view?: 'works'): UseThreadArtifactsResult {
@@ -131,7 +146,10 @@ export function useThreadArtifacts(threadId: string | undefined, view?: 'works')
     return () => abortRef.current?.abort();
   }, [threadId, view, refetch]);
 
-  useWorksSourceRefresh(threadId, view === 'works', refetch);
+  const refreshWorksSource = useCallback(() => {
+    void refetch();
+  }, [refetch]);
+  useWorksSourceRefresh(threadId, view === 'works', refreshWorksSource);
 
   const works = useMemo(
     () => projectThreadWorks(artifacts, coverage.lineageResolved),

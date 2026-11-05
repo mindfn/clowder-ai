@@ -89,7 +89,7 @@ export interface EntrustedWorkLifecycleOptions {
   readonly expectedThreadId?: string;
   readonly now?: () => number;
   readonly custodyGrantRegistry?: F310CustodyGrantRegistryV1;
-  readonly onChanged?: (ownerUserId: string) => void;
+  readonly onChanged?: (ownerUserId: string, threadId: string) => void;
   readonly artifactReader?: PreparedArtifactReader;
   /** Checked by the Task store at the aggregate's actual write boundary. */
   readonly writeFence?: TaskMutationWriteFence;
@@ -309,7 +309,7 @@ export class EntrustedWorkLifecycleService {
   }
 
   private notifyChanged(task: TaskItem): void {
-    if (task.userId) this.onChanged?.(task.userId);
+    if (task.userId) this.onChanged?.(task.userId, task.threadId);
   }
 
   assertCurrentAuthorization(admission: Extract<CustodyAdmissionRequestV1, { basis: 'authorized_source' }>): void {
