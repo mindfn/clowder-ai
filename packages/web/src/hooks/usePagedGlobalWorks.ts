@@ -113,6 +113,10 @@ export function usePagedGlobalWorks(enabled: boolean, ownerKey?: string | null) 
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const armRefresh = useRef(() => {});
   const catalogueGeneration = useRef(0);
+  const globalCatalogueComplete = useRef(false);
+  const invalidThreads = useRef(new Set<string>());
+  const retryBlockedThreads = useRef(new Set<string>());
+  const threadRefreshVersions = useRef(new Map<string, number>());
   const pendingThreadRefreshes = useRef(new Map<string, string | undefined>());
   const drainingThreadRefreshes = useRef(false);
   const drainThreadRefreshes = useRef(() => {});
@@ -124,6 +128,10 @@ export function usePagedGlobalWorks(enabled: boolean, ownerKey?: string | null) 
     const retained = restart ? confirmed.current : null;
     if (restart) {
       catalogueGeneration.current += 1;
+      globalCatalogueComplete.current = false;
+      invalidThreads.current.clear();
+      retryBlockedThreads.current.clear();
+      threadRefreshVersions.current.clear();
       pendingThreadRefreshes.current.clear();
       current.current = empty();
       cursor.current = undefined;
@@ -154,10 +162,11 @@ export function usePagedGlobalWorks(enabled: boolean, ownerKey?: string | null) 
           current.current.workLineage === 'resolved' && body.workLineage === 'resolved' ? 'resolved' : 'unavailable';
         const artifacts = mergeArtifactPages(current.current.artifacts, body.artifacts, workLineage);
         cursor.current = body.nextCursor;
+        globalCatalogueComplete.current = body.complete;
         publish({
           artifacts,
           workLineage,
-          complete: body.complete,
+          complete: body.complete && invalidThreads.current.size === 0,
           loading: artifacts.length === 0 && !body.complete,
           loadingMore: !body.complete,
         });
@@ -165,6 +174,7 @@ export function usePagedGlobalWorks(enabled: boolean, ownerKey?: string | null) 
       }
     } catch (error) {
       if (!ac.signal.aborted) {
+        globalCatalogueComplete.current = false;
         cursorExpired.current = error instanceof WorksCursorExpired;
         publish({ error: true, complete: false, loading: false, loadingMore: false });
       }
@@ -181,38 +191,65 @@ export function usePagedGlobalWorks(enabled: boolean, ownerKey?: string | null) 
   }, []);
   const replaceThread = useCallback(async (threadId: string, requestedTitle?: string) => {
     const generation = catalogueGeneration.current;
+    const refreshVersion = threadRefreshVersions.current.get(threadId);
     const ac = new AbortController();
     try {
       const body = await fetchThreadWorks(threadId, ac.signal);
-      if (generation !== catalogueGeneration.current || !current.current.complete) return;
-      const next = replaceThreadSnapshot(current.current, body, threadId, requestedTitle);
+      if (
+        generation !== catalogueGeneration.current ||
+        refreshVersion !== threadRefreshVersions.current.get(threadId) ||
+        !globalCatalogueComplete.current
+      )
+        return;
+      invalidThreads.current.delete(threadId);
+      retryBlockedThreads.current.delete(threadId);
+      threadRefreshVersions.current.delete(threadId);
+      const replacement = replaceThreadSnapshot(current.current, body, threadId, requestedTitle);
+      const complete = invalidThreads.current.size === 0;
+      const next = { ...replacement, complete, loadingMore: !complete, error: retryBlockedThreads.current.size > 0 };
       current.current = next;
-      confirmed.current = next;
+      confirmed.current = complete ? next : null;
       setSnapshot(next);
     } catch (error) {
-      if (generation !== catalogueGeneration.current || ac.signal.aborted) return;
+      if (
+        generation !== catalogueGeneration.current ||
+        refreshVersion !== threadRefreshVersions.current.get(threadId) ||
+        ac.signal.aborted
+      )
+        return;
       const failure = threadReadFailure(error);
       if (failure === 'remove') {
+        invalidThreads.current.delete(threadId);
+        retryBlockedThreads.current.delete(threadId);
+        threadRefreshVersions.current.delete(threadId);
+        const complete = globalCatalogueComplete.current && invalidThreads.current.size === 0;
         const next = {
           ...current.current,
           artifacts: current.current.artifacts.filter((item) => item.threadId !== threadId),
-          complete: true,
+          complete,
           loading: false,
-          loadingMore: false,
-          error: false,
+          loadingMore: !complete,
+          error: retryBlockedThreads.current.size > 0,
         };
         current.current = next;
-        confirmed.current = next;
+        confirmed.current = complete ? next : null;
         setSnapshot(next);
         return;
       }
       if (failure === 'clear') {
+        globalCatalogueComplete.current = false;
+        invalidThreads.current.clear();
+        retryBlockedThreads.current.clear();
+        threadRefreshVersions.current.clear();
+        pendingThreadRefreshes.current.clear();
         const next = { ...empty(), loading: false, error: true };
         current.current = next;
         confirmed.current = null;
         setSnapshot(next);
         return;
       }
+      retryBlockedThreads.current.add(threadId);
+      pendingThreadRefreshes.current.set(threadId, requestedTitle);
       const next = { ...current.current, complete: false, loading: false, loadingMore: false, error: true };
       current.current = next;
       confirmed.current = null;
@@ -220,8 +257,10 @@ export function usePagedGlobalWorks(enabled: boolean, ownerKey?: string | null) 
     }
   }, []);
   drainThreadRefreshes.current = () => {
-    if (walking.current || drainingThreadRefreshes.current || tabHidden()) return;
-    const next = pendingThreadRefreshes.current.entries().next().value as [string, string | undefined] | undefined;
+    if (walking.current || drainingThreadRefreshes.current || tabHidden() || !globalCatalogueComplete.current) return;
+    const next = [...pendingThreadRefreshes.current.entries()].find(
+      ([threadId]) => !retryBlockedThreads.current.has(threadId),
+    );
     if (!next) return;
     pendingThreadRefreshes.current.delete(next[0]);
     drainingThreadRefreshes.current = true;
@@ -251,6 +290,11 @@ export function usePagedGlobalWorks(enabled: boolean, ownerKey?: string | null) 
     void read(true);
   }, [read]);
   const refetch = useCallback(() => {
+    if (globalCatalogueComplete.current && retryBlockedThreads.current.size > 0) {
+      retryBlockedThreads.current.clear();
+      drainThreadRefreshes.current();
+      return;
+    }
     void read(!current.current.error || cursorExpired.current);
   }, [read]);
   /** Source-change entry point: never aborts a running walk, and coalesces bursts into one later walk. */
@@ -260,7 +304,19 @@ export function usePagedGlobalWorks(enabled: boolean, ownerKey?: string | null) 
   }, []);
   /** Replace one known thread slice without restarting the complete owner catalogue walk. */
   const refreshThread = useCallback((threadId: string, threadTitle?: string) => {
+    invalidThreads.current.add(threadId);
+    retryBlockedThreads.current.delete(threadId);
+    threadRefreshVersions.current.set(threadId, (threadRefreshVersions.current.get(threadId) ?? 0) + 1);
     pendingThreadRefreshes.current.set(threadId, threadTitle);
+    const next = {
+      ...current.current,
+      complete: false,
+      loadingMore: globalCatalogueComplete.current,
+      error: retryBlockedThreads.current.size > 0,
+    };
+    current.current = next;
+    confirmed.current = null;
+    setSnapshot(next);
     drainThreadRefreshes.current();
   }, []);
   useEffect(() => {
@@ -272,6 +328,10 @@ export function usePagedGlobalWorks(enabled: boolean, ownerKey?: string | null) 
     if (enabled) restart();
     else {
       catalogueGeneration.current += 1;
+      globalCatalogueComplete.current = false;
+      invalidThreads.current.clear();
+      retryBlockedThreads.current.clear();
+      threadRefreshVersions.current.clear();
       pendingThreadRefreshes.current.clear();
       current.current = empty();
       confirmed.current = null;
@@ -281,6 +341,10 @@ export function usePagedGlobalWorks(enabled: boolean, ownerKey?: string | null) 
     return () => {
       cancelRefresh();
       catalogueGeneration.current += 1;
+      globalCatalogueComplete.current = false;
+      invalidThreads.current.clear();
+      retryBlockedThreads.current.clear();
+      threadRefreshVersions.current.clear();
       pendingThreadRefreshes.current.clear();
       request.current?.abort();
     };

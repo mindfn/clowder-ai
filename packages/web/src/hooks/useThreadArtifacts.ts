@@ -81,9 +81,9 @@ export function useWorksSourceRefresh(
     if (!enabled) return;
     const invalidate = (event: Event) => {
       const detail = (event as CustomEvent<{ ownerUserId?: string; threadId?: string }>).detail;
-      // Browser-local actions belong to the mounted host thread. A server event without a
-      // thread coordinate stays global so a background-thread revocation cannot be hidden.
-      const changedThreadId = detail?.threadId ?? (detail?.ownerUserId ? undefined : threadId);
+      // Never guess a thread for an unscoped revocation: the affected work may be open from
+      // another catalogue row while the host conversation remains unchanged.
+      const changedThreadId = detail?.threadId;
       refetch(changedThreadId ? { threadId: changedThreadId } : undefined);
     };
     window.addEventListener('cat-cafe:entrusted-work-projection-invalidated', invalidate);
