@@ -10,6 +10,7 @@
 #   ./scripts/start-dev.sh            — 开发模式 (next dev + Redis 持久化)
 #   ./scripts/start-dev.sh --prod-web — API 非 watch + 前端 production build + next start
 #   ./scripts/start-dev.sh --quick    — 仅跳过重复构建；不改变 dev/prod 模式
+#   ./scripts/start-dev.sh --rebuild  — 忽略可信产物身份，强制重新构建
 #   ./scripts/start-dev.sh --memory   — 使用内存存储 (重启丢数据)
 #   ./scripts/start-dev.sh --no-redis — 同 --memory
 #   ./scripts/start-dev.sh --daemon   — 后台运行 (日志输出到 cat-cafe-daemon.log)
@@ -49,7 +50,7 @@ set -o pipefail
 print_start_dev_usage() {
     printf '%s\n' \
         'Usage:' \
-        '  ./scripts/start-dev.sh [--quick] [--memory|--no-redis] [--prod-web] [--debug]' \
+        '  ./scripts/start-dev.sh [--quick|--rebuild] [--memory|--no-redis] [--prod-web] [--debug]' \
         '                         [--profile=dev|production|opensource] [--daemon|-d]' \
         '                         [--allow-account-regression] (accept new account unavailability)' \
         '                         [--] [--npm-registry=URL] [--pip-index-url=URL] [--hf-endpoint=URL]' \
@@ -88,6 +89,7 @@ NC='\033[0m' # No Color
 
 # 解析参数
 QUICK_MODE=false
+FORCE_BUILD=false
 USE_REDIS=true
 PROD_WEB=false
 DEBUG_MODE=false
@@ -97,6 +99,7 @@ ALLOW_ACCOUNT_REGRESSION=false
 for arg in "$@"; do
     case $arg in
         --quick|-q) QUICK_MODE=true ;;
+        --rebuild) FORCE_BUILD=true ;;
         --memory|--no-redis) USE_REDIS=false ;;
         --prod-web) PROD_WEB=true ;;
         --debug) DEBUG_MODE=true ;;
@@ -109,6 +112,7 @@ for arg in "$@"; do
             ;;
     esac
 done
+[ "$FORCE_BUILD" != true ] || QUICK_MODE=false
 
 # 加载环境变量 (放最前面，后续函数需要端口号)
 # 优先级 (#603 .local convention):
@@ -1171,11 +1175,16 @@ web_production_build_ready() {
 }
 
 # 清理缓存
-# --prod-web + --quick: 保留 .next production 产物以便秒启动
+# Production builds let Next.js refresh its output and reuse its compiler cache.
+# --quick additionally skips the build and reuses the completed production output.
 clean_cache() {
-    if [ "$PROD_WEB" = true ] && [ "$QUICK_MODE" = true ]; then
+    if [ "$PROD_WEB" = true ]; then
+        # A failed rebuild must not leave an older bundle eligible for --quick.
+        if [ "$QUICK_MODE" != true ]; then
+            /bin/rm -f "$PROJECT_DIR/packages/web/.next/BUILD_ID"
+        fi
         echo ""
-        echo -e "${YELLOW}保留 .next 产物 (--prod-web --quick)${NC}"
+        echo -e "${YELLOW}保留 .next 构建缓存 (production)${NC}"
         return
     fi
 
@@ -1202,9 +1211,19 @@ verified_runtime_artifacts_for_current_tree() {
     is_official_runtime_data_owner
 }
 
+current_build_artifacts_ready() {
+    [ "$PROD_WEB" = true ] && \
+    node "$SCRIPT_DIR/lib/build-identity.cjs" ready "$PROJECT_DIR" shared mcp-server api web
+}
+
 reuse_verified_runtime_artifacts() {
+    [ "$FORCE_BUILD" != true ] || return 0
     if verified_runtime_artifacts_for_current_tree; then
         QUICK_MODE=true
+        BUILD_REUSE_REASON=runtime
+    elif current_build_artifacts_ready; then
+        QUICK_MODE=true
+        BUILD_REUSE_REASON=current-tree
     fi
 }
 
@@ -1433,7 +1452,7 @@ run_logged_step() {
 
 # 构建 shared + MCP + API (tsc)；--prod-web 时额外构建 Frontend
 compile_packages() {
-    local package rc
+    local package build_script rc
     local built_packages=(shared mcp-server api)
     [ "$PROD_WEB" != true ] || built_packages+=(web)
     for package in "${built_packages[@]}"; do
@@ -1441,7 +1460,11 @@ compile_packages() {
         echo -e "${CYAN}构建 $package...${NC}"
         # Explicitly propagate failure in the new compiler shell: it does not
         # inherit the launcher's errexit, and a later echo must not hide status.
-        if run_logged_step "$package 构建" 10 run_in_dir "$PROJECT_DIR/packages/$package" pnpm run build; then
+        build_script=build
+        # shared and MCP were built in dependency order above. The public API
+        # build remains self-contained; only this prepared caller skips them.
+        [ "$package" != api ] || build_script=build:prepared
+        if run_logged_step "$package 构建" 10 run_in_dir "$PROJECT_DIR/packages/$package" pnpm run "$build_script"; then
             echo -e "${GREEN}  ✓ $package 构建完成${NC}"
         else
             rc=$?
@@ -1899,7 +1922,11 @@ main() {
         build_packages
     else
         echo ""
-        echo -e "${YELLOW}跳过构建 (--quick 模式)${NC}"
+        if [ "${BUILD_REUSE_REASON:-}" = current-tree ]; then
+            echo -e "${YELLOW}跳过构建（源码与可信产物一致）${NC}"
+        else
+            echo -e "${YELLOW}跳过构建 (--quick 模式)${NC}"
+        fi
     fi
 
     echo ""

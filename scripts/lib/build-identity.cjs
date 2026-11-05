@@ -119,6 +119,18 @@ function readStamp(root, pkg) {
   }
 }
 
+function artifactsReadyForCurrentTree(root, packages) {
+  const source = captureBuildState(root);
+  return (
+    FULL_COMMIT.test(source?.revision ?? '') &&
+    packages.length > 0 &&
+    packages.every(
+      (pkg) =>
+        Object.hasOwn(PRODUCTS, pkg) && productState(root, pkg) !== null && readStamp(root, pkg) === source.revision,
+    )
+  );
+}
+
 function beginBuildIdentity(root) {
   // Establish the known build namespaces before observing source directories.
   // Creating dist/.next on a fresh checkout must not look like adding source;
@@ -367,6 +379,7 @@ async function runBuildIdentity(root, packages, command, args) {
 module.exports = {
   PRODUCTS,
   INPUTS,
+  artifactsReadyForCurrentTree,
   beginBuildIdentity,
   invalidateBuildIdentity,
   finishBuildIdentity,
@@ -388,6 +401,11 @@ if (require.main === module) {
         process.exitCode = 1;
       },
     );
+  } else if (action === 'ready') {
+    if (!root || !existsSync(path.resolve(root, 'package.json'))) {
+      throw new Error('build identity requires a package root');
+    }
+    process.exitCode = artifactsReadyForCurrentTree(root, [revision, ...packages]) ? 0 : 1;
   } else if (action === 'revision') {
     process.stdout.write(JSON.parse(root).revision ?? '');
   } else if (!root || !existsSync(path.resolve(root, 'package.json'))) {

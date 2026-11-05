@@ -70,6 +70,7 @@ QUICK_MODE="$BUILD_QUICK"
 run_logged_step() {
   local pkg="\${4##*/}"
   printf '%s:%s\\n' "$pkg" "\${CAT_CAFE_WEB_BUILD_REVISION:-}" >> "$PROJECT_DIR/build-calls.log"
+  printf '%s:%s\\n' "$pkg" "\${*:5}" >> "$PROJECT_DIR/build-commands.log"
   [ "$pkg" != "$BUILD_FAIL" ] || return 17
   [ "$BUILD_NO_PRODUCT" != true ] || return 0
   if [ "$pkg" = web ]; then
@@ -132,6 +133,105 @@ test('normal successful production build publishes one exact API/Web identity an
   for (const pkg of Object.keys(artifacts)) assert.equal(readFileSync(stamp(root, pkg), 'utf8').trim(), head);
   assert.match(readFileSync(join(root, 'build-calls.log'), 'utf8'), new RegExp(`web:${head}`));
 });
+
+test('a clean matching production build is reusable and any tracked input change invalidates reuse', () => {
+  const { root } = fixture();
+  const result = build(root);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(identity.artifactsReadyForCurrentTree(root, Object.keys(artifacts)), true);
+  writeFileSync(join(root, 'packages', 'api', 'src', 'index.ts'), 'changed after build\n');
+  assert.equal(identity.artifactsReadyForCurrentTree(root, Object.keys(artifacts)), false);
+});
+
+test('production startup automatically reuses a clean matching build without requiring --quick', () => {
+  const { root } = fixture();
+  const result = build(root);
+  assert.equal(result.status, 0, result.stderr);
+  const reuse = spawnSync(
+    'bash',
+    [
+      '-c',
+      `
+source "$LAUNCHER" --source-only >/dev/null 2>&1
+trap - EXIT INT TERM
+PROJECT_DIR="$FIXTURE_ROOT"
+PROD_WEB=true
+QUICK_MODE=false
+reuse_verified_runtime_artifacts
+printf '%s:' "$QUICK_MODE"
+QUICK_MODE=false
+FORCE_BUILD=true
+reuse_verified_runtime_artifacts
+printf '%s' "$QUICK_MODE"
+`,
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        PATH: process.env.PATH,
+        HOME: root,
+        LAUNCHER: launcher,
+        FIXTURE_ROOT: root,
+      },
+    },
+  );
+  assert.equal(reuse.status, 0, reuse.stderr);
+  assert.equal(reuse.stdout, 'true:false');
+});
+
+test('the launcher builds API dependencies once before the prepared API build', () => {
+  const { root } = fixture();
+  const result = build(root);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(readFileSync(join(root, 'build-commands.log'), 'utf8').trim().split('\n'), [
+    'shared:pnpm run build',
+    'mcp-server:pnpm run build',
+    'api:pnpm run build:prepared',
+    'web:pnpm run build',
+  ]);
+});
+
+for (const [prod, quick] of [
+  [true, false],
+  [true, true],
+  [false, false],
+]) {
+  test(`cache cleanup preserves production compiler cache and invalidates incomplete builds (prod=${prod}, quick=${quick})`, () => {
+    const { root } = fixture({ versioned: false });
+    const cache = join(root, 'packages/web/.next/cache/webpack');
+    mkdirSync(cache, { recursive: true });
+    writeFileSync(join(cache, 'compiler-cache'), 'reusable cache');
+    const result = spawnSync(
+      'bash',
+      [
+        '-c',
+        `
+source "$LAUNCHER" --source-only >/dev/null 2>&1
+trap - EXIT INT TERM
+PROJECT_DIR="$FIXTURE_ROOT"
+cd "$PROJECT_DIR"
+PROD_WEB="$BUILD_PROD"
+QUICK_MODE="$BUILD_QUICK"
+clean_cache
+`,
+      ],
+      {
+        encoding: 'utf8',
+        env: {
+          PATH: process.env.PATH,
+          HOME: root,
+          LAUNCHER: launcher,
+          FIXTURE_ROOT: root,
+          BUILD_PROD: String(prod),
+          BUILD_QUICK: String(quick),
+        },
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(join(cache, 'compiler-cache')), prod);
+    assert.equal(existsSync(join(root, 'packages/web/.next/BUILD_ID')), prod && quick);
+  });
+}
 
 for (const fail of ['shared', 'mcp-server', 'api', 'web']) {
   test(`failed ${fail} build invalidates old deployment stamps, including partial output`, () => {

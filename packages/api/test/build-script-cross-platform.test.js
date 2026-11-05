@@ -34,6 +34,12 @@ test('api build keeps native copy and packaging behind the selected edition entr
     actualBuildScript = buildScript;
   }
   assert.equal(typeof actualBuildScript, 'string');
+  if (actualBuildScript.includes('pnpm run build:prepared')) {
+    const preparedBuild = packageJson.scripts?.['build:prepared'];
+    assert.equal(typeof preparedBuild, 'string');
+    assert.doesNotMatch(preparedBuild, /pnpm --dir \.\.\/(shared|mcp-server) build/);
+    actualBuildScript = actualBuildScript.replace('pnpm run build:prepared', preparedBuild);
+  }
   assert.match(actualBuildScript, /pnpm --dir \.\.\/shared build/);
   assert.doesNotMatch(actualBuildScript, /collective-service|collective-connector/);
   assert.match(actualBuildScript, /node \.\/scripts\/copy-bundled-plugin-packages\.mjs/);
