@@ -14,6 +14,7 @@
     "lint": "next lint",
     "test": "pnpm run test:unit && pnpm run test:smoke && pnpm run test:guards",
     "test:browser:f293": "node scripts/run-with-node-env-test.mjs node --test test/browser/f293-human-recovery.test.mjs",
+    "test:browser:plugin-lifecycle": "pnpm --dir ../api exec node scripts/with-test-home.mjs node --import tsx --import ./test/helpers/setup-cat-registry.js --test --test-timeout=180000 ../web/test/browser/plugin-lifecycle-1727.test.mjs",
     "test:browser:style-upgrade": "node scripts/run-with-node-env-test.mjs node --test test/browser/f322-style-upgrade.test.mjs",
     "test:unit": "node scripts/run-with-node-env-test.mjs pnpm exec vitest run && node scripts/run-with-node-env-test.mjs node --test test/next-config.test.cjs test/build-stamp.test.cjs test/ensure-browser-test-artifacts.test.cjs test/run-with-node-env-test.test.cjs test/browser-resource-admission.test.cjs test/default-test-entry.test.cjs test/sanitize-widget-types.test.mjs test/core-smoke-budget.test.cjs test/f307-workspace-open.test.mjs test/xianxian-atlas-alpha.test.mjs test/f311-workspace-browser-api.test.mjs",
     "test:smoke": "node scripts/run-with-node-env-test.mjs --core-smoke node --test --test-concurrency=1 test/browser/chat-connection-recovery.test.mjs test/browser/navigation-continuity.test.mjs test/browser/rich-html-interaction-continuity.test.mjs",

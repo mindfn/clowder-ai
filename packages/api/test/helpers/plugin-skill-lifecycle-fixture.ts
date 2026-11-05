@@ -18,6 +18,8 @@ export async function pluginSkillLifecycleFixture() {
   const pluginId = 'fixture.skill-lifecycle';
   await mkdir(join(packageRoot, 'skills/guide'), { recursive: true });
   await writeFile(join(packageRoot, 'skills/guide/SKILL.md'), '# Fixture plugin guide\n');
+  await mkdir(join(packageRoot, 'skills/helper'), { recursive: true });
+  await writeFile(join(packageRoot, 'skills/helper/SKILL.md'), '# Uncontested plugin helper\n');
   await writeFile(
     join(packageRoot, 'manifest.json'),
     JSON.stringify({
@@ -32,10 +34,17 @@ export async function pluginSkillLifecycleFixture() {
           name: 'Guide',
           resources: [],
           capabilities: [],
-          contributions: [{ type: 'skill', id: 'guide' }],
+          contributions: [
+            { type: 'skill', id: 'guide' },
+            { type: 'skill', id: 'helper' },
+          ],
         },
       ],
-      contributions: [{ type: 'skill', id: 'guide', path: 'skills/guide' }],
+      contributions: [
+        { type: 'skill', id: 'guide', path: 'skills/guide' },
+        { type: 'skill', id: 'helper', path: 'skills/helper' },
+      ],
+      configuration: [{ key: 'NOTE', label: 'Retention note', kind: 'string', required: false }],
       steps: Array.from({ length: 30 }, (_, i) => ({
         text: `验收说明 ${i + 1}：操作区应始终可到达，技能冲突不应让整个插件启动失败。`,
       })),
@@ -59,7 +68,7 @@ export async function pluginSkillLifecycleFixture() {
   const prior = { deployment: process.env.CAT_CAFE_DEPLOYMENT_ID, runtime: process.env.CAT_CAFE_RUNTIME_ROOT };
   process.env.CAT_CAFE_DEPLOYMENT_ID = 'runtime';
   process.env.CAT_CAFE_RUNTIME_ROOT = root;
-  let runtime;
+  let runtime: ReturnType<typeof createDormantPluginRuntimeComposition>;
   try {
     runtime = createDormantPluginRuntimeComposition({
       projectRoot: root,
@@ -78,7 +87,7 @@ export async function pluginSkillLifecycleFixture() {
     if (prior.runtime === undefined) delete process.env.CAT_CAFE_RUNTIME_ROOT;
     else process.env.CAT_CAFE_RUNTIME_ROOT = prior.runtime;
   }
-  const { manager } = createPluginManagerRuntimeComposition({
+  const { manager, assets } = createPluginManagerRuntimeComposition({
     runtime,
     catalogProvider: { snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 1 }) },
     catalogManifests: [],
@@ -97,6 +106,7 @@ export async function pluginSkillLifecycleFixture() {
     packageRoot,
     runtime,
     manager,
+    assets,
     install,
     close: async () => {
       await runtime.shutdown('test_complete');
