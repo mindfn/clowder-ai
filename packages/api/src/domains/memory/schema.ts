@@ -86,6 +86,12 @@ END`,
 // schema_version ledgers. They must never be reused even though main returned to V52.
 export const CURRENT_SCHEMA_VERSION = 76;
 
+function tableHasColumn(db: Database.Database, table: string, column: string): boolean {
+  return (db.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string }>).some(
+    (candidate) => candidate.name === column,
+  );
+}
+
 function memoryCueLedgerHasConsumerBinding(db: Database.Database): boolean {
   return (db.prepare('PRAGMA table_info(memory_cue_events)').all() as Array<{ name: string }>).some(
     ({ name }) => name === 'consumer_cat_id',
@@ -780,10 +786,9 @@ export function applyMigrations(db: Database.Database): void {
   }
 
   // V25: F102 bugfix — add thread_id to recall_events for RecallFeed history persistence
-  if (currentVersion < 25) {
-    try {
-      db.exec("ALTER TABLE recall_events ADD COLUMN thread_id TEXT DEFAULT ''");
-    } catch {}
+  const recallEventsHasThreadId = tableHasColumn(db, 'recall_events', 'thread_id');
+  if (currentVersion < 25 || !recallEventsHasThreadId) {
+    if (!recallEventsHasThreadId) db.exec("ALTER TABLE recall_events ADD COLUMN thread_id TEXT DEFAULT ''");
     try {
       db.exec('CREATE INDEX IF NOT EXISTS idx_recall_events_thread ON recall_events(thread_id)');
     } catch {}
@@ -801,26 +806,33 @@ export function applyMigrations(db: Database.Database): void {
         )
       `);
     } catch {}
-    db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(25, new Date().toISOString());
+    db.prepare('INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (?, ?)').run(
+      25,
+      new Date().toISOString(),
+    );
   }
 
   // V26: RecallFeed history — preserve reported hit count separately from
   // candidates_json. Thread-scope search_evidence results can report Found N
   // without anchor candidate rows, so candidates_json.length is not resultCount.
-  if (currentVersion < 26) {
-    try {
-      db.exec('ALTER TABLE recall_events ADD COLUMN result_count INTEGER');
-    } catch {}
-    db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(26, new Date().toISOString());
+  const recallEventsHasResultCount = tableHasColumn(db, 'recall_events', 'result_count');
+  if (currentVersion < 26 || !recallEventsHasResultCount) {
+    if (!recallEventsHasResultCount) db.exec('ALTER TABLE recall_events ADD COLUMN result_count INTEGER');
+    db.prepare('INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (?, ?)').run(
+      26,
+      new Date().toISOString(),
+    );
   }
 
   // V27: Recall result outcome status — producer/search side contract. Nullable
   // so pre-V27 rows stay distinguishable as legacy_unknown at read time.
-  if (currentVersion < 27) {
-    try {
-      db.exec('ALTER TABLE recall_events ADD COLUMN result_status TEXT');
-    } catch {}
-    db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(27, new Date().toISOString());
+  const recallEventsHasResultStatus = tableHasColumn(db, 'recall_events', 'result_status');
+  if (currentVersion < 27 || !recallEventsHasResultStatus) {
+    if (!recallEventsHasResultStatus) db.exec('ALTER TABLE recall_events ADD COLUMN result_status TEXT');
+    db.prepare('INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (?, ?)').run(
+      27,
+      new Date().toISOString(),
+    );
   }
 
   // V28: include keywords in evidence_fts. Rebuild the external-content FTS table
