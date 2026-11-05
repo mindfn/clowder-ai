@@ -58,6 +58,11 @@ function decodeCursor(token: string | undefined, owner: string): Cursor {
   }
 }
 
+/** Let the route re-authorize only the in-progress thread without trusting cursor contents directly. */
+export function globalWorksCursorThreadId(token: string | undefined, owner: string): string | undefined {
+  return decodeCursor(token, owner).current?.threadId;
+}
+
 const fingerprint = (message: StoredMessage) =>
   createHash('sha256')
     .update(JSON.stringify([message.id, message.timestamp, message.extra, message.contentBlocks]))
@@ -68,6 +73,8 @@ export async function readGlobalWorksPage(input: {
   userId: string;
   cursor?: string;
   threads: readonly CatalogueThread[];
+  /** False when `threads` contains only the freshly authorized cursor thread. */
+  completeThreadCatalogue?: boolean;
   messages?: IMessageStore;
   tasks?: ITaskStore;
   accepted: (threadId: string, messages: readonly StoredMessage[]) => Promise<ThreadArtifactDTO[]>;
@@ -243,6 +250,9 @@ export async function readGlobalWorksPage(input: {
     }
     state.afterThread = thread.id;
     delete state.current;
+    // A targeted continuation intentionally knows nothing about the next accessible thread.
+    // Return a boundary cursor so the next request can read the catalogue once and locate it.
+    if (input.completeThreadCatalogue === false) break;
     if (!threads.some((item) => item.id.localeCompare(thread.id) < 0)) {
       exhausted = true;
       break;
