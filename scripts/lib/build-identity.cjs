@@ -53,7 +53,23 @@ function environmentStampPath(root) {
   return path.join(path.dirname(path.resolve(root, PRODUCTS.web)), '.build-environment');
 }
 
-function webBuildEnvironment(environment = process.env) {
+function webDotenvFingerprint(root) {
+  const hash = createHash('sha256');
+  for (const name of ['.env.production.local', '.env.local', '.env.production', '.env']) {
+    const file = path.resolve(root, 'packages/web', name);
+    try {
+      const contents = readFileSync(file);
+      hash.update(JSON.stringify([name, contents.length]));
+      hash.update(contents);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      hash.update(JSON.stringify([name, null]));
+    }
+  }
+  return hash.digest('hex');
+}
+
+function webBuildEnvironment(root, environment = process.env) {
   const names = Object.keys(environment)
     .filter(
       (name) =>
@@ -68,7 +84,10 @@ function webBuildEnvironment(environment = process.env) {
         ].includes(name),
     )
     .sort();
-  return Object.fromEntries(names.map((name) => [name, String(environment[name] ?? '')]));
+  return {
+    environment: Object.fromEntries(names.map((name) => [name, String(environment[name] ?? '')])),
+    dotenvFingerprint: webDotenvFingerprint(root),
+  };
 }
 
 function readWebBuildEnvironment(root) {
@@ -161,7 +180,7 @@ function artifactsReadyForCurrentTree(root, packages, environment = process.env)
         Object.hasOwn(PRODUCTS, pkg) && productState(root, pkg) !== null && readStamp(root, pkg) === source.revision,
     ) &&
     (!packages.includes('web') ||
-      JSON.stringify(readWebBuildEnvironment(root)) === JSON.stringify(webBuildEnvironment(environment)))
+      JSON.stringify(readWebBuildEnvironment(root)) === JSON.stringify(webBuildEnvironment(root, environment)))
   );
 }
 
@@ -177,7 +196,7 @@ function beginBuildIdentity(root) {
     revision: source?.revision ?? null,
     fingerprint: source?.fingerprint ?? null,
     namespaces: source?.namespaces ?? null,
-    webBuildEnvironment: webBuildEnvironment(),
+    webBuildEnvironment: webBuildEnvironment(root),
     products: Object.fromEntries(
       Object.keys(PRODUCTS).map((pkg) => [
         pkg,
