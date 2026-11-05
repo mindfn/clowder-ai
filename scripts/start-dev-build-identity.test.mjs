@@ -35,7 +35,10 @@ function git(root, ...args) {
 function fixture({ versioned = true } = {}) {
   // Retained isolated source/build fixtures contain no persistent user data.
   const root = mkdtempSync(join(tmpdir(), 'f117-build-identity-'));
-  writeFileSync(join(root, '.gitignore'), '**/dist/\n**/.next/\n*.tsbuildinfo\n*.log\npackages/web/public/sw.js\n');
+  writeFileSync(
+    join(root, '.gitignore'),
+    '**/dist/\n**/.next/\n**/.env*.local\n*.tsbuildinfo\n*.log\npackages/web/public/sw.js\n',
+  );
   writeFileSync(join(root, 'package.json'), '{}\n');
   writeFileSync(join(root, 'tsconfig.base.json'), '{}\n');
   mkdirSync(join(root, 'packages', 'collective-service', 'src'), { recursive: true });
@@ -167,6 +170,20 @@ test('production reuse is bound to the public Web build environment at the same 
     }),
     false,
   );
+  assert.equal(identity.artifactsReadyForCurrentTree(root, Object.keys(artifacts), {}), false);
+});
+
+test('production reuse rejects a changed Next dotenv input even while Git remains clean', () => {
+  const { root } = fixture();
+  const dotenv = join(root, 'packages', 'web', '.env.production.local');
+  writeFileSync(dotenv, 'NEXT_PUBLIC_COLLECTIVE_SERVICE_URL=https://first.example.invalid\n');
+  const result = build(root);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(identity.artifactsReadyForCurrentTree(root, Object.keys(artifacts), {}), true);
+  assert.equal(git(root, 'status', '--porcelain'), '');
+
+  writeFileSync(dotenv, 'NEXT_PUBLIC_COLLECTIVE_SERVICE_URL=https://second.example.invalid\n');
+  assert.equal(git(root, 'status', '--porcelain'), '');
   assert.equal(identity.artifactsReadyForCurrentTree(root, Object.keys(artifacts), {}), false);
 });
 
