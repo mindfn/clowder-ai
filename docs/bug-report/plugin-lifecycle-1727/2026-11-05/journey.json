@@ -1,0 +1,216 @@
+{
+  "requests": [
+    "GET /api/session",
+    "GET /api/plugin-manager/plugins/_local",
+    "GET /api/plugin-manager/plugins/_local/fixture.skill-lifecycle",
+    "GET /api/plugin-manager/plugins/fixture.skill-lifecycle/documentation",
+    "GET /api/plugin-manager/plugins",
+    "POST /api/plugin-manager/marketplaces/refresh",
+    "GET /api/agent-providers",
+    "GET /api/plugin-manager/plugins",
+    "GET /api/plugin-manager/plugins/_local/fixture.skill-lifecycle",
+    "POST /api/plugin-manager/plugins/fixture.skill-lifecycle/set-enabled",
+    "GET /api/agent-providers",
+    "GET /api/plugin-manager/plugins/_local",
+    "GET /api/plugin-manager/plugins/_local/fixture.skill-lifecycle",
+    "GET /api/plugin-manager/plugins/fixture.skill-lifecycle/documentation",
+    "GET /api/agent-providers",
+    "GET /api/plugin-manager/plugins/fixture.skill-lifecycle/contributions/tools",
+    "GET /api/plugin-manager/plugins",
+    "GET /api/plugin-manager/plugins/_local/fixture.skill-lifecycle",
+    "GET /api/plugin-manager/plugins/fixture.skill-lifecycle/documentation",
+    "GET /api/plugin-manager/plugins/fixture.skill-lifecycle/contributions/tools",
+    "POST /api/plugin-manager/plugins/fixture.skill-lifecycle/skills/resolve",
+    "GET /api/plugin-manager/plugins/_local/fixture.skill-lifecycle",
+    "GET /api/plugin-manager/plugins/fixture.skill-lifecycle/documentation",
+    "GET /api/plugin-manager/plugins/fixture.skill-lifecycle/contributions/tools",
+    "POST /api/plugin-manager/plugins/fixture.skill-lifecycle/restart",
+    "GET /api/plugin-manager/plugins/_local",
+    "GET /api/plugin-manager/plugins/_local/fixture.skill-lifecycle",
+    "GET /api/plugin-manager/plugins/fixture.skill-lifecycle/documentation",
+    "GET /api/plugin-manager/plugins/fixture.skill-lifecycle/contributions/tools",
+    "GET /api/plugin-manager/plugins",
+    "GET /api/plugin-manager/plugins/_local/fixture.skill-lifecycle",
+    "GET /api/plugin-manager/plugins/fixture.skill-lifecycle/documentation",
+    "GET /api/plugin-manager/plugins/fixture.skill-lifecycle/contributions/tools",
+    "POST /api/plugin-manager/plugins/fixture.skill-lifecycle/uninstall",
+    "GET /api/plugin-manager/plugins/_local",
+    "GET /api/plugin-manager/plugins",
+    "POST /api/plugin-manager/plugins/install",
+    "GET /api/session",
+    "GET /api/plugin-manager/plugins/_local",
+    "GET /api/plugin-manager/plugins/_local/fixture.skill-lifecycle",
+    "GET /api/plugin-manager/plugins/fixture.skill-lifecycle/documentation",
+    "GET /api/plugin-manager/plugins",
+    "POST /api/plugin-manager/marketplaces/refresh",
+    "GET /api/agent-providers",
+    "GET /api/plugin-manager/plugins",
+    "GET /api/plugin-manager/plugins/_local/fixture.skill-lifecycle",
+    "POST /api/plugin-manager/plugins/fixture.skill-lifecycle/set-enabled",
+    "GET /api/agent-providers",
+    "GET /api/plugin-manager/plugins/_local",
+    "GET /api/plugin-manager/plugins/_local/fixture.skill-lifecycle",
+    "GET /api/plugin-manager/plugins/fixture.skill-lifecycle/documentation",
+    "GET /api/agent-providers",
+    "GET /api/plugin-manager/plugins/fixture.skill-lifecycle/contributions/tools",
+    "GET /api/plugin-manager/plugins",
+    "GET /api/plugin-manager/plugins/_local/fixture.skill-lifecycle",
+    "GET /api/plugin-manager/plugins/fixture.skill-lifecycle/documentation",
+    "GET /api/plugin-manager/plugins/fixture.skill-lifecycle/contributions/tools"
+  ],
+  "audits": [
+    {
+      "type": "config_updated",
+      "data": {
+        "target": "plugin-manager",
+        "stage": "requested",
+        "operator": "owner-user",
+        "operation": "set-enabled",
+        "pluginId": "fixture.skill-lifecycle",
+        "expectedRevision": 3
+      }
+    },
+    {
+      "type": "config_updated",
+      "data": {
+        "target": "plugin-manager",
+        "stage": "requested",
+        "operator": "owner-user",
+        "operation": "resolve-skill-conflict",
+        "pluginId": "fixture.skill-lifecycle",
+        "expectedRevision": 5
+      }
+    },
+    {
+      "type": "config_updated",
+      "data": {
+        "target": "plugin-manager",
+        "stage": "requested",
+        "operator": "owner-user",
+        "operation": "restart",
+        "pluginId": "fixture.skill-lifecycle",
+        "expectedRevision": 5
+      }
+    },
+    {
+      "type": "config_updated",
+      "data": {
+        "target": "plugin-manager",
+        "stage": "requested",
+        "operator": "owner-user",
+        "operation": "uninstall",
+        "pluginId": "fixture.skill-lifecycle",
+        "expectedRevision": 8
+      }
+    },
+    {
+      "type": "config_updated",
+      "data": {
+        "target": "plugin-manager",
+        "stage": "requested",
+        "operator": "owner-user",
+        "operation": "install",
+        "sourceKind": "local-directory"
+      }
+    },
+    {
+      "type": "config_updated",
+      "data": {
+        "target": "plugin-manager",
+        "stage": "requested",
+        "operator": "owner-user",
+        "operation": "set-enabled",
+        "pluginId": "fixture.skill-lifecycle",
+        "expectedRevision": 2
+      }
+    }
+  ],
+  "errors": [],
+  "failures": [],
+  "final": {
+    "pluginId": "fixture.skill-lifecycle",
+    "pluginInstanceId": "pi_882ad89d-4791-4b1e-8094-bafff9dc44c0",
+    "displayName": "插件生命周期验收",
+    "description": "隔离数据上的真实插件管理流程：旧技能迁移、冲突处理、重启和卸载重装。",
+    "source": {
+      "kind": "local-directory",
+      "packageName": null,
+      "trust": "unverified"
+    },
+    "availableVersion": "1.0.0",
+    "installedVersion": "1.0.0",
+    "packageDigest": "sha512-CTngAkFLtKAn2lEHRW7qzo8J0L1vmA/zqHC8XQ/anQIQ7rN+kbja3hh5QxVrQKYYAYwniJdr0yTocQw2WuISzg==",
+    "artifact": "installed",
+    "config": "ready",
+    "auth": "not-required",
+    "intent": "enabled",
+    "live": "running",
+    "lifecycleRevision": 4,
+    "capabilitySummary": [],
+    "actions": {
+      "install": false,
+      "setEnabled": true,
+      "uninstall": true,
+      "blockingReasons": [],
+      "restart": true
+    },
+    "capabilities": [],
+    "contributions": [
+      {
+        "id": "guide",
+        "kind": "skill",
+        "name": "guide"
+      },
+      {
+        "id": "helper",
+        "kind": "skill",
+        "name": "helper"
+      }
+    ],
+    "steps": [
+      "验收说明 1：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 2：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 3：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 4：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 5：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 6：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 7：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 8：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 9：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 10：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 11：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 12：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 13：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 14：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 15：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 16：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 17：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 18：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 19：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 20：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 21：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 22：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 23：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 24：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 25：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 26：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 27：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 28：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 29：操作区应始终可到达，技能冲突不应让整个插件启动失败。",
+      "验收说明 30：操作区应始终可到达，技能冲突不应让整个插件启动失败。"
+    ],
+    "testable": false,
+    "configFields": [
+      {
+        "key": "NOTE",
+        "label": "Retention note",
+        "kind": "string",
+        "required": false,
+        "currentValue": "owner configuration must survive",
+        "sensitive": false
+      }
+    ],
+    "skillConflicts": []
+  },
+  "retention": "configuration bytes, fixture file data, user skill backup, second skill mount"
+}
