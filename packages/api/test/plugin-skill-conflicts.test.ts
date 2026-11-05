@@ -11,6 +11,7 @@ import {
   removeDeclaredStaticResources,
 } from '../src/domains/plugin/declared/declared-static-resources.js';
 import { PluginSkillResources } from '../src/domains/plugin/declared/plugin-skill-resources.js';
+import { snapshotInventoryFixture } from './helpers/snapshot-inventory-fixture.js';
 
 async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
   const root = await mkdtemp(join(tmpdir(), 'plugin-skill-conflicts-'));
@@ -165,7 +166,7 @@ test('the real carrier keeps unrelated runtime work alive when all skill clients
       grants: [],
     }),
   };
-  const router = new PluginRuntimeCarrierRouter(inventory as never, f.host as never);
+  const router = new PluginRuntimeCarrierRouter(snapshotInventoryFixture(inventory) as never, f.host as never);
   router.register({
     claims: () => true,
     start: async () => {
