@@ -1420,6 +1420,8 @@ export class IndexBuilder implements IIndexBuilder {
    * Resolve the only crash window in the cross-store protocol. A prepared row
    * is retained iff canonical MessageStore truth is recalled; otherwise it is
    * released and the normal thread rebuild restores the searchable passage.
+   * Committed rows are durable recall guards, not unfinished work: keep them
+   * without re-reading messages or re-invalidating their thread projections.
    */
   async reconcileMessageRecallSuppressions(
     isRecalled: (threadId: string, messageId: string) => boolean | Promise<boolean>,
@@ -1429,6 +1431,7 @@ export class IndexBuilder implements IIndexBuilder {
       .prepare(
         `SELECT doc_anchor AS docAnchor, passage_id AS passageId, lease_id AS leaseId
          FROM message_recall_index_suppressions
+         WHERE state = 'prepared'
          GROUP BY doc_anchor, passage_id`,
       )
       .all() as Array<{ docAnchor: string; passageId: string; leaseId: string }>;

@@ -197,3 +197,41 @@ describe('F264 Gap F recalled-body evidence purge', () => {
     );
   });
 });
+
+describe('F264 startup suppression recovery', () => {
+  for (const recalled of [true, false]) {
+    it(`resolves prepared leases without replaying committed history (recalled=${recalled})`, async (t) => {
+      const store = new SqliteEvidenceStore(':memory:');
+      await store.initialize();
+      t.after(() => store.close());
+      const db = store.getDb();
+      const insert = db.prepare(
+        `INSERT INTO message_recall_index_suppressions
+         (doc_anchor, passage_id, lease_id, state, prepared_at, committed_at)
+         VALUES (?, ?, ?, ?, '2026-11-01T00:00:00Z', ?)`,
+      );
+      for (let i = 0; i < 68; i++) {
+        insert.run('thread-history', `msg-history-${i}`, `lease-${i}`, 'committed', '2026-11-01T00:00:01Z');
+      }
+      const committedRows = db.prepare(
+        `SELECT * FROM message_recall_index_suppressions
+         WHERE doc_anchor = 'thread-history' ORDER BY passage_id, lease_id`,
+      );
+      const committedBefore = committedRows.all();
+      insert.run('thread-interrupted', 'msg-interrupted', 'lease-interrupted', 'prepared', null);
+      const builder = new IndexBuilder(store, process.cwd());
+      const reads = [];
+      const recover = () =>
+        builder.reconcileMessageRecallSuppressions((threadId, messageId) => {
+          reads.push([threadId, messageId]);
+          return recalled;
+        });
+
+      assert.deepEqual(await recover(), { retained: recalled ? 1 : 0, released: recalled ? 0 : 1 });
+      assert.deepEqual(reads, [['interrupted', 'interrupted']], 'only unfinished cross-store work needs a source read');
+      assert.deepEqual(committedRows.all(), committedBefore, 'committed recall guards must survive recovery unchanged');
+      assert.deepEqual(await recover(), { retained: 0, released: 0 });
+      assert.equal(reads.length, 1, 'the next boot must not replay a completed recovery');
+    });
+  }
+});
