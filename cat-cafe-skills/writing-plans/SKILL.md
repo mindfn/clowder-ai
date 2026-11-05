@@ -1,6 +1,6 @@
 ---
 name: writing-plans
-tips_exempt: "Renewed 2026-10-30: accepted planning guidance now states resource, waiting and false-block costs against the real loss a safeguard prevents; this remains internal planning guidance with no new end-user entry or action."
+tips_exempt: "Renewed 2026-11-04: the fork-retained truth-source model gate and accepted cost guidance remain internal planning rules with no new end-user entry or action."
 description: >
   把已接受的愿景与需求转成接手者可实施、可验收的计划。
   Use when: 跨组件、状态对象、依赖或实施顺序需要先理清，且没有足够的现成计划。
