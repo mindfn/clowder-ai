@@ -56,7 +56,10 @@ function fixture({ versioned = true } = {}) {
   return { root, head: git(root, 'rev-parse', 'HEAD') };
 }
 
-function build(root, { prod = true, fail = '', mutation = '', quick = false, noProduct = false } = {}) {
+function build(
+  root,
+  { prod = true, fail = '', mutation = '', quick = false, noProduct = false, environment = {} } = {},
+) {
   const result = spawnSync(
     'bash',
     [
@@ -120,6 +123,7 @@ if [ "$QUICK_MODE" = false ]; then build_packages; fi
         BUILD_MUTATION: mutation,
         BUILD_QUICK: String(quick),
         BUILD_NO_PRODUCT: String(noProduct),
+        ...environment,
       },
     },
   );
@@ -138,9 +142,32 @@ test('a clean matching production build is reusable and any tracked input change
   const { root } = fixture();
   const result = build(root);
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(identity.artifactsReadyForCurrentTree(root, Object.keys(artifacts)), true);
+  assert.equal(identity.artifactsReadyForCurrentTree(root, Object.keys(artifacts), {}), true);
   writeFileSync(join(root, 'packages', 'api', 'src', 'index.ts'), 'changed after build\n');
-  assert.equal(identity.artifactsReadyForCurrentTree(root, Object.keys(artifacts)), false);
+  assert.equal(identity.artifactsReadyForCurrentTree(root, Object.keys(artifacts), {}), false);
+});
+
+test('production reuse is bound to the public Web build environment at the same source revision', () => {
+  const { root } = fixture();
+  const firstEnvironment = { API_SERVER_PORT: '4004', NEXT_PUBLIC_BRAND_NAME: 'Clowder' };
+  const result = build(root, { environment: firstEnvironment });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(identity.artifactsReadyForCurrentTree(root, Object.keys(artifacts), firstEnvironment), true);
+  assert.equal(
+    identity.artifactsReadyForCurrentTree(root, Object.keys(artifacts), {
+      ...firstEnvironment,
+      API_SERVER_PORT: '4404',
+    }),
+    false,
+  );
+  assert.equal(
+    identity.artifactsReadyForCurrentTree(root, Object.keys(artifacts), {
+      ...firstEnvironment,
+      NEXT_PUBLIC_API_URL: 'https://example.invalid',
+    }),
+    false,
+  );
+  assert.equal(identity.artifactsReadyForCurrentTree(root, Object.keys(artifacts), {}), false);
 });
 
 test('production startup automatically reuses a clean matching build without requiring --quick', () => {

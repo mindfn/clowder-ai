@@ -49,8 +49,40 @@ function stampPath(root, pkg) {
   return path.join(path.dirname(path.resolve(root, PRODUCTS[pkg])), '.build-commit');
 }
 
+function environmentStampPath(root) {
+  return path.join(path.dirname(path.resolve(root, PRODUCTS.web)), '.build-environment');
+}
+
+function webBuildEnvironment(environment = process.env) {
+  const names = Object.keys(environment)
+    .filter(
+      (name) =>
+        name.startsWith('NEXT_PUBLIC_') ||
+        [
+          'API_SERVER_PORT',
+          'FRONTEND_PORT',
+          'CAT_CAFE_DEPLOYMENT_REVISION_REQUIRED',
+          'CAT_CAFE_DESKTOP_WEB_BUILD',
+          'CAT_CAFE_WEB_TEST_DIST_DIR',
+          'CAT_CAFE_WEB_TEST_TSCONFIG',
+        ].includes(name),
+    )
+    .sort();
+  return Object.fromEntries(names.map((name) => [name, String(environment[name] ?? '')]));
+}
+
+function readWebBuildEnvironment(root) {
+  try {
+    const value = JSON.parse(readFileSync(environmentStampPath(root), 'utf8'));
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 function invalidateBuildIdentity(root) {
   for (const pkg of Object.keys(PRODUCTS)) rmSync(stampPath(root, pkg), { force: true });
+  rmSync(environmentStampPath(root), { force: true });
 }
 
 function captureBuildState(root) {
@@ -119,7 +151,7 @@ function readStamp(root, pkg) {
   }
 }
 
-function artifactsReadyForCurrentTree(root, packages) {
+function artifactsReadyForCurrentTree(root, packages, environment = process.env) {
   const source = captureBuildState(root);
   return (
     FULL_COMMIT.test(source?.revision ?? '') &&
@@ -127,7 +159,9 @@ function artifactsReadyForCurrentTree(root, packages) {
     packages.every(
       (pkg) =>
         Object.hasOwn(PRODUCTS, pkg) && productState(root, pkg) !== null && readStamp(root, pkg) === source.revision,
-    )
+    ) &&
+    (!packages.includes('web') ||
+      JSON.stringify(readWebBuildEnvironment(root)) === JSON.stringify(webBuildEnvironment(environment)))
   );
 }
 
@@ -143,6 +177,7 @@ function beginBuildIdentity(root) {
     revision: source?.revision ?? null,
     fingerprint: source?.fingerprint ?? null,
     namespaces: source?.namespaces ?? null,
+    webBuildEnvironment: webBuildEnvironment(),
     products: Object.fromEntries(
       Object.keys(PRODUCTS).map((pkg) => [
         pkg,
@@ -189,6 +224,16 @@ function finishBuildIdentity(root, context, packages) {
       const temp = `${stamp}.${process.pid}.tmp`;
       try {
         writeFileSync(temp, `${capturedRevision}\n`, { flag: 'wx' });
+        renameSync(temp, stamp);
+      } finally {
+        rmSync(temp, { force: true });
+      }
+    }
+    if (packages.includes('web')) {
+      const stamp = environmentStampPath(root);
+      const temp = `${stamp}.${process.pid}.tmp`;
+      try {
+        writeFileSync(temp, `${JSON.stringify(context.webBuildEnvironment)}\n`, { flag: 'wx' });
         renameSync(temp, stamp);
       } finally {
         rmSync(temp, { force: true });
@@ -384,7 +429,9 @@ module.exports = {
   invalidateBuildIdentity,
   finishBuildIdentity,
   runBuildIdentity,
+  environmentStampPath,
   stampPath,
+  webBuildEnvironment,
 };
 
 if (require.main === module) {
