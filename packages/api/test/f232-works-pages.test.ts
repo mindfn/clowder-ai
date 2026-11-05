@@ -133,7 +133,7 @@ test('global Works yields a bounded page before scanning long history, then resu
     messageStore.append({
       userId: owner,
       from: { kind: 'agent', catId: createCatId('codex61-sol') },
-      threadId: 'T',
+      threadId: i < 350 ? 'T2' : 'T1',
       timestamp: i + 1,
       content: '',
       mentions: [],
@@ -145,11 +145,28 @@ test('global Works yields a bounded page before scanning long history, then resu
   const readPage = messageStore.getByThreadBeforeBounded.bind(messageStore);
   let rawReads = 0;
   let custodyEvents = 0;
+  let fullCatalogueReads = 0;
+  let candidateReads = 0;
   const tasks = new TaskStore();
   tasks.listByThreadPage = () => ({ tasks: [], scannedCount: 0 });
   tasks.listByThread = () => assert.fail('unbounded task read');
   await app.register(threadsRoutes, {
-    threadStore: { list: async () => [{ id: 'T', title: 'Long history', createdBy: owner }] },
+    threadStore: {
+      list: async () => {
+        fullCatalogueReads += 1;
+        return [
+          { id: 'T2', title: 'Newer long history', createdBy: owner },
+          { id: 'T1', title: 'Older long history', createdBy: owner },
+        ];
+      },
+      listCandidates: async (_userId: string, threadIds: readonly string[]) => {
+        candidateReads += 1;
+        assert.equal(threadIds.length, 1);
+        const id = threadIds[0];
+        assert.ok(id === 'T1' || id === 'T2');
+        return [{ id, title: `${id} long history`, createdBy: owner }];
+      },
+    },
     messageStore: Object.assign(messageStore, {
       getByThread: () => assert.fail('paged Works must not start an unbounded visible-message refill'),
       getByThreadBeforeBounded: (...args: Parameters<MessageStore['getByThreadBeforeBounded']>) => {
@@ -193,6 +210,8 @@ test('global Works yields a bounded page before scanning long history, then resu
     } while (cursor);
     assert.equal(complete, true);
     assert.equal(seen.size, 700);
+    assert.equal(fullCatalogueReads, 3, 'continuation pages must not hydrate the complete thread catalogue');
+    assert.ok(candidateReads > 0, 'continuation pages must freshly re-authorize the current thread');
     assert.equal(custodyEvents, 0, 'catalogue reads must not emit custody events');
   } finally {
     await app.close();

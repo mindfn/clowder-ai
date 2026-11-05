@@ -18,7 +18,11 @@ import type { InvocationQueue } from '../domains/cats/services/agents/invocation
 import type { InvocationTracker } from '../domains/cats/services/agents/invocation/InvocationTracker.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import type { TaskProgressStore } from '../domains/cats/services/agents/invocation/TaskProgressStore.js';
-import { readGlobalWorksPage, WorksPageError } from '../domains/cats/services/agents/routing/global-works-page.js';
+import {
+  globalWorksCursorThreadId,
+  readGlobalWorksPage,
+  WorksPageError,
+} from '../domains/cats/services/agents/routing/global-works-page.js';
 import {
   type PrTitleReader,
   readArtifactPrTitles,
@@ -1830,10 +1834,15 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
         if (!query.success) return reply.code(400).send({ error: 'Invalid paged works query' });
         const started = performance.now();
         try {
+          const cursorThreadId = globalWorksCursorThreadId(query.data.cursor, userId);
+          const targetedContinuation = cursorThreadId !== undefined && threadStore.listCandidates !== undefined;
           const page = await readGlobalWorksPage({
             userId,
             cursor: query.data.cursor,
-            threads: await threadStore.list(userId),
+            threads: targetedContinuation
+              ? await threadStore.listCandidates!(userId, [cursorThreadId])
+              : await threadStore.list(userId),
+            completeThreadCatalogue: !targetedContinuation,
             messages: messageStore,
             tasks: taskStore,
             accepted: async (threadId, messages) => {
