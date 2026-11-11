@@ -1,6 +1,6 @@
 ---
 name: writing-plans
-tips_exempt: "Renewed 2026-10-30: accepted planning guidance now states resource, waiting and false-block costs against the real loss a safeguard prevents; this remains internal planning guidance with no new end-user entry or action."
+tips_exempt: "Renewed 2026-11-10: the rebased fork overlay keeps truth-source ownership and resource/waiting-cost guidance inside the existing planning workflow; it adds no end-user entry or action."
 description: >
   把已接受的愿景与需求转成接手者可实施、可验收的计划。
   Use when: 跨组件、状态对象、依赖或实施顺序需要先理清，且没有足够的现成计划。
@@ -28,6 +28,14 @@ triggers:
 - 计划需要跨 session/跨猫消费时，保存在可追溯载体并持久化。通常使用 `feature-specs/YYYY-MM-DD-<topic>.md`；Git 载体按当前工作现场与仓库风险规则选择，不为写计划专门切回 main。
 
 模板与例子是可选参考。可以照用、改造或换成更清楚的表达；不要求按固定分钟粒度拆动作，不要求预写完整实现，也不按模型资格决定谁可以不用模板。路径已经明确或已有详细计划时直接继续执行。
+
+## Truth-Source Model（只补本次缺失的 delta）
+
+涉及跨层状态同步或级联更新时，核对本次变化触及的真相源、写入方、消费方、派生关系、级联规则和不变量。已有契约与验证证据直接引用，不重画完整系统；只把会影响实现或验收、而现有真相源没有讲清的 delta 补出来。
+
+表达形式按问题选择：短段落、数据流图、矩阵、不变量列表或现有测试引用都可以。表格不是准入条件，也不按文件数、行数或是否涉及 config/state/filesystem 机械触发。若一个未知会改变方案，就先用代码、真实入口或小实验查清；若现有精准测试已经覆盖受影响路径，直接复用，只有缺口才新增 regression guard。
+
+> **根因（2026-06-05 反思）**：布偶猫 F719 Skill Lifecycle Management 曾在未厘清写入、派生与消费关系时边做边理解，得到“长得像但数据流不通”的实现。要保留的是先找真相源与断点的判断，不是把三张固定表变成新的流程门槛。
 
 ## Stateful Object Gate：状态契约必须清楚
 
