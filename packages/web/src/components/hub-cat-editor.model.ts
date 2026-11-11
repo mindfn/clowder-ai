@@ -92,6 +92,7 @@ export interface HubCatEditorDraft {
 }
 
 export interface StrategyFormState {
+  overrideRevision?: string;
   strategy: StrategyType;
   /** Policy for which executionStatus was returned by the last server read. */
   statusStrategy: StrategyType;
@@ -451,6 +452,7 @@ export function initialState(cat?: CatData | null, draft?: HubCatEditorDraft | n
 
 export function toStrategyForm(entry: CatStrategyEntry): StrategyFormState {
   return {
+    overrideRevision: entry.overrideRevision,
     strategy: entry.effective.strategy,
     statusStrategy: entry.effective.strategy,
     warnThreshold: String(entry.effective.thresholds.warn),

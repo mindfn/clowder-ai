@@ -7,7 +7,6 @@ import {
 import { createModuleLogger } from '../../../infrastructure/logger.js';
 import type { ToolExecutionPolicy } from '../../cats/services/types.js';
 import { activateDeclaredMcp } from '../declared/declared-mcp-resources.js';
-import { DeclaredPluginUi } from '../declared/declared-plugin-ui.js';
 import {
   type DeclaredPluginTool,
   type DeclaredPluginWebhook,
@@ -92,7 +91,6 @@ export interface PluginRuntimeCarrier {
 }
 
 export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
-  readonly ui = new DeclaredPluginUi();
   readonly nativeActions: NativePluginActions;
   readonly #nativeMcpLaunches: NativeMcpLaunches;
   readonly #carriers: PluginRuntimeCarrier[] = [];
@@ -171,7 +169,6 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
       await admitContributions();
       // stop/stopAll invalidate this admission even after carrier readiness.
       if (this.nativeActions.generation(pluginInstanceId) === generation) {
-        this.ui.activate(admission);
         this.afterStart?.(pluginInstanceId);
       }
       return result;
@@ -185,7 +182,6 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   }
 
   async stop(pluginInstanceId: string, reason = 'host_stop'): Promise<void> {
-    this.ui.deactivate(pluginInstanceId);
     this.#nativeMcpLaunches.deactivate(pluginInstanceId);
     this.nativeActions.deactivate(pluginInstanceId);
     const authority = await this.inventory.readAuthority(pluginInstanceId);
@@ -239,7 +235,6 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   }
 
   async stopAll(reason = 'host_shutdown'): Promise<void> {
-    this.ui.deactivateAll();
     this.#nativeMcpLaunches.deactivateAll();
     this.nativeActions.deactivateAll();
     if (this.beforeStop) {
