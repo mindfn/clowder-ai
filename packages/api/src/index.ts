@@ -5726,6 +5726,7 @@ async function main(): Promise<void> {
       await companionDesktopComponent.prepare();
     },
     catalogManifests: OFFICIAL_BUNDLED_MANIFESTS,
+    threads: threadStore,
   });
   router.addressedPlugins = pluginManagerRuntime.addressedTargets;
   const { AddressedPluginQueueDelivery } = await import(
