@@ -958,7 +958,6 @@ function ChatBinding({
           body: JSON.stringify({ fromMessageId: args.mid, editedContent: args.text, userId: getUserId() }),
         });
         await refreshSidebarThreadSnapshot();
-        await flushComposerDraft(threadId);
         pushThreadRouteWithHistory(result.threadId, window);
         return;
       }
@@ -990,7 +989,6 @@ function ChatBinding({
         return;
       }
       case 'thread':
-        await flushComposerDraft(threadId);
         ui.current.target = '';
         ui.current.reply = null;
         ui.current.pop = null;
@@ -1159,7 +1157,6 @@ function ChatBinding({
         return;
       case 'runtimeReload':
         if (connection.updateRequired) {
-          await flushComposerDraft(threadId);
           window.location.reload();
         }
         return;
@@ -1597,7 +1594,6 @@ function ChatBinding({
         return;
       case 'jump': {
         if (args.thread && args.thread !== threadId) {
-          await flushComposerDraft(threadId);
           pendingJump.current = { threadId: args.thread, mid: args.mid };
           pushThreadRouteWithHistory(args.thread, window);
           return;
