@@ -45,7 +45,7 @@ async function readRecallContinuation(
   if (!isRecallContinuation(body, previous, cursor)) throw new Error('Invalid recall continuation');
   return body;
 }
-export function useMemoryRecall(days: number, source: string, catId: string) {
+export function useMemoryRecall(days: number, source: string, catId: string, needed: boolean | number = true) {
   const path = `/api/memory/recall?days=${days}&source=${source}${catId ? `&catId=${encodeURIComponent(catId)}` : ''}`;
   const [attempt, setAttempt] = useState(0);
   const generation = `${path}:${attempt}`;
@@ -69,6 +69,7 @@ export function useMemoryRecall(days: number, source: string, catId: string) {
   const inFlight = useRef(false);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
   useEffect(() => {
+    if (!needed) return;
     const current = { controller: new AbortController() };
     run.current = current;
     inFlight.current = false;
@@ -90,7 +91,7 @@ export function useMemoryRecall(days: number, source: string, catId: string) {
       active = false;
       current.controller.abort();
     };
-  }, [path, days, generation]);
+  }, [path, days, generation, needed]);
   const loadMore = async () => {
     const current = run.current;
     const previousPage = visible.data;
