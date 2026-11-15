@@ -579,6 +579,9 @@ function recallModel() {
   const groups = recallGroups(events, data);
   const selected = ui.recallFor;
   return {
+    raw: Object.assign({}, page, { events: events, next: page?.nextCursor ?? null }),
+    threadId: data.threadId,
+    sourceFilter: ui.recallSource,
     load: read.threadId !== data.threadId ? 'loading' : read.load || (page?.readStatus === 'partial' ? 'stale' : ''),
     replyCount: selected
       ? Number(groups.some((group) => group.key === selected))

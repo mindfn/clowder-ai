@@ -2839,6 +2839,7 @@
       cafeMemory: {
         navHidden: !!CS.navHidden,
         q: m.q,
+        hubTab: m.hubTab,
         people: pages.person,
         profiles: { ...pages.profile, selected: d?.family === 'profile' ? d.id : null },
         events: pages.event,
@@ -3163,6 +3164,7 @@
       };
     }
     if (ui.view === 'status') {
+      if (projectionNeeded) projectionNeeded.add('envConfig');
       const stats = index.data?.healthy ? parseIndexStatus(index.data) : null,
         report = healthReport.data,
         health = maintenance.data?.health ?? maintenance.data,
@@ -3208,6 +3210,7 @@
         vectors: stats?.vectorsCount,
         evidence: index.data,
         maintenance: health,
+        environment: projectData('settings') ? projectData('settings').env : null,
         distribution: collections
           .filter((c) => c.status !== 'archived')
           .map((c) => ({ type: c.kind, pct: total ? ((c.docCount ?? 0) / total) * 100 : 0 })),

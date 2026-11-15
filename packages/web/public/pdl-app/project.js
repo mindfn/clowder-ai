@@ -1909,6 +1909,7 @@ function bindProject() {
       vm: {
         type: f.draft.kind,
         vis: f.draft.sensitivity,
+        draft: { name: f.draft.name, displayName: f.draft.displayName, root: f.draft.root },
         scan: f.scan,
         created: !!f.created,
         indexStatus: f.created ? f.created.status : '',

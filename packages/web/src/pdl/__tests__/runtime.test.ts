@@ -493,6 +493,40 @@ async function boot(
 }
 
 describe('unmodified runtime and project chat bindings', () => {
+  it('provides the v2 memory environment from the existing projected settings owner', async () => {
+    const { dom, w, port, errors } = await boot();
+    try {
+      w.eval("CS.m.hubTab='feed';CS.m.view='status';go('memory');render(true)");
+      await w.__settled();
+      expect(port.get).toHaveBeenCalledWith('/api/config/env-summary');
+      expect(w.eval('VM.cafeMemory().status.environment.variables')).toEqual(environmentSummaryFixture().variables);
+      expect(w.eval('VM.cafeMemory().hubTab')).toBe('feed');
+      const count = port.get.mock.calls.length;
+      for (let i = 0; i < 5; i++) w.eval('VM.cafeMemory()');
+      expect(port.get).toHaveBeenCalledTimes(count);
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      dom.window.close();
+    }
+  });
+
+  it('forwards composer default-recipient picks and system reset to the host', async () => {
+    const { dom, w, action, errors } = await boot();
+    try {
+      w.eval("A.pick({path:'cs.prefer',id:'codex'})");
+      await w.__settled();
+      expect(action).toHaveBeenLastCalledWith('preferredCats', { id: 'codex' }, undefined);
+      expect(w.eval('CS.prefer')).toEqual([]);
+      w.eval("A.pick({path:'cs.prefer',none:true})");
+      await w.__settled();
+      expect(action).toHaveBeenLastCalledWith('preferredCats', { none: '1' }, undefined);
+      expect(w.eval('CS.prefer')).toEqual([]);
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      dom.window.close();
+    }
+  });
+
   it('applies a restored draft through the local input path and projects the store draft flag', async () => {
     const { dom, w, data, ui, push } = await boot();
     try {
@@ -1314,6 +1348,15 @@ describe('unmodified runtime and project chat bindings', () => {
       buildModels.mockClear();
       const vm = w.eval('VM.queueTargets()');
       expect(vm).toMatchObject({ pool: ['codex', 'new'], selected: ['codex'], dispatched: [{ id: 'done' }] });
+      expect(vm.state).toEqual({
+        threadId: 'pdl-test',
+        entryId: 'queue-1',
+        selected: ['codex'],
+        strategies: {},
+        error: '',
+        ...value,
+      });
+      expect(vm.cats).toEqual(w.eval('projectChatData().cats'));
       expect(buildModels).not.toHaveBeenCalled();
       w.eval("CS.queueTargets.selected=['new'];CS.queueTargets.strategies.new='interrupt_reply'");
       const action = vi.fn(async () => true);
@@ -1329,6 +1372,13 @@ describe('unmodified runtime and project chat bindings', () => {
         }),
       });
       expect(w.eval('S.dialog')).toBeNull();
+      w.clowderChat.pushProject({
+        chatOwners: {
+          ...chatPlacementData(),
+          queueTargets: { '["pdl-test","queue-1"]': { load: 'error', error: 'queue unavailable' } },
+        },
+      });
+      expect(w.eval('VM.queueTargets()')).toMatchObject({ load: 'error', error: 'queue unavailable' });
     } finally {
       await w.__settled();
       dom.window.close();
@@ -1650,6 +1700,12 @@ describe('unmodified runtime and project chat bindings', () => {
       await w.eval("A.modal({v:'ibIgnore'})");
       buildModels.mockClear();
       expect(w.eval('VM.chatModal().view')).toBe('modal.ibIgnore');
+      expect(w.eval('MODALS.ibIgnore(CS.modal).vm.preview')).toMatchObject({
+        requests,
+        coverage: { state: 'complete' },
+        consistency: { state: 'verified' },
+        personalView: { preferenceRevision: 3, ignoredCount: 1 },
+      });
       expect(w.eval('VM.chatModal().submission.disabled')).toBeFalsy();
       expect(buildModels).not.toHaveBeenCalled();
       revision = 4;
@@ -3285,6 +3341,7 @@ describe('unmodified runtime and project chat bindings', () => {
       await w.__settled();
       input = w.document.getElementById('chat-input');
       expect(w.eval('VM.chatPop().mentions').some((item: { name: string }) => item.name === 'New member')).toBe(true);
+      expect(w.eval('VM.runtimeConnection()')).toEqual(w.eval('VM.chatPage().connection'));
       expect(w.eval('WHO_DATA.members()').some((member: { id: string }) => member.id === 'new-member')).toBe(true);
       expect(w.document.querySelector('[data-stream] > [data-mid="reply-1"]')).toBe(stream);
       input.value = '@nothing-matches';
@@ -4815,6 +4872,11 @@ describe('unmodified runtime and project chat bindings', () => {
       expect(w.eval('S.ws.recallFor')).toBe('reply-1');
       expect(w.eval('S.ws.recallExpected')).toBe(1);
       expect(w.eval('VM.cafeWsRecall().groups[0].key')).toBe('reply-1');
+      expect(w.eval('VM.cafeWsRecall().raw.events[0].id')).toBe('stored-recall');
+      expect(w.eval('VM.cafeWsRecall().raw.next')).toBeNull();
+      expect(w.eval('VM.cafeWsRecall().threadId')).toBe(data.threadId);
+      w.eval("S.ws.recallSource='push'");
+      expect(w.eval('VM.cafeWsRecall().sourceFilter')).toBe('push');
       expect(errors).not.toHaveBeenCalled();
       expect(buildModels).not.toHaveBeenCalled();
     } finally {
@@ -6701,6 +6763,7 @@ it('uses the r135 library form values and captured Mission Hub dialog fields thr
   try {
     await w.eval("A.modal({ v:'lib'})");
     await w.__settled();
+    expect(w.eval('MODALS.lib().vm.draft')).toEqual({ name: '', displayName: '', root: '' });
     expect([...w.document.querySelectorAll('#lib-type option')].map((option) => option.value)).toEqual([
       'project',
       'world',

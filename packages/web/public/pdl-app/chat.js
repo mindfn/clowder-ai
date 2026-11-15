@@ -532,7 +532,7 @@ window.clowderChat = {
     A.scheduleDecide = function (d) {
       return chatAction('cardDecide', { mid: d.mid, v: d.decision === 'approve' ? 'ok' : 'no' });
     };
-    ['chatHeader', 'chatPage', 'chatComposer', 'chatPop', 'chatWelcome'].forEach(function (name) {
+    ['chatHeader', 'chatPage', 'chatComposer', 'chatPop', 'chatWelcome', 'runtimeConnection'].forEach(function (name) {
       VM[name] = function () {
         return chatRead(name);
       };
@@ -793,6 +793,10 @@ window.clowderChat = {
     };
     SET_AFTER['cs.viewCat'] = function () {
       return chatAction('conversationView', { v: CS.viewCat || '' });
+    };
+    SET_AFTER['cs.prefer'] = function (value, d) {
+      CS.prefer = [];
+      return chatAction('preferredCats', d.none != null ? { none: '1' } : { id: d.id });
     };
     SET_AFTER['cs.speaking'] = function () {
       return chatAction('speak', { mid: CS.speaking || '' });
