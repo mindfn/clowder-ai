@@ -56,6 +56,9 @@
     },
     "file": {
       "openProject": "打开项目文件",
+      "outsideWorkspace": "文件所在目录未注册到工作区",
+      "needsConnection": "需要先连接文件所在的目录才能打开",
+      "unreadable": "这个文件暂时打不开",
       "noPreview": "这种文件不能在这里预览",
       "openLocal": "用默认应用打开"
     },
@@ -874,6 +877,8 @@
     }
   },
   "wsRecall": {
+    "partial": "部分读到：有些记录或回复的对应关系暂时读不到。",
+    "reread": "重读",
     "summary": {
       "count": "召回 {0}"
     },
@@ -1873,7 +1878,8 @@
     "allCats": "全部猫",
     "rebuilding": "重建中…",
     "runLog": "运行日志",
-    "noLogs": "还没有日志"
+    "noLogs": "还没有日志",
+    "flagRerank": "记忆搜索结果自动重排序"
   },
   "wsExec": {
     "title": "执行",

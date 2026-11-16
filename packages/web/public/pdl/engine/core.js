@@ -117,7 +117,7 @@ function ioSend(ev, payload) { if (IO.port) IO.port.send(ev, payload); }
 function ioOn(ev, fn) { if (IO.port) IO.port.on(ev, fn); else IO.subs.push([ev, fn]); }
 function ioNow() { return IO.port && IO.port.now ? IO.port.now() : Date.now(); }   /* 现在几点：数据层的时钟 */
 function ioFile(path) { return IO.port && IO.port.file ? IO.port.file(path) : ''; }
-/* 身份的数据（应用登记）：组件库的身份组件（who.js）、选成员、提及、徽标只经这里读数据，不认识应用的数据——
+/* 身份的数据（应用登记）：组件库的身份组件（identity.js）、选成员、提及、徽标只经这里读数据，不认识应用的数据——
    member(id) 成员（找不到给第一个）· members() 全部成员 · me() 你 · plugins() 插件（按 id）· builtinConnector(id) 宿主内置的连接器 ·
    health() 回调授权健康（没有就 null）· live(id, 回合) 执行状态 · handleId(句柄) 句柄是哪个成员 */
 const WHO_DATA = pdlReads('who', { member: function () { return null; }, members: function () { return []; }, me: function () { return {}; }, plugins: function () { return {}; }, builtinConnector: function () { return false; }, health: function () { return null; }, live: null, handleId: function () { return null; } });
@@ -273,7 +273,7 @@ function nodeId(n) {
 }
 function treeKey(el) { const ks = []; for (let n = el; n && n !== document.body; n = n.parentElement) { const k = nodeId(n); if (k) ks.unshift(k); } return ks.join('/'); }
 /* 节点的“版本”就是它的 HTML：相位（节拍、轮换起点）从不写进 HTML，由动画诞生时按时间原点对齐 */
-function streamVer(el) { return el.outerHTML.replace(/ data-aname="[^"]*"/g, ''); }   /* 锚点名（ui.js）是插进页面后按身份写上的，不算内容 */
+function streamVer(el) { return el.outerHTML.replace(/ data-aname="[^"]*"/g, ''); }   /* 锚点名（anchor.js）是插进页面后按身份写上的，不算内容 */
 /* 本地更新之后（只改了某个节点里的属性 / 一小块）：把所在消息节点、各层孤岛记下的版本更新成现在的样子，
    下次整页重画时它们照样被复用（前提：本地更新出来的 HTML 和重画出来的一样） */
 /* 组件在页面上写的测量结果（CSS 变量、data-foldable、按测量改的提示文字）不算内容：记版本前由各组件把副本还原成“刚画出来”的样子 */
@@ -366,7 +366,7 @@ function reuseApply(old) {
   });
 }
 /* 滚动区的锚点（唯一一份）：窗口是固定的，内容里有变化（一张卡片变长变短、插入、删除、流式输出、展开收起、图片读完）时，
-   只有变了的那一块自己重画，其余的按窗口的锚点往能伸展的方向挪，不跳。锚点只由窗口的状态决定，和点了什么、动作同步还是异步无关：
+   只有变了的那一块自己重画，其余的按窗口的锚点往能伸展的方向挪，不跳。锚点由窗口的状态决定（用户点的那一下例外，见 anchorPin）：
    · 贴底的区（stick-end）停在底部：锚点是底，变化往上长（浏览器的反向排列本来就这样，不用补）；普通的区停在顶上：锚点是顶，变化往下长；
    · 否则：锚点是窗口里第一张完整可见的单位（带身份的最外层节点：消息、行……）的上沿，它不动，变化都往它下面长；
      它被删掉了，就由紧挨着它的下一张接到它原来的位置；
@@ -404,7 +404,7 @@ function anchorApply(sc, a) {
   if (!a || !a.refs || !sc.isConnected) return;
   for (let i = 0; i < a.refs.length; i++) {
     const n = anchorFind(sc, a.refs[i]); if (!n || !n.getBoundingClientRect().height) continue;
-    const d = n.getBoundingClientRect().top - sc.getBoundingClientRect().top - a.y;
+    const d = n.getBoundingClientRect().top - sc.getBoundingClientRect().top - (a.refs[i].y != null ? a.refs[i].y : a.y);
     if (Math.abs(d) >= 1) { const st = sc.scrollTop; sc.scrollTop += d; if (sc.scrollTop !== st) ANCHOR_SELF.set(sc, sc.scrollTop); }
     return;
   }
@@ -417,6 +417,17 @@ function anchorKeep(sc) {
   const a = ANCHOR.get(sc);
   if (a && Math.abs(sc.scrollTop - a.st) <= 1) anchorApply(sc, a);
   ANCHOR.set(sc, anchorTake(sc));
+}
+/* 用户点了一个东西（展开、打开、收起……）就是用户在操作这个区：和用户滚动一样，贴底的区不再跟着往下走，被点的节点是锚点——它不动，变化往它下面长。
+   锚点是它所在滚动区里它和它带身份的祖先（它没了就由祖先接着）；用户再滚动时重新按窗口取（滚回底部就又跟着往下） */
+function anchorPin(el) {
+  for (let sc = el.closest('.scroll'); sc; sc = sc.parentElement && sc.parentElement.closest('.scroll')) {
+    const refs = []; for (let n = el.closest(KEYED_SEL); n && sc.contains(n) && n !== sc; n = n.parentElement && n.parentElement.closest(KEYED_SEL)) if (nodeId(n)) refs.push(anchorRef(sc, n));
+    if (!refs.length) continue;
+    const r = sc.getBoundingClientRect();
+    refs.forEach(function (ref) { ref.y = ref.el.getBoundingClientRect().top - r.top; });
+    ANCHOR.set(sc, { st: sc.scrollTop, y: refs[0].y, refs: refs });
+  }
 }
 /* 滚动后立刻重新取锚点（滚动事件每帧一次，在尺寸观察之前到）；引擎自己为了还原而改的那一下不算 */
 document.addEventListener('scroll', function (e) { const sc = e.target; if (!sc.classList || !sc.classList.contains('scroll')) return; const own = ANCHOR_SELF.get(sc); ANCHOR_SELF.delete(sc); if (own != null && Math.abs(sc.scrollTop - own) <= 1) return; ANCHOR.set(sc, anchorTake(sc)); }, true);
@@ -811,7 +822,7 @@ document.addEventListener('click', function (e) {
   const inner = e.target.closest('button, .switch, select, input, textarea, a');
   if (inner && inner !== el && el.contains(inner) && !inner.dataset.act) return;
   const fn = actFn(el.dataset.act);
-  if (fn) { e.preventDefault(); e.stopPropagation(); ACT_FROM = el; ACT_TRIGGER = actTrigger(el); try { fn(actionArgs(el), el); } finally { ACT_FROM = null; } }
+  if (fn) { e.preventDefault(); e.stopPropagation(); anchorPin(el); ACT_FROM = el; ACT_TRIGGER = actTrigger(el); try { fn(actionArgs(el), el); } finally { ACT_FROM = null; } }
 });
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape' && !e.isComposing && popEsc()) { e.preventDefault(); e.stopImmediatePropagation(); return; }   /* 弹窗框架：Esc 关最上面一个 */
@@ -824,7 +835,7 @@ document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') { keyDeclared(e); return; }   /* 弹窗的 Esc 在上面的 popEsc；控件自己声明的 esc（data-on-esc）在这里；别的（抽屉等）由各自登记在 KEY_FNS 里 */
   const el = e.target;
   if ((e.key === 'Enter' || e.key === ' ') && el.matches && el.matches('[role="button"][data-act], tr[data-act], .opt[data-act]')) { e.preventDefault(); el.click(); }
-  keyDeclared(e);   /* 控件自己声明的按键（data-on-enter 等，见 ui.js） */
+  keyDeclared(e);   /* 控件自己声明的按键（data-on-enter 等，见组件库 inputs.js） */
 });
 /* 把焦点放进一个（新出现的）输入框：唯一的一处。pos 是光标位置，'all' 全选。重绘时保住焦点和选区是 render() 自己的事，输入处理不用再补 */
 /* 表单里第一个标了错的字段：聚焦并滚进视口（错误标在外框上时聚焦它里面的输入框） */
@@ -1044,17 +1055,22 @@ function msgMd(x) { if (x && x.md != null && x.html == null) x.html = ENGINE_PAR
 /* 经组件库得到的两样文字和一个节点（ENGINE_PARTS 登记）：应用、视图模型只经这里取，不认识组件 */
 function whoSync() { ENGINE_PARTS.whoSync(); }
 function whoText(x, o) { return ENGINE_PARTS.whoText(x, o); }
-/* 数据出错：当空数据画（由调用的一方给空），这里只给一条通用提示。
-   来源（一份视图模型、宿主的一份数据……）的同一个错误只提示一次；dataOk 之后再出错会再提示。提示放到这一轮画完之后。 */
+/* 数据出错：不弹全局提示；读它的视图 / 块在自己的位置画出错状态（vmFailed）。来源按读取的名字记（视图模型出错是 vm:名字，宿主的一份数据是它被读的路径），
+   视图模型读到的来源里有出错的（同名或在它下面）就算这个视图读取出错。同一个错误只往控制台打一次，dataOk 之后再出错会再打 */
 const DATA_ERR = {};
 function dataError(source, e) {
   const m = String((e && e.message) || e);
-  if (DATA_ERR[source] === m) return;   /* 同一个错误：不再提示，也不再往控制台打 */
+  if (DATA_ERR[source] === m) return;
   console.error(e);
-  DATA_ERR[source] = m; setTimeout(function () { toast(tc('common.dataError'), null, 'danger'); }, 0);
+  DATA_ERR[source] = m;
 }
 function dataOk(source) { delete DATA_ERR[source]; }
-/* 读一份视图模型：读出错就当空数据（null，各处按自己的空状态画） */
+function vmFailed(name) {
+  if (DATA_ERR['vm:' + name]) return true;
+  const e = VM_SEEN.get('~vm:vm:' + name), bad = Object.keys(DATA_ERR);
+  return !!e && bad.length > 0 && Array.from(e.src).some(function (r) { return bad.some(function (k) { return r === k || r.indexOf(k + '.') === 0; }); });
+}
+/* 读一份视图模型：读出错给 null，读它的视图 / 块画出错状态（vmFailed），别处按空画 */
 function vmRead(name, arg) {   /* arg：按渲染类型取到的模板，它的视图模型收到这一项的数据（见组件库的 typed 块） */
   if (!VM[name]) return null;
   try { const r = VM[name](arg); dataOk('vm:' + name); return r; }

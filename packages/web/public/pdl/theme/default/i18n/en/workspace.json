@@ -1,4 +1,8 @@
 {
+ "wsRecall": {
+  "partial": "Partly read: some records or their replies cannot be read right now.",
+  "reread": "Read again"
+ },
  "wsPreview": {
   "discovered": "Discovered services"
  },
@@ -44,5 +48,8 @@
    "expires": "Expires",
    "result": "Result"
   }
+ },
+ "memory": {
+  "flagRerank": "Auto re-rank memory search results"
  }
 }

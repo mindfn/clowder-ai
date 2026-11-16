@@ -296,7 +296,10 @@ it('attributes an API action failure to its raw owner and delegates notification
   expect(binding.data.readFailures).toHaveProperty('workbench', expect.objectContaining({ name: 'PdlReadError' }));
   expect(binding.data).toHaveProperty('home.waits.projection.items.0.taskTitle', 'Healthy owner data');
   receive();
-  expect(engine.dataError).toHaveBeenLastCalledWith('workbench', expect.objectContaining({ name: 'PdlReadError' }));
+  expect(engine.dataError).toHaveBeenLastCalledWith(
+    'project.workbench',
+    expect.objectContaining({ name: 'PdlReadError' }),
+  );
   const notifications = engine.dataError.mock.calls.length;
   await fail();
   expect(receive()).toEqual(
@@ -319,11 +322,14 @@ it('attributes an API action failure to its raw owner and delegates notification
   expect(binding.data.readFailures).not.toHaveProperty('workbench');
   expect(binding.data).toHaveProperty('workbench.workspace.worktreeId', 'owner');
   receive();
-  expect(engine.dataOk).toHaveBeenCalledWith('workbench');
+  expect(engine.dataOk).toHaveBeenCalledWith('project.workbench');
   vi.mocked(apiFetch).mockImplementation(async () => new Response(JSON.stringify({ error: 'Owner unavailable' })));
   await fail();
   receive();
-  expect(engine.dataError).toHaveBeenLastCalledWith('workbench', expect.objectContaining({ name: 'PdlReadError' }));
+  expect(engine.dataError).toHaveBeenLastCalledWith(
+    'project.workbench',
+    expect.objectContaining({ name: 'PdlReadError' }),
+  );
   expect(owners.workbench.models).not.toHaveBeenCalled();
   expect(owners.home.models).not.toHaveBeenCalled();
 });
@@ -360,6 +366,6 @@ it('keeps an existing error/retry component on refresh failure and detects its l
   Object.assign(owners.ops, { data: { read: { load: '', title: 'Recovered owner' } } });
   expect(read()).toHaveProperty('title', 'Recovered owner');
   expect(engine.dataError).not.toHaveBeenCalled();
-  expect(engine.dataOk).toHaveBeenCalledWith('ops');
+  expect(engine.dataOk).toHaveBeenCalledWith('project.ops');
   expect(owners.ops.models).not.toHaveBeenCalled();
 });

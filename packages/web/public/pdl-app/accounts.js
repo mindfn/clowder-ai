@@ -9,7 +9,7 @@ function bindAccounts() {
     load = 'loading',
     timer;
   const vendor = function (p) {
-    return p.clientId === 'anthropic' ? 'Claude' : p.clientId === 'openai' ? 'Codex' : p.clientId;
+    return p.clientId === 'anthropic' ? 'Claude' : p.clientId === 'openai' ? 'Codex' : p.clientId || ''; // API-key accounts have no clientId
   };
   const account = function (id) {
     return providers.find(function (p) {
@@ -137,7 +137,7 @@ function bindAccounts() {
     filtered.sort(
       (a, b) =>
         providerCounts[b.clientId] - providerCounts[a.clientId] ||
-        a.clientId.localeCompare(b.clientId) ||
+        (a.clientId || '').localeCompare(b.clientId || '') ||
         Number(row(b).using) - Number(row(a).using) ||
         a.displayName.localeCompare(b.displayName),
     );

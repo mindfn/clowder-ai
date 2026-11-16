@@ -1503,7 +1503,11 @@ views:
                           "true":
                             t: workbench.flagName.true
                             args: ["@name"]
-                          _: "@name"
+                          _:
+                            of: "@id"
+                            map:
+                              F200_CONSUMPTION_RERANK: t:memory.flagRerank
+                              _: "@name"
                       tip: "@id"
                   trail:
                     - text:
@@ -1988,6 +1992,11 @@ views:
             variant: meta
         help: t:wsRecall.help
         when: $.replyCount
+      - type: text
+        parts:
+          - {text: t:wsRecall.partial, variant: meta}
+          - control: {type: button, link: true, label: t:wsRecall.reread, act: refresh, args: {k: recall}}
+        when: $.partial
       - type: list
         id: ws-recall
         groups: $.groups
@@ -4675,7 +4684,7 @@ views:
               of: [0, 1, 2]
               item:
                 of: "@"
-                map: {"0": $.detail.year, "1": /, "2": $.detail.time}
+                map: {"0": $.detail.year, "1": /, "2": {of: $.detail.at, fmt: stamp}}
               sep: ""
             num: true
         actions:
@@ -4723,15 +4732,12 @@ views:
                   label: t:common.addTag
           - type: section
             title: t:wsSignals.body
-            actions:
-              - type: button
-                iconOnly: true
-                icon: refresh
-                label: t:common.refresh
-                act: wsSigRefresh
-                args: {k: $.detail.id}
             blocks:
-              - {type: markdown, text: $.detail.body, more: $.detail.more}
+              - type: fold
+                key: $.detail.bodyKey
+                more: {act: wsSigRefresh, args: {k: $.detail.id}, when: "!$.detail.full"}   # 全文还没读：查看更多 = 读全文
+                blocks:
+                  - {type: markdown, text: $.detail.body, more: $.detail.more}
         right:
           - type: section
             title:
