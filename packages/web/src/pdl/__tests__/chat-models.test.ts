@@ -5,6 +5,63 @@ import { chatModels, composerTrigger } from '../chat-models';
 import { fixtureData, fixtureUi } from './chat-fixture';
 
 describe('chat contract projections', () => {
+  it('provides raw composer preferences, connection and admission state for both theme contracts', () => {
+    const data = fixtureData(),
+      ui = fixtureUi();
+    data.forwardingBlocked = false;
+    data.cats.push({ ...data.cats[0], id: 'opencode-glm', displayName: 'GLM', mentionPatterns: ['@glm'] });
+    data.images = [new File(['draft'], 'draft.txt', { type: 'text/plain' })];
+    ui.pop = { kind: 'plus', preferredExpanded: true };
+    ui.sendScope = 'thread';
+    ui.target = 'opencode-glm';
+    const popup = chatModels(data, ui).chatPop;
+    expect(popup).toMatchObject({
+      preferNames: [data.cats[0].displayName],
+      preferredIds: ['codex'],
+      preferredExpanded: true,
+      sendScope: 'thread',
+      homeState: null,
+      members: expect.arrayContaining([expect.objectContaining({ id: 'codex', selected: true })]),
+      connection: { isReadonly: false, forwardingBlocked: false, updateRequired: false, canReload: false },
+      attachments: [expect.objectContaining({ name: 'draft.txt', size: 5 })],
+    });
+    data.threadId = 'default';
+    data.readonly = true;
+    data.updateRequired = true;
+    const admission = {
+      ready: true,
+      optionsLocked: true,
+      preferredCats: ['opencode-glm'],
+      homeState: { busy: true, state: 'creating' },
+    };
+    const home = chatModels(data, ui, { admission });
+    expect(home.chatPop).toMatchObject({
+      preferredIds: ['opencode-glm'],
+      homeState: admission.homeState,
+      members: expect.arrayContaining([expect.objectContaining({ id: 'opencode-glm', selected: true })]),
+      connection: { isReadonly: true, canReload: true, updateRequired: true, forwardingBlocked: false },
+    });
+    expect(home.runtimeConnection).toEqual(home.chatPage.connection);
+    const empty = chatModels({ ...data, threads: [], images: [] }, ui).chatPop;
+    expect(empty).toMatchObject({ preferredIds: [], attachments: [], members: expect.any(Array) });
+  });
+
+  it('marks saved default recipients independently of the current target and selects the system default when cleared', () => {
+    const data = fixtureData(),
+      ui = fixtureUi();
+    ui.pop = { kind: 'plus', page: 'prefer' };
+    ui.target = 'another-cat';
+    expect(chatModels(data, ui).chatPop).toMatchObject({
+      systemSelected: false,
+      members: expect.arrayContaining([expect.objectContaining({ id: 'codex', selected: true })]),
+    });
+    data.threads[0].preferredCats = [];
+    expect(chatModels(data, ui).chatPop).toMatchObject({
+      systemSelected: true,
+      members: expect.arrayContaining([expect.objectContaining({ id: 'codex', selected: false })]),
+    });
+  });
+
   it('derives execution rows once per unchanged message and keeps paired output when another source changes', () => {
     const data = fixtureData(),
       ui = fixtureUi();

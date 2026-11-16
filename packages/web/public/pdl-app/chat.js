@@ -532,7 +532,7 @@ window.clowderChat = {
     A.scheduleDecide = function (d) {
       return chatAction('cardDecide', { mid: d.mid, v: d.decision === 'approve' ? 'ok' : 'no' });
     };
-    ['chatHeader', 'chatPage', 'chatComposer', 'chatPop', 'chatWelcome'].forEach(function (name) {
+    ['chatHeader', 'chatPage', 'chatComposer', 'chatPop', 'chatWelcome', 'runtimeConnection'].forEach(function (name) {
       VM[name] = function () {
         return chatRead(name);
       };
@@ -547,10 +547,26 @@ window.clowderChat = {
       };
     };
     VM.chatHeader = function () {
-      return Object.assign({}, chatRead('chatHeader'), { editing: !!S.renaming });
+      return {
+        ...chatRead('chatHeader'),
+        editing: !!S.renaming,
+        panelOpen: !!S.panel,
+        get tasksOpen() {
+          const source = projectData('workbench');
+          return source && source.tasks
+            ? source.tasks.filter(function (t) {
+                return t.status !== 'done';
+              }).length
+            : undefined;
+        },
+        get worksCount() {
+          const source = projectData('reviews');
+          return source && source.artifacts.complete ? source.artifacts.total : undefined;
+        },
+      };
     };
     VM.chatComposer = function () {
-      return chatRead('chatComposer');
+      return Object.assign({}, chatRead('chatComposer'), { homePin: !!CS.homePin });
     };
     VM.chatPop = function () {
       return chatRead('chatPop');
@@ -778,6 +794,10 @@ window.clowderChat = {
     SET_AFTER['cs.viewCat'] = function () {
       return chatAction('conversationView', { v: CS.viewCat || '' });
     };
+    SET_AFTER['cs.prefer'] = function (value, d) {
+      CS.prefer = [];
+      return chatAction('preferredCats', d.none != null ? { none: '1' } : { id: d.id });
+    };
     SET_AFTER['cs.speaking'] = function () {
       return chatAction('speak', { mid: CS.speaking || '' });
     };
@@ -897,6 +917,15 @@ window.clowderChat = {
       CS.modal = null;
       render(true);
       return A.insert({ into: 'chat-input', text: d.v, mode: 'replace' });
+    };
+    A.popPage = function (d) {
+      const stack = CS.pop.stack || (CS.pop.stack = []),
+        page = CS.pop.page || 'main';
+      if (stack.length && stack[stack.length - 1] === d.v) stack.pop();
+      else if (d.v === 'main') stack.length = 0;
+      else stack.push(page);
+      CS.pop.page = d.v;
+      render(true);
     };
     A.popBack = function () {
       const stack = CS.pop.stack || [];

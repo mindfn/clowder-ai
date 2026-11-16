@@ -164,10 +164,10 @@ test('an unconfirmed write cannot re-arm native movement from its old persisted 
     release = resolve;
   });
   t.after(release);
-  const put = f.store.put.bind(f.store);
-  f.store.put = async (owner, config) => {
+  const patch = f.store.patch.bind(f.store);
+  f.store.patch = async (owner, config) => {
     await pending;
-    await put(owner, config);
+    await patch(owner, config);
   };
   const login = await f.app.inject({ url: '/api/session' });
   const headers = { cookie: String(login.headers['set-cookie']).split(';')[0]!, origin: 'http://localhost:5102' };

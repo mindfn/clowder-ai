@@ -1151,6 +1151,21 @@ function ChatBinding({
       case 'threadFeatureSave':
         await patchThread(args.id || threadId, { backlogItemId: args.value || null });
         return true;
+      case 'preferredCats': {
+        const admission = threadId === 'default' ? admissionRef.current : null;
+        const selected =
+          (admission
+            ? admission.intent?.preferredCats
+            : current.current.threads.find((t) => t.id === threadId)?.preferredCats) ?? [];
+        const next = args.none
+          ? []
+          : selected.includes(args.id)
+            ? selected.filter((id) => id !== args.id)
+            : [...selected, args.id];
+        if (admission) admission.updatePreferredCats(next);
+        else await patchThread(threadId, { preferredCats: next });
+        return;
+      }
       case 'threadStatus': {
         const t = current.current.threads.find((t) => t.id === (args.id || threadId));
         const key = args.field === 'fav' ? 'favorited' : 'pinned';
@@ -1806,7 +1821,12 @@ function ChatBinding({
       export: exportMids === undefined ? undefined : { mids: exportMids, items: window.__catCafeImageExportItems },
       playback: playback.current,
       outputPreference: { mode: preference.mode, status: preference.status, error: preference.error },
-      admission: { ready: admissionRef.current?.ready, optionsLocked: admissionRef.current?.optionsLocked },
+      admission: admissionRef.current && {
+        ready: admissionRef.current.ready,
+        optionsLocked: admissionRef.current.optionsLocked,
+        preferredCats: admissionRef.current.intent?.preferredCats ?? [],
+        homeState: { busy: admissionRef.current.optionsLocked, state: admissionRef.current.phase },
+      },
     };
   };
   const port = useRef<ChatPort>(null!);
