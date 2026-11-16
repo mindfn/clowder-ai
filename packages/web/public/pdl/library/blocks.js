@@ -702,7 +702,7 @@ Object.assign(PDL_BLOCKS, {
     const it = pv(b.data, sc, root), node = pdlTyped(b.slot, pv(b.of, sc, root));
     if (!node) return pvBlocks(b.blocks, sc, root);
     const r = node.sources ? pdlSourceOf(node, it) : node.vm ? vmRead(node.vm, it) : it;
-    return r ? pvBlocks(node.blocks, r, r) : '';
+    return r ? pvBlocks(node.blocks, r, r) : node.vm && vmFailed(node.vm) ? viewState('error', { text: tc('common.viewError') }) : '';
   },
   component: function (b, sc, root) { const f = PDL_COMPONENTS[b.use]; return f ? f(pv(b.props, sc, root), sc, root) : ''; },
   /* 容器：给一组块套组件库里的一种角色（见 PDL_ROLES.box）；里面什么都没有就不画。tone：带状态色调的容器（告警卡片）；faint：被新的取代了（旧提议） */

@@ -1044,17 +1044,17 @@ function msgMd(x) { if (x && x.md != null && x.html == null) x.html = ENGINE_PAR
 /* 经组件库得到的两样文字和一个节点（ENGINE_PARTS 登记）：应用、视图模型只经这里取，不认识组件 */
 function whoSync() { ENGINE_PARTS.whoSync(); }
 function whoText(x, o) { return ENGINE_PARTS.whoText(x, o); }
-/* 数据出错：当空数据画（由调用的一方给空），这里只给一条通用提示。
-   来源（一份视图模型、宿主的一份数据……）的同一个错误只提示一次；dataOk 之后再出错会再提示。提示放到这一轮画完之后。 */
+/* 数据出错：不弹全局提示；读它的视图 / 块在自己的位置画出错状态（vmFailed）。同一个错误只往控制台打一次，dataOk 之后再出错会再打 */
 const DATA_ERR = {};
 function dataError(source, e) {
   const m = String((e && e.message) || e);
-  if (DATA_ERR[source] === m) return;   /* 同一个错误：不再提示，也不再往控制台打 */
+  if (DATA_ERR[source] === m) return;
   console.error(e);
-  DATA_ERR[source] = m; setTimeout(function () { toast(tc('common.dataError'), null, 'danger'); }, 0);
+  DATA_ERR[source] = m;
 }
 function dataOk(source) { delete DATA_ERR[source]; }
-/* 读一份视图模型：读出错就当空数据（null，各处按自己的空状态画） */
+function vmFailed(name) { return !!DATA_ERR['vm:' + name]; }
+/* 读一份视图模型：读出错给 null，读它的视图 / 块画出错状态（vmFailed），别处按空画 */
 function vmRead(name, arg) {   /* arg：按渲染类型取到的模板，它的视图模型收到这一项的数据（见组件库的 typed 块） */
   if (!VM[name]) return null;
   try { const r = VM[name](arg); dataOk('vm:' + name); return r; }
