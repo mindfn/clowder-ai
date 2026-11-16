@@ -99,6 +99,8 @@ body, [data-grid] > *, .chat > .stream { --g-w: min(100cqi - var(--g-pad) - max(
 :is(.msg-body, .md) .divider { margin: var(--sp-l) 0; }
 .glyph { width: var(--ctl-m); height: var(--ctl-m); border-radius: var(--r-m); background: var(--bg-field); color: var(--fg-muted); display: grid; place-items: center; flex-shrink: 0; }
 .glyph > img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }
+.glyph:has(> img:not([data-loaded])) { animation: mo-skel var(--loop) ease-in-out infinite backwards; }   /* 图片还没读到：骨架的节拍 */
+.glyph > img:not([data-loaded]) { visibility: hidden; }
 .glyph.glyph-xl { width: var(--av-xl); height: var(--av-xl); border-radius: var(--r-l); }   /* 页头的大图标（插件详情），和成员详情的 xl 头像同一个尺寸 */
 .glyph.glyph-xl svg { width: 50%; height: 50%; }
 .field { display: flex; flex-wrap: wrap; gap: var(--field-gap); padding: var(--sp-s) var(--sp-m); align-items: start; }   /* 字段：名字一列 + 控件；放不下时控件自己换到下一行（按字段自己的宽度，不看在对话框还是工作台里） */
