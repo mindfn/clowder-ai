@@ -5138,6 +5138,7 @@ frags:
                 of: "@kind"
                 map:
                   commentary: {of: "@title", fmt: plainLine}
+                  thinking: {of: "@title", fmt: plainLine}
                   _: "@title"
               mono:
                 of: "@kind"
@@ -5145,24 +5146,8 @@ frags:
               tone:
                 of: "@status"
                 map: {error: warn, _: ""}
-          inline:
-            - control: {type: status, tone: info, text: t:common.status.running}
-              when: ["@subagent", "@running"]
-            - control: {type: status, tone: "@stateTone", text: "@stateText"}
-              when: ["@subagent", "!@running"]
           sub:
-            - {parts: "@sub", when: "!@subagent"}
-            - text:
-                t: chatMessage.execution.sub
-                args:
-                  - of: "@running"
-                    map:
-                      "true":
-                        t: chat.executionProgress.true
-                        args: ["@progress"]
-                      "false": "@progress"
-                      _: "@running"
-              when: "@subagent"
+            - {parts: "@sub"}
           cols:
             - v: "@dur"
               w: time
@@ -5171,14 +5156,12 @@ frags:
                 map: {error: warn, _: ""}
               when: "@dur"
           expand:
-            - type: label
-              text: t:chatMessage.execution.detailLabel
-              when: ["@subagent", "!@running"]
             - type: content
               html:
                 of: "@kind"
                 map:
                   commentary: {of: "@detail", fmt: markdownRest}
+                  thinking: {of: "@detail", fmt: markdownRest}
                   _: {of: "@detail", fmt: escaped}
               raw: true
               when:
@@ -5187,6 +5170,7 @@ frags:
                 - of: "@kind"
                   map:
                     commentary: {of: "@detail", fmt: markdownRest}
+                    thinking: {of: "@detail", fmt: markdownRest}
                     _: true
             - type: each
               from: "@details"
