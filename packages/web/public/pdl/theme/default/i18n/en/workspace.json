@@ -44,5 +44,8 @@
    "expires": "Expires",
    "result": "Result"
   }
+ },
+ "memory": {
+  "flagRerank": "Auto re-rank memory search results"
  }
 }
