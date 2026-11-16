@@ -589,9 +589,9 @@ Object.assign(PDL_BLOCKS, {
       const pane = function (side, cls) { const follow = b.scroll && (b.follow === side || b.follow === 'both'), body = pvBlocks(b[side], sc, root); return '<div class="' + cls + (b.scroll ? ' scroll' : '') + (follow ? ' stick-end' : '') + '">' + (follow ? '<div>' + body + '</div>' : body) + '</div>'; };
       return '<div class="cafe-two"' + (b.scroll ? ' data-scroll="panes"' : '') + '>' + pane('left', 'cafe-two-main') + pane('right', 'cafe-two-side') + '</div>';
     }
-    /* 容器树：分栏（split）下面两栏（pane-l 列表 / pane-r 详情）。并排时选中的详情打开在 pane-r（列表的兄弟）；收起时（窄屏，布局状态 VIEWPORT.narrow）
+    /* 容器树：分栏（split）下面两栏（pane-l 列表 / pane-r 详情）。并排时选中的详情打开在 pane-r（列表的兄弟）；收起时（窗口窄（VIEWPORT.narrow），或者画在窄的区域里（regionNarrow：没放大的工作台））
        分栏变成“列表 → 详情”，详情打开在两栏共同的父容器 split 里。打开到哪个容器写在 data-into 上，返回的判断只看容器树，在画之前从触发点定（见 core.js 的 go、proj.js 的 navOpen） */
-    const col = VIEWPORT.narrow, picked = !!pv(b.picked, sc, root);
+    const col = VIEWPORT.narrow || regionNarrow(PV.region), picked = !!pv(b.picked, sc, root);
     /* 收起时选了一项：详情盖住了列表，详情的头先画（引擎的返回落在看得见的那一栏的头里） */
     let L, Rr; if (col && picked) { Rr = pvBlocks(b.right, sc, root); L = pvBlocks(b.left, sc, root); } else { L = pvBlocks(b.left, sc, root); Rr = pvBlocks(b.right, sc, root); }
     /* 并排时两栏各自滚动（详情栏是自己的滚动容器，列表栏里的列表自己滚），滚详情不带着整页；收起时只有一栏，照常随页面滚 */

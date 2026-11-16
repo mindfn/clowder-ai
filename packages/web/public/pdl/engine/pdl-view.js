@@ -290,7 +290,7 @@ function pvList(v, sc, root) { const x = Array.isArray(v) ? v : pv(v, sc, root);
 function ctlJoin(a, b) { return (a || '') + (b || ''); }
 function pvAnnot(l, sc, root) { if (!l) return null; if (typeof l === 'string') { const t = pv(l, sc, root); if (Array.isArray(t)) return t.map(function (x) { return typeof x === 'string' ? { text: x, pos: 'after' } : x; }); if (t && typeof t === 'object') return t; return t ? { text: t, pos: 'after' } : null; } const t = pv(l.text, sc, root); return t ? { text: t, pos: l.pos || 'after', tone: pv(l.tone, sc, root) } : null; }
 function pvNote(n) { return n ? ' data-note="' + n + '"' : ''; }
-const PV = { units: {}, ro: 0, inert: 0, ctTitle: '', leadSize: '', load: '', viewId: '', tabKey: '' };   /* ctTitle：正在画的容器的名字（工作台标签的标题），视图下钻返回的默认名字 */   /* units：按单元画、自己逐项映射 item 的块（组件库登记） */
+const PV = { units: {}, ro: 0, inert: 0, ctTitle: '', leadSize: '', load: '', viewId: '', tabKey: '', region: '' };   /* ctTitle：正在画的容器的名字（工作台标签的标题），视图下钻返回的默认名字 */   /* units：按单元画、自己逐项映射 item 的块（组件库登记） */
 /* stay 的标记：不占布局的一层（display: contents），弹窗引擎看点击落在不在 [data-stay] 里 */
 function pvStay(html) { return html ? '<span class="vw-stay" data-stay>' + html + '</span>' : ''; }
 /* item：按数据重复的块 / 控件（from，或写成绑定的 options / items）每一项的字段在这里声明：对每一项按 item 取值（@ 是那一项），盖在这一项的数据上，
