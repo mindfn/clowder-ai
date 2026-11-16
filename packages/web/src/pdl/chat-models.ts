@@ -457,6 +457,21 @@ export function chatModels(data: ChatData, ui: ChatUiState, input?: ChatProjecti
       );
   const safePreview = (mid: string | undefined, text: string) =>
     mid && data.messages.find((m) => m.id === mid)?.extra?.recall ? '' : text;
+  // One list of who can be @-mentioned: members, you and plugin instances, each with every handle that names it.
+  // The composer's candidates and the recognition (and colour) of an @ in a message both come from it.
+  const mentionables = () => [
+    ...data.cats.map((cat) => ({
+      who: { kind: 'agent' as const, catId: cat.id },
+      name: cat.nickname || cat.displayName,
+      handles: cat.mentionPatterns,
+    })),
+    { who: { kind: 'user' as const }, name: data.me.name, handles: data.me.mentionPatterns },
+    ...(data.pluginTargets?.targets ?? []).map((target) => ({
+      who: { kind: 'plugin' as const, instanceId: target.id },
+      name: target.displayName,
+      handles: [`@${target.alias}`],
+    })),
+  ];
   const memberCatalog = () =>
     data.cats.map((cat) => ({
       id: cat.id,
@@ -924,15 +939,17 @@ export function chatModels(data: ChatData, ui: ChatUiState, input?: ChatProjecti
         key: `${member.name}${member.handle}${member.breed}`.toLowerCase(),
       })),
       // a plugin instance is a candidate like a member; its avatar resolves from the instance id
-      ...(data.pluginTargets?.targets ?? []).map((target) => ({
-        who: target.id,
-        kind: 'member',
-        meta: [],
-        name: target.displayName,
-        handle: `@${target.alias}`,
-        ins: `@${target.alias}`,
-        key: `${target.displayName}@${target.alias}`.toLowerCase(),
-      })),
+      ...mentionables()
+        .filter((m) => m.who.kind === 'plugin')
+        .map((m) => ({
+          who: (m.who as { instanceId: string }).instanceId,
+          kind: 'member',
+          meta: [],
+          name: m.name,
+          handle: m.handles[0],
+          ins: m.handles[0],
+          key: `${m.name}${m.handles[0]}`.toLowerCase(),
+        })),
       { kind: 'thread', ins: '@thread', key: 'thread' },
       { kind: 'all', ins: '@all', key: 'all' },
       ...[...breeds]
@@ -1051,6 +1068,9 @@ export function chatModels(data: ChatData, ui: ChatUiState, input?: ChatProjecti
     },
     get memberCatalog() {
       return memberCatalog();
+    },
+    get mentionables() {
+      return mentionables();
     },
     get memberSettings() {
       return { cats: data.cats.map((cat) => ({ ...cat, form: initialState(cat) })), owner: data.me };
