@@ -493,6 +493,50 @@ async function boot(
 }
 
 describe('unmodified runtime and project chat bindings', () => {
+  it('相关处置 shows only on a signal message with dispositions on record', async () => {
+    const { dom, w } = await boot();
+    try {
+      const paw = () => w.eval("chatOwnerMessageVM({ mid: 'paw-1', actsCtx: { paw: true } }).actsCtx.paw");
+      expect(paw()).toBe(false);
+      w.eval("pushProjectData({ chatOwners: Object.assign({}, chatOwnerData(), { pawCounts: { 'paw-1': 2 } }) })");
+      expect(paw()).toBe(true);
+      expect(w.eval("chatOwnerMessageVM({ mid: 'plain', actsCtx: { paw: false } }).actsCtx.paw")).toBe(false);
+    } finally {
+      dom.window.close();
+    }
+  });
+
+  it('plugin requests read host sources, writes run every returned public action, plugSet writes also', async () => {
+    const { dom, w, port } = await boot();
+    try {
+      w.eval(
+        `PDL_PLUGIN_REQ['t-p']={save:{path:'save',method:'POST',query:{thread:'host:currentThread.id',pick:'state.pick',tab:'state.tab'}}};`,
+      );
+      const thread = w.eval('VM.chatHeader().id');
+      expect(thread).toBeTruthy();
+      w.eval("S.plug['t-p']={tab:'cards'}");
+      await w.eval("A.plugSet({plugin:'t-p',k:'pick',v:'obj:a',also:{tab:'version'}})");
+      expect(w.eval("S.plug['t-p']")).toEqual({ pick: 'obj:a', tab: 'version' });
+      port.post.mockResolvedValueOnce({
+        acts: [
+          { act: 'toast', args: { msg: 'one' } },
+          { act: 'notPublic', args: {} },
+          { act: 'toast', args: { msg: 'two' } },
+        ],
+      } as never);
+      await w.eval("A.plugin({plugin:'t-p',request:'save'})");
+      const [path, query] = port.post.mock.calls.at(-1) as unknown[];
+      expect(path).toBe('/api/plugins/t-p/save');
+      expect(query).toMatchObject({ thread, pick: 'obj:a', tab: 'version' });
+      expect(w.eval('TOAST_LOG.slice(-2)')).toEqual(['one', 'two']);
+      // a { t, args } in returned data is text in the plugin's packs, like one written in PDL; other objects stay data
+      expect(w.eval("pv('$.x', {}, { x: { t: 'common.viewError' } })")).toBe(w.eval("tc('common.viewError')"));
+      expect(w.eval("pv('$.x', {}, { x: { t: 'a', v: 1 } })")).toEqual({ t: 'a', v: 1 });
+    } finally {
+      dom.window.close();
+    }
+  });
+
   it('provides the v2 memory environment from the existing projected settings owner', async () => {
     const { dom, w, port, errors } = await boot();
     try {
@@ -5106,7 +5150,7 @@ describe('unmodified runtime and project chat bindings', () => {
     }
   });
   it('retains the existing owner read-error component once without adding a toast', async () => {
-    const { dom, w, action } = await boot(undefined, undefined, undefined, {
+    const { dom, w } = await boot(undefined, undefined, undefined, {
       cafeWsOps: { load: 'error' },
     });
     try {
@@ -5114,13 +5158,8 @@ describe('unmodified runtime and project chat bindings', () => {
       await w.__settled();
       const error = w.eval("tc('wsOps.load.error')");
       expect(w.document.querySelector('[data-view="cafe.ws.ops"]')?.textContent).toContain(error);
-      const failure = new Error('Owner unavailable');
-      failure.name = 'PdlReadError';
-      action.mockRejectedValueOnce(failure);
-      w.document.querySelector('[data-act="viewRetry"]').click();
-      await vi.waitFor(() => expect(action).toHaveBeenCalledWith('refresh', { k: 'ops' }, undefined));
-      w.clowderChat.update();
-      await w.__settled();
+      // no in-place retry (the error text says reopen or refresh)
+      expect(w.document.querySelector('[data-act="viewRetry"]')).toBeNull();
       expect(w.eval('TOAST_LOG')).toEqual([]);
       expect(w.document.querySelectorAll('[data-view="cafe.ws.ops"]')).toHaveLength(1);
     } finally {

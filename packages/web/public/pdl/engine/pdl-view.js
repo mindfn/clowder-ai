@@ -186,7 +186,7 @@ const PDL_SCHEMA = {
   send: { args: 1, disabled: 1, stop: 1, stopping: 1, tip: 1 },
   settings: { from: 1, plain: 1, row: 1, rows: 1, when: 1 },
   slot: { ctx: 1, slot: 1 },
-  split: { left: 1, picked: 1, right: 1, scroll: ['panes'], follow: ['left', 'right', 'both'], variant: R('split'), when: 1 },   /* follow：独立滚动的一侧跟随最新内容；picked：窄屏下钻的选中状态。 */
+  split: { back: 1, left: 1, picked: 1, right: 1, scroll: ['panes'], follow: ['left', 'right', 'both'], variant: R('split'), when: 1 },   /* follow：独立滚动的一侧跟随最新内容；picked：窄屏下钻的选中状态；back：选中是状态（不导航）时，收起后详情的返回。 */
   stats: { actions: 1, from: 1, items: 1, variant: R('stats'), when: 1 },   /* 数字块只有两种：一格一格的数字（默认）、一行计数 + 操作（counters） */
   status: { text: 1, tone: ['$', 'info', 'ok', 'warn', 'danger'], when: 1 },
   steps: { act: 1, args: 1, from: 1, variant: R('steps'), when: 1 },
@@ -258,10 +258,13 @@ function pv(v, sc, root) {
   if (v[0] === '@' || v.indexOf('$.') === 0) {
     const base = v[0] === '@' ? sc : root, path = v[0] === '@' ? v.slice(1) : v.slice(2);
     const got = path.split('.').reduce(function (o, k) { return o == null ? o : o[k]; }, base);
-    return got;
+    return pvSaid(got) ? pvSaidText(got) : got;
   }
   return v;
 }
+/* 数据里带来的文案（插件后端返回的 { t, args }，只有这两个键）：和写在 PDL 里的一样按当前语言翻译，参数里套着的也翻译；参数是数据，不再当路径解析 */
+function pvSaid(x) { return !!x && typeof x === 'object' && !Array.isArray(x) && typeof x.t === 'string' && Object.keys(x).every(function (k) { return k === 't' || k === 'args'; }); }
+function pvSaidText(x) { return tc.apply(null, [x.t].concat((x.args || []).map(function (a) { return pvSaid(a) ? pvSaidText(a) : a; }))); }
 function pvOk(w, sc, root) { if (w == null) return true; if (Array.isArray(w)) return w.every(function (x) { return pvOk(x, sc, root); });   /* 一组条件：都成立才算 */
   const neg = w[0] === '!', x = pv(neg ? w.slice(1) : w, sc, root); const ok = Array.isArray(x) ? x.length > 0 : !!x; return neg ? !ok : ok; }
 function pvArgs(args, sc, root) {

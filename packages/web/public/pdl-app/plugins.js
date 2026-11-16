@@ -950,10 +950,19 @@ function bindPluginRequests() {
       'openUrl',
       'dialog',
     ],
-    data: ['members', 'threads', 'currentThread'],
+    data: ['members', 'threads', 'currentThread', 'composer'],
   };
   // The host data a plugin may read are existing view models (already in component shape).
-  const HOST_DATA = { members: 'members', threads: 'navThreads', currentThread: 'chatHeader' };
+  // composer: the current input's text (a plugin may save it, e.g. as a quick phrase)
+  const HOST_DATA = {
+    members: 'members',
+    threads: 'navThreads',
+    currentThread: 'chatHeader',
+    composer: 'composerText',
+  };
+  VM.composerText = function () {
+    return { text: (CS.draft && CS.draft['chat-input']) || '' };
+  };
   const CSP =
     "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-src 'none'; object-src 'none'";
   ENGINE_PARTS.pluginPublic = PLUGIN_PUBLIC;
@@ -970,6 +979,13 @@ function bindPluginRequests() {
     if (typeof v !== 'string') return v;
     if (v.indexOf('state.') === 0) return (S.plug[pk] || {})[v.slice(6)];
     if (v === 'host.origin') return location.origin;
+    // a host source the plugin may read (host:currentThread.id): the read follows it like any other source
+    if (v.indexOf('host:') === 0) {
+      const path = v.slice(5).split('.');
+      return path.slice(1).reduce(function (o, k) {
+        return o == null ? o : o[k];
+      }, vmRead(HOST_DATA[path[0]]));
+    }
     if (v[0] === '@')
       return v
         .slice(1)
@@ -1025,8 +1041,10 @@ function bindPluginRequests() {
       : out;
   }
   function read(key) {
-    const s = held[key];
-    pushProjectData({ [key]: Object.assign({}, projectData(key), { load: 'loading' }) });
+    const s = held[key],
+      cur = projectData(key);
+    // a source that already has a value keeps drawing it while it is read again; only a first read is loading
+    if (!cur || cur.value === undefined) pushProjectData({ [key]: Object.assign({}, cur, { load: 'loading' }) });
     return call(s.plugin, s.request, s.input).then(
       function (v) {
         const before = projectData(key) || {};
@@ -1094,16 +1112,20 @@ function bindPluginRequests() {
     }
     if (res && res.error) toast(res.error, null, 'danger');
     else if (res && res.message) toast(res.message);
-    // A write may hand back one public host action (e.g. insert into the input).
-    if (res && !res.error && res.act && PLUGIN_PUBLIC.acts.indexOf(res.act) >= 0) actFn(res.act)(res.args || {});
+    // A write may hand back public host actions (act / args, or a list in acts: open the new thread and the panel).
+    if (res && !res.error)
+      (res.act ? [{ act: res.act, args: res.args }] : []).concat(res.acts || []).forEach(function (a) {
+        if (PLUGIN_PUBLIC.acts.indexOf(a.act) >= 0) actFn(a.act)(a.args || {});
+      });
     if (r.method && r.method !== 'GET') await reread(pk);
     return res;
   }
   A.plugin = function (d) {
     return write(d.plugin, d.request, d);
   };
+  // also: other keys set in the same step (a project change resets the pick; locate also picks the tab)
   A.plugSet = function (d) {
-    (S.plug[d.plugin] = S.plug[d.plugin] || {})[d.k] = d.v;
+    Object.assign((S.plug[d.plugin] = S.plug[d.plugin] || {}), { [d.k]: d.v }, d.also);
     render(true);
     return reread(d.plugin);
   };
