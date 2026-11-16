@@ -418,16 +418,15 @@ function anchorKeep(sc) {
   if (a && Math.abs(sc.scrollTop - a.st) <= 1) anchorApply(sc, a);
   ANCHOR.set(sc, anchorTake(sc));
 }
-/* 用户点了一个东西（展开、打开、收起……）：这一下引起的变化以被点的节点为锚点——它不动，变化往它下面长；贴底的区也一样（展开的内容不把它顶上去）。
-   锚点是它所在滚动区里它和它带身份的祖先（它没了就由祖先接着）。两帧之内没有变化就交回按窗口取的锚点，点了不变的东西不影响贴底 */
+/* 用户点了一个东西（展开、打开、收起……）就是用户在操作这个区：和用户滚动一样，贴底的区不再跟着往下走，被点的节点是锚点——它不动，变化往它下面长。
+   锚点是它所在滚动区里它和它带身份的祖先（它没了就由祖先接着）；用户再滚动时重新按窗口取（滚回底部就又跟着往下） */
 function anchorPin(el) {
   for (let sc = el.closest('.scroll'); sc; sc = sc.parentElement && sc.parentElement.closest('.scroll')) {
     const refs = []; for (let n = el.closest(KEYED_SEL); n && sc.contains(n) && n !== sc; n = n.parentElement && n.parentElement.closest(KEYED_SEL)) if (nodeId(n)) refs.push(anchorRef(sc, n));
     if (!refs.length) continue;
-    const r = sc.getBoundingClientRect(), pin = { st: sc.scrollTop, y: refs[0].el.getBoundingClientRect().top - r.top, refs: refs }, box = sc;
+    const r = sc.getBoundingClientRect();
     refs.forEach(function (ref) { ref.y = ref.el.getBoundingClientRect().top - r.top; });
-    ANCHOR.set(sc, pin);
-    requestAnimationFrame(function () { requestAnimationFrame(function () { if (ANCHOR.get(box) === pin) ANCHOR.set(box, anchorTake(box)); }); });
+    ANCHOR.set(sc, { st: sc.scrollTop, y: refs[0].y, refs: refs });
   }
 }
 /* 滚动后立刻重新取锚点（滚动事件每帧一次，在尺寸观察之前到）；引擎自己为了还原而改的那一下不算 */
