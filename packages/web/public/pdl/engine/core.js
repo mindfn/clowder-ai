@@ -1055,7 +1055,8 @@ function msgMd(x) { if (x && x.md != null && x.html == null) x.html = ENGINE_PAR
 /* 经组件库得到的两样文字和一个节点（ENGINE_PARTS 登记）：应用、视图模型只经这里取，不认识组件 */
 function whoSync() { ENGINE_PARTS.whoSync(); }
 function whoText(x, o) { return ENGINE_PARTS.whoText(x, o); }
-/* 数据出错：不弹全局提示；读它的视图 / 块在自己的位置画出错状态（vmFailed）。同一个错误只往控制台打一次，dataOk 之后再出错会再打 */
+/* 数据出错：不弹全局提示；读它的视图 / 块在自己的位置画出错状态（vmFailed）。来源按读取的名字记（视图模型出错是 vm:名字，宿主的一份数据是它被读的路径），
+   视图模型读到的来源里有出错的（同名或在它下面）就算这个视图读取出错。同一个错误只往控制台打一次，dataOk 之后再出错会再打 */
 const DATA_ERR = {};
 function dataError(source, e) {
   const m = String((e && e.message) || e);
@@ -1064,7 +1065,11 @@ function dataError(source, e) {
   DATA_ERR[source] = m;
 }
 function dataOk(source) { delete DATA_ERR[source]; }
-function vmFailed(name) { return !!DATA_ERR['vm:' + name]; }
+function vmFailed(name) {
+  if (DATA_ERR['vm:' + name]) return true;
+  const e = VM_SEEN.get('~vm:vm:' + name), bad = Object.keys(DATA_ERR);
+  return !!e && bad.length > 0 && Array.from(e.src).some(function (r) { return bad.some(function (k) { return r === k || r.indexOf(k + '.') === 0; }); });
+}
 /* 读一份视图模型：读出错给 null，读它的视图 / 块画出错状态（vmFailed），别处按空画 */
 function vmRead(name, arg) {   /* arg：按渲染类型取到的模板，它的视图模型收到这一项的数据（见组件库的 typed 块） */
   if (!VM[name]) return null;

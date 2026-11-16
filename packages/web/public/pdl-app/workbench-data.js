@@ -93,7 +93,7 @@ function recallGroups(events, data) {
         graph: event.toolName === 'cat_cafe_graph_resolve',
         push: event.source === 'push',
         date: event.timestamp,
-        results: results,
+        results: event.results && event.results.length ? results : [], // no hits: the row's empty reason says so; the query is already the title
         canLocate: !!mid,
         mid: mid,
         thread: data.threadId,
@@ -582,7 +582,8 @@ function recallModel() {
     raw: Object.assign({}, page, { events: events, next: page?.nextCursor ?? null }),
     threadId: data.threadId,
     sourceFilter: ui.recallSource,
-    load: read.threadId !== data.threadId ? 'loading' : read.load || (page?.readStatus === 'partial' ? 'stale' : ''),
+    load: read.threadId !== data.threadId ? 'loading' : read.load,
+    partial: page?.readStatus === 'partial',
     replyCount: selected
       ? Number(groups.some((group) => group.key === selected))
       : groups.filter((group) => group.key !== 'unlocated').length,
