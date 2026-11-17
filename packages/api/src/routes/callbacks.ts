@@ -138,7 +138,7 @@ import {
   type Viewer,
 } from '../domains/cats/services/stores/visibility.js';
 import { getVoiceBlockSynthesizer } from '../domains/cats/services/tts/VoiceBlockSynthesizer.js';
-import type { IConciergeConfigStore } from '../domains/concierge/ConciergeConfigStore.js';
+import type { ReadCompanionSettings } from '../domains/concierge/companion-settings.js';
 import {
   hasConciergeNavigationMarker,
   projectConciergeStoredContent,
@@ -706,9 +706,8 @@ function hasTypedConciergeNavigationAction(richBlocks: readonly RichBlock[]): bo
 
 async function projectCallbackContentForStorage(
   threadStore: IThreadStore | undefined,
-  conciergeConfigStore: IConciergeConfigStore | undefined,
+  companionSettings: ReadCompanionSettings | undefined,
   threadId: string,
-  userId: string,
   senderCatId: string,
   content: string,
   richBlocks: readonly RichBlock[],
@@ -717,7 +716,7 @@ async function projectCallbackContentForStorage(
   try {
     const thread = await threadStore.get(threadId);
     if (thread?.threadKind !== 'concierge') return { ok: true, content };
-    if (!conciergeConfigStore) {
+    if (!companionSettings) {
       return {
         ok: false,
         statusCode: 503,
@@ -725,8 +724,7 @@ async function projectCallbackContentForStorage(
         message: 'Concierge duty ownership is unavailable; no callback content was persisted.',
       };
     }
-    const config = await conciergeConfigStore.get(userId);
-    if (config.dutyCatProfileId !== senderCatId) return { ok: true, content };
+    if ((await companionSettings()).dutyCatProfileId !== senderCatId) return { ok: true, content };
     if (hasConciergeNavigationMarker(content) && !hasTypedConciergeNavigationAction(richBlocks)) {
       return {
         ok: false,
@@ -876,7 +874,7 @@ export interface CallbackRoutesOptions {
   /** For thinking mode filtering in thread-context + thread-cats discovery */
   threadStore?: IThreadStore;
   /** F229: duty-cat ownership for callback projection and action admission. */
-  conciergeConfigStore?: IConciergeConfigStore;
+  companionSettings?: ReadCompanionSettings;
   /** F211 Phase B: external IDE-direct runtime session registration. */
   sessionChainStore?: import('../domains/cats/services/stores/ports/SessionChainStore.js').ISessionChainStore;
   runtimeSessionStore?: IRuntimeSessionStore;
@@ -1466,9 +1464,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         ? { ok: true, content: durableCloudReturnDuplicate.content }
         : await projectCallbackContentForStorage(
             threadStore,
-            opts.conciergeConfigStore,
+            opts.companionSettings,
             effectiveThreadId,
-            principal.userId,
             senderCatId,
             storedContent,
             extractedBlocks,
@@ -3000,9 +2997,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // admission evidence: a navigation action must be carried by this callback.
     const contentProjection = await projectCallbackContentForStorage(
       threadStore,
-      opts.conciergeConfigStore,
+      opts.companionSettings,
       effectiveThreadId,
-      actor.userId,
       senderCatId,
       storedContent,
       extractedBlocks,
