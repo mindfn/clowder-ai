@@ -176,6 +176,33 @@ function bindSidebar() {
       time: t.lastActiveAt,
       participants: t.participants,
       renaming: !!S.renaming && S.renaming.entity === 'thread' && S.renaming.id === t.id,
+      // Who is running here, one entry per member (name + their colour's pulsing dot, rotating when several):
+      // the live executions, or the sidebar's working presence before those are read.
+      runs: (runs.length
+        ? runs.map(function (e) {
+            return { catId: e.catId, since: e.startedAt };
+          })
+        : presence && presence.status === 'working'
+          ? (presence.cats || []).map(function (c) {
+              return { catId: c, since: presence.activeSince };
+            })
+          : []
+      )
+        .filter(function (r, i, all) {
+          return (
+            all.findIndex(function (x) {
+              return x.catId === r.catId;
+            }) === i
+          );
+        })
+        .map(function (r) {
+          // Whole minutes (the row shows minutes), so the row only changes when what it shows does.
+          return {
+            who: r.catId,
+            status: '',
+            secs: r.since ? Math.max(0, Math.floor((Date.now() - r.since) / 60000)) * 60 : 0,
+          };
+        }),
       running: runs.length > 0 || (!!presence && presence.status === 'working'),
       failed: !!presence && presence.status === 'error',
       who: runs.length

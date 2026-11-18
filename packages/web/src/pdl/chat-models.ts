@@ -454,6 +454,16 @@ export function activeExecutionRows(data: ChatData, ui: ChatUiState) {
     };
   });
 }
+/** One composer capsule per member: the reply when there is one; with several runs (a reply and background
+ * commands) the capsule carries them all as entries, one row each when it expands. */
+export function memberRunners(rows: ReturnType<typeof activeExecutionRows>) {
+  const byMember = new Map<string, typeof rows>();
+  for (const row of rows) byMember.set(row.who, [...(byMember.get(row.who) ?? []), row]);
+  return [...byMember.values()].map((runs) => {
+    const ordered = [...runs.filter((r) => !r.command), ...runs.filter((r) => r.command)];
+    return { ...ordered[0], entries: ordered.length > 1 ? ordered : null };
+  });
+}
 export function chatModels(data: ChatData, ui: ChatUiState, input?: ChatProjectionInput) {
   const raw = data,
     project = input?.project;
@@ -554,6 +564,12 @@ export function chatModels(data: ChatData, ui: ChatUiState, input?: ChatProjecti
     return rows;
   };
   const thread = () => data.threads.find((item) => item.id === data.threadId);
+  // This conversation's members: its participants, or the members who have spoken in it.
+  const conversationMembers = () => {
+    const participants = thread()?.participants ?? [];
+    if (participants.length) return participants;
+    return [...new Set(data.messages.flatMap((m) => (m.type === 'assistant' && m.catId ? [m.catId] : [])))];
+  };
   const recipients = () =>
     ui.whisper
       ? ui.whisperTo
@@ -574,18 +590,20 @@ export function chatModels(data: ChatData, ui: ChatUiState, input?: ChatProjecti
     isReadonly: !!data.readonly,
     forwardingBlocked: data.forwardingBlocked !== false,
   });
-  const memberItems = (selected: readonly string[]) =>
-    members().map((member) => {
-      const execution = data.executions.find((e) => e.catId === member.id && e.threadId === data.threadId);
-      return {
-        id: member.id,
-        name: member.name,
-        handle: member.handle,
-        executing: !!execution,
-        state: execution ? (execution.kind === 'live_invocation' ? 'reply' : 'command') : 'idle',
-        selected: selected.includes(member.id),
-      };
-    });
+  const memberItems = (selected: readonly string[], among?: readonly string[]) =>
+    members()
+      .filter((member) => !among || among.includes(member.id))
+      .map((member) => {
+        const execution = data.executions.find((e) => e.catId === member.id && e.threadId === data.threadId);
+        return {
+          id: member.id,
+          name: member.name,
+          handle: member.handle,
+          executing: !!execution,
+          state: execution ? (execution.kind === 'live_invocation' ? 'reply' : 'command') : 'idle',
+          selected: selected.includes(member.id),
+        };
+      });
   // A plugin's reply carrier is the reply's typing row until the reply arrives; a result without content shows nothing.
   const sourceMessages = (timeline = messages()) =>
     timeline
@@ -1302,7 +1320,7 @@ export function chatModels(data: ChatData, ui: ChatUiState, input?: ChatProjecti
         locked: locked(),
         top: true,
         notices: notices(),
-        runners: activeExecutionRows(data, ui).filter((x) => x.actions.thread === data.threadId),
+        runners: memberRunners(activeExecutionRows(data, ui).filter((x) => x.actions.thread === data.threadId)),
         queue: data.queue.length
           ? {
               key: data.threadId,
@@ -1503,6 +1521,8 @@ export function chatModels(data: ChatData, ui: ChatUiState, input?: ChatProjecti
                 : subpage === 'prefer'
                   ? preferredIds()
                   : recipients(),
+            // "View as" lists this conversation's members (its participants, or who has spoken here), not everyone.
+            kind === 'people' ? conversationMembers() : undefined,
           ),
         };
       if (kind === 'plus' && subpage === 'mode') return { ...base, sendScope: ui.sendScope, sendMode: ui.sendMode };
