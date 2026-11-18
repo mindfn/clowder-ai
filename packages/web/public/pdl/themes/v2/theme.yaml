@@ -16747,7 +16747,6 @@ pdl:
                         act: popPage
                         args:
                           v: mode
-                        glyph: ↪
                   preferred:
                     - type: component
                       use: v2ComposerPreferredCats
@@ -27422,23 +27421,16 @@ pdl:
                   act: opLiveStop
                   args:
                     k: $.id
-                when: $.cancelable
+                when: [$.cancelable, "!$.stuck"]
               - type: component
-                use: v2Each
+                use: v2Action
                 props:
-                  from:
-                    - {}
-                  control:
-                    type: component
-                    use: v2More
-                    props:
-                      items:
-                        - label: t:execDetail.forceReset.title
-                          act: opForceReset
-                          args:
-                            threadId: $.threadId
-                          tone: danger
-                when: $.threadId
+                  label: t:execDetail.forceReset.title
+                  act: opForceReset
+                  args:
+                    threadId: $.threadId
+                  danger: true
+                when: [$.stuck, $.threadId]
               - type: component
                 use: v2Action
                 props:

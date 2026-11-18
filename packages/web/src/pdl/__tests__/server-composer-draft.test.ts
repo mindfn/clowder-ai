@@ -1,0 +1,138 @@
+import type { ContextAttachment } from '@cat-cafe/shared';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { apiFetch } from '@/utils/api-client';
+import { type ComposerDraft, useServerComposerDraft } from '../useServerComposerDraft';
+import { cleanup, renderHook, waitFor } from './hook-host';
+
+vi.mock('@/utils/api-client', () => ({ apiFetch: vi.fn() }));
+beforeEach(() => vi.clearAllMocks());
+afterEach(cleanup);
+
+const quote = { v: 1, id: 'q1', kind: 'thread', threadId: 't9', title: 'Elsewhere' } as unknown as ContextAttachment;
+const calls = () =>
+  vi.mocked(apiFetch).mock.calls.map(([path, init]) => [init?.method ?? 'GET', String(path), init?.body]);
+const writes = () => calls().filter(([method]) => method !== 'GET');
+const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Lets React run the renders and effects a rerender queued, optionally across some time. */
+const flushed = async (ms = 0) => {
+  await waitFor(() => {});
+  if (ms) await settle(ms);
+  await waitFor(() => {});
+};
+
+/** Mounts the hook the way the host does: a restore fills the composer, and the composer feeds the next render. */
+function mount(draft: ComposerDraft, threadId = 't1') {
+  const state = { draft, threadId };
+  const host: { rerender?: () => void } = {};
+  const restore = vi.fn((saved: ComposerDraft) => {
+    state.draft = saved;
+    host.rerender?.();
+  });
+  const hook = renderHook(() =>
+    useServerComposerDraft({ threadId: state.threadId, enabled: true, draft: state.draft, restore }),
+  );
+  host.rerender = hook.rerender;
+  return { hook, restore, state };
+}
+
+it('shows the draft the server keeps when the conversation opens, without writing it back', async () => {
+  vi.mocked(apiFetch).mockResolvedValue(
+    Response.json({
+      draft: { text: '写到一半', contentBlocks: [{ type: 'context_attachment', attachment: quote }], replyTo: 'm1' },
+      revision: 3,
+    }),
+  );
+  const { restore } = mount({ text: '', contexts: [] });
+  await waitFor(() => expect(restore).toHaveBeenCalledWith({ text: '写到一半', contexts: [quote], replyTo: 'm1' }));
+  await flushed(700);
+  expect(writes()).toEqual([]);
+});
+
+it('empties what this browser kept when the draft was sent or cleared elsewhere', async () => {
+  vi.mocked(apiFetch).mockResolvedValue(Response.json({ draft: null, revision: 4 }));
+  const { restore } = mount({ text: 'stale words', contexts: [] });
+  await waitFor(() => expect(restore).toHaveBeenCalledWith({ text: '', contexts: [] }));
+  await flushed(700);
+  expect(writes()).toEqual([]);
+});
+
+it('keeps words typed before the server answered and writes them back', async () => {
+  let answer: (response: Response) => void = () => {};
+  vi.mocked(apiFetch).mockImplementation((_path, init) =>
+    init?.method
+      ? Promise.resolve(Response.json({ draft: { revision: 3 } }))
+      : new Promise<Response>((resolve) => {
+          answer = resolve;
+        }),
+  );
+  const { hook, restore, state } = mount({ text: '', contexts: [] });
+  state.draft = { text: 'typed first', contexts: [] };
+  hook.rerender();
+  await flushed();
+  answer(Response.json({ draft: { text: 'older' }, revision: 2 }));
+  await waitFor(() =>
+    expect(writes()).toEqual([
+      ['PUT', '/api/threads/t1/composer-draft', JSON.stringify({ expectedRevision: 2, text: 'typed first' })],
+    ]),
+  );
+  expect(restore).not.toHaveBeenCalled();
+});
+
+it('writes edits back under the last revision and repeats once on the revision the server reports', async () => {
+  vi.mocked(apiFetch).mockImplementation(async (_path, init) => {
+    if (!init?.method) return Response.json({ draft: null, revision: 0 });
+    const body = JSON.parse(String(init.body)) as { expectedRevision: number };
+    return body.expectedRevision === 5
+      ? Response.json({ draft: { text: 'new', revision: 6 } })
+      : Response.json({ code: 'DRAFT_REVISION_MISMATCH', actualRevision: 5 }, { status: 409 });
+  });
+  const { hook, state } = mount({ text: '', contexts: [] });
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
+  state.draft = { text: 'new', contexts: [quote] };
+  hook.rerender();
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(3));
+  const body = (revision: number) =>
+    JSON.stringify({
+      expectedRevision: revision,
+      text: 'new',
+      contentBlocks: [{ type: 'context_attachment', attachment: quote }],
+    });
+  expect(writes()).toEqual([
+    ['PUT', '/api/threads/t1/composer-draft', body(0)],
+    ['PUT', '/api/threads/t1/composer-draft', body(5)],
+  ]);
+});
+
+it('writes an edit still waiting at once when the owner moves to another conversation', async () => {
+  vi.mocked(apiFetch).mockImplementation(async (_path, init) =>
+    init?.method ? Response.json({ draft: { revision: 1 } }) : Response.json({ draft: null, revision: 0 }),
+  );
+  const { hook, state } = mount({ text: '', contexts: [] });
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
+  state.draft = { text: 'half a thought', contexts: [] };
+  hook.rerender();
+  await flushed();
+  state.threadId = 't2';
+  state.draft = { text: '', contexts: [] };
+  hook.rerender();
+  await flushed(100);
+  expect(writes()).toEqual([
+    ['PUT', '/api/threads/t1/composer-draft', JSON.stringify({ expectedRevision: 0, text: 'half a thought' })],
+  ]);
+});
+
+it('deletes the saved draft of a conversation whose send the server took', async () => {
+  vi.mocked(apiFetch).mockResolvedValue(Response.json({ draft: { text: 'sent soon' }, revision: 2 }));
+  const { hook } = mount({ text: 'sent soon', contexts: [] });
+  await waitFor(() => expect(apiFetch).toHaveBeenCalled());
+  await settle(50);
+  vi.mocked(apiFetch).mockResolvedValue(Response.json({ draft: null, revision: 3 }));
+  hook.result.current.clear('t1');
+  await waitFor(() =>
+    expect(writes()).toContainEqual([
+      'DELETE',
+      '/api/threads/t1/composer-draft',
+      JSON.stringify({ expectedRevision: 2 }),
+    ]),
+  );
+});

@@ -447,8 +447,11 @@ function bindPluginSpaces() {
         'content-editor-provider': 'editor',
         'desktop-window': 'desktop',
       };
+    // Webhooks and event subscriptions are the plugin's own plumbing (routes it receives on), not something to use.
+    const plumbing = ['webhook', 'events'];
     const groups = new Map();
     items.forEach(function (capability) {
+      if (plumbing.includes(capability.kind)) return;
       if (active && projectionNeeded) projectionNeeded.add('pluginTools:' + plugin.pluginId);
       const kind = kinds[capability.kind] || capability.kind;
       if (!groups.has(kind)) groups.set(kind, { kind: kind, scheduler: kind === 'scheduler', items: [] });
