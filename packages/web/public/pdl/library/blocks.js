@@ -90,9 +90,9 @@ function R(k) { return PDL_ROLES[k].slice(); }
    PDL 里出现没声明的属性、或者枚举外的字面值，结构检查（pdl-schema）就报错。新增属性先在这里声明 */
 Object.assign(PDL_SCHEMA, {
   /* 行模板（列表的 row：PDL_ROWS 里的实体模板，或列表声明里就地写的字段映射）：layout 必填，取组件库的一种行布局（组件库 rows.js ROW_LAYOUTS；tree 只由树块用）；
-     其余是数据绑定。_rowNo：每种布局不接受的字段（单行没有副行，只有条目有竖排尾部，记录行不能再展开） */
+     其余是数据绑定。_rowNo：每种布局不接受的字段（单行没有副行，只有条目有竖排尾部；记录行声明了 expand 也能在原位展开，lang 2026-11-18） */
   _row: { layout: ['line', 'two', 'item', 'record'], key: 1, lead: 1, title: 1, inline: 1, sub: 1, meta: 1, cols: 1, acts: 1, tone: 1, color: 1, bar: 1, act: 1, args: 1, note: 1, expand: 1, more: 1, moreWhen: 1, moreAfter: 1, cur: 1, aside: 1, subLines: 1, label: 1, help: 1, when: 1 },
-  _rowNo: { line: ['sub', 'meta', 'aside', 'subLines'], two: ['aside', 'subLines'], item: [], record: ['sub', 'meta', 'aside', 'subLines', 'expand'] },
+  _rowNo: { line: ['sub', 'meta', 'aside', 'subLines'], two: ['aside', 'subLines'], item: [], record: ['sub', 'meta', 'aside', 'subLines'] },
   app: { demo: 1, name: ['entry', 'stripe', 'handle'], region: 1, when: 1 },
   back: { act: 1, args: 1, label: 1, when: 1 },   /* 返回放在这里（引擎的返回）；act / args 是没有返回可回时的去处 */
   box: { blocks: 1, faint: 1, fill: 1, follow: 1, note: 1, open: 1, tone: ['$', 'info', 'ok', 'warn', 'danger'], variant: R('box'), when: 1 },
@@ -113,7 +113,7 @@ Object.assign(PDL_SCHEMA, {
   each: { blocks: 1, control: 1, from: 1, when: 1 },
   empty: { action: 1, help: 1, icon: 1, text: 1, when: 1 },
   fold: { blocks: 1, height: ['m', 's'], key: 1, more: { act: 1, args: 1, when: 1 }, shape: ['$', 'bottom'], when: 1 },
-  dialog: { pop: 1, title: 1, help: 1, wide: 1, layout: ['viewport', 'fill'], span: ['full'], form: 1, error: 1, actions: 1, footer: 1, blocks: 1, when: 1 },   /* footer：底部区域的块声明，与标题栏 actions 分开。 */
+  dialog: { pop: 1, title: 1, help: 1, wide: 1, layout: ['viewport', 'fill'], span: ['full'], rows: 1, form: 1, error: 1, actions: 1, footer: 1, blocks: 1, when: 1 },   /* footer：底部区域的块声明，与标题栏 actions 分开。 */
   form: { args: 1, blocks: 1, from: 1, htmlId: 1, id: 1, note: 1, when: 1 },
   frame: { html: 1, src: 1, message: 1, on: 1, icon: 1, note: 1, plugin: 1, tall: 1, title: 1, what: 1, when: 1 },   /* html 自动量内容；src 填满视口。on.message 把框内消息交给动作，origin 的判断属于应用。 */
   grow: { when: 1 },
@@ -857,7 +857,7 @@ Object.assign(PDL_BLOCKS, {
   },
   component: function (b, sc, root) { const f = PDL_COMPONENTS[b.use]; return f ? f(pv(b.props, sc, root), sc, root) : ''; },
   /* 容器：给一组块套组件库里的一种角色（见 PDL_ROLES.box）；里面什么都没有就不画。tone：带状态色调的容器（告警卡片）；faint：被新的取代了（旧提议） */
-  dialog: function (b, sc, root) { return dialogHtml({ key: pv(b.pop, sc, root), title: pv(b.title, sc, root), help: pv(b.help, sc, root), wide: pv(b.wide, sc, root), layout: pv(b.layout, sc, root), span: pv(b.span, sc, root), form: pv(b.form, sc, root), error: pv(b.error, sc, root), actions: pvControls(b.actions, sc, root), body: pvBlocks(b.blocks, sc, root), acts: pvBlocks(b.footer, sc, root) }); },
+  dialog: function (b, sc, root) { return dialogHtml({ key: pv(b.pop, sc, root), title: pv(b.title, sc, root), help: pv(b.help, sc, root), wide: pv(b.wide, sc, root), rows: pv(b.rows, sc, root), layout: pv(b.layout, sc, root), span: pv(b.span, sc, root), form: pv(b.form, sc, root), error: pv(b.error, sc, root), actions: pvControls(b.actions, sc, root), body: pvBlocks(b.blocks, sc, root), acts: pvBlocks(b.footer, sc, root) }); },
   box: function (b, sc, root) { const body = pvBlocks(b.blocks, sc, root), cls = BOX[b.variant || ''] + (pv(b.follow, sc, root) ? ' scroll stick-end' : ''); if (!body) return ''; const tone = pv(b.tone, sc, root); return '<div class="' + cls + '"' + (b.key ? ' data-key="' + h(pv(b.key, sc, root)) + '"' : '') + (tone ? ' data-tone="' + h(tone) + '"' : '') + (pv(b.faint, sc, root) ? ' data-faint' : '') + (b.open != null ? ' data-open="' + !!pv(b.open, sc, root) + '"' : '') + (pv(b.fill, sc, root) ? ' data-fill' : '') + pvNote(pv(b.note, sc, root)) + '>' + (/\bstick-end\b/.test(cls) ? '<div>' + body + '</div>' : body) + '</div>'; },   /* 停在底部的容器（stick-end）里只放一个子元素 */
   pre: function (b, sc, root) {   /* 原样的文字（代码、日志、原始记录）：一个样子；默认不在里面限高滚动——它在的页面 / 详情铺满容器，由页面滚动。
      rows：持续追加的文字（日志）在页面里只占几行，框里自己滚动，停在最新的一行（stick-end） */
