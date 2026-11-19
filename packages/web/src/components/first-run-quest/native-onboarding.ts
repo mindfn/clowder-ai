@@ -1,5 +1,7 @@
-import { isDshLauncher } from '@cat-cafe/shared';
+import { catClientSupportsNativeTool, isDshLauncher } from '@cat-cafe/shared';
 import type { CatData } from '@/hooks/useCatData';
+import type { ProfileItem } from '../hub-accounts.types';
+import { eligibleAgyAccounts, pickDefaultAgyAccount } from '../hub-cat-editor.agy';
 import { autoSlug, type HubCatEditorFormState, initialState } from '../hub-cat-editor.model';
 import { matchesRuntime, type RuntimeChoice, runtimeDefaults } from '../settings/members/member-runtime-draft';
 import { withLegacyNativeIdentityRepair } from './native-identity-repair';
@@ -21,6 +23,8 @@ export interface NativePartner {
   legacySharedRequestKey?: string;
   existingId?: string;
   identityConflict?: boolean;
+  accountRequired?: boolean;
+  agyAccounts?: Array<{ id: string; name: string; kind: string }>;
   missingExisting?: boolean;
   recoverable?: { id: string; form: HubCatEditorFormState };
 }
@@ -41,6 +45,9 @@ export function nativeRuntimeSelectable(runtime: RuntimeChoice, form?: HubCatEdi
   if (!runtime.installed || (runtime.clientId === 'acp' && !runtime.acp)) return false;
   if (runtime.acp && isDshLauncher(runtime.acp.command, runtime.acp.startupArgs)) {
     return runtime.discoveryStatus !== 'acp_profile_invalid';
+  }
+  if (!catClientSupportsNativeTool(runtime.clientId)) {
+    return Boolean(form?.accountRef?.trim());
   }
   if (form && !usesDetectedRuntimeConfiguration(form, runtime)) return true;
   if (['openai', 'anthropic'].includes(runtime.clientId) && runtime.readiness) {
@@ -79,11 +86,17 @@ function partnerKey(runtime: RuntimeChoice): string {
   return `acp-${(hash >>> 0).toString(16)}`;
 }
 
+export interface RecommendNativePartnersOptions {
+  accounts?: ProfileItem[];
+  projectPath?: string;
+}
+
 export function recommendNativePartners(
   runtimes: RuntimeChoice[],
   templates: TemplateCard[],
   cats: CatData[],
   journeyId: string,
+  options?: RecommendNativePartnersOptions,
 ): NativePartner[] {
   const seen = new Set<string>();
   const reservedIds = new Set(cats.map((cat) => cat.id.toLowerCase()));
@@ -112,7 +125,9 @@ export function recommendNativePartners(
     const legacyId = stableOnboardingMemberId(journeyId, 'partner', partnerKey(runtime));
     const existing = cats.find(
       (cat) =>
-        (cat.id === legacyId || cat.configurationSource === 'native_tool') &&
+        (cat.id === legacyId ||
+          cat.configurationSource === 'native_tool' ||
+          !catClientSupportsNativeTool(runtime.clientId)) &&
         matchesRuntime(initialState(cat), runtime),
     );
     const baseId = autoSlug(runtime.label);
@@ -124,14 +139,44 @@ export function recommendNativePartners(
     reservedIds.add(catId.toLowerCase());
     const existingForm = existing ? initialState(existing) : undefined;
     const persistedForm = existingForm ? withLegacyNativeIdentityRepair(existingForm, form, runtime) : undefined;
-    const partner = {
+    const agyEligible =
+      runtime.agyCarrier && options?.accounts ? eligibleAgyAccounts(options.accounts, runtime.agyCarrier) : [];
+    const defaultAgyAccount =
+      runtime.agyCarrier && options?.accounts ? pickDefaultAgyAccount(options.accounts, runtime.agyCarrier) : undefined;
+    const draftForm: HubCatEditorFormState = persistedForm
+      ? persistedForm
+      : {
+          ...form,
+          ...runtimeDefaults(runtime),
+          catId,
+          mentionPatterns: uniqueAlias,
+          ...(runtime.agyCarrier
+            ? {
+                accountRef: defaultAgyAccount?.id ?? '',
+                agyProfileId: catId,
+                ...(options?.projectPath?.startsWith('/') ? { agyTrustedWorkspaces: options.projectPath } : {}),
+              }
+            : {}),
+        };
+    const accountRequired = Boolean(
+      runtime.installed && !catClientSupportsNativeTool(runtime.clientId) && !existing && !draftForm.accountRef.trim(),
+    );
+    const partner: NativePartner = {
       id: key,
       creationRequestKey: runtime.acp ? newNativeRequestKey() : key,
       runtime,
-      form: persistedForm
-        ? persistedForm
-        : { ...form, ...runtimeDefaults(runtime), catId, mentionPatterns: uniqueAlias },
-      selected: nativeRuntimeSelectable(runtime, persistedForm),
+      form: draftForm,
+      selected: nativeRuntimeSelectable(runtime, draftForm),
+      ...(accountRequired ? { accountRequired: true } : {}),
+      ...(runtime.agyCarrier
+        ? {
+            agyAccounts: agyEligible.map((account) => ({
+              id: account.id,
+              name: account.displayName,
+              kind: account.builtin ? 'builtin' : account.authType,
+            })),
+          }
+        : {}),
       ...(existing ? { existingId: existing.id } : {}),
     };
     const identityConflict = hasNativeIdentityConflict(partner, cats);

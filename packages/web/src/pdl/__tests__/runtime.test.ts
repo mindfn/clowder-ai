@@ -6639,6 +6639,141 @@ it('creates only pending selected native partners and retains adjusted preferenc
   }
 });
 
+it('presents AGY Native account, model, and workspace requirements clearly in nativeSetup and keeps effort optional', async () => {
+  const meta = {
+    accounts: [
+      { id: 'google-work', displayName: 'Work Google', authType: 'oauth', builtin: false, clientId: 'google' },
+    ],
+    projectPath: '/workspace/demo',
+    templates: [],
+    blank: initialState(),
+    codex: { sandboxMode: 'workspace-write', approvalPolicy: 'on-request' },
+    strategies: [],
+    libraries: [],
+    runtimes: [],
+    clients: [
+      {
+        id: 'google',
+        label: 'Google / AGY Native',
+        supportsNativeTool: false,
+        acpMaxDefault: 3,
+        carriers: [['cli', 'CLI']],
+        accounts: ['google-work'],
+      },
+    ],
+  };
+  const partners = [
+    {
+      id: 'agy-native',
+      selected: true,
+      selectable: true,
+      creationRequestKey: 'agy-native',
+      agyAccounts: [{ id: 'google-work', name: 'Work Google', kind: 'oauth' }],
+      form: {
+        ...initialState(),
+        catId: 'agy-native',
+        displayName: 'AGY Native',
+        clientId: 'google',
+        carrier: 'cli',
+        configurationSource: 'managed_account',
+        accountRef: 'google-work',
+        defaultModel: '',
+        cliEffort: '',
+        agyNativeEnabled: true,
+        agyProfileId: 'agy-native',
+        agyAutoApprove: false,
+        agyTrustedWorkspaces: '/workspace/demo',
+      },
+      runtime: {
+        id: 'agy-native',
+        label: 'AGY Native',
+        clientId: 'google',
+        agyCarrier: 'native',
+        installed: true,
+        acpMaxDefault: 3,
+        readiness: { status: 'unknown' },
+      },
+    },
+    {
+      id: 'agy-blocked',
+      selected: false,
+      selectable: false,
+      accountRequired: true,
+      creationRequestKey: 'agy-blocked',
+      agyAccounts: [],
+      form: {
+        ...initialState(),
+        catId: 'agy-blocked',
+        displayName: 'AGY Blocked',
+        clientId: 'google',
+        carrier: 'cli',
+        configurationSource: 'managed_account',
+        accountRef: '',
+        agyNativeEnabled: true,
+      },
+      runtime: {
+        id: 'agy-blocked',
+        label: 'AGY Native',
+        clientId: 'google',
+        agyCarrier: 'native',
+        installed: true,
+        acpMaxDefault: 3,
+        readiness: { status: 'unknown' },
+      },
+    },
+  ];
+  const creates: Record<string, unknown>[] = [];
+  const { dom, w } = await boot(undefined, undefined, undefined, {}, (port) => {
+    const previous = port.action;
+    port.action = (name, args, element) => {
+      if (name === 'membersRead') return meta;
+      if (name === 'nativeDetect') return structuredClone(partners);
+      if (name === 'memberRuntimeModels') return { status: 'live', models: [], effortOptions: [] };
+      if (name === 'nativeCreate') {
+        const partner = JSON.parse(args.value);
+        creates.push(partner);
+        return { id: partner.form.catId };
+      }
+      return previous(name, args, element);
+    };
+  });
+  try {
+    w.eval('go("members")');
+    await w.__settled();
+    w.eval('A.open({ref:"members.detect"})');
+    await w.__settled();
+    // Blocked AGY Native shows accountRequired state, not notInstalled.
+    expect(w.eval('VM.nativeSetup().items.find(c=>c.id==="agy-blocked").state')).toBe('accountRequired');
+    expect(w.eval('VM.nativeSetup().items.find(c=>c.id==="agy-native").adjusting')).toBe(true);
+    // Submitting with blank model fails with agy_model_required (distinct from effort).
+    await w.eval('A.nativeCreate()');
+    expect(w.eval('VM.nativeSetup().submitError')).toBe('agy_model_required');
+    expect(creates).toHaveLength(0);
+    // Filling actual model ID without effort succeeds and preserves autoApprove=false + managed_account.
+    const model = w.document.getElementById('probe-agy-native-model');
+    model.value = 'gemini-3.8-flash-high';
+    model.dispatchEvent(new w.Event('input', { bubbles: true }));
+    await w.__settled();
+    await w.eval('A.nativeCreate()');
+    expect(w.eval('VM.nativeSetup().submitError')).toBe('');
+    expect(creates).toHaveLength(1);
+    expect(creates[0]).toMatchObject({
+      form: {
+        clientId: 'google',
+        carrier: 'cli',
+        configurationSource: 'managed_account',
+        accountRef: 'google-work',
+        defaultModel: 'gemini-3.8-flash-high',
+        cliEffort: '',
+        agyAutoApprove: false,
+        agyTrustedWorkspaces: '/workspace/demo',
+      },
+    });
+  } finally {
+    dom.window.close();
+  }
+});
+
 it.each([
   false,
   true,
