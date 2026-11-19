@@ -603,6 +603,28 @@ function bindMembers() {
   A.memberVoicesRetry = function () {
     return read();
   };
+  function isEligibleAgyAccount(a, acp) {
+    if (a.authType !== 'oauth') return false;
+    if (a.envVars && Object.keys(a.envVars).length > 0) return false;
+    if (acp) return !a.agy;
+    if (a.agy) return ['ready', 'refreshable'].includes(a.agyLoginStatus);
+    return true;
+  }
+  function defaultAgyAccountId(acp) {
+    const googleClient = meta.clients.find(function (row) {
+      return row.id === 'google';
+    });
+    if (!googleClient) return '';
+    const eligible = meta.accounts.filter(function (a) {
+      return googleClient.accounts.includes(a.id) && isEligibleAgyAccount(a, acp);
+    });
+    const picked = !acp
+      ? eligible.find(function (a) {
+          return !!a.agy;
+        }) || eligible[0]
+      : eligible[0];
+    return picked ? picked.id : '';
+  }
   function form() {
     const state = draft();
     if (!state) return null;
@@ -665,10 +687,15 @@ function bindMembers() {
         : 0) +
       (JSON.stringify(state.shared) !== JSON.stringify(state.sharedOriginal) ? 1 : 0) +
       (shared && clientSettingsDirty(shared) ? 1 : 0);
+    const supportsNativeTool = !client || client.supportsNativeTool !== false;
+    const agyActive = f.clientId === 'google' && (f.agyNativeEnabled || f.agyAcpEnabled);
     const missing = !state.id
-      ? ['breed', 'role', 'aliases'].filter(function (key) {
-          return !d[key] || (Array.isArray(d[key]) && !d[key].length);
-        })
+      ? ['breed', 'role', 'aliases']
+          .concat(supportsNativeTool ? [] : ['acc'])
+          .concat(agyActive ? ['model'] : [])
+          .filter(function (key) {
+            return !d[key] || (Array.isArray(d[key]) && !d[key].length);
+          })
       : [];
     const l0 =
       state.id &&
@@ -685,7 +712,7 @@ function bindMembers() {
       on: !cat || !cat.roster || cat.roster.available,
       cloud: cloud,
       configurationSource: f.configurationSource,
-      supportsNativeTool: !client || client.supportsNativeTool !== false,
+      supportsNativeTool: supportsNativeTool,
       accountRef: f.accountRef,
       clientName: client && client.label,
       nativeLogin: runtime && runtime.readiness,
@@ -708,9 +735,7 @@ function bindMembers() {
             kind: a.builtin ? 'builtin' : a.authType === 'api_key' ? 'key' : a.authType,
             blocked:
               f.clientId === 'google' && (f.agyNativeEnabled || f.agyAcpEnabled)
-                ? a.authType !== 'oauth' ||
-                  (!!a.envVars && Object.keys(a.envVars).length > 0) ||
-                  (f.agyAcpEnabled ? !!a.agy : !!a.agy && !['ready', 'refreshable'].includes(a.agyLoginStatus))
+                ? !isEligibleAgyAccount(a, !!f.agyAcpEnabled)
                 : !!a.agy,
           };
         }),
@@ -843,17 +868,33 @@ function bindMembers() {
         return row.id === state.form.clientId;
       });
       state.form.carrier = client.carriers[0][0];
-      state.form.accountRef = '';
       state.form.cliEffort = '';
       state.form.configurationSource =
         client && client.supportsNativeTool === false ? 'managed_account' : 'native_tool';
       if (state.form.clientId === 'google') {
         state.form.agyNativeEnabled = true;
         state.form.agyAcpEnabled = false;
+        state.form.accountRef = defaultAgyAccountId(false);
         if (!state.form.agyTrustedWorkspaces && meta.projectPath) state.form.agyTrustedWorkspaces = meta.projectPath;
       } else {
+        state.form.accountRef = '';
         state.form.agyNativeEnabled = false;
         state.form.agyAcpEnabled = false;
+      }
+    }
+    if (key === 'carrier' && state.form.clientId === 'google') {
+      const isAcp = state.form.carrier === 'acp';
+      state.form.agyNativeEnabled = !isAcp;
+      state.form.agyAcpEnabled = isAcp;
+      state.form.configurationSource = 'managed_account';
+      const currentAcc = meta.accounts.find(function (a) {
+        return a.id === state.form.accountRef;
+      });
+      if (!currentAcc || !isEligibleAgyAccount(currentAcc, isAcp)) {
+        state.form.accountRef = defaultAgyAccountId(isAcp);
+      }
+      if (!isAcp && !state.form.agyTrustedWorkspaces && meta.projectPath) {
+        state.form.agyTrustedWorkspaces = meta.projectPath;
       }
     }
     render(true);
@@ -894,8 +935,9 @@ function bindMembers() {
       });
     if (!runtime) return;
     Object.assign(state.form, pdlClone(runtime.form));
-    if (runtime.agyCarrier && !state.form.agyTrustedWorkspaces && meta.projectPath) {
-      state.form.agyTrustedWorkspaces = meta.projectPath;
+    if (runtime.agyCarrier) {
+      if (!state.form.accountRef) state.form.accountRef = defaultAgyAccountId(runtime.agyCarrier === 'acp');
+      if (!state.form.agyTrustedWorkspaces && meta.projectPath) state.form.agyTrustedWorkspaces = meta.projectPath;
     }
     commitModel(state.form);
     render(true);
@@ -1291,7 +1333,13 @@ function bindMembers() {
   FORMS.member = async function () {
     const state = draft();
     if (state.saveState !== 'idle') return;
-    if (form().preferences && form().preferences.invalidEffort) return;
+    const current = form();
+    if (current.preferences && current.preferences.invalidEffort) return;
+    if (current.invalid && current.invalid.acc) {
+      state.saveError = tc('memberForm.fields.err');
+      render(true);
+      return;
+    }
     state.submitted = pdlClone(state.form);
     state.saveState = state.pendingWrite ? 'checking' : 'saving';
     state.saveError = '';
