@@ -37,11 +37,20 @@ function bindPluginSpaces() {
   function opOf(plugin) {
     return ops[plugin.pluginId] || plugin.operation;
   }
+  // Only installed plugins are known senders: a plugin that isn't installed has no identity anywhere outside the
+  // plugin page, so its messages fall back to their source name / id like any unknown sender.
   pdlReads('who').plugins = function () {
     return Object.fromEntries(
-      pluginRows().map(function (plugin) {
-        return [plugin.pluginId, { name: plugin.displayName, icon: plugin.icon, instanceId: plugin.pluginInstanceId }];
-      }),
+      pluginRows()
+        .filter(function (plugin) {
+          return plugin.artifact === 'installed';
+        })
+        .map(function (plugin) {
+          return [
+            plugin.pluginId,
+            { name: plugin.displayName, icon: plugin.icon, instanceId: plugin.pluginInstanceId },
+          ];
+        }),
     );
   };
   // A detail that can't be read is just missing; its place says so (detailLoad) instead of loading forever.
@@ -107,7 +116,9 @@ function bindPluginSpaces() {
       if (name.indexOf('pluginTools:') === 0) settleHold(chatAction('settingsPluginToolsRead', { id: name.slice(12) }));
     });
   });
+  // A plugin that isn't installed shows only its list row; only an installed plugin has a detail to read.
   function config(plugin) {
+    if (plugin.artifact !== 'installed') return null;
     if (projectionNeeded) projectionNeeded.add('pluginDetail:' + plugin.pluginId);
     const detail = placementData().pluginDetails[plugin.pluginId],
       inst = plugin.pluginId;
@@ -328,11 +339,12 @@ function bindPluginSpaces() {
       sel: chosen
         ? Object.assign({}, selected, {
             key: chosen.pluginId,
-            detailLoad: placementData().pluginDetails[chosen.pluginId]
-              ? ''
-              : detailFailed[chosen.pluginId]
-                ? 'error'
-                : 'loading',
+            detailLoad:
+              chosen.artifact !== 'installed' || placementData().pluginDetails[chosen.pluginId]
+                ? ''
+                : detailFailed[chosen.pluginId]
+                  ? 'error'
+                  : 'loading',
             name: chosen.displayName,
             icon: chosen.icon,
             publisher: chosen.publisher,
