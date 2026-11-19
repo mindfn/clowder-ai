@@ -5305,9 +5305,19 @@
     "created": "Created",
     "ready": "Available",
     "dshAuto": "Installed · Configured automatically when added",
+    "accountRequired": "Requires signed-in Google OAuth account",
     "conflict": "A member with this name already exists",
     "adjust": "Adjust",
-    "createFailed": "Could not create {0} ({1}):"
+    "createFailed": "Could not create {0} ({1}):",
+    "agyModelPlaceholder": "Enter an actual model ID, e.g. gemini-3.8-flash-high",
+    "agyModelHint": "AGY Native requires an actual model ID and does not support leaving it blank to follow tool defaults; reasoning effort is optional.",
+    "errors": {
+      "agyAccountRequired": "Bind a valid Google OAuth account first (no environment overrides; standalone AGY accounts must be signed in).",
+      "agyModelRequired": "AGY Native requires an actual model ID and does not support leaving it blank to follow tool defaults.",
+      "agyProfileInvalid": "Isolated profile ID format is invalid.",
+      "agyWorkspaceRequired": "Restricted AGY Native mode requires at least one approved workspace.",
+      "agyAbsolutePathRequired": "Profile root and approved workspaces must use absolute paths."
+    }
   },
   "wsRecall": {
     "summary": {

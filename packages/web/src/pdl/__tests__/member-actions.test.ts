@@ -430,39 +430,89 @@ it('derives account options from real account families and exposes only actual c
   expect(data.clients.find((client) => client.id === 'acp')?.acpMaxDefault).toBe(20);
 });
 
-it('creates the probed AGY member with its chosen model and effort and the current project as a restricted workspace', async () => {
+it('creates the probed AGY member with a valid managed Google OAuth account, actual model ID, and restricted workspace', async () => {
   const read = vi.mocked(apiFetch).getMockImplementation()!;
+  const agyRuntime = {
+    id: 'agy-native',
+    label: 'AGY Native',
+    clientId: 'google',
+    agyCarrier: 'native',
+    installed: true,
+    models: [],
+    readiness: { status: 'unknown' },
+  };
+  let accountProviders: Record<string, unknown>[] = [];
   vi.mocked(apiFetch).mockImplementation(async (path, init) =>
     path === '/api/cats/native-runtimes'
-      ? Response.json({
-          runtimes: [
-            {
-              id: 'agy-native',
-              label: 'AGY Native',
-              clientId: 'google',
-              agyCarrier: 'native',
-              installed: true,
-              models: [],
-              readiness: { status: 'unknown' },
-            },
-          ],
-        })
-      : path === '/api/cats' && !init?.method
-        ? Response.json({ cats: [] })
-        : read(path, init),
+      ? Response.json({ runtimes: [agyRuntime] })
+      : path === '/api/accounts'
+        ? Response.json({ projectPath: '/test/project', providers: accountProviders })
+        : path === '/api/cats' && !init?.method
+          ? Response.json({ cats: [] })
+          : read(path, init),
   );
+  // Without an eligible Google OAuth account, AGY Native is visible but not selectable.
+  accountProviders = [
+    {
+      id: 'google-key',
+      name: 'Key',
+      displayName: 'Google Key',
+      builtin: false,
+      authType: 'api_key',
+      clientId: 'google',
+    },
+    {
+      id: 'agy-unlogged',
+      name: 'AGY',
+      displayName: 'AGY Unlogged',
+      builtin: false,
+      authType: 'oauth',
+      clientId: 'google',
+      agy: { storage: 'cli_file', credentialHome: '/tmp/agy-unlogged' },
+      agyLoginStatus: 'not_logged_in',
+    },
+  ];
+  const blocked = (await readNativeMembers('journey', false))[0];
+  expect(blocked.selectable).toBe(false);
+  expect(blocked.selected).toBe(false);
+  expect(blocked.accountRequired).toBe(true);
+
+  // With a signed-in Google OAuth account (not hardcoded to 'gemini'), AGY Native builds a managed_account draft.
+  accountProviders = [
+    ...accountProviders,
+    {
+      id: 'custom-google-oauth',
+      name: 'Google OAuth',
+      displayName: 'Work Google',
+      builtin: false,
+      authType: 'oauth',
+      clientId: 'google',
+    },
+  ];
   const partners = await readNativeMembers('journey', false),
     partner = partners[0];
   expect(partner.selectable).toBe(true);
+  expect(partner.form.configurationSource).toBe('managed_account');
+  expect(partner.form.accountRef).toBe('custom-google-oauth');
   expect(partner.form.defaultModel).toBe('');
+  expect(partner.agyAccounts?.map((account) => account.id)).toEqual(['custom-google-oauth']);
   partner.form.defaultModel = 'gemini-native';
-  partner.form.cliEffort = 'high';
   await createNativeMember(partner, 'journey');
   expect(writes.at(-1)?.body).toMatchObject({
+    clientId: 'google',
+    carrier: 'cli',
+    configurationSource: 'managed_account',
+    accountRef: 'custom-google-oauth',
     defaultModel: 'gemini-native',
-    cli: { effort: 'high' },
-    agyProfile: { carrier: 'native', model: 'gemini-native', autoApprove: false, trustedWorkspaces: ['/test/project'] },
+    agyProfile: {
+      enabled: true,
+      carrier: 'native',
+      model: 'gemini-native',
+      autoApprove: false,
+      trustedWorkspaces: ['/test/project'],
+    },
   });
+  expect(writes.at(-1)?.body).not.toHaveProperty('cli.effort');
 });
 
 it('writes member changes with revision and account-derived service tier, without a credential setting', async () => {

@@ -1,3 +1,4 @@
+import { catClientSupportsNativeTool } from '@cat-cafe/shared';
 import { serializeCommandArgs } from '../../hub-cat-editor.acp';
 import { usesAgyAcp, usesAgyNative } from '../../hub-cat-editor.agy';
 import { type HubCatEditorFormState, initialState, splitCommandArgs } from '../../hub-cat-editor.model';
@@ -114,7 +115,7 @@ export function runtimeDefaults(next: RuntimeChoice): RuntimeFields {
   return {
     ...pickRuntime(defaults),
     clientId: next.clientId,
-    configurationSource: 'native_tool',
+    configurationSource: catClientSupportsNativeTool(next.clientId) ? 'native_tool' : 'managed_account',
     accountRef: '',
     defaultModel: '',
     cliEffort: '',

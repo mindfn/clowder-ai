@@ -1,5 +1,29 @@
 import type { CatData } from '@/hooks/useCatData';
-import type { HubCatEditorFormState } from './hub-cat-editor.model';
+import type { ProfileItem } from './hub-accounts.types';
+import { filterAccounts, type HubCatEditorFormState } from './hub-cat-editor.model';
+
+export function isEligibleAgyAccount(account: ProfileItem, carrier: 'native' | 'acp' = 'native'): boolean {
+  if (account.authType !== 'oauth') return false;
+  if (account.envVars && Object.keys(account.envVars).length > 0) return false;
+  if (carrier === 'acp') return !account.agy;
+  if (account.agy) return account.agyLoginStatus === 'ready' || account.agyLoginStatus === 'refreshable';
+  return true;
+}
+
+export function eligibleAgyAccounts(profiles: ProfileItem[], carrier: 'native' | 'acp' = 'native'): ProfileItem[] {
+  return filterAccounts('google', profiles).filter((account) => isEligibleAgyAccount(account, carrier));
+}
+
+export function pickDefaultAgyAccount(
+  profiles: ProfileItem[],
+  carrier: 'native' | 'acp' = 'native',
+): ProfileItem | undefined {
+  const eligible = eligibleAgyAccounts(profiles, carrier);
+  if (carrier === 'native') {
+    return eligible.find((account) => Boolean(account.agy)) ?? eligible[0];
+  }
+  return eligible[0];
+}
 
 export function usesAgyNative(form: Pick<HubCatEditorFormState, 'clientId' | 'carrier' | 'agyNativeEnabled'>) {
   return form.clientId === 'google' && form.carrier !== 'acp' && form.agyNativeEnabled === true;

@@ -758,6 +758,7 @@ function bindMembers() {
       on: !cat || !cat.roster || cat.roster.available,
       cloud: cloud,
       configurationSource: f.configurationSource,
+      supportsNativeTool: !client || client.supportsNativeTool !== false,
       accountRef: f.accountRef,
       clientName: isDsh ? (legacyDsh ? 'DeepSeek Harness' : dshClientName) : client && client.label,
       nativeLogin: runtime && runtime.readiness,
@@ -792,9 +793,11 @@ function bindMembers() {
             name: a.displayName,
             kind: a.builtin ? 'builtin' : a.authType === 'api_key' ? 'key' : a.authType,
             blocked:
-              !!a.agy &&
-              (!(f.clientId === 'google' && f.agyNativeEnabled) ||
-                !['ready', 'refreshable'].includes(a.agyLoginStatus)),
+              f.clientId === 'google' && (f.agyNativeEnabled || f.agyAcpEnabled)
+                ? a.authType !== 'oauth' ||
+                  (!!a.envVars && Object.keys(a.envVars).length > 0) ||
+                  (f.agyAcpEnabled ? !!a.agy : !!a.agy && !['ready', 'refreshable'].includes(a.agyLoginStatus))
+                : !!a.agy,
           };
         }),
       preferences: cloud
@@ -841,7 +844,17 @@ function bindMembers() {
       hybrid: d.ctxStrat === 'hybrid',
       speedOn: f.clientId === 'openai' && !!account && account.authType === 'oauth' && f.carrier !== 'acp',
       astra: /astra/.test(f.defaultModel),
-      invalid: {},
+      invalid: {
+        acc: !!(client && client.supportsNativeTool === false && !f.accountRef),
+        agyDirs:
+          f.clientId === 'google' &&
+          f.carrier !== 'acp' &&
+          !!f.agyNativeEnabled &&
+          !f.agyAutoApprove &&
+          !(f.agyTrustedWorkspaces || '').split('\n').some(function (v) {
+            return v.trim().length > 0;
+          }),
+      },
       routing: null,
       save: {
         state: state.saveState,
@@ -947,7 +960,13 @@ function bindMembers() {
     if (key === 'accountRef' && e.target.value) {
       state.form.configurationSource = 'managed_account';
       if (canFollowAccount(state.form)) state.form.accountBindingMode = 'override';
-    } else if (key === 'accountRef') state.form.configurationSource = 'native_tool'; // the client's own login and configuration
+    } else if (key === 'accountRef') {
+      const accClient = meta.clients.find(function (row) {
+        return row.id === state.form.clientId;
+      });
+      state.form.configurationSource =
+        accClient && accClient.supportsNativeTool === false ? 'managed_account' : 'native_tool';
+    }
     if (key === 'clientId') {
       const client = meta.clients.find(function (row) {
         return row.id === state.form.clientId;
@@ -955,6 +974,16 @@ function bindMembers() {
       state.form.carrier = client.carriers[0][0];
       state.form.accountRef = '';
       state.form.cliEffort = '';
+      state.form.configurationSource =
+        client && client.supportsNativeTool === false ? 'managed_account' : 'native_tool';
+      if (state.form.clientId === 'google') {
+        state.form.agyNativeEnabled = true;
+        state.form.agyAcpEnabled = false;
+        if (!state.form.agyTrustedWorkspaces && meta.projectPath) state.form.agyTrustedWorkspaces = meta.projectPath;
+      } else {
+        state.form.agyNativeEnabled = false;
+        state.form.agyAcpEnabled = false;
+      }
     }
     if (!canFollowAccount(state.form)) delete state.form.accountBindingMode;
     render(true);
@@ -996,6 +1025,9 @@ function bindMembers() {
     if (!runtime) return;
     Object.assign(state.form, pdlClone(runtime.form));
     delete state.form.accountBindingMode;
+    if (runtime.agyCarrier && !state.form.agyTrustedWorkspaces && meta.projectPath) {
+      state.form.agyTrustedWorkspaces = meta.projectPath;
+    }
     commitModel(state.form);
     render(true);
   };
@@ -1538,7 +1570,14 @@ function bindMembers() {
       act('nativeDetect', { journeyId: setup.journeyId, refresh: String(data.refresh !== false) })
         .then(
           function (partners) {
-            if (S.nativeSetup === setup) setup.partners = partners;
+            if (S.nativeSetup === setup) {
+              setup.partners = partners.map(function (p) {
+                if (p.runtime && p.runtime.agyCarrier && p.selectable && !p.existingId && !p.form.defaultModel.trim()) {
+                  p.adjusting = true;
+                }
+                return p;
+              });
+            }
           },
           function (error) {
             if (S.nativeSetup === setup) setup.submitError = error.message;
@@ -1555,18 +1594,35 @@ function bindMembers() {
     if (!g) return null;
     return {
       items: g.partners.map(function (p) {
+        const agyCarrier = (p.runtime && p.runtime.agyCarrier) || '';
+        const agyAccounts = p.agyAccounts || [];
         return {
           id: p.id,
           name: p.form.displayName,
           runtime: p.runtime.dshDesktop ? Object.assign({}, p.runtime, { label: dshClientName }) : p.runtime,
+          agyCarrier: agyCarrier,
+          agyAccounts: agyAccounts,
+          accountRequired: !!p.accountRequired,
           selected: p.selected,
           existingId: p.existingId,
           selectable: p.selectable && !p.existingId && !p.identityConflict,
-          payload: { defaultModel: p.form.defaultModel, cliEffort: p.form.cliEffort },
+          payload: {
+            defaultModel: p.form.defaultModel,
+            cliEffort: p.form.cliEffort,
+            accountRef: p.form.accountRef || '',
+            agyProfileId: p.form.agyProfileId || p.form.catId || '',
+            agyHomeRoot: p.form.agyHomeRoot || '',
+            agyAutoApprove: p.form.agyAutoApprove === true,
+            agyTrustedWorkspaces: p.form.agyTrustedWorkspaces || '',
+          },
           fieldIds: {
+            account: 'probe-' + p.id + '-account',
             model: 'probe-' + p.id + '-model',
-
             effort: 'probe-' + p.id + '-effort',
+            agyPerm: 'probe-' + p.id + '-agyPerm',
+            agyProfile: 'probe-' + p.id + '-agyProfile',
+            agyRoot: 'probe-' + p.id + '-agyRoot',
+            agyDirs: 'probe-' + p.id + '-agyDirs',
           },
           adjusting: !!p.adjusting,
           get preferences() {
@@ -1576,11 +1632,13 @@ function bindMembers() {
             ? 'created'
             : p.identityConflict
               ? 'conflict'
-              : p.selectable
-                ? p.runtime.dshDesktop
-                  ? 'dshAuto'
-                  : 'ready'
-                : 'unavailable',
+              : p.accountRequired
+                ? 'accountRequired'
+                : p.selectable
+                  ? p.runtime.dshDesktop
+                    ? 'dshAuto'
+                    : 'ready'
+                  : 'unavailable',
         };
       }),
       createDisabled:
@@ -1613,8 +1671,23 @@ function bindMembers() {
     const partner = S.nativeSetup.partners.find(function (p) {
       return p.id === e.target.dataset.id;
     });
-    partner.form[{ model: 'defaultModel', effort: 'cliEffort' }[e.target.dataset.k]] = e.target.value;
-    if (e.target.dataset.k === 'model' && e.type === 'change' && listedModel(partner.form, '', partner.runtime))
+    const k = e.target.dataset.k;
+    if (k === 'agyPerm') {
+      partner.form.agyAutoApprove = e.target.value === 'true';
+    } else if (k === 'account') {
+      partner.form.accountRef = e.target.value;
+      partner.form.configurationSource = 'managed_account';
+    } else {
+      const field = {
+        model: 'defaultModel',
+        effort: 'cliEffort',
+        agyProfile: 'agyProfileId',
+        agyRoot: 'agyHomeRoot',
+        agyDirs: 'agyTrustedWorkspaces',
+      }[k];
+      if (field) partner.form[field] = e.target.value;
+    }
+    if (k === 'model' && e.type === 'change' && listedModel(partner.form, '', partner.runtime))
       commitModel(partner.form);
     render(true);
   };
@@ -1636,8 +1709,43 @@ function bindMembers() {
           runtimeCatalogState(partner.form, '', partner.runtime),
           partner.runtime.acpMaxDefault,
         );
-        if ((partner.runtime.agyCarrier === 'native' && !partner.form.defaultModel.trim()) || preference.invalidEffort)
-          throw new Error('runtime_preference_required');
+        if (partner.runtime.agyCarrier) {
+          if (!partner.form.accountRef || !partner.form.accountRef.trim()) {
+            partner.adjusting = true;
+            throw new Error('agy_account_required');
+          }
+          const model = (partner.form.defaultModel || '').trim();
+          if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(model)) {
+            partner.adjusting = true;
+            throw new Error('agy_model_required');
+          }
+          const profileId = (partner.form.agyProfileId || partner.form.catId || '').trim();
+          if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(profileId)) {
+            partner.adjusting = true;
+            throw new Error('agy_profile_invalid');
+          }
+          const workspaces = (partner.form.agyTrustedWorkspaces || '')
+            .split('\n')
+            .map(function (v) {
+              return v.trim();
+            })
+            .filter(Boolean);
+          if (!partner.form.agyAutoApprove && !workspaces.length) {
+            partner.adjusting = true;
+            throw new Error('agy_workspace_required');
+          }
+          const homeRoot = (partner.form.agyHomeRoot || '').trim();
+          if (
+            workspaces.some(function (path) {
+              return path[0] !== '/';
+            }) ||
+            (homeRoot && homeRoot[0] !== '/')
+          ) {
+            partner.adjusting = true;
+            throw new Error('agy_absolute_path_required');
+          }
+        }
+        if (preference.invalidEffort) throw new Error('runtime_effort_invalid');
         if (partner.runtime.dshDesktop && !partner.creationForm)
           partner.creationForm = await act('nativePrepare', { value: JSON.stringify(partner) });
         const cat = await act('nativeCreate', { journeyId: setup.journeyId, value: JSON.stringify(partner) });
