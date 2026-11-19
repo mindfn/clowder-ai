@@ -540,7 +540,8 @@
       "true": " · 有出错"
     },
     "execWhat": {
-      "reply": "回复你的消息"
+      "reply": "回复你的消息",
+      "watch": "守望查看"
     },
     "magicWord": "{0} · {1} → {2}",
     "emptyValue": {
@@ -896,7 +897,12 @@
       "dismissed": "已忽略",
       "undone": "已撤销",
       "target": "→ {0}",
-      "original": "原话"
+      "original": "原话",
+      "panel": "多只守望",
+      "panelLimit": "同时在看的上限",
+      "ownAccount": "成员自己的账号",
+      "who": "看是谁",
+      "roundMember": {"pending": "{0}（没轮到）", "running": "{0}（还在看）", "spoke": "{0}（说了）", "quiet": "{0}（没说）", "failed": "{0}（没跑成）", "interrupted": "{0}（中断了）"}
     },
     "routing": {
       "mention": "@{0}",
@@ -984,6 +990,7 @@
     }
   },
   "chatRich": {
+    "profile": {"full": "完整内容", "before": "当前内容", "after": "提议改为"},
     "selection": {
       "cardTitle": "卡片 · {0}",
       "fileSub": "{0} · 文档",

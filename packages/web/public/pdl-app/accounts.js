@@ -20,21 +20,22 @@ function bindAccounts() {
     });
   };
   async function read() {
-    try {
-      const values = await Promise.all([
-        api.get('/api/accounts'),
-        api.get('/api/accounts/codex/members'),
-        api.get('/api/accounts/claude/members'),
-        api.get('/api/accounts/agy/members'),
-      ]);
-      providers = values[0].providers;
-      selections = { codex: values[1].selection, claude: values[2].selection, agy: values[3].selection };
-      load = '';
-      dataOk('accounts');
-    } catch (error) {
-      load = 'error';
-      dataError('accounts', error);
-    }
+    // The directory and each family's selection are read on their own; a selection that fails only leaves its
+    // members unknown (the last one read, or none).
+    const tools = ['codex', 'claude', 'agy'],
+      values = await Promise.allSettled(
+        [api.get('/api/accounts')].concat(
+          tools.map(function (tool) {
+            return api.get('/api/accounts/' + tool + '/members');
+          }),
+        ),
+      );
+    if (values[0].status === 'fulfilled') providers = values[0].value.providers;
+    tools.forEach(function (tool, i) {
+      const v = values[i + 1];
+      selections[tool] = v.status === 'fulfilled' ? v.value.selection : selections[tool] || { members: [] };
+    });
+    load = values[0].status === 'fulfilled' || load === '' ? '' : 'error';
     arm();
     await chatDataRender();
   }
@@ -53,12 +54,23 @@ function bindAccounts() {
     clearTimeout(timer);
     if (!document.hidden && heldNeeded.has('accounts')) settleHold(read());
   });
+  // The sidebar quota pin preference: read when a projection shows it (a theme that draws the quota bars).
+  let pin = null;
+  async function readPin() {
+    try {
+      pin = await api.get('/api/config/quota-pin');
+    } catch {
+      pin = null;
+    }
+    await chatDataRender();
+  }
   api.on('sources:needed', function (diff) {
     if (diff.removed.indexOf('accounts') >= 0) clearTimeout(timer);
     if (diff.added.indexOf('accounts') >= 0) {
       clearTimeout(timer);
       settleHold(read());
     }
+    if (diff.added.indexOf('quotaPin') >= 0) settleHold(readPin());
   });
   PAGES.accounts = function () {
     return pdlView('page.accounts');
@@ -80,8 +92,10 @@ function bindAccounts() {
   }
   // Remaining below this percentage is low (that item of the quota row is shown as a warning).
   const QUOTA_LOW = 20;
+  // One reading shape for every family: { observedAt, items } (agy / kimi store just that; Codex adds a status).
   function accountQuotaData(o) {
-    const items = o.status === 'ok' ? o.items : (o.lastSuccess || {}).items || [];
+    const ok = !o.status || o.status === 'ok',
+      items = ok ? o.items : (o.lastSuccess || {}).items || [];
     const left = function (x) {
       return Math.max(0, Math.min(100, x.percentKind === 'remaining' ? x.usedPercent : 100 - x.usedPercent));
     };
@@ -97,7 +111,7 @@ function bindAccounts() {
       at: o.lastSuccess ? o.lastSuccess.observedAt : o.observedAt,
       hasAt: true,
       out:
-        o.status === 'ok' &&
+        ok &&
         items.some(function (x) {
           return left(x) === 0;
         }),
@@ -245,25 +259,16 @@ function bindAccounts() {
       dir: p.codex && p.codex.credentialHome,
       open: open,
       quota:
-        p.authType === 'oauth' &&
-        (p.clientId === 'anthropic'
-          ? !p.baseUrl
-          : p.clientId === 'openai' &&
-            ((p.codex && p.codex.status === 'ready') ||
-              (p.quota && p.quota.status === 'unavailable') ||
-              st.quota[p.id])),
+        !!storedQuota(p) ||
+        (p.authType === 'oauth' &&
+          p.clientId === 'openai' &&
+          ((p.codex && p.codex.status === 'ready') ||
+            (p.quota && p.quota.status === 'unavailable') ||
+            !!st.quota[p.id])),
       quotaBusy: !!(st.quota[p.id] && st.quota[p.id].busy),
       quotaIdentityChanged:
         !!(st.quota[p.id] && st.quota[p.id].identityChanged) || (!!p.quota && !quotaMatches(p, p.quota)),
-      quotaData: (function () {
-        const fail = st.quota[p.id] && st.quota[p.id].fail;
-        if (p.clientId === 'anthropic')
-          return p.claudeQuota || fail ? claudeQuotaData(p.claudeQuota ? p.claudeQuota.samples : {}, fail) : null;
-        const observation = (st.quota[p.id] && st.quota[p.id].observation) || p.quota;
-        return observation && quotaMatches(p, observation) && !(st.quota[p.id] && st.quota[p.id].identityChanged)
-          ? accountQuotaData(observation)
-          : null;
-      })(),
+      quotaData: quotaDataOf(p),
       canSwitch:
         (p.clientId === 'openai' ||
           p.clientId === 'anthropic' ||
@@ -471,12 +476,143 @@ function bindAccounts() {
       },
     });
   };
-  // Claude: the account list carries the stored reading (claudeQuota); a failed read keeps it and names why.
-  async function claudeQuota(p) {
+  // The quota an account row shows; 执行 shows the same reading for the account a member uses.
+  function quotaDataOf(p) {
+    const fail = st.quota[p.id] && st.quota[p.id].fail;
+    if (p.clientId === 'anthropic')
+      return p.claudeQuota || fail ? claudeQuotaData(p.claudeQuota ? p.claudeQuota.samples : {}, fail) : null;
+    if (storedQuota(p)) {
+      const reading = p.agyQuota || p.kimiQuota;
+      return reading
+        ? Object.assign(accountQuotaData(reading), fail ? { fail: fail } : {})
+        : fail
+          ? { items: [], resets: [], fail: fail }
+          : null;
+    }
+    const observation = (st.quota[p.id] && st.quota[p.id].observation) || p.quota;
+    return observation && quotaMatches(p, observation) && !(st.quota[p.id] && st.quota[p.id].identityChanged)
+      ? accountQuotaData(observation)
+      : null;
+  }
+  // Members on a built-in login use the account its selection names; others the account set on the member.
+  function memberAccountRef(id, own) {
+    const picked = Object.values(selections)
+      .flatMap(function (sel) {
+        return sel.members;
+      })
+      .find(function (m) {
+        return m.id === id;
+      });
+    return (picked && picked.accountRef) || own;
+  }
+  VM.memberQuota = function (id, own) {
+    if (projectionNeeded) projectionNeeded.add('accounts');
+    const p = account(memberAccountRef(id, own)),
+      q = p && quotaDataOf(p);
+    return q && q.items.length ? { account: p.displayName, items: q.items } : null;
+  };
+  // Quota pin: every signed-in account's reading (the same as its account row) and, per family, the least left among
+  // the selected accounts. Which accounts count is the owner's choice (null = all); drawing it is a theme's choice.
+  const QUOTA_FAMILIES = ['claude', 'codex', 'agy', 'kimi'];
+  function quotaFamily(p) {
+    if (p.authType !== 'oauth' || p.googleCloud) return '';
+    if (p.agy) return 'agy';
+    return { anthropic: p.baseUrl ? '' : 'claude', openai: 'codex', kimi: 'kimi' }[p.clientId] || '';
+  }
+  VM.quotaPin = function () {
+    if (projectionNeeded) {
+      projectionNeeded.add('accounts');
+      projectionNeeded.add('quotaPin');
+    }
+    if (!pin) return { pinned: false, bars: [], accounts: [], selected: [], count: 0 };
+    const all = providers.filter(quotaFamily).map(function (p) {
+      const q = quotaDataOf(p);
+      return {
+        id: p.id,
+        family: quotaFamily(p),
+        name: p.displayName,
+        inUse: accountUsers(p).length > 0,
+        items: q ? q.items : [],
+        canRefresh: !!storedQuota(p) || p.clientId === 'openai',
+      };
+    });
+    const chosen =
+      pin.selectedAccountRefs ||
+      all.map(function (a) {
+        return a.id;
+      });
+    all.forEach(function (a) {
+      a.selected = chosen.indexOf(a.id) >= 0;
+    });
+    const bars = QUOTA_FAMILIES.map(function (f) {
+      const left = all
+        .filter(function (a) {
+          return a.selected && a.family === f;
+        })
+        .reduce(function (m, a) {
+          return a.items.reduce(function (n, i) {
+            return n == null || i.left < n ? i.left : n;
+          }, m);
+        }, null);
+      return { family: f, left: left, has: left != null, low: left != null && left < QUOTA_LOW };
+    });
+    return {
+      pinned: pin.pinned,
+      bars: bars,
+      accounts: all,
+      selected: all.filter(function (a) {
+        return a.selected;
+      }),
+      choosing: !!CS.quotaChoosing,
+      count: chosen.length,
+    };
+  };
+  A.quotaPinSet = async function (d) {
+    pin = await api.post('/api/config/quota-pin', { method: 'PUT' }, d);
+    await chatDataRender();
+    return true;
+  };
+  A.quotaPinSelect = function (d) {
+    return A.quotaPinSet({
+      selectedAccountRefs: VM.quotaPin()
+        .accounts.filter(function (a) {
+          return a.selected !== (a.id === d.id);
+        })
+        .map(function (a) {
+          return a.id;
+        }),
+    });
+  };
+  A.quotaPinRefresh = async function () {
+    await Promise.all(
+      VM.quotaPin()
+        .selected.filter(function (a) {
+          return a.canRefresh;
+        })
+        .map(function (a) {
+          return A.accQuota({ k: a.id });
+        }),
+    );
+    return true;
+  };
+  // Claude, agy and kimi: the account list carries the stored reading; reading again stores a new one and the list is
+  // read again. A failed read keeps the last reading and names why.
+  function storedQuota(p) {
+    return p.clientId === 'anthropic'
+      ? p.authType === 'oauth' && !p.baseUrl
+        ? 'claude'
+        : ''
+      : p.agyQuotaReady
+        ? 'agy'
+        : p.kimiLoginReady
+          ? 'kimi'
+          : '';
+  }
+  async function readStoredQuota(p) {
     const state = (st.quota[p.id] = { busy: true });
     render(true);
     try {
-      await api.post('/api/accounts/' + encodeURIComponent(p.id) + '/claude/quota', {}, {});
+      await api.post('/api/accounts/' + encodeURIComponent(p.id) + '/' + storedQuota(p) + '/quota', {}, {});
     } catch (error) {
       state.identityChanged = error.status === 409;
       state.fail =
@@ -492,7 +628,7 @@ function bindAccounts() {
   }
   A.accQuota = async function (d) {
     const p = account(d.k);
-    if (p.clientId === 'anthropic') return claudeQuota(p);
+    if (storedQuota(p)) return readStoredQuota(p);
     const signature = JSON.stringify(p.codex && p.codex.identity),
       previous = (st.quota[p.id] && st.quota[p.id].observation) || p.quota;
     const state = (st.quota[p.id] = { busy: true });
@@ -540,9 +676,7 @@ function bindAccounts() {
         op === 'start' ? (terminal ? { terminal: true } : {}) : { attemptId: p.codex.attempt.id },
       );
       await read();
-    } catch (error) {
-      dataError('accounts', error);
-    }
+    } catch {}
   }
   A.accRelogin = function (d) {
     return login(account(d.id), 'start');
@@ -584,10 +718,8 @@ function bindAccounts() {
         { scope: 'local', includeOverrides: overrides },
       );
       state.load = '';
-      dataOk('accounts.switch');
-    } catch (error) {
+    } catch {
       state.load = 'error';
-      dataError('accounts.switch', error);
     }
     render(true);
   }

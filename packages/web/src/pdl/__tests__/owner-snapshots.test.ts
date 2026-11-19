@@ -231,7 +231,7 @@ function desktop() {
   };
 }
 function sources() {
-  const card = (id: string, query: string) => ({ blockId: id, view: { response: { query, results: [] } } });
+  const card = (id: string, query: string) => ({ blockId: id, view: { response: { query, results: [], meta: {} } } });
   const before = {
     ...ownerData().sources,
     records: { ...ownerData().sources.records, evidence: { a: card('a', 'before'), b: card('b', 'keep') } },
@@ -453,14 +453,13 @@ it.each([
   'sources',
   'desktop',
   'trash',
-])('publishes %s read errors on receipt and ignores the unchanged error source', (owner) => {
+])('holds %s read errors as its data and ignores the unchanged error source', (owner) => {
   const context = ownerConsole(),
     value = ownerData()[owner as keyof ReturnType<typeof ownerData>];
-  context.dataError = vi.fn();
   context.render = vi.fn();
   const failure = new Error('Owner unavailable');
   context.pushProjectData({ [owner]: { ...value, error: failure } });
-  expect(context.dataError).toHaveBeenCalledTimes(1);
+  expect(context.projectData(owner).error).toBe(failure);
   context.render.mockClear();
   expect(context.pushProjectData({ [owner]: { ...value, error: failure } })[owner]).toEqual({
     added: [],
@@ -469,7 +468,6 @@ it.each([
     orderChanged: false,
     fields: [],
   });
-  expect(context.dataError).toHaveBeenCalledTimes(1);
   expect(context.render).not.toHaveBeenCalled();
 });
 

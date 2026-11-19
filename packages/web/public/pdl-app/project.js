@@ -306,7 +306,7 @@ function bindProject() {
   ].forEach(function (binding) {
     binding[2].forEach(function (name) {
       VM[name] = function () {
-        return projectData(binding[0]) ? binding[1]()[name] : null;
+        return projectData(binding[0]) ? binding[1]()[name] : ownerFailed(binding[0]) ? { load: 'error' } : null;
       };
     });
   });
@@ -1069,10 +1069,10 @@ function bindProject() {
     };
   });
   VM.cafeWsOps = function () {
-    return projectOps().cafeWsOps;
+    return ownerFailed('ops') ? { load: 'error' } : projectOps().cafeWsOps;
   };
   VM.theater = function () {
-    if (!projectData('replay')) return null;
+    if (!projectData('replay')) return ownerFailed('replay') ? { load: 'error' } : null;
     const m = replayModels().theater;
     if (!m) return null;
     return Object.assign({}, m, { items: m.items.map(chatMessageVM) });
@@ -1439,6 +1439,7 @@ function bindProject() {
     return d;
   }
   VM.cafeWsEvo = function () {
+    if (ownerFailed('evolution')) return { load: 'error' };
     const models = projectEvolution(),
       m = models.cafeWsEvo;
     if (!m) return null;
@@ -1479,7 +1480,7 @@ function bindProject() {
   A.wsEvoNew = function () {
     const threadId = S.route === 'chat' ? S.thread : null;
     if (!threadId) return;
-    const operationId = crypto.randomUUID();
+    const operationId = PLATFORM.uuid();
     const form = {
       kind: 'wsEvoNew',
       on: function () {
@@ -1498,7 +1499,8 @@ function bindProject() {
     return chatAction('rpPlay');
   };
   VM.replay = function () {
-    if (!projectData('replay')) return { load: 'loading', sources: [], source: 'thread', player: null };
+    if (!projectData('replay'))
+      return { load: ownerFailed('replay') ? 'error' : 'loading', sources: [], source: 'thread', player: null };
     const model = replayModels();
     return Object.assign({}, model.theater.rp, { load: model.theater.load, player: model.theater.player });
   };
@@ -1809,7 +1811,7 @@ function bindProject() {
         toast(tc('films.invalidFile'));
         return;
       }
-      return chatAction('filmImport', { document: document, operationId: crypto.randomUUID() });
+      return chatAction('filmImport', { document: document, operationId: PLATFORM.uuid() });
     });
   };
   let filmRegistrationDraft = null;
@@ -1824,7 +1826,7 @@ function bindProject() {
     }
   };
   A.filmRegister = function () {
-    filmRegistrationDraft = { mapping: null, error: '', attempt: crypto.randomUUID() };
+    filmRegistrationDraft = { mapping: null, error: '', attempt: PLATFORM.uuid() };
     dialog({ kind: 'filmRegister' });
   };
   VM.filmRegisterForm = function () {
@@ -1857,6 +1859,16 @@ function bindProject() {
   };
   FORMS.pvGo = function () {
     return chatAction('pvGo', { v: val('pv-url') });
+  };
+  // An HTML widget's destination (the library checked it): a message is jumped to, a local page opens in
+  // 页面预览, a map place goes to the platform (the system browser in the desktop app).
+  A.widgetNav = function (d) {
+    if (d.kind === 'message') return A.msgJump({ t: d.t, mid: d.mid });
+    if (d.kind === 'local') {
+      A.wsTool({ k: 'preview' });
+      return chatAction('pvGo', { v: d.url });
+    }
+    return A.openUrl({ url: d.url });
   };
   A.pvRetry = function () {
     return chatAction('pvRetry');
@@ -2982,7 +2994,7 @@ function bindProject() {
         project: data.filmOwner.contentRef,
         revision: data.filmReviewRevision,
         id: d.id,
-        operationId: crypto.randomUUID(),
+        operationId: PLATFORM.uuid(),
       };
     dialog({
       kind: 'filmReopen',

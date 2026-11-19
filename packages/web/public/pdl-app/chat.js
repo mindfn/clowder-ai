@@ -424,6 +424,7 @@ function chatMessageVM(x) {
     Object.assign({}, x, {
       html: body.html,
       suggestions: x.watcher ? watcherSuggestions(chatDataSnapshot.chat.threadId, x.mid) : [],
+      embeds: x.embeds && x.embeds.concat(watcherRoundEmbed(x)),
     }),
   );
 }
@@ -555,8 +556,6 @@ window.clowderChat = {
   pushSidebar: pushSidebar,
   pushProject: pushProjectData,
   pushChat: pushChat,
-  dataError: dataError,
-  dataOk: dataOk,
   emit: function (event, data) {
     let result;
     (chatEvents[event] || []).forEach(function (fn) {

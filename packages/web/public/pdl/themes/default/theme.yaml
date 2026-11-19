@@ -929,15 +929,6 @@ pdl:
           need:
             - "!cmd"
             - inv
-        - id: live.thread
-          scope: row
-          move: ws.live.run
-          title: t:entryLayout.rowSlot.openThread
-          icon: jump
-          open:
-            action: goThread
-          args:
-            k: thread
         - id: live.stop
           scope: row
           move: ws.live.run
@@ -1897,6 +1888,13 @@ pdl:
     MAIN:
       anchor: main
       as: cover
+    QUOTA_WINDOW:
+      of: "@window"
+      map:
+        five_hour: t:accounts.quotaWindow.five_hour
+        seven_day: t:accounts.quotaWindow.seven_day
+        seven_day_overage_included: t:accounts.quotaWindow.fable
+        _: "@label"
     EXEC_MEMBER_ITEM:
       overview:
         - kind: usage
@@ -1917,6 +1915,17 @@ pdl:
           when: "@currentSession.runtime"
           runtimeKind: "@currentSession.runtime.kind"
           life: "@currentSession.runtime.life"
+        - kind: quota
+          when: "@quota"
+          account: "@quota.account"
+          windows:
+            of: "@quota.items"
+            item:
+              t: accounts.quotaItem
+              args:
+                - $frag: QUOTA_WINDOW
+                - "@left"
+            sep: " · "
         - kind: started
           when: "@currentSession"
           created: "@currentSession.created"
@@ -2007,6 +2016,7 @@ pdl:
               fmt: clock
             "false": ""
             _: "@running"
+        kind: "@run.kind"
       tone:
         of: "@running"
         map:
@@ -2056,6 +2066,7 @@ pdl:
                 usage: t:wsSessions.member.overviewLabel.usage
                 context: t:memberForm.context
                 runtime: t:wsSessions.runtime
+                quota: t:accounts.quota
                 started: t:wsSessions.started
                 _: "@kind"
           cols:
@@ -2123,6 +2134,12 @@ pdl:
                           - "@runtimeKind"
                           - " · "
                           - "@life"
+                        sep: ""
+                      quota:
+                        parts:
+                          - "@account"
+                          - " · "
+                          - "@windows"
                         sep: ""
                       started:
                         t: wsSessions.member.overviewValue.started
@@ -6951,6 +6968,26 @@ pdl:
         blocks:
           - type: settings
             rows:
+              - label: t:memberForm.voicePick.label
+                ctls:
+                  - type: select
+                    id: f-vPick
+                    value: $.form.voices.pick
+                    options: $.form.voices.options
+                    change: memberVoice
+                    label: t:memberForm.voicePick.label
+                    when: "!$.form.voices.error"
+                  - type: text
+                    variant: meta
+                    text: t:memberForm.voicePick.error
+                    when: $.form.voices.error
+                  - type: button
+                    label: t:common.retry
+                    act: memberVoicesRetry
+                    when: $.form.voices.error
+                foot:
+                  - text: t:memberForm.voicePick.none
+                    when: $.form.voices.none
               - kind: field
                 label: t:memberForm.fields.language
                 id: f-vLang
@@ -6992,6 +7029,8 @@ pdl:
                   - text: t:memberForm.access.text
                     tone: danger
                     when: $.form.invalid.vVoice
+                  - text: t:memberForm.voicePick.defaultVoice
+                    when: $.form.voices.defaultVoice
               - kind: field
                 label: t:memberForm.fields.speechRate
                 id: f-vSpeed
@@ -7119,6 +7158,22 @@ pdl:
                     tone: danger
                     when: $.form.invalid.ctxWin
                 help: t:memberForm.fields.contextWindowHelp
+              - label: t:memberForm.l0.label
+                ctls:
+                  - type: text
+                    variant: value
+                    text:
+                      t: memberForm.l0.value
+                      args:
+                        - of: $.form.l0
+                          fmt: compact
+                  - type: button
+                    link: true
+                    label: t:rules.title
+                    act: open
+                    args:
+                      page: rules
+                when: $.form.l0
               - kind: field
                 label: t:memberForm.fields.contextFullPolicy
                 id: f-ctxStrat
@@ -7841,6 +7896,25 @@ pdl:
               use: diff
               props: "@rich.diff"
               when: "@rich.diff"
+            - type: disclosure
+              key: "@rich.profile.key"
+              title: t:chatRich.profile.full
+              when: "@rich.profile"
+              blocks:
+                - type: text
+                  variant: meta
+                  text: t:chatRich.profile.before
+                - type: content
+                  html:
+                    of: "@rich.profile.before"
+                    fmt: markdown
+                - type: text
+                  variant: meta
+                  text: t:chatRich.profile.after
+                - type: content
+                  html:
+                    of: "@rich.profile.after"
+                    fmt: markdown
             - type: component
               use: media
               props: "@rich.audio"
@@ -16342,6 +16416,7 @@ pdl:
                                               args:
                                                 - "@what"
                                         _: "@what"
+                                    watch: t:chat.execWhat.watch
                                     _: "@kind"
                                 when:
                                   - "!@error"
@@ -20286,6 +20361,7 @@ pdl:
                 path: cs.modal.open
                 v: goal
               key: goal
+              when: $.goalRead
               open:
                 of: $.open
                 map:
@@ -20337,6 +20413,7 @@ pdl:
                 path: cs.modal.open
                 v: runtime
               key: runtime
+              when: $.runtime
               open:
                 of: $.open
                 map:
@@ -26863,6 +26940,7 @@ pdl:
                       - v: selected
                         label: t:chatMessage.watcher.selected
                 - label: t:member.title
+                  when: "!$.panelOn"
                   control:
                     type: select
                     id: watcher-member
@@ -26880,6 +26958,57 @@ pdl:
                             map:
                               "true": ""
                               _: "@capability.reason"
+                - label: t:chatMessage.watcher.panel
+                  when: $.panelAvailable
+                  control:
+                    type: switch
+                    label: t:chatMessage.watcher.panel
+                    value: $.panelOn
+                    act: watcherPanelSet
+                    args:
+                      field: enabled
+                      value:
+                        of: $.panelOn
+                        map:
+                          "true": false
+                          _: true
+                - label: t:chatMessage.watcher.panelLimit
+                  when: $.panelOn
+                  control:
+                    type: select
+                    id: watcher-panel-limit
+                    value: $.panel.maxConcurrentRuns
+                    change: watcherPanel
+                    args:
+                      field: maxConcurrentRuns
+                    options: $.panelLimits
+            - type: settings
+              when: $.panelOn
+              from: $.panelMembers
+              row:
+                label: "@label"
+                ctls:
+                  - type: select
+                    when: "@active"
+                    id: "@fieldId"
+                    value: "@account"
+                    change: watcherPanelAccount
+                    args:
+                      id: "@catId"
+                    options:
+                      - v: ""
+                        label: t:chatMessage.watcher.ownAccount
+                      - from: $.panelAccounts
+                        item:
+                          v: "@id"
+                          label: "@label"
+                  - type: switch
+                    label: "@label"
+                    value: "@active"
+                    disabled: "@last"
+                    act: watcherPanelMember
+                    args:
+                      id: "@catId"
             - type: choices
               variant: multi
               from: $.availableLabels
@@ -34450,6 +34579,22 @@ pdl:
                 "false": false
                 _: true
         - parts: "@inline"
+        - icon:
+            of: "@run.kind"
+            map:
+              watch: eye
+              _: ""
+          size: xs
+          tip:
+            of: "@run.kind"
+            map:
+              watch: t:chat.execWhat.watch
+              _: ""
+          when:
+            of: "@run.kind"
+            map:
+              watch: true
+              _: false
         - dot: "@run.tone"
           tip: "@run.tip"
           when: "@run"
@@ -34728,12 +34873,7 @@ pdl:
                             _: ""
                         parts:
                           - text:
-                              of: "@window"
-                              map:
-                                five_hour: t:accounts.quotaWindow.five_hour
-                                seven_day: t:accounts.quotaWindow.seven_day
-                                seven_day_overage_included: t:accounts.quotaWindow.fable
-                                _: "@label"
+                              $frag: QUOTA_WINDOW
                           - text: " "
                           - text:
                               t: settings.quotaLeft
@@ -36482,6 +36622,37 @@ pdl:
                           variant: meta
                           text: "@comment"
                           when: "@comment"
+            - type: box
+              when: "@round"
+              blocks:
+                - type: toolbar
+                  items:
+                    - type: chip
+                      label: t:chatMessage.watcher.who
+                      icon: users
+                      pressed: "@round.open"
+                      act: watcherRoundOpen
+                      args:
+                        id: "@round.id"
+                - type: box
+                  when: "@round.open"
+                  load: "@round.load"
+                  error: t:frame.loadError
+                  retry:
+                    act: watcherRoundOpen
+                    args:
+                      id: "@round.id"
+                      reload: true
+                  blocks:
+                    - type: kv
+                      from: "@round.members"
+                      item:
+                        k: "@label"
+                        v:
+                          t: chatMessage.watcher.roundMember
+                          args:
+                            - "@status"
+                            - "@name"
             - type: toolbar
               variant: marker
               when: "@deleted"

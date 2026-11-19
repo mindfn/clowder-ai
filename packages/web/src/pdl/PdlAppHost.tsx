@@ -119,6 +119,7 @@ import {
   readMemberRuntimeModels,
   readMemberSettings,
   readNativeMembers,
+  readVoiceChoices,
   removeMember,
   runMemberProviderSetup,
   saveMember,
@@ -1044,6 +1045,8 @@ function ChatBinding({
           dshMembers: current.current.cats.filter((cat) => isDshMember(cat, meta.runtimes)).map((cat) => cat.id),
         };
       }
+      case 'memberVoicesRead':
+        return readVoiceChoices();
       case 'memberCanonRead':
         return readMemberCanon(args.id, threadId);
       case 'memberCanonSave':
@@ -2113,8 +2116,6 @@ function ChatBinding({
     if (!sameSidebar) port.current.sidebarData = sidebar;
     // The console accepts data during startup; the engine waits until boot to render.
     if (!window.clowderChat) return;
-    if (project.current?.sidebarError) window.clowderChat.dataError('sidebar', project.current.sidebarError);
-    else window.clowderChat.dataOk('sidebar');
     window.clowderChat.update(port.current);
   }, []);
   dataPublisher.current = publishData;

@@ -2,6 +2,7 @@
 'use strict';
 function bindMembers() {
   let meta = null,
+    failed = false, // the member list could not be read: its place says so instead of loading forever
     pending = null,
     page = '',
     editor = null,
@@ -20,7 +21,7 @@ function bindMembers() {
     } catch (error) {
       if (error.name === 'PdlReadError' && name !== 'memberSave') {
         meta = null;
-        dataError('members', error);
+        failed = true;
       }
       if (['runtime.readError', 'members.loadError', 'memberNew.templatesError'].indexOf(error.message) >= 0)
         throw new Error(tc(error.message));
@@ -35,8 +36,20 @@ function bindMembers() {
       act('membersRead', {})
         .then(async function (data) {
           if (id && id !== 'new' && id !== 'list') {
-            const values = await Promise.all([act('settingsHooksRead', {}), act('memberCanonRead', { id: id })]);
-            data.canon = values[1];
+            const values = await Promise.all([
+              act('settingsHooksRead', {}).catch(function () {
+                return null;
+              }),
+              // a voice list that can't be read only leaves the pick empty (with a retry), not the page
+              act('memberVoicesRead', {}).catch(function () {
+                return null;
+              }),
+              act('memberCanonRead', { id: id }).catch(function () {
+                return null;
+              }),
+            ]);
+            data.voices = Array.isArray(values[1]) ? values[1] : null;
+            data.canon = values[2];
             data.savedCheck =
               data.dshMembers && data.dshMembers.includes(id)
                 ? await act('memberDshRead', { id: id, value: JSON.stringify(data.runtimes) })
@@ -44,12 +57,12 @@ function bindMembers() {
           }
           if (target === page) {
             meta = data;
-            dataOk('members');
+            failed = false;
           }
         })
-        .catch(function (error) {
+        .catch(function () {
           meta = null;
-          if (error.name !== 'PdlReadError') dataError('members', error);
+          failed = true;
         })
         .finally(function () {
           pending = null;
@@ -173,7 +186,7 @@ function bindMembers() {
       onOpts: on.map(function (c) {
         return c.id;
       }),
-      load: meta ? '' : 'loading',
+      load: meta ? '' : failed ? 'error' : 'loading',
       defaultCatOptions: on.map(function (c) {
         return {
           id: c.id,
@@ -277,7 +290,8 @@ function bindMembers() {
       return cat.id === data.id;
     });
     const next = data.v == null ? !!cat.roster && !cat.roster.available : data.v === true || data.v === 'true';
-    return chatAction('memberAvailable', { id: data.id, v: String(next) });
+    // who is available changes the fixed-prompt estimate: read the settings again
+    return chatAction('memberAvailable', { id: data.id, v: String(next) }).then(read);
   };
 
   function selectedRuntime(form) {
@@ -367,11 +381,9 @@ function bindMembers() {
                 if (!heldNeeded.has(key)) return;
                 state.value = value;
                 state.load = '';
-                dataOk(key);
               },
-              function (error) {
+              function () {
                 state.load = 'error';
-                dataError(key, error);
               },
             )
             .finally(chatDataRender),
@@ -526,6 +538,62 @@ function bindMembers() {
     vVar: 'voiceTemperature',
     executionApproval: 'executionApproval',
   };
+  // 选择声线: a choice fills the whole voice; the form matches a choice when every voice field equals it
+  const VOICE_FIELDS = {
+    voiceVoice: 'voice',
+    voiceLangCode: 'langCode',
+    voiceSpeed: 'speed',
+    voiceRefAudio: 'refAudio',
+    voiceRefText: 'refText',
+    voiceInstruct: 'instruct',
+    voiceTemperature: 'temperature',
+  };
+  function voiceForm(config) {
+    const out = {};
+    Object.keys(VOICE_FIELDS).forEach(function (k) {
+      const v = config[VOICE_FIELDS[k]];
+      out[k] = v == null ? '' : String(v);
+    });
+    return out;
+  }
+  function voiceChoices(f) {
+    const list = meta.voices || [],
+      x = function (c) {
+        const want = voiceForm(c.voiceConfig);
+        return Object.keys(want).every(function (k) {
+          return String(f[k] == null ? '' : f[k]) === want[k];
+        });
+      },
+      cur = list.find(x);
+    return {
+      error: meta.voices === null,
+      none: !!meta.voices && !list.length,
+      pick: cur ? cur.id : '',
+      defaultVoice: !f.voiceVoice && !f.voiceRefAudio,
+      options: [{ v: '', label: tc('memberForm.voicePick.keep') }].concat(
+        list.map(function (c) {
+          return {
+            v: c.id,
+            label: c.familyName + ' · ' + c.label,
+            why: c.available ? '' : tc('memberForm.voicePick.unavailable'),
+            sub: c.referenceAvailability === 'unknown' ? tc('memberForm.voicePick.unknown') : '',
+          };
+        }),
+      ),
+    };
+  }
+  CHANGES.memberVoice = function (e) {
+    const state = draft(),
+      c = (meta.voices || []).find(function (x) {
+        return x.id === e.target.value;
+      });
+    if (!state || !c || !c.available) return;
+    Object.assign(state.form, voiceForm(c.voiceConfig));
+    render(true);
+  };
+  A.memberVoicesRetry = function () {
+    return read();
+  };
   function form() {
     const state = draft();
     if (!state) return null;
@@ -598,7 +666,15 @@ function bindMembers() {
           return !d[key] || (Array.isArray(d[key]) && !d[key].length);
         })
       : [];
+    const l0 =
+      state.id &&
+      meta.l0 &&
+      meta.l0.members.find(function (m) {
+        return m.catId === state.id;
+      });
     return {
+      voices: voiceChoices(f),
+      l0: l0 ? l0.tokens : null,
       isNew: !state.id,
       existing: !!state.id,
       id: state.id,
@@ -1058,7 +1134,7 @@ function bindMembers() {
       });
       const profile = preset
         ? pdlClone(preset)
-        : { id: 'client-' + crypto.randomUUID(), name: '', command: '', startupArgs: [] };
+        : { id: 'client-' + PLATFORM.uuid(), name: '', command: '', startupArgs: [] };
       let id = profile.id,
         n = 2;
       while (
@@ -1318,7 +1394,7 @@ function bindMembers() {
     const previous = S.nativeSetup;
     if (previous && previous.busy) return;
     const setup = (S.nativeSetup = {
-      journeyId: previous ? previous.journeyId : crypto.randomUUID(),
+      journeyId: previous ? previous.journeyId : PLATFORM.uuid(),
       partners: [],
       busy: true,
       submitError: '',
@@ -1479,7 +1555,7 @@ function bindMembers() {
       return v.id === data.version;
     });
     if (!file && !selected) throw new Error(tc('common.select'));
-    const body = { operationId: crypto.randomUUID(), reason: reason, expectedBindingRevision: c.bindingRevision };
+    const body = { operationId: PLATFORM.uuid(), reason: reason, expectedBindingRevision: c.bindingRevision };
     if (!file) {
       body.indexedVersionRef = selected.id;
       body.expectedAssetRevision = selected.assetRevision;

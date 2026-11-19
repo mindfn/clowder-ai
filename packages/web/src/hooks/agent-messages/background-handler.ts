@@ -7,8 +7,7 @@ import {
   writeToolEvent,
 } from '@/hooks/named-message-writer';
 import { admitStreamEvent } from '@/hooks/stream-position';
-import type { CatStatusType, ChatMessage } from '@/stores/chat-types';
-import { useChatStore } from '@/stores/chatStore';
+import type { CatStatusType } from '@/stores/chat-types';
 import { invocationErrorRowId, isRecoverableInFlightError, upsertErrorRow } from './error-rows';
 import { isStaleTerminalEvent, markThreadInvocationActive, markThreadInvocationComplete } from './invocation-slots';
 import {
@@ -296,90 +295,4 @@ function handleSystemInfo(msg: BackgroundAgentMessage, options: Options): void {
     timestamp: msg.timestamp,
     ...(extra ? { extra } : {}),
   });
-}
-
-const heldStreams = new Map<string, { threadId: string; base?: ChatMessage; events: BackgroundAgentMessage[] }>();
-
-/** Only output still in flight needs a cache beyond its visible source. */
-export function holdStreamEvent(msg: BackgroundAgentMessage): void {
-  if (
-    !msg.messageId ||
-    msg.origin === 'callback' ||
-    !['text', 'tool_use', 'tool_result', 'system_info', 'provider_signal'].includes(msg.type)
-  )
-    return;
-  const key = JSON.stringify([msg.threadId, msg.messageId]);
-  let held = heldStreams.get(key);
-  if (!held) {
-    held = {
-      threadId: msg.threadId,
-      base: useChatStore
-        .getState()
-        .getThreadState(msg.threadId)
-        .messages.find((row) => row.id === msg.messageId),
-      events: [],
-    };
-    heldStreams.set(key, held);
-  }
-  const previous = held.events.at(-1);
-  if (msg.type === 'text' && previous?.type === 'text' && msg.textMode !== 'replace')
-    held.events[held.events.length - 1] = {
-      ...previous,
-      ...msg,
-      textMode: previous.textMode,
-      content: (previous.content ?? '') + (msg.content ?? ''),
-    };
-  else held.events.push(msg);
-}
-
-export function finishHeldStream(threadId: string, messageId?: string, invocationId?: string): void {
-  for (const [key, held] of heldStreams)
-    if (
-      held.threadId === threadId &&
-      (messageId
-        ? (held.base?.id ?? held.events[0]?.messageId) === messageId
-        : invocationId && (held.base?.extra?.stream?.invocationId ?? held.events[0]?.invocationId) === invocationId)
-    )
-      heldStreams.delete(key);
-}
-
-export function rememberHeldStream(msg: BackgroundAgentMessage): void {
-  if (!msg.messageId || msg.origin === 'callback' || msg.isFinal || ['done', 'error'].includes(msg.type)) return;
-  const message = useChatStore
-    .getState()
-    .getThreadState(msg.threadId)
-    .messages.find((row) => row.id === msg.messageId);
-  if (message?.isStreaming)
-    heldStreams.set(JSON.stringify([msg.threadId, message.id]), { threadId: msg.threadId, base: message, events: [] });
-}
-
-/** Full history lands first; only the output that cannot be pulled is overlaid. */
-export function resumeHeldStreams(threadId: string): void {
-  const store = useChatStore.getState();
-  let sequence = 0;
-  for (const [key, held] of heldStreams) {
-    if (held.threadId !== threadId) continue;
-    const id = held.events[0]?.messageId ?? held.base?.id;
-    const server = store.getThreadState(threadId).messages.find((row) => row.id === id);
-    if (server?.lifecycle?.kind === 'response' && server.lifecycle.status !== 'processing') {
-      heldStreams.delete(key);
-      continue;
-    }
-    if (!held.base && server) held.base = { ...server, content: '', toolEvents: [] };
-    if (held.base) {
-      if (server) store.patchThreadMessage(threadId, held.base.id, held.base);
-      else store.addMessageToThread(threadId, held.base);
-    }
-    for (const event of held.events)
-      handleBackgroundAgentMessage(event, {
-        store: useChatStore.getState(),
-        nextBgSeq: () => sequence++,
-        addToast: () => {},
-      });
-    held.base = useChatStore
-      .getState()
-      .getThreadState(threadId)
-      .messages.find((row) => row.id === id);
-    held.events = [];
-  }
 }

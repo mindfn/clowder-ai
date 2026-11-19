@@ -323,7 +323,9 @@ function workbenchModels() {
               defaultApplication: info?.info?.defaultApplication,
             },
           }
-        : null;
+        : source.openFailed
+          ? { load: 'error' }
+          : null;
 
       return filePage;
     },
@@ -544,9 +546,17 @@ function executionModel(query) {
       hasContext: !!ctx,
       context: ctx ? { used: ctx.usedTokens, ceiling: ctx.windowTokens, source: ctx.source } : null,
       contextPercent: ctx ? ctx.fillRatio * 100 : 0,
+      quota: VM.memberQuota(id, cat && cat.accountRef),
       contextWarn: !!ctx && ctx.fillRatio >= 0.8,
       run: {
         state: live ? 'streaming' : 'idle',
+        kind: !live
+          ? ''
+          : live.executionKind === 'watcher'
+            ? 'watch'
+            : live.kind === 'managed_command'
+              ? 'command'
+              : 'reply',
         time: live ? (Date.now() - live.startedAt) / 1000 : 0,
         hasLast: false,
       },
