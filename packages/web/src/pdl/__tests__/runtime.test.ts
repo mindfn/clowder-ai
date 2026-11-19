@@ -7193,6 +7193,106 @@ it('presents AGY Native account, model, and workspace requirements clearly in na
       },
     });
   } finally {
+    await w.__settled();
+    dom.window.close();
+  }
+});
+
+it('auto-binds an eligible Google OAuth account and blocks missing account before POST in manual memberNew', async () => {
+  const meta = {
+    accounts: [
+      { id: 'google-key', displayName: 'Google Key', authType: 'api_key', builtin: false, clientId: 'google' },
+      { id: 'google-work', displayName: 'Work Google', authType: 'oauth', builtin: false, clientId: 'google' },
+    ],
+    projectPath: '/workspace/demo',
+    templates: [],
+    blank: initialState(),
+    codex: { sandboxMode: 'workspace-write', approvalPolicy: 'on-request' },
+    strategies: [],
+    libraries: [],
+    runtimes: [],
+    clients: [
+      {
+        id: 'anthropic',
+        label: 'Claude Code',
+        supportsNativeTool: true,
+        acpMaxDefault: 3,
+        carriers: [['cli', 'CLI']],
+        accounts: [],
+      },
+      {
+        id: 'google',
+        label: 'Google / AGY Native',
+        supportsNativeTool: false,
+        acpMaxDefault: 3,
+        carriers: [
+          ['cli', 'CLI'],
+          ['acp', 'ACP'],
+        ],
+        accounts: ['google-key', 'google-work'],
+      },
+    ],
+  };
+  const saves: Record<string, unknown>[] = [];
+  const { dom, w } = await boot(undefined, undefined, undefined, {}, (port) => {
+    const previous = port.action;
+    port.action = (name, args, element) => {
+      if (name === 'membersRead') return meta;
+      if (name === 'memberRuntimeModels') return { status: 'live', models: [], effortOptions: [] };
+      if (name === 'memberSave') {
+        const submitted = JSON.parse(args.value);
+        saves.push(submitted);
+        return { id: 'agy-manual', configurationRevision: 'rev-1', ...submitted };
+      }
+      return previous(name, args, element);
+    };
+  });
+  try {
+    w.eval('go("memberNew")');
+    await w.__settled();
+    const clientSelect = w.document.getElementById('f-client');
+    clientSelect.value = 'google';
+    clientSelect.dispatchEvent(new w.Event('change', { bubbles: true }));
+    await w.__settled();
+    expect(w.eval('VM.memberNew().form.d.acc')).toBe('google-work');
+    expect(w.eval('VM.memberNew().form.configurationSource')).toBe('managed_account');
+    expect(w.eval('VM.memberNew().form.d.agyOn')).toBe(true);
+    expect(w.eval('VM.memberNew().form.d.agyDirs')).toBe('/workspace/demo');
+    expect(w.eval('VM.memberNew().form.save.missing.map(m => m.k)')).toContain('model');
+
+    // Manually clearing account must block submission client-side instead of sending a 400 POST without accountRef.
+    const accSelect = w.document.getElementById('f-acc');
+    accSelect.value = '';
+    accSelect.dispatchEvent(new w.Event('change', { bubbles: true }));
+    await w.__settled();
+    expect(w.eval('VM.memberNew().form.invalid.acc')).toBe(true);
+    expect(w.eval('VM.memberNew().form.save.missing.map(m => m.k)')).toContain('acc');
+    await w.eval('FORMS.member()');
+    expect(saves).toHaveLength(0);
+    expect(w.eval('VM.memberNew().form.save.error')).toBeTruthy();
+
+    // Selecting the eligible Google OAuth account and setting a model allows saving with full AGY Native fields.
+    accSelect.value = 'google-work';
+    accSelect.dispatchEvent(new w.Event('change', { bubbles: true }));
+    await w.__settled();
+    const modelInput = w.document.getElementById('f-model');
+    modelInput.value = 'gemini-3.8-flash-high';
+    modelInput.dispatchEvent(new w.Event('input', { bubbles: true }));
+    await w.__settled();
+    await w.eval('FORMS.member()');
+    expect(saves).toHaveLength(1);
+    expect(saves[0]).toMatchObject({
+      clientId: 'google',
+      carrier: 'cli',
+      configurationSource: 'managed_account',
+      accountRef: 'google-work',
+      defaultModel: 'gemini-3.8-flash-high',
+      agyNativeEnabled: true,
+      agyAutoApprove: false,
+      agyTrustedWorkspaces: '/workspace/demo',
+    });
+  } finally {
+    await w.__settled();
     dom.window.close();
   }
 });
