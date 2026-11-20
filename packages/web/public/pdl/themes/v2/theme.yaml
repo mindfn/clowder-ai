@@ -5529,6 +5529,17 @@ pdl:
             - type: component
               use: v2Action
               props:
+                label: t:chatRich.openWork
+                act: workOpen
+                args:
+                  mid: "@rich.file.mid"
+                  url: "@rich.file.url"
+              when:
+                - "!@rich.file.work"
+                - "@rich.file.mid"
+            - type: component
+              use: v2Action
+              props:
                 iconOnly: true
                 icon: download
                 label: t:common.download
@@ -6800,6 +6811,11 @@ pdl:
       when: $.form.isNew
     v2.bind.fields.20:
       - $frag: v2.bind.v2Box.21
+      - type: typed
+        slot: chat.rich
+        of: "@card.publish.type"
+        data: "@card.publish"
+        when: "@card.publish"
     v2.bind.v2Box.21:
       type: component
       use: v2Box
@@ -16739,6 +16755,8 @@ pdl:
                                       act: workOpen
                                       args:
                                         i: "@work"
+                                        mid: "@mid"
+                                        url: "@url"
                         when: "@rich"
                       - type: component
                         use: v2StatusText
@@ -16902,6 +16920,18 @@ pdl:
                   input: cafeHomeTitle
                 when: $.home
             field:
+              - type: component
+                use: v2Chip
+                props:
+                  icon: reply
+                  label:
+                    of: $.input.draft.reply.text
+                    slice: [0, 80]
+                  x:
+                    act: close
+                    args: {path: cs.reply}
+                    label: t:composer.cancelQuote
+                when: $.input.draft.reply
               - type: component
                 use: v2Box
                 props:
@@ -21491,7 +21521,11 @@ pdl:
                       act: workOpen
                       args:
                         i: "@work"
-                    _: null
+                    _:
+                      act: workOpen
+                      args:
+                        mid: "@mid"
+                        url: "@url"
             blocks:
               - type: component
                 use: v2Media
