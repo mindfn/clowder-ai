@@ -73,6 +73,7 @@ function optionEffect(name, value) {
   if (name === '-i') return {}; // Local read input; never a write or service target.
   if (name === '-p' && /^\d+$/.test(value) && +value > 0 && +value <= 65535) return { port: +value };
   if (name === '-l' && /^[\w.-]+$/.test(value)) return { user: value };
+  if (name === '-O') return value === 'check' ? { controlCheck: true } : { unproven: true };
   if (name !== '-o') return null;
   const option = /^([A-Za-z]+)(?:=|\s+)(.+)$/s.exec(value);
   if (!option) return null;
@@ -84,39 +85,126 @@ function readTransportOption(words, index) {
   const flag = words[index++].value;
   if (FLAGS.has(flag)) return { next: index };
   if (flag === '--') return { next: index, end: true };
-  const attached = /^-[iplo].+/.test(flag);
+  const attached = /^-[iploO].+/.test(flag);
   const name = attached ? flag.slice(0, 2) : flag;
   const value = attached ? flag.slice(2) : words[index++]?.value;
   const effect = value === undefined ? null : optionEffect(name, value);
   return effect ? { ...effect, next: index } : null;
 }
 
-function transport(words, localAddresses) {
+function parseTransportOptions(words) {
   let index = 1;
   const state = {};
   while (index < words.length && words[index].value.startsWith('-')) {
     const option = readTransportOption(words, index);
-    if (!option || option.unproven) return option;
+    if (!option || option.unproven) return { failed: option };
     index = option.next;
     Object.assign(state, option);
     if (option.end) break;
   }
-  const destination = /^(?:([\w.-]+)@)?([A-Za-z0-9.:-]+)$/.exec(words[index++]?.value ?? '');
-  if (!destination || index >= words.length) return null;
+  return { index, state };
+}
+
+function validateRemoteTail(words, index, controlCheck) {
+  if (controlCheck) return index === words.length ? 'ok' : 'unproven';
+  if (index >= words.length) return 'null';
   // OpenSSH resumes option parsing after the destination. This proof admits
   // only a non-option command there; it must not hide -o/-F/-J as remote argv.
-  if (words[index].value.startsWith('-')) return { unproven: true };
+  return words[index].value.startsWith('-') ? 'unproven' : 'ok';
+}
+
+function transport(words) {
+  const parsed = parseTransportOptions(words);
+  if ('failed' in parsed) return parsed.failed;
+  const { state } = parsed;
+  let { index } = parsed;
+  const destination = /^(?:([\w.-]+)@)?([A-Za-z0-9.:-]+)$/.exec(words[index++]?.value ?? '');
+  if (!destination) return null;
+  const tail = validateRemoteTail(words, index, state.controlCheck);
+  if (tail !== 'ok') return tail === 'unproven' ? { unproven: true } : null;
   if (state.user && destination[1] && state.user !== destination[1]) return null;
   return {
     host: destination[2],
     user: state.user ?? destination[1],
     port: state.port,
-    remote: remoteAddress(destination[2], localAddresses),
+    controlCheck: Boolean(state.controlCheck),
     command: words
       .slice(index)
       .map((word) => word.value)
       .join(' '),
   };
+}
+
+function isLiteralSingleSsh(layout, parsed) {
+  return Boolean(
+    layout &&
+      layout.heredocs.length <= 1 &&
+      !layout.heredocs.some((h) => !h.quoted) &&
+      parsed.syntaxComplete &&
+      parsed.words.every((w) => w.literal) &&
+      parsed.redirections.every((r) => r.operand.literal),
+  );
+}
+
+function defaultLocalAddresses() {
+  return Object.values(networkInterfaces())
+    .flat()
+    .filter(Boolean)
+    .map((a) => a.address);
+}
+
+function unwrapMappedIpv4(address) {
+  const match = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);
+  return match && isIP(match[1]) === 4 ? match[1] : address;
+}
+
+function isLoopbackAddress(host) {
+  const unwrapped = unwrapMappedIpv4(host.toLowerCase());
+  if (isIP(unwrapped) === 4) return unwrapped.startsWith('127.');
+  if (isIP(unwrapped) === 6) return /^(?:0+:){7}0*1$|^::0*1$/.test(unwrapped);
+  return false;
+}
+
+function isLocalInterfaceAddress(host, localAddresses) {
+  if (!host || isIP(host) === 0) return false;
+  const lower = host.toLowerCase();
+  const unwrapped = unwrapMappedIpv4(lower);
+  if (isLoopbackAddress(unwrapped)) return false;
+  const locals = new Set(
+    localAddresses.flatMap((address) => {
+      const normalized = address.toLowerCase().split('%')[0];
+      const mapped = unwrapMappedIpv4(normalized);
+      return mapped === normalized ? [normalized] : [normalized, mapped];
+    }),
+  );
+  return locals.has(lower) || locals.has(unwrapped);
+}
+
+function buildSshScopeResult(target, configuration, localAddresses, command, parsed, layout) {
+  const networkHost = configuration.entryHost ?? configuration.hostname ?? target.host;
+  const jumpedTargets = configuration.hasProxyJump
+    ? [configuration.hostname ?? target.host, ...(configuration.hopHosts ?? [])]
+    : [];
+  const reflectsLocal = jumpedTargets.some((host) => isLocalInterfaceAddress(host, localAddresses));
+  if (!remoteAddress(networkHost, localAddresses) || reflectsLocal) {
+    if (target.controlCheck || configuration.hasControlMaster || configuration.hasProxyJump) {
+      return { unproven: true };
+    }
+    // SSH joins the remote argv into shell source. For a local or unproved
+    // destination, inspect that source under local protection, not as one
+    // opaque executable name ("kill -TERM PID" is not a program name).
+    return {
+      local: `${target.command} ${parsed.redirections.map((r) => command.slice(r.start, r.end)).join(' ')}\n${layout.heredocs.map((h) => h.span).join('')}`,
+    };
+  }
+  const redirects = parsed.redirections.filter((r) => !/^\d*<<-?$/.test(r.operator));
+  // Preserve the shell's exact redirection operands and their ordering. The
+  // opaque remote command is not re-parsed as local source or certified read.
+  const local = `: ${redirects.map((r) => command.slice(r.start, r.end)).join(' ')}`;
+  const port = target.port ?? configuration.port;
+  const user = target.user ?? configuration.user;
+  const targetHost = configuration.entryHost ? target.host : (configuration.hostname ?? target.host);
+  return { local, target: `ssh://${user ? `${user}@` : ''}${targetHost}:${port}` };
 }
 
 /** A single literal SSH transport owns its remote argv and quoted stdin.
@@ -130,39 +218,16 @@ export function remoteSshExecution(raw, cwd, options = {}) {
   const parsed = shellInvocation(command);
   const program = parsed.words[0]?.value;
   if (commandName(program) !== 'ssh') return containsSshExecution(command, cwd) ? { unproven: true } : null;
-  if (
-    !layout ||
-    layout.heredocs.length > 1 ||
-    layout.heredocs.some((h) => !h.quoted) ||
-    !parsed.syntaxComplete ||
-    !parsed.words.every((w) => w.literal) ||
-    !parsed.redirections.every((r) => r.operand.literal)
-  )
-    return { unproven: true };
+  if (!isLiteralSingleSsh(layout, parsed)) return { unproven: true };
   if (!['ssh', '/usr/bin/ssh'].includes(program) || !systemSsh(program, cwd)) return { unproven: true };
-  const localAddresses =
-    options.localAddresses ??
-    Object.values(networkInterfaces())
-      .flat()
-      .filter(Boolean)
-      .map((a) => a.address);
-  const target = transport(parsed.words, localAddresses);
-  if (!target) return { unproven: true };
-  if (target.unproven) return target;
-  const configuration = sshConfigurationScope(target.host, options.configFiles);
+  const localAddresses = options.localAddresses ?? defaultLocalAddresses();
+  const target = transport(parsed.words);
+  if (!target || target.unproven) return target ?? { unproven: true };
+  const configuration = sshConfigurationScope(
+    target.host,
+    options.configFiles,
+    options.homeDir ? { homeDir: options.homeDir } : undefined,
+  );
   if (!configuration.complete) return { unproven: true };
-  if (!target.remote) {
-    // SSH joins the remote argv into shell source. For a local or unproved
-    // destination, inspect that source under local protection, not as one
-    // opaque executable name ("kill -TERM PID" is not a program name).
-    return {
-      local: `${target.command} ${parsed.redirections.map((r) => command.slice(r.start, r.end)).join(' ')}\n${layout.heredocs.map((h) => h.span).join('')}`,
-    };
-  }
-  const redirects = parsed.redirections.filter((r) => !/^\d*<<-?$/.test(r.operator));
-  // Preserve the shell's exact redirection operands and their ordering. The
-  // opaque remote command is not re-parsed as local source or certified read.
-  const local = `: ${redirects.map((r) => command.slice(r.start, r.end)).join(' ')}`;
-  const port = target.port ?? configuration.port;
-  return { local, target: `ssh://${target.user ? `${target.user}@` : ''}${target.host}:${port}` };
+  return buildSshScopeResult(target, configuration, localAddresses, command, parsed, layout);
 }
