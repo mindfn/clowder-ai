@@ -841,7 +841,13 @@ export function chatModels(data: ChatData, ui: ChatUiState, input?: ChatProjecti
                       : null,
                   }
                 : proposal
-                  ? proposalView(proposal, !!ui.editing?.[message.id], !!ui.asking?.[message.id], ui.f)
+                  ? proposalView(
+                      proposal,
+                      !!ui.editing?.[message.id],
+                      !!ui.asking?.[message.id],
+                      ui.f,
+                      messageRichBlocks(message).find((b) => b.id === proposal.target.blockId),
+                    )
                   : ask
                     ? runtimeAskView(
                         bound
@@ -1035,7 +1041,8 @@ export function chatModels(data: ChatData, ui: ChatUiState, input?: ChatProjecti
     data.images.map((file, index) => ({
       index,
       name: file.name,
-      kind: 'image',
+      kind: file.type.startsWith('image/') ? 'image' : 'file',
+      clipboard: false,
       size: file.size,
       state: data.uploadStatus === 'uploading' ? 'up' : '',
       source: draftSource(file),
