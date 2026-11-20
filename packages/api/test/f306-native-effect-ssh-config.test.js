@@ -156,7 +156,14 @@ test('host aliases resolve HostName/User, recursively audit ProxyJump, and allow
       'Host deep',
       '  HostName 127.0.0.1',
       '  ProxyJump hop1,root@hop2:2200',
-      `  ControlPath ${join(root, '.ssh', 'cm-%h-%p-%r')}`,
+      `  ControlPath ${join(root, '.ssh', 'cm-%C')}`,
+      'Host deep-tokens',
+      '  HostName 127.0.0.1',
+      '  ProxyJump hop1',
+      '  ControlPath ~/.ssh/cm-%h-%p-%r-%j',
+      'Host direct-tokens',
+      '  HostName 203.0.113.11',
+      '  ControlPath ~/.ssh/cm-%h-%p-%r',
     ].join('\n'),
   );
   assert.deepEqual(sshConfigurationScope('deep', [config], { homeDir: root }), {
@@ -164,15 +171,40 @@ test('host aliases resolve HostName/User, recursively audit ProxyJump, and allow
     port: 22,
     hostname: '127.0.0.1',
     entryHost: '203.0.113.10',
+    hopHosts: ['10.0.0.5'],
     hasProxyJump: true,
     hasControlMaster: true,
   });
+  assert.equal(sshConfigurationScope('deep-tokens', [config], { homeDir: root }).complete, true);
+  assert.equal(sshConfigurationScope('direct-tokens', [config], { homeDir: root }).complete, true);
+});
+
+test('Include ~/ resolves relative to the configured homeDir', (t) => {
+  const root = fixture(t),
+    sshDir = join(root, '.ssh'),
+    config = join(root, 'config'),
+    extra = join(sshDir, 'extra.conf');
+  mkdirSync(sshDir);
+  writeFileSync(config, 'Host ascend\n  HostName 203.0.113.8\n  Include ~/.ssh/extra.conf\n');
+  writeFileSync(extra, 'Port 2229\n');
+  assert.deepEqual(sshConfigurationScope('ascend', [config], { homeDir: root }), {
+    complete: true,
+    port: 2229,
+    hostname: '203.0.113.8',
+  });
+  writeFileSync(extra, 'ProxyCommand kill -TERM 4242\n');
+  assert.equal(sshConfigurationScope('ascend', [config], { homeDir: root }).complete, false);
 });
 
 test('unsafe ProxyJump chains, conflicting HostName, and unisolated/out-of-ssh ControlPath fail closed', (t) => {
   const root = fixture(t),
     config = join(root, 'config');
   const unsafeConfigs = [
+    // P1: ProxyCommand none suppresses ProxyJump in OpenSSH (target layer, both orders)
+    'Host ascend\n  ProxyCommand none\n  ProxyJump 8.8.8.8\n  HostName 127.0.0.1\n',
+    'Host ascend\n  ProxyJump 8.8.8.8\n  ProxyCommand none\n  HostName 127.0.0.1\n',
+    // P1: ProxyCommand none suppresses ProxyJump in a hop scope
+    'Host jump-loop\n  ProxyCommand none\n  ProxyJump 8.8.8.8\n  HostName 127.0.0.1\nHost ascend\n  HostName 127.0.0.1\n  ProxyJump jump-loop\n',
     // ProxyJump target hides a local executor
     'Host jump-bad\n  HostName 203.0.113.8\n  ProxyCommand kill -TERM 4242\nHost ascend\n  HostName 127.0.0.1\n  ProxyJump jump-bad\n',
     // Second hop hides a local executor
@@ -193,6 +225,19 @@ test('unsafe ProxyJump chains, conflicting HostName, and unisolated/out-of-ssh C
     'Host ascend\n  HostName 203.0.113.8\n  ControlMaster auto\n  ControlPath ~/.ssh/shared.sock\n',
     // Escaped %%C is literal percent, not %C isolation token
     'Host ascend\n  HostName 203.0.113.8\n  ControlMaster auto\n  ControlPath ~/.ssh/cm-%%C\n',
+    // P2-2: ControlPath runtime environment expansion or unsupported path-injecting tokens
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: OpenSSH ControlPath ${ENV} expansion literal
+    'Host ascend\n  HostName 203.0.113.8\n  ControlMaster auto\n  ControlPath ~/.ssh/${CM_DIR}/cm-%C\n',
+    'Host ascend\n  HostName 203.0.113.8\n  ControlMaster auto\n  ControlPath ~/.ssh/cm-$USER-%C\n',
+    'Host ascend\n  HostName 203.0.113.8\n  ControlMaster auto\n  ControlPath ~/.ssh/cm-%d-%C\n',
+    'Host ascend\n  HostName 203.0.113.8\n  ControlMaster auto\n  ControlPath ~/.ssh/cm-%k-%C\n',
+    'Host ascend\n  HostName 203.0.113.8\n  ControlMaster auto\n  ControlPath ~/.ssh/cm-%C%\n',
+    // P3-1: ProxyJump with %h-%p-%r lacks %j jump-host isolation (either directive order)
+    'Host jump\n  HostName 203.0.113.8\nHost ascend\n  HostName 127.0.0.1\n  ProxyJump jump\n  ControlPath ~/.ssh/cm-%h-%p-%r\n',
+    'Host jump\n  HostName 203.0.113.8\nHost ascend\n  HostName 127.0.0.1\n  ControlPath ~/.ssh/cm-%h-%p-%r\n  ProxyJump jump\n',
+    // P3-2: ControlMaster ask/autoask can invoke local ssh-askpass(1)
+    'Host ascend\n  HostName 203.0.113.8\n  ControlMaster ask\n',
+    'Host ascend\n  HostName 203.0.113.8\n  ControlMaster autoask\n',
     // Unknown ControlMaster value
     'Host ascend\n  HostName 203.0.113.8\n  ControlMaster bogus\n',
   ];

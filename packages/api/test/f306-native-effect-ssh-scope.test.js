@@ -212,9 +212,19 @@ test('controlled SSH config with remote ProxyJump and isolated ControlMaster all
       '  HostName 203.0.113.9',
       '  ControlMaster auto',
       '  ControlPath ~/.ssh/shared.sock',
+      'Host loop',
+      '  ProxyCommand none',
+      '  ProxyJump 8.8.8.8',
+      '  HostName 127.0.0.1',
+      'Host lanback',
+      '  ProxyJump 8.8.8.8',
+      '  HostName 192.168.1.50',
+      'Host lanback-hop',
+      '  ProxyJump 8.8.8.8,192.168.1.50',
+      '  HostName 127.0.0.1',
     ].join('\n'),
   );
-  const extra = { sshScope: { configFiles: [config], localAddresses: [], homeDir: root } };
+  const extra = { sshScope: { configFiles: [config], localAddresses: ['127.0.0.1', '192.168.1.50'], homeDir: root } };
 
   for (const provider of ['Bash', 'exec_command']) {
     for (const command of [
@@ -271,6 +281,11 @@ test('controlled SSH config with remote ProxyJump and isolated ControlMaster all
     "ssh local-only 'kill -TERM 4242'",
     'ssh local-jump true',
     'ssh bad-cm true',
+    `ssh loop 'rm -rf ${runtime}/.env'`,
+    'ssh loop true',
+    `ssh lanback 'rm -rf ${runtime}/.env'`,
+    'ssh lanback true',
+    'ssh lanback-hop true',
   ]) {
     const result = decide(deniedCommand, runtime, extra);
     assert.equal(result.decision, 'deny', `${deniedCommand} => ${JSON.stringify(result)}`);
