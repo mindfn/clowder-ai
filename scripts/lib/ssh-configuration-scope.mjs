@@ -41,7 +41,8 @@ const DISABLED = new Map([
   ['tunnel', new Set(['no'])],
 ]);
 
-const CONTROL_MASTER_VALUES = new Set(['no', 'auto', 'yes', 'ask', 'autoask']);
+const CONTROL_MASTER_VALUES = new Set(['no', 'auto', 'yes']);
+const CONTROL_PATH_TOKENS = new Set(['%', 'C', 'h', 'i', 'j', 'L', 'l', 'n', 'p', 'r', 'u']);
 
 export function sshOptionIsLocal(name, value) {
   name = name.toLowerCase();
@@ -77,15 +78,22 @@ function nearestRealPath(target) {
   }
 }
 
-function auditConfigControlPath(value, homeDir) {
-  if (value.toLowerCase() === 'none') return { enabled: false };
-  if (!value || /[\s\0]/.test(value)) throw new Error('unreadable SSH ControlPath');
-  const expanded = value.startsWith('~/') ? join(homeDir, value.slice(2)) : value;
-  if (!isAbsolute(expanded) || expanded.split(/[\\/]/).includes('..')) {
-    throw new Error('SSH ControlPath is outside ~/.ssh');
+function parseControlPathTokens(name) {
+  const tokens = new Set();
+  for (let i = 0; i < name.length; i += 1) {
+    if (name[i] !== '%') continue;
+    const code = name[i + 1];
+    if (!code || !CONTROL_PATH_TOKENS.has(code)) {
+      throw new Error('SSH ControlPath contains unsupported token');
+    }
+    if (code !== '%') tokens.add(code);
+    i += 1;
   }
+  return tokens;
+}
+
+function assertControlPathInsideSshDir(normalized, homeDir) {
   const sshDir = resolve(homeDir, '.ssh');
-  const normalized = resolve(expanded);
   if (!normalized.startsWith(`${sshDir}${sep}`)) {
     throw new Error('SSH ControlPath is outside ~/.ssh');
   }
@@ -102,10 +110,23 @@ function auditConfigControlPath(value, homeDir) {
   if (realParent !== realSshDir && !realParent.startsWith(`${realSshDir}${sep}`)) {
     throw new Error('SSH ControlPath resolves outside ~/.ssh');
   }
-  const tokens = basename(normalized).replaceAll('%%', '');
-  const isolated = tokens.includes('%C') || (tokens.includes('%h') && tokens.includes('%p') && tokens.includes('%r'));
-  if (!isolated) throw new Error('SSH ControlPath is not isolated per target');
-  return { enabled: true };
+}
+
+function auditConfigControlPath(value, homeDir) {
+  if (value.toLowerCase() === 'none') return { enabled: false, hasJumpIsolation: true };
+  if (!value || /[\s\0$]/.test(value)) throw new Error('unreadable SSH ControlPath');
+  const expanded = value.startsWith('~/') ? join(homeDir, value.slice(2)) : value;
+  if (!isAbsolute(expanded) || expanded.split(/[\\/]/).includes('..')) {
+    throw new Error('SSH ControlPath is outside ~/.ssh');
+  }
+  const normalized = resolve(expanded);
+  assertControlPathInsideSshDir(normalized, homeDir);
+  const tokens = parseControlPathTokens(basename(normalized));
+  const hasBaseIsolation = tokens.has('C') || (tokens.has('h') && tokens.has('p') && tokens.has('r'));
+  if (!hasBaseIsolation) throw new Error('SSH ControlPath is not isolated per target');
+  const hasJumpIsolation =
+    tokens.has('C') || (tokens.has('h') && tokens.has('p') && tokens.has('r') && tokens.has('j'));
+  return { enabled: true, hasJumpIsolation };
 }
 
 function globPattern(pattern) {
@@ -133,12 +154,8 @@ function hostMatches(patterns, host) {
   return positive;
 }
 
-function includePaths(value, prefix) {
-  const path = value.startsWith('~/')
-    ? join(homedir(), value.slice(2))
-    : isAbsolute(value)
-      ? value
-      : join(prefix, value);
+function includePaths(value, prefix, homeDir) {
+  const path = value.startsWith('~/') ? join(homeDir, value.slice(2)) : isAbsolute(value) ? value : join(prefix, value);
   if (/[$%`{}[\]]/.test(path) || /[*?]/.test(dirname(path))) throw new Error('unreadable SSH Include');
   if (!/[*?]/.test(path)) return [path];
   let names;
@@ -210,6 +227,23 @@ function auditPort(value, state) {
   state.port = Number(value);
 }
 
+function auditProxyCommand(value, state) {
+  if (value.toLowerCase() !== 'none') throw new Error('SSH config changes local execution/target');
+  state.sawProxyCommand = true;
+}
+
+function auditControlPathOption(value, state) {
+  const audited = auditConfigControlPath(value, state.homeDir);
+  if (!audited.enabled) return;
+  state.hasControlMaster = true;
+  if (!audited.hasJumpIsolation) state.controlPathLacksJumpIsolation = true;
+}
+
+function auditUser(value, state) {
+  if (!/^[\w.-]+$/.test(value)) throw new Error('SSH user is unknown');
+  if (state.user === undefined) state.user = value;
+}
+
 /** Read configuration, never `ssh -G`: Match exec can run even during that query.
  * This recognizes Host/Include only; unmodelled Match or relocation is unknown.
  * All files remain inputs; no identity contents or SSH command is read/executed.
@@ -217,17 +251,11 @@ function auditPort(value, state) {
 function auditOption(key, value, state) {
   if (key === 'hostname') return auditHostName(value, state);
   if (key === 'proxyjump') return auditProxyJump(value, state);
+  if (key === 'proxycommand') return auditProxyCommand(value, state);
   if (key === 'controlmaster') return auditControlMaster(value, state);
-  if (key === 'controlpath') {
-    if (auditConfigControlPath(value, state.homeDir).enabled) state.hasControlMaster = true;
-    return;
-  }
+  if (key === 'controlpath') return auditControlPathOption(value, state);
   if (sshOptionIsLocal(key, value)) throw new Error('SSH config changes local execution/target');
-  if (key === 'user') {
-    if (!/^[\w.-]+$/.test(value)) throw new Error('SSH user is unknown');
-    if (state.user === undefined) state.user = value;
-    return;
-  }
+  if (key === 'user') return auditUser(value, state);
   if (key === 'port') auditPort(value, state);
 }
 
@@ -247,7 +275,8 @@ function readDirective(words, context, prefix, depth, state) {
   // Host state inside an Include is local to that file. Options remain
   // shared, but its last Host block must not disable the parent's checks.
   for (const value of values)
-    for (const file of includePaths(value, prefix)) readConfiguration(file, { ...context }, prefix, depth + 1, state);
+    for (const file of includePaths(value, prefix, state.homeDir))
+      readConfiguration(file, { ...context }, prefix, depth + 1, state);
 }
 
 function readConfiguration(path, context, prefix, depth, state) {
@@ -263,6 +292,21 @@ function readConfiguration(path, context, prefix, depth, state) {
     if (!words?.length) throw new Error('unreadable SSH config');
     readDirective(words, context, prefix, depth, state);
   }
+}
+
+function collectHopHosts(hopScopes, proxyJumps) {
+  const hosts = [];
+  for (let i = 0; i < hopScopes.length; i += 1) {
+    const scope = hopScopes[i];
+    if (i > 0) {
+      if (scope.entryHost) hosts.push(scope.entryHost);
+      hosts.push(scope.hostname ?? proxyJumps[i]);
+    } else if (scope.hasProxyJump) {
+      hosts.push(scope.hostname ?? proxyJumps[i]);
+    }
+    if (scope.hopHosts?.length) hosts.push(...scope.hopHosts);
+  }
+  return hosts;
 }
 
 function auditProxyJumpChain(host, proxyJumps, files, homeDir, jumpDepth, visitedHosts) {
@@ -281,6 +325,7 @@ function auditProxyJumpChain(host, proxyJumps, files, homeDir, jumpDepth, visite
   return {
     ok: true,
     entryHost: firstHop.entryHost ?? firstHop.hostname ?? proxyJumps[0],
+    hopHosts: collectHopHosts(hopScopes, proxyJumps),
     hasControlMaster: hopScopes.some((scope) => scope.hasControlMaster),
   };
 }
@@ -291,18 +336,16 @@ function buildScopeResult(state, jumpResult) {
   if (state.user !== undefined) result.user = state.user;
   if (jumpResult) {
     result.entryHost = jumpResult.entryHost;
+    if (jumpResult.hopHosts.length) result.hopHosts = jumpResult.hopHosts;
     result.hasProxyJump = true;
   }
   if (state.hasControlMaster || jumpResult?.hasControlMaster) result.hasControlMaster = true;
   return result;
 }
 
-export function sshConfigurationScope(
-  host,
-  files = [join(homedir(), '.ssh/config'), '/etc/ssh/ssh_config'],
-  options = {},
-) {
+export function sshConfigurationScope(host, files, options = {}) {
   const homeDir = options.homeDir ?? homedir();
+  const configFiles = files ?? [join(homeDir, '.ssh/config'), '/etc/ssh/ssh_config'];
   const jumpDepth = options._jumpDepth ?? 0;
   const visitedHosts = options._visitedHosts ?? new Set();
   if (jumpDepth > 4 || visitedHosts.has(host)) return { complete: false, reason: 'SSH ProxyJump recursion' };
@@ -315,12 +358,16 @@ export function sshConfigurationScope(
     hostname: undefined,
     user: undefined,
     proxyJumps: undefined,
+    sawProxyCommand: false,
     hasControlMaster: false,
+    controlPathLacksJumpIsolation: false,
   };
   try {
-    for (const file of files) readConfiguration(file, { active: true }, dirname(file), 0, state);
+    for (const file of configFiles) readConfiguration(file, { active: true }, dirname(file), 0, state);
     if (!state.proxyJumps?.length) return buildScopeResult(state, null);
-    const jumpResult = auditProxyJumpChain(host, state.proxyJumps, files, homeDir, jumpDepth, visitedHosts);
+    if (state.sawProxyCommand) throw new Error('SSH ProxyCommand conflicts with ProxyJump');
+    if (state.controlPathLacksJumpIsolation) throw new Error('SSH ControlPath with ProxyJump must isolate jump host');
+    const jumpResult = auditProxyJumpChain(host, state.proxyJumps, configFiles, homeDir, jumpDepth, visitedHosts);
     return jumpResult.ok ? buildScopeResult(state, jumpResult) : jumpResult.failedHop;
   } catch (error) {
     return { complete: false, reason: error.code ?? error.message };

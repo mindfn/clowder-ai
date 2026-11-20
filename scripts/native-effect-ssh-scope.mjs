@@ -153,9 +153,40 @@ function defaultLocalAddresses() {
     .map((a) => a.address);
 }
 
+function unwrapMappedIpv4(address) {
+  const match = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);
+  return match && isIP(match[1]) === 4 ? match[1] : address;
+}
+
+function isLoopbackAddress(host) {
+  const unwrapped = unwrapMappedIpv4(host.toLowerCase());
+  if (isIP(unwrapped) === 4) return unwrapped.startsWith('127.');
+  if (isIP(unwrapped) === 6) return /^(?:0+:){7}0*1$|^::0*1$/.test(unwrapped);
+  return false;
+}
+
+function isLocalInterfaceAddress(host, localAddresses) {
+  if (!host || isIP(host) === 0) return false;
+  const lower = host.toLowerCase();
+  const unwrapped = unwrapMappedIpv4(lower);
+  if (isLoopbackAddress(unwrapped)) return false;
+  const locals = new Set(
+    localAddresses.flatMap((address) => {
+      const normalized = address.toLowerCase().split('%')[0];
+      const mapped = unwrapMappedIpv4(normalized);
+      return mapped === normalized ? [normalized] : [normalized, mapped];
+    }),
+  );
+  return locals.has(lower) || locals.has(unwrapped);
+}
+
 function buildSshScopeResult(target, configuration, localAddresses, command, parsed, layout) {
   const networkHost = configuration.entryHost ?? configuration.hostname ?? target.host;
-  if (!remoteAddress(networkHost, localAddresses)) {
+  const jumpedTargets = configuration.hasProxyJump
+    ? [configuration.hostname ?? target.host, ...(configuration.hopHosts ?? [])]
+    : [];
+  const reflectsLocal = jumpedTargets.some((host) => isLocalInterfaceAddress(host, localAddresses));
+  if (!remoteAddress(networkHost, localAddresses) || reflectsLocal) {
     if (target.controlCheck || configuration.hasControlMaster || configuration.hasProxyJump) {
       return { unproven: true };
     }
