@@ -16,8 +16,6 @@ pdl:
             props:
               value: "@selected"
               label: "@title"
-              act: "@act"
-              args: "@args"
               role: row
           when: "@selectable"
       title:
@@ -5528,6 +5526,17 @@ pdl:
                 args:
                   i: "@rich.file.work"
               when: "@rich.file.work"
+            - type: component
+              use: v2Action
+              props:
+                label: t:chatRich.openWork
+                act: workOpen
+                args:
+                  mid: "@rich.file.mid"
+                  url: "@rich.file.url"
+              when:
+                - "!@rich.file.work"
+                - "@rich.file.mid"
             - type: component
               use: v2Action
               props:
@@ -16737,6 +16746,8 @@ pdl:
                                       act: workOpen
                                       args:
                                         i: "@work"
+                                        mid: "@mid"
+                                        url: "@url"
                         when: "@rich"
                       - type: component
                         use: v2StatusText
@@ -16900,6 +16911,18 @@ pdl:
                   input: cafeHomeTitle
                 when: $.home
             field:
+              - type: component
+                use: v2Chip
+                props:
+                  icon: reply
+                  label:
+                    of: $.input.draft.reply.text
+                    slice: [0, 80]
+                  x:
+                    act: close
+                    args: {path: cs.reply}
+                    label: t:composer.cancelQuote
+                when: $.input.draft.reply
               - type: component
                 use: v2Box
                 props:
@@ -19952,31 +19975,33 @@ pdl:
               - type: component
                 use: v2Text
                 props:
-                  text:
-                    t: mediaReview.lightbox.sub
-                    args:
-                      - $.author
-                      - $.version
-                      - of: $.at
-                        fmt: at
-                      - of: $.many
-                        map:
-                          "true":
-                            of:
-                              - 0
-                              - 1
-                              - 2
-                              - 3
-                            item:
-                              of: "@"
-                              map:
-                                "0": " · "
-                                "1": $.index
-                                "2": " / "
-                                "3": $.total
-                            sep: ""
-                          "false": ""
-                          _: $.many
+                  parts:
+                    sep: " · "
+                    parts:
+                      - text: $.author
+                        when: $.author
+                      - text:
+                          t: films.version
+                          args:
+                            - $.version
+                        when: $.version
+                      - text:
+                          of: $.at
+                          fmt: at
+                        when: $.at
+                      - text:
+                          of:
+                            - 0
+                            - 1
+                            - 2
+                          item:
+                            of: "@"
+                            map:
+                              "0": $.index
+                              "1": " / "
+                              "2": $.total
+                          sep: ""
+                        when: $.many
                   role: meta
                 when:
                   of: $.target.kind
@@ -21487,7 +21512,11 @@ pdl:
                       act: workOpen
                       args:
                         i: "@work"
-                    _: null
+                    _:
+                      act: workOpen
+                      args:
+                        mid: "@mid"
+                        url: "@url"
             blocks:
               - type: component
                 use: v2Media
