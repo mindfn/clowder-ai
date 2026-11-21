@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -30,6 +30,19 @@ interface StdioServerConfig {
   readonly command: string;
   readonly args: readonly [string];
   readonly env: { readonly CAT_CAFE_API_URL: string; readonly CAT_CAFE_CREDENTIAL_FILE: string };
+}
+
+/** Antigravity prefixes tools with `mcp_<server>_`; keep plugin aliases compact and provider-local. */
+export function agyNativeMcpServerName(name: string): string {
+  if (!name.startsWith('plugin__')) return name;
+  const contribution =
+    name
+      .split('__')
+      .at(-1)
+      ?.replace(/[^A-Za-z0-9_-]/g, '_')
+      .slice(0, 8) || 'plugin';
+  const digest = createHash('sha256').update(name).digest('base64url').slice(0, 10);
+  return `p_${contribution}_${digest}`;
 }
 
 function requireDirectory(path: string): void {
@@ -135,12 +148,13 @@ export function materializeAgyNativeMcpConfig(input: AgyNativeMcpConfigInput): s
     : input.resolvedServers
       ? Object.fromEntries(
           Object.entries(input.resolvedServers).map(([name, entry]) => {
+            const providerName = agyNativeMcpServerName(name);
             // The upstream remote transport uses serverUrl, not Claude's type/url envelope.
             if (entry.type === 'http' && typeof entry.url === 'string') {
               const { type: _type, url, ...rest } = entry;
-              return [name, { ...rest, serverUrl: url }];
+              return [providerName, { ...rest, serverUrl: url }];
             }
-            return [name, entry];
+            return [providerName, entry];
           }),
         )
       : Object.fromEntries(
