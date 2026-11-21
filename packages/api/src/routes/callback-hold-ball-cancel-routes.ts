@@ -25,6 +25,7 @@ import { createModuleLogger } from '../infrastructure/logger.js';
 import type { DynamicTaskDef, DynamicTaskStore } from '../infrastructure/scheduler/DynamicTaskStore.js';
 import type { TaskRunnerV2 } from '../infrastructure/scheduler/TaskRunnerV2.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
+import { readUnixProcessSnapshotSync, sameUnixProcess } from '../utils/cli-process-ownership.js';
 import { resolveDirectLocalAuthorizationUserId } from '../utils/request-identity.js';
 import { requireCallbackPrincipal } from './callback-auth-prehandler.js';
 import { cancelManagedWakeIfTaskMatches } from './callback-hold-ball-routes.js';
@@ -275,23 +276,41 @@ function persistHoldCancellation(
   return { applied, durableJob };
 }
 
-function cancelDurableGateIfPresent(
+async function cancelDurableGateIfPresent(
   durableJob: DurableManagedGateJob | undefined,
   taskId: string,
   access: HoldAccessDecision,
   operatorUserId: string,
-): ReturnType<typeof cancelDurableManagedGateJob> | null {
+): Promise<{
+  outcome: ReturnType<typeof cancelDurableManagedGateJob>;
+  reasonCode?: 'cleanup_unproven' | 'process_snapshot_unavailable' | 'cancellation_recheck_failed';
+} | null> {
   if (!durableJob || !validateDurableManagedGateJob(durableJob, taskId)) return null;
   if (durableJob.recordStorage === 'sqlite_v1') {
-    return new ManagedJobService(undefined, 4, operatorUserId).cancel(
-      jobAccess(access, durableJob.wakeTarget.threadId),
-      durableJob.jobId,
-    );
+    const service = new ManagedJobService(undefined, 4, operatorUserId);
+    const principal = jobAccess(access, durableJob.wakeTarget.threadId);
+    let outcome = service.cancel(principal, durableJob.jobId);
+    if (outcome.state !== 'pending') return { outcome };
+    try {
+      const observation = await service.reconcileJob(principal, durableJob.jobId);
+      outcome = service.cancel(principal, durableJob.jobId);
+      if (outcome.state !== 'pending') return { outcome };
+      const identity = observation.inspection.record?.ownerIdentity;
+      if (!identity) return { outcome };
+      const snapshot = readUnixProcessSnapshotSync({ pids: [identity.pid] });
+      if (snapshot === null) return { outcome, reasonCode: 'process_snapshot_unavailable' };
+      if (!sameUnixProcess(identity, snapshot.get(identity.pid))) return { outcome, reasonCode: 'cleanup_unproven' };
+      return { outcome };
+    } catch {
+      return { outcome, reasonCode: 'cancellation_recheck_failed' };
+    }
   }
-  return cancelDurableManagedGateJob(durableJob, {
-    cancelledBy: `${access.actor.kind}:${access.actor.id}:${access.actor.userId}`,
-    reason: 'explicit_hold_cancel',
-  });
+  return {
+    outcome: cancelDurableManagedGateJob(durableJob, {
+      cancelledBy: `${access.actor.kind}:${access.actor.id}:${access.actor.userId}`,
+      reason: 'explicit_hold_cancel',
+    }),
+  };
 }
 
 type DurableHoldCancellationState =
@@ -525,8 +544,9 @@ export function registerHoldBallCancelRoutes(app: FastifyInstance, deps: HoldBal
       // F295: the deleted task may already have been replaced in the same thread+cat slot.
       // Fence by taskId so a stale bubble cannot terminate the replacement command.
       if (retained !== 'not_started') cancelExactManagedRunner(deps, taskId, threadId, catId);
-      const durableCancellation = cancelDurableGateIfPresent(mutation.durableJob, taskId, access, deps.ownerUserId);
-      const durableDescriptorInvalid = Boolean(mutation.durableJob && !durableCancellation);
+      const durableResult = await cancelDurableGateIfPresent(mutation.durableJob, taskId, access, deps.ownerUserId);
+      const durableCancellation = durableResult?.outcome ?? null;
+      const durableDescriptorInvalid = Boolean(mutation.durableJob && !durableResult);
       const cancellationState =
         retained === 'pending' && !mutation.durableJob
           ? 'retained_pending'
@@ -535,7 +555,15 @@ export function registerHoldBallCancelRoutes(app: FastifyInstance, deps: HoldBal
       const durableCancelled = cancellationState === 'durable_cancelled';
       const durableConflict = cancellationState === 'durable_conflict';
       log.info(
-        { taskId, threadId, ownerCatId: catId, actor: access.actor, durableCancellation, durableDescriptorInvalid },
+        {
+          taskId,
+          threadId,
+          ownerCatId: catId,
+          actor: access.actor,
+          durableCancellation,
+          durableDescriptorInvalid,
+          reasonCode: durableResult?.reasonCode,
+        },
         durableConflict
           ? 'F261: durable hold cancellation could not be admitted'
           : isDurableCancellation
@@ -549,6 +577,17 @@ export function registerHoldBallCancelRoutes(app: FastifyInstance, deps: HoldBal
         } catch (err) {
           log.warn({ taskId, threadId, err }, 'F222 UX-3: failed to trigger hold_ball cancel feedback');
         }
+      }
+
+      if (durableResult?.reasonCode) {
+        reply.status(503);
+        return {
+          outcome: 'unknown',
+          taskId,
+          reasonCode: durableResult.reasonCode,
+          cancelled: false,
+          cancellationRequested: true,
+        };
       }
 
       try {
