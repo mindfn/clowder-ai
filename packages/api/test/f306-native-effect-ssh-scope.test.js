@@ -31,7 +31,7 @@ function fixture(t) {
 
 test('SSH aliases and ProxyJump remain ordinary user-authorized shell commands', (t) => {
   const { decide, home } = fixture(t);
-  for (const command of [`HOME='${home}' ssh ascend 'uname -a'`, "ssh -J bastion ascend 'uname -a'"]) {
+  for (const command of [`HOME='${home}' ssh ascend 'kill -TERM 4242'`, "ssh -J bastion ascend 'kill -TERM 4242'"]) {
     const result = decide(command);
     assert.equal(result.decision, 'allow', `${command}: ${JSON.stringify(result)}`);
   }
