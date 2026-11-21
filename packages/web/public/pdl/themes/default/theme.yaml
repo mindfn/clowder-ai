@@ -201,6 +201,7 @@ pdl:
                               created: t:nativeSetup.created
                               ready: t:nativeSetup.ready
                               dshAuto: t:nativeSetup.dshAuto
+                              accountRequired: t:nativeSetup.accountRequired
                               unavailable: t:common.status.notInstalled
                               conflict: t:nativeSetup.conflict
                               _: "@state"
@@ -223,8 +224,31 @@ pdl:
                       - type: settings
                         rows:
                           - kind: field
+                            label: t:memberForm.fields.account
+                            id: "@fieldIds.account"
+                            req: true
+                            control:
+                              - type: select
+                                id: "@fieldIds.account"
+                                value: "@payload.accountRef"
+                                change: nativePreference
+                                args:
+                                  k: account
+                                  id: "@id"
+                                options:
+                                  - from: "@agyAccounts"
+                                    item:
+                                      v: "@id"
+                                      label:
+                                        t: settingsUi.member.accountName
+                                        args:
+                                          - "@kind"
+                                          - "@name"
+                            when: "@agyCarrier"
+                          - kind: field
                             label: t:runtime.model
                             id: "@fieldIds.model"
+                            req: "@agyCarrier"
                             control:
                               - type: input
                                 id: "@fieldIds.model"
@@ -256,7 +280,27 @@ pdl:
                                       v: "@value"
                                       label: "@label"
                                       sub: "@description"
+                                when: "!@agyCarrier"
+                              - type: input
+                                id: "@fieldIds.model"
+                                value: "@payload.defaultModel"
+                                input: nativePreference
+                                change: nativePreference
+                                args:
+                                  k: model
+                                  id: "@id"
+                                mono: true
+                                placeholder: t:nativeSetup.agyModelPlaceholder
+                                listFrom:
+                                  - from: "@preferences.catalog.models"
+                                    item:
+                                      v: "@value"
+                                      label: "@label"
+                                      sub: "@description"
+                                when: "@agyCarrier"
                             foot:
+                              - text: t:nativeSetup.agyModelHint
+                                when: "@agyCarrier"
                               - text:
                                   t: memberForm.runtime.inherited
                                   args:
@@ -305,6 +349,65 @@ pdl:
                               - text: t:memberForm.runtime.invalidEffort
                                 tone: danger
                                 when: "@preferences.invalidEffort"
+                          - kind: field
+                            label: t:threadSettings.permission
+                            id: "@fieldIds.agyPerm"
+                            control:
+                              - type: select
+                                id: "@fieldIds.agyPerm"
+                                value: "@payload.agyAutoApprove"
+                                change: nativePreference
+                                args:
+                                  k: agyPerm
+                                  id: "@id"
+                                options:
+                                  - v: false
+                                    label: t:memberForm.contextPolicy.agyPerm
+                                  - v: true
+                                    label: t:memberForm.contextPolicy.fullTrust
+                            when: "@agyCarrier"
+                          - kind: field
+                            label: t:memberForm.fields.isolatedProfileId
+                            id: "@fieldIds.agyProfile"
+                            control:
+                              - type: input
+                                id: "@fieldIds.agyProfile"
+                                value: "@payload.agyProfileId"
+                                input: nativePreference
+                                args:
+                                  k: agyProfile
+                                  id: "@id"
+                                mono: true
+                            when: "@agyCarrier"
+                          - kind: field
+                            label: t:memberForm.fields.profileRoot
+                            id: "@fieldIds.agyRoot"
+                            control:
+                              - type: input
+                                id: "@fieldIds.agyRoot"
+                                value: "@payload.agyHomeRoot"
+                                input: nativePreference
+                                args:
+                                  k: agyRoot
+                                  id: "@id"
+                                mono: true
+                                placeholder: t:memberForm.fields.absolutePath
+                            when: "@agyCarrier"
+                          - kind: field
+                            label: t:memberForm.fields.approvedWorkspaces
+                            id: "@fieldIds.agyDirs"
+                            control:
+                              - type: input
+                                id: "@fieldIds.agyDirs"
+                                value: "@payload.agyTrustedWorkspaces"
+                                input: nativePreference
+                                args:
+                                  k: agyDirs
+                                  id: "@id"
+                                mono: true
+                                placeholder: t:memberForm.fields.absolutePath
+                                rows: true
+                            when: "@agyCarrier"
                         when: "@adjusting"
                 - type: notice
                   tone: danger
@@ -318,6 +421,12 @@ pdl:
                     - text:
                         of: $.submitError
                         map:
+                          agy_account_required: t:nativeSetup.errors.agyAccountRequired
+                          agy_model_required: t:nativeSetup.errors.agyModelRequired
+                          agy_profile_invalid: t:nativeSetup.errors.agyProfileInvalid
+                          agy_workspace_required: t:nativeSetup.errors.agyWorkspaceRequired
+                          agy_absolute_path_required: t:nativeSetup.errors.agyAbsolutePathRequired
+                          runtime_effort_invalid: t:memberForm.runtime.invalidEffort
                           runtime_preference_required: t:memberForm.runtime.preferenceRequired
                           _: $.submitError
                   when: $.submitError
@@ -6115,9 +6224,13 @@ pdl:
                   options:
                     - v: ""
                       label:
-                        t: memberForm.fields.clientOwn
-                        args:
-                          - $.form.clientName
+                        of: $.form.supportsNativeTool
+                        map:
+                          "false": t:memberForm.fields.opts
+                          _:
+                            t: memberForm.fields.clientOwn
+                            args:
+                              - $.form.clientName
                     - from: $.form.accounts
                       item:
                         v: "@id"

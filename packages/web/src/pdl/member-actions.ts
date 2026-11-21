@@ -2,6 +2,7 @@ import {
   type AssetCanonItem,
   type CatVoiceOption,
   type CharacterAssetBinding,
+  catClientSupportsNativeTool,
   defaultAcpPoolMaxProcesses,
   type MemberVisualAssets,
   type PluginManagerDetail,
@@ -178,6 +179,7 @@ export async function readMemberSettings() {
   ]);
   return {
     accounts: accounts.providers,
+    projectPath: accounts.projectPath,
     l0,
     templates: templates.templates,
     blank: initialState(),
@@ -193,6 +195,7 @@ export async function readMemberSettings() {
       id: client.value,
       acpMaxDefault: defaultAcpPoolMaxProcesses(client.value),
       label: client.label,
+      supportsNativeTool: catClientSupportsNativeTool(client.value),
       carriers: carrierOptionsForClient(client.value).map((mode) => [mode.value, mode.label]),
       accounts: filterAccounts(client.value, accounts.providers).map((account) => account.id),
     })),
@@ -244,13 +247,12 @@ export async function readNativeMembers(journeyId: string, refresh: boolean) {
     request<{ cats: CatData[] }>('/api/cats'),
     request<AccountsResponse>('/api/accounts'),
   ]);
-  return recommendNativePartners(discovered.runtimes, templates.templates, roster.cats, journeyId).map((partner) => ({
+  return recommendNativePartners(discovered.runtimes, templates.templates, roster.cats, journeyId, {
+    accounts: accounts.providers,
+    projectPath: accounts.projectPath,
+  }).map((partner) => ({
     ...partner,
     runtime: { ...partner.runtime, acpMaxDefault: defaultAcpPoolMaxProcesses(partner.runtime.clientId) },
-    form:
-      !partner.existingId && partner.runtime.agyCarrier
-        ? { ...partner.form, agyTrustedWorkspaces: accounts.projectPath }
-        : partner.form,
     selectable: nativeRuntimeSelectable(partner.runtime, partner.form),
   }));
 }
