@@ -437,7 +437,7 @@ function pvControl(c, sc, root) {
       if (combo) { COMBO[id] = combo; return '<span class="combo">' + inp + btn(pvText(c.label || c.placeholder, sc, root), { iconOnly: true, sm: true, icon: 'updown', act: 'comboOpen', data: ' data-for="' + h(id) + '" aria-haspopup="menu"' }) + (c.reload ? btn(tc('common.refresh'), { iconOnly: true, sm: true, icon: 'refresh', act: c.reload.act, busy: !!P(c.reload.busy), tip: P(c.reload.tip), why: P(c.reload.why), data: argAttrs(pvArgsObj(c.reload.args || {}, sc, root)) }) : '') + '</span>'; }
       return c.lead ? '<label class="input-lead">' + pvParts(c.lead, sc, root) + inp + '</label>' : inp;   /* lead：框里最前面的状态（地址栏的连接点） */
     }
-    case 'check': return c.variant === 'row' ? checkMark(!!P(c.value), c.act, data, pvText(c.label, sc, root)) : checkBox(!!P(c.value), (c.tint ? tintDot(P(c.tint)) : '') + pvText(c.label, sc, root), c.act, data);
+    case 'check': return c.variant === 'row' ? (c.act ? checkMark(!!P(c.value), c.act, data, pvText(c.label, sc, root)) : '<span class="cafe-check" aria-checked="' + !!P(c.value) + '">' + checkInd() + '</span>') :   /* 没有自己的动作：只是这一行的选中标记，点它就是点这一行 */ checkBox(!!P(c.value), (c.tint ? tintDot(P(c.tint)) : '') + pvText(c.label, sc, root), c.act, data);
     case 'tints': return colorCtl({ kind: 'slot', value: +P(c.value), act: c.act, label: pvText(c.label, sc, root), data: data });   /* 取色的槽位变体：6 个成员色调里单选 */
     case 'text': {   /* 一段文字：默认是正文墨色；meta 是次要信息；value 是一项设置的值；for 时是某个控件的名字（label 元素）。什么都不加时就是片段本身（不包一层） */
       const t = c.parts ? (typeof c.parts === 'string' ? pvLit(P(c.parts), sc, root) : pvJoin(c.parts, sc, root, '')) : pvText(c.text, sc, root), tone = P(c.tone), tip = P(c.tip);
@@ -814,7 +814,7 @@ Object.assign(PDL_BLOCKS, {
   /* 消息导航（右侧细刻度）：一条消息一格；tone u 你 / c 成员 / s 其它，err 有出错、wait 等你回应；older：更早的还没加载 */
   ticks: function (b, sc, root) {
     return ('<nav class="cafe-mini hide-sm" data-note="14" data-tip-group="inline" data-own="ticks" aria-label="' + h(tc('chatNav.label')) + '">') + (pv(b.older, sc, root) ? '<span class="cafe-tick older" data-tip="' + h(tc('chatNav.older')) + '"></span>' : '') +
-      unitsHtml('ticks', pvList(b.from, sc, root), function (x) { return x.mid; }, function (raw, r) { const x = unitsItem(b, raw, r), w = whoInfo(x.from, x.source), tip = x.tip && typeof x.tip === 'object' ? x.tip.prefix + htmlText(mdHtml(x.tip.markdown.filter(Boolean).join('\n'))).slice(0, x.tip.max) : x.tip; return '<button type="button" class="cafe-tick ' + x.tone + (x.err ? ' err' : '') + (x.wait ? ' wait' : '') + '" style="--c:' + h(w.color || 'var(--identity-fallback)') + '" data-act="msgJump" data-mid="' + h(x.mid) + '" data-tip="' + h(tip) + '" aria-label="' + h(x.label) + '"></button>'; }, root) + '</nav>';
+      unitsHtml('ticks', pvList(b.from, sc, root), function (x) { return x.mid; }, function (raw, r) { const x = unitsItem(b, raw, r), w = whoInfo(x.from, x.source), tip = x.tip && typeof x.tip === 'object' ? x.tip.prefix + htmlText(mdHtml(x.tip.markdown.filter(Boolean).join('\n'))).slice(0, x.tip.max) : x.tip; return '<button type="button" class="cafe-tick ' + x.tone + (x.err ? ' err' : '') + (x.wait ? ' wait' : '') + '" style="--c:' + h(w.color || 'var(--identity-fallback)') + '" data-act="msgJump" data-mid="' + h(x.mid) + '" data-tip="' + h(tip) + '" aria-label="' + h(x.label) + '"></button>'; }, root, { placeholder: false }) + '</nav>';
   },
   /* 开始的几种方式（空对话）：图标 · 标题 · 一句话，点了做对应的事 */
   /* 标签编辑器：管理标签、整理未分类、对话设置、信号的标签都是它。项 { id, name, tint, n, on }；
