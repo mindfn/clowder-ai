@@ -19,7 +19,6 @@ import {
   splitShellExecutionSegments,
 } from './native-effect-shell-classifier.mjs';
 import { decideShellHookPayload } from './native-effect-shell-decision.mjs';
-import { remoteSshExecution } from './native-effect-ssh-scope.mjs';
 import { classifyNativeTarget as classifyTarget } from './native-effect-target-classifier.mjs';
 import { nativeSecretDenial } from './native-secret-policy.mjs';
 import { projectLocalNativeShellPayload } from './native-shell-execution-context.mjs';
@@ -84,24 +83,14 @@ export function decideNativeHookPayload(payload, options = {}) {
         normalizeHookToolInput(payload.tool_input),
       )
     : '';
-  const ssh =
-    isRecord(payload) && sourceTool(payload.tool_name) === 'shell'
-      ? remoteSshExecution(raw, cwd, options.sshScope)
-      : null;
-  const decision = decideNativeHookPayloadWithoutSelfHost(payload, ssh);
+  const decision = decideNativeHookPayloadWithoutSelfHost(payload);
   // Edit payloads are source data. Their file target was already classified;
   // only a shell payload can express a process action for the self-host guard.
   if (decision.source.tool !== 'shell') return decision;
-  return applySelfHostPolicy(
-    decision,
-    hereDocumentView(ssh?.local ?? raw).host,
-    cwd,
-    resolveSelfHost,
-    options.observeHost,
-  );
+  return applySelfHostPolicy(decision, hereDocumentView(raw).host, cwd, resolveSelfHost, options.observeHost);
 }
 
-function decideNativeHookPayloadWithoutSelfHost(payload, ssh) {
+function decideNativeHookPayloadWithoutSelfHost(payload) {
   if (!isRecord(payload)) return deny(invalidCandidate(), 'unparseable_hook_payload');
   const toolName = typeof payload.tool_name === 'string' ? payload.tool_name : '';
   const toolInput = normalizeHookToolInput(payload.tool_input);
@@ -109,7 +98,7 @@ function decideNativeHookPayloadWithoutSelfHost(payload, ssh) {
   const provider = typeof payload.turn_id === 'string' || typeof payload.tool_use_id === 'string' ? 'codex' : 'claude';
   const source = { provider, tool: sourceTool(toolName), ...(cwd ? { cwd } : {}) };
   const raw = hookTargetText(toolName, toolInput);
-  if (source.tool === 'shell') return decideShellScope(raw, cwd, source, ssh);
+  if (source.tool === 'shell') return decideShellScope(raw, cwd, source);
   const effect = classifyEffect(toolName, raw);
   const targetText = toolName === 'apply_patch' ? applyPatchTargetText(raw) : raw;
   const patchTargets = toolName === 'apply_patch' && targetText.length > 0 ? targetText.split('\n') : [];
@@ -123,18 +112,8 @@ function decideNativeHookPayloadWithoutSelfHost(payload, ssh) {
   return decideNativeEffect(candidate);
 }
 
-function decideShellScope(raw, cwd, source, ssh) {
-  if (ssh?.unproven)
-    return deny(
-      { effect: 'unknown', target: classifyTarget('', cwd, 'unknown'), source },
-      'ssh_local_execution_unproven',
-    );
-  const decision = decideShellHookPayload(hereDocumentView(ssh?.local ?? raw), cwd, source);
-  if (!ssh?.target || decision.decision === 'deny' || !['read', 'unknown'].includes(decision.effect)) return decision;
-  return {
-    ...decideNativeEffect({ effect: 'unknown', target: { kind: 'ordinary', value: ssh.target }, source }),
-    reasonCode: 'remote_ssh_policy_deferred',
-  };
+function decideShellScope(raw, cwd, source) {
+  return decideShellHookPayload(hereDocumentView(raw), cwd, source);
 }
 
 function normalizeHookToolInput(toolInput) {
