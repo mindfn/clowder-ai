@@ -303,6 +303,14 @@ function bindMembers() {
     return chatAction('memberAvailable', { id: data.id, v: String(next) }).then(read);
   };
 
+  function canFollowAccount(f) {
+    return (
+      ['openai', 'anthropic'].includes(f.clientId) &&
+      f.carrier !== 'acp' &&
+      f.configurationSource !== 'native_tool' &&
+      !!f.accountRef
+    );
+  }
   function selectedRuntime(form) {
     return meta.runtimes.find(function (row) {
       return (
@@ -441,7 +449,7 @@ function bindMembers() {
       });
     return {
       catalog: catalog,
-      catalogLoading: !!catalogState && catalogState.load === 'loading',
+      catalogLoading: catalogState ? catalogState.load === 'loading' : !!pending,
       catalogRead: true,
       acpMaxDefault: poolDefault,
       selectedModel: selected,
@@ -761,9 +769,8 @@ function bindMembers() {
         ? null
         : memberPreferences(f, catalogState, runtime ? runtime.acpMaxDefault : client && client.acpMaxDefault),
       identityProtection: cat && cat.identityProtection,
-      follow: ['openai', 'anthropic'].includes(f.clientId) && f.carrier !== 'acp' && f.accountBindingMode === 'follow',
-      overrideAccount:
-        ['openai', 'anthropic'].includes(f.clientId) && f.carrier !== 'acp' && f.accountBindingMode === 'override',
+      follow: canFollowAccount(f) && f.accountBindingMode === 'follow',
+      overrideAccount: canFollowAccount(f) && f.accountBindingMode === 'override',
       required: { provider: f.clientId === 'opencode' },
       noAccount: !meta.accounts.length,
       active: active,
@@ -874,9 +881,7 @@ function bindMembers() {
     if (key === 'name') state.form.displayName = e.target.value;
     if (key === 'accountRef' && e.target.value) {
       state.form.configurationSource = 'managed_account';
-      if (['openai', 'anthropic'].includes(state.form.clientId) && state.form.carrier !== 'acp')
-        state.form.accountBindingMode = 'override';
-      else delete state.form.accountBindingMode;
+      if (canFollowAccount(state.form)) state.form.accountBindingMode = 'override';
     } else if (key === 'accountRef') {
       const accClient = meta.clients.find(function (row) {
         return row.id === state.form.clientId;
@@ -918,6 +923,7 @@ function bindMembers() {
         state.form.agyTrustedWorkspaces = meta.projectPath;
       }
     }
+    if (!canFollowAccount(state.form)) delete state.form.accountBindingMode;
     render(true);
   }
   SET_AFTER['ss.draft.{k}'] = function (v, d) {
@@ -928,7 +934,7 @@ function bindMembers() {
   A.followAcc = async function () {
     const state = draft(),
       client = state.form.clientId;
-    if (client !== 'openai' && client !== 'anthropic') return;
+    if (!canFollowAccount(state.form)) return;
     if ((await chatAction('settingsFollowRead', { clientId: client })) === false) return;
     const selected = chatDataSnapshot.project.settings.follows[client];
     if (selected.accountRef) {
@@ -956,6 +962,7 @@ function bindMembers() {
       });
     if (!runtime) return;
     Object.assign(state.form, pdlClone(runtime.form));
+    delete state.form.accountBindingMode;
     if (runtime.agyCarrier) {
       if (!state.form.accountRef) state.form.accountRef = defaultAgyAccountId(runtime.agyCarrier === 'acp');
       if (!state.form.agyTrustedWorkspaces && meta.projectPath) state.form.agyTrustedWorkspaces = meta.projectPath;
