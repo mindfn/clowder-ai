@@ -12,7 +12,7 @@ import { invokeSingleCat } from '../dist/domains/cats/services/agents/invocation
 import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
 import { fixture } from './helpers/alpha-plugin-runtime-fixture.js';
 
-test('an owner-enabled new Alpha plugin is discoverable to an ordinary member without a canonical registration', async (t) => {
+test('an owner-enabled plugin is published and discoverable to an ordinary member', async (t) => {
   const f = await fixture(t, 'alpha');
   const capabilityId = `plugin:${f.pluginId}:native`;
   const config = await readCapabilitiesConfig(f.capabilityProjectRoot);
@@ -64,6 +64,6 @@ test('an owner-enabled new Alpha plugin is discoverable to an ordinary member wi
   assert.ok(observed, 'the newly installed local contribution must reach ordinary member discovery');
   assert.equal(observed.enabled, true);
   assert.equal(observed.workingDir.startsWith(f.projectRoot), true);
-  assert.equal(await readFile(canonical, 'utf8'), before, 'discovery cannot publish Alpha into shared policy');
-  assert.equal(f.writes(), 0);
+  assert.notEqual(await readFile(canonical, 'utf8'), before, 'explicit enable must publish the plugin capability');
+  assert.ok(f.writes() > 0);
 });

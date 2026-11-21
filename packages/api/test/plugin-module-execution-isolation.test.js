@@ -154,7 +154,6 @@ test('real shared Worker exit revokes publications and records a safe failure', 
         config = next;
       },
     },
-    persistCapabilities: false,
   };
   const released = [];
   const router = new PluginRuntimeCarrierRouter(inventory, resources, {
