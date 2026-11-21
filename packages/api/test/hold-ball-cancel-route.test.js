@@ -6,6 +6,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -361,6 +362,168 @@ describe('F167 Phase J AC-J1: DELETE /api/callbacks/hold-ball/:taskId', () => {
       assert.equal(existsSync(`${ownerJob.recordPath}.terminal`), false);
       assert.equal(JSON.parse(readFileSync(`${ownerJob.recordPath}.cancel-request`, 'utf8')).jobId, ownerJob.jobId);
     } finally {
+      if (previousDataDir === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+      else process.env.CAT_CAFE_DATA_DIR = previousDataDir;
+      rmSync(dataRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('parked sqlite job with a dead owner reaches cancelled terminal on explicit stop', async () => {
+    const task = makeHoldTask('hold-ball-parked-dead-owner', 'thread-parked-dead-owner', 'codex');
+    const dataRoot = mkdtempSync(join(tmpdir(), 'cat-cafe-hold-cancel-parked-'));
+    const previousDataDir = process.env.CAT_CAFE_DATA_DIR;
+    process.env.CAT_CAFE_DATA_DIR = dataRoot;
+    const { ManagedJobService } = await import('../dist/domains/managed-job/ManagedJobService.js');
+    const { recordDurableManagedGateProcess, recordManagedJobAttempt } = await import(
+      '../dist/domains/managed-job/durable-managed-gate-job-store.js'
+    );
+    const { readManagedJobRecovery, updateManagedJobRecovery } = await import(
+      '../dist/domains/managed-job/managed-job-recovery-ledger.js'
+    );
+    const { applyManagedJobRecoveryOutcome } = await import(
+      '../dist/domains/managed-job/managed-job-recovery-state.js'
+    );
+    const service = new ManagedJobService(dataRoot);
+    const principal = { userId: 'user1', catId: 'codex', threadId: task.deliveryThreadId };
+    const job = await service.submit(principal, {
+      command: 'node --version',
+      cwd: process.cwd(),
+      originInvocationId: 'parked-dead-owner',
+      originTaskId: task.id,
+      executionSlaMs: 10_000,
+      idempotencyKey: 'parked-dead-owner',
+      wakeTarget: principal,
+    });
+    service.admit(principal, job.jobId, 'visible-parked-dead-owner');
+    const deadPid = spawnSync('/usr/bin/true').pid;
+    assert.ok(Number.isSafeInteger(deadPid));
+    assert.equal(
+      recordDurableManagedGateProcess(job, {
+        pid: deadPid,
+        ppid: 1,
+        pgid: deadPid,
+        startedAt: 'Wed Oct 14 18:00:00 2026',
+      }),
+      true,
+    );
+    recordManagedJobAttempt(job, 'parked-dead-owner-attempt');
+    const recovery = readManagedJobRecovery(job);
+    assert.ok(recovery);
+    let parked = recovery.recovery;
+    for (let attempt = 0; attempt < 5; attempt += 1)
+      parked = applyManagedJobRecoveryOutcome(
+        parked,
+        { kind: 'retryable_error', reason: 'cleanup_unproven' },
+        job.jobId,
+        Date.now(),
+      );
+    assert.equal(parked.disposition, 'parked');
+    assert.equal(updateManagedJobRecovery(job, recovery.revision, parked), true);
+    task.params = {
+      ...task.params,
+      holdLifecycle: {
+        mode: 'wake_when',
+        status: 'active',
+        wakeAt: task.trigger.fireAt,
+        createdBy: 'hold-ball:codex',
+        managedCommand: {
+          state: 'command_running',
+          command: 'node --version',
+          startedAt: Date.now() - 1_000,
+          jobId: job.jobId,
+        },
+      },
+    };
+    const deps = makeStubDeps([task], { 'thread-parked-dead-owner': 'test-user' });
+    const app = await createApp(deps);
+
+    try {
+      const res = await app.inject({
+        method: 'DELETE',
+        url: `/api/callbacks/hold-ball/${task.id}`,
+        headers: { 'x-cat-cafe-user': 'test-user' },
+      });
+
+      assert.equal(res.statusCode, 200, res.body);
+      assert.equal(res.json().status, 'ok');
+      assert.equal(res.json().cancelled, true);
+      assert.equal(service.get(principal, job.jobId).state, 'cancelled');
+      assert.equal(readManagedJobRecovery(job).recovery.disposition, undefined);
+    } finally {
+      await app.close();
+      if (previousDataDir === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+      else process.env.CAT_CAFE_DATA_DIR = previousDataDir;
+      rmSync(dataRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('sqlite job with a live owner keeps explicit stop pending', async (t) => {
+    const task = makeHoldTask('hold-ball-live-sqlite-owner', 'thread-live-sqlite-owner', 'codex');
+    const dataRoot = mkdtempSync(join(tmpdir(), 'cat-cafe-hold-cancel-live-sqlite-'));
+    const previousDataDir = process.env.CAT_CAFE_DATA_DIR;
+    process.env.CAT_CAFE_DATA_DIR = dataRoot;
+    const child = spawn(process.execPath, [
+      '-e',
+      "process.on('SIGTERM', () => {}); process.stdout.write('ready\\n'); setInterval(() => {}, 1000)",
+    ]);
+    t.after(() => {
+      child.kill('SIGKILL');
+    });
+    await new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.stdout.once('data', resolve);
+    });
+    const { ManagedJobService } = await import('../dist/domains/managed-job/ManagedJobService.js');
+    const { recordDurableManagedGateProcess } = await import(
+      '../dist/domains/managed-job/durable-managed-gate-job-store.js'
+    );
+    const { readUnixProcessSnapshotSync } = await import('../dist/utils/cli-process-ownership.js');
+    const service = new ManagedJobService(dataRoot);
+    const principal = { userId: 'user1', catId: 'codex', threadId: task.deliveryThreadId };
+    const job = await service.submit(principal, {
+      command: 'node --version',
+      cwd: process.cwd(),
+      originInvocationId: 'live-sqlite-owner',
+      originTaskId: task.id,
+      executionSlaMs: 10_000,
+      idempotencyKey: 'live-sqlite-owner',
+      wakeTarget: principal,
+    });
+    service.admit(principal, job.jobId, 'visible-live-sqlite-owner');
+    const identity = readUnixProcessSnapshotSync({ pids: [child.pid] }).get(child.pid);
+    assert.ok(identity);
+    assert.equal(recordDurableManagedGateProcess(job, identity), true);
+    task.params = {
+      ...task.params,
+      holdLifecycle: {
+        mode: 'wake_when',
+        status: 'active',
+        wakeAt: task.trigger.fireAt,
+        createdBy: 'hold-ball:codex',
+        managedCommand: {
+          state: 'command_running',
+          command: 'node --version',
+          startedAt: Date.now() - 1_000,
+          jobId: job.jobId,
+        },
+      },
+    };
+    const deps = makeStubDeps([task], { 'thread-live-sqlite-owner': 'test-user' });
+    const app = await createApp(deps);
+
+    try {
+      const res = await app.inject({
+        method: 'DELETE',
+        url: `/api/callbacks/hold-ball/${task.id}`,
+        headers: { 'x-cat-cafe-user': 'test-user' },
+      });
+
+      assert.equal(res.statusCode, 202, res.body);
+      assert.equal(res.json().status, 'pending');
+      assert.equal(res.json().cancelled, false);
+      assert.equal(service.get(principal, job.jobId).state, 'running');
+    } finally {
+      await app.close();
       if (previousDataDir === undefined) delete process.env.CAT_CAFE_DATA_DIR;
       else process.env.CAT_CAFE_DATA_DIR = previousDataDir;
       rmSync(dataRoot, { recursive: true, force: true });
