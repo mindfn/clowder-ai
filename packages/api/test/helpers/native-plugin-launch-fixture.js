@@ -68,7 +68,6 @@ export async function fixture(t, options = {}) {
     }),
     {
       projectRoot: root,
-      persistCapabilities: options.persistCapabilities ?? true,
       packages: {
         resolveInstalledPackage: async (digest) => ({
           rootDir: packageRoot,

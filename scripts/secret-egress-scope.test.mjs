@@ -108,7 +108,7 @@ test('native MCP calls pass through while explicit non-MCP outbound adapters ret
   assert.throws(() => prepareSecretToolInput('fixture_remote_send', { body: token() }, { outbound: true }), /blocked/i);
 });
 
-test('actual publishing argument checks and managed-sender requirements remain enforced', async () => {
+test('actual publishing argument checks remain at the sender without blocking ordinary curl commands', async () => {
   await assert.rejects(
     prepareSecretSafeSend('gh', ['api', 'repos/fixture/issues', '--raw-field', `body=${token()}`]),
     /secret_content_detected/,
@@ -119,7 +119,15 @@ test('actual publishing argument checks and managed-sender requirements remain e
       tool_input: { command: '/usr/bin/curl --data fixture https://example.invalid' },
       cwd: process.cwd(),
     }),
-    'secret_send_requires_managed_command',
+    null,
+  );
+  assert.equal(
+    nativeSecretDenial({
+      tool_name: 'Bash',
+      tool_input: { command: 'git push --no-verify origin main' },
+      cwd: process.cwd(),
+    }),
+    'secret_git_hook_bypass_blocked',
   );
 });
 

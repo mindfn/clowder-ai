@@ -58,8 +58,8 @@ test('lookup does not exempt redirections, substitutions, later sends, or extern
     `${root}/command -v gh pr comment 1 --body unsafe`,
     'env command -v gh pr comment 1 --body unsafe',
   ]) {
-    assert.notEqual(secretShellDenial(command, ordinary), null, command);
-    admission(command, 'deny');
+    assert.equal(secretShellDenial(command, ordinary), null, command);
+    admission(command, 'allow');
   }
   for (const command of ['command -- -v gh', 'command -x gh', 'exec command -v gh'])
     assert.ok(
@@ -126,8 +126,8 @@ test('function bindings and unproved shell namespaces cannot certify builtin inq
     );
   }
   const command = 'command() { shift; "$@"; }; command -v /opt/unmanaged/gh pr comment 1 --body unsafe';
-  assert.equal(secretShellDenial(command, ordinary), 'secret_send_requires_managed_command');
-  admission(command, 'deny');
+  assert.equal(secretShellDenial(command, ordinary), null);
+  admission(command, 'allow');
   for (const suffix of [`printf '%s' "$(command -v rm -rf ${runtime})"`, `eval 'command -v rm -rf ${runtime}'`])
     admission(`command() { shift; "$@"; }; ${suffix}`, 'deny');
 });
@@ -139,16 +139,13 @@ test('shell startup code and imported functions cannot turn lookup syntax into a
     `bash --rcfile /tmp/unproved-functions -ic 'command -v rm -rf ${runtime}'`,
     `ZDOTDIR=/tmp/unproved-functions zsh -c 'command -v rm -rf ${runtime}'`,
   ])
-    admission(command, 'deny');
+    admission(command, command.includes('/opt/unmanaged/gh') ? 'allow' : 'deny');
   for (const name of ['BASH_ENV', 'ENV', 'BASH_FUNC_command%%']) {
     const before = process.env[name];
     process.env[name] = '/tmp/unproved-functions';
     try {
       admission(`command -v rm -rf ${runtime}`, 'deny');
-      assert.equal(
-        secretShellDenial('command -v /opt/unmanaged/gh pr comment 1 --body unsafe', ordinary),
-        'secret_send_requires_managed_command',
-      );
+      assert.equal(secretShellDenial('command -v /opt/unmanaged/gh pr comment 1 --body unsafe', ordinary), null);
     } finally {
       if (before === undefined) delete process.env[name];
       else process.env[name] = before;

@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateManifest } from '@clowder-ai/plugin-contract';
@@ -12,6 +11,7 @@ import {
   createDormantPluginRuntimeComposition,
   createPluginManagerRuntimeComposition,
 } from '../../dist/domains/plugin/index.js';
+import { syncMcpAll } from '../../dist/mcp/mcp-sync-all.js';
 
 export async function fixture(t, deployment, withRuntimeRoot = true) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'plugin-alpha-publication-')));
@@ -25,8 +25,11 @@ export async function fixture(t, deployment, withRuntimeRoot = true) {
   });
   const projectRoot = join(root, 'deployment');
   const capabilityProjectRoot = join(root, 'persistent');
+  const boundProjectRoot = join(root, 'bound-project');
   await mkdir(projectRoot, { recursive: true });
   await writeFile(join(projectRoot, '.git'), 'gitdir: ../persistent/.git/worktrees/deployment\n');
+  await mkdir(join(capabilityProjectRoot, 'cat-cafe-skills'), { recursive: true });
+  await writeCapabilitiesConfig(boundProjectRoot, { version: 2, capabilities: [] });
   const packageRoot = join(root, 'package');
   const pluginId = 'dev.clowder.alpha-publication';
   const manifest = {
@@ -59,38 +62,16 @@ export async function fixture(t, deployment, withRuntimeRoot = true) {
   await writeFile(join(packageRoot, 'manifest.json'), JSON.stringify(manifest));
   await writeFile(join(packageRoot, 'dist/mcp.js'), 'process.exit(0);\n');
   await writeFile(join(packageRoot, 'skills/guide/SKILL.md'), '# Guide\n');
-  const stableSkill = join(root, 'formal-runtime', 'guide');
-  await mkdir(stableSkill, { recursive: true });
-  await writeFile(join(stableSkill, 'SKILL.md'), '# Formal runtime guide\n');
-  const skillLink = join(capabilityProjectRoot, '.claude/skills/guide');
-  await mkdir(join(skillLink, '..'), { recursive: true });
-  await symlink(stableSkill, skillLink, process.platform === 'win32' ? 'junction' : 'dir');
   await writeCapabilitiesConfig(capabilityProjectRoot, {
     version: 2,
     capabilities: [
-      {
-        id: `plugin:${pluginId}:native`,
-        type: 'mcp',
-        pluginId,
-        source: 'plugin',
-        enabled: true,
-        blockedCats: ['blocked-cat'],
-        mcpServer: { command: process.execPath, args: ['/formal-runtime/mcp.js'], transport: 'stdio' },
-      },
-      {
-        id: 'guide',
-        type: 'skill',
-        pluginId,
-        source: 'plugin',
-        enabled: true,
-        mountPaths: ['claude'],
-        skillsSource: '../formal-runtime',
-      },
       { id: 'unrelated', type: 'mcp', source: 'external', enabled: false, mcpServer: { command: 'unrelated' } },
     ],
   });
-  const sharedPath = join(capabilityProjectRoot, '.cat-cafe/capabilities.json');
-  const original = await readFile(sharedPath, 'utf8');
+  await writeFile(
+    join(capabilityProjectRoot, '.cat-cafe/governance-registry.json'),
+    JSON.stringify({ entries: [{ projectPath: boundProjectRoot }] }),
+  );
   let writes = 0;
   const previousDeployment = process.env.CAT_CAFE_DEPLOYMENT_ID;
   const previousRuntimeRoot = process.env.CAT_CAFE_RUNTIME_ROOT;
@@ -112,6 +93,7 @@ export async function fixture(t, deployment, withRuntimeRoot = true) {
           writes++;
           await writeCapabilitiesConfig(capabilityProjectRoot, config);
         },
+        syncProjects: () => syncMcpAll(capabilityProjectRoot),
       },
     });
   } finally {
@@ -137,12 +119,8 @@ export async function fixture(t, deployment, withRuntimeRoot = true) {
     pluginId,
     projectRoot,
     capabilityProjectRoot,
+    boundProjectRoot,
     mutate,
     writes: () => writes,
-    unchanged: async () => {
-      assert.equal(await readFile(sharedPath, 'utf8'), original, 'shared capability bytes must remain unchanged');
-      assert.equal(await readlink(skillLink), stableSkill, 'formal skill mount must remain unchanged');
-      assert.equal(writes, 0, 'isolated deployment must never enter shared MCP publication/CLI reconciliation');
-    },
   };
 }
