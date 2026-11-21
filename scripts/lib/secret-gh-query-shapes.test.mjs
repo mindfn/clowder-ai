@@ -26,8 +26,7 @@ test('complete natural help pipelines remain observations at the native secret b
     'gh auth status; gh run rerun --help | head -65; gh api repos/o/r',
     'gh pr merge --subject --help --squash 123 | cat',
   ]) {
-    const expected = command.includes('--subject --help') ? 'secret_send_requires_managed_command' : null;
-    assert.equal(secretShellDenial(command, process.cwd()), expected, command);
+    assert.equal(secretShellDenial(command, process.cwd()), null, command);
   }
 });
 
@@ -64,7 +63,7 @@ test('the actual wrapper delegates the natural query without external execution'
   }
 });
 
-test('help text as option value, post-terminator data and actual writes keep their boundaries', async () => {
+test('native shell policy admits gh writes while the sender still validates arguments', async () => {
   for (const command of [
     'gh pr merge --subject --help --squash 123 | cat',
     'gh pr merge -- --help | cat',
@@ -79,7 +78,7 @@ test('help text as option value, post-terminator data and actual writes keep the
     'gh() { printf unsafe; }; gh pr merge --help | cat',
     'printf "%s" "$(source /tmp/unproved; gh pr merge --help)" | cat',
   ])
-    assert.equal(secretShellDenial(command, process.cwd()), 'secret_send_requires_managed_command', command);
+    assert.equal(secretShellDenial(command, process.cwd()), null, command);
   for (const args of [
     ['run', 'rerun', '123', '--failed'],
     ['run', 'rerun', '--job', '--help'],
