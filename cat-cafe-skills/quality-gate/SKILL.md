@@ -65,6 +65,13 @@ Step 2: CREATE — 先确定完整旅程，再组织检查
   - 按风险将计算、组件事件等局部分支交给单测或集成测试；浏览器检查真实入口、导航、渲染和跨步骤状态，不为每个内部切片重复验整套按钮
   - 非交互交付按其真实使用场景写输入、处理与最终结果；不为纯文档或内部计算虚构页面旅程
 
+Step 2.4: SEMANTIC REWORK AUDIT（反复返工方向检查）
+  - 统一使用 `shared-rules` §16d Review loop brake 与 §16e Failure-Mode Audit；不另建按提交数裁决的第二套闸门。
+  - commit 数、同一区域反复改动和多轮 finding 只是方向线索，不自动 PASS/FAIL。判断同一 failure mode 是否再次出现、当前坐标系是否仍解释不了结果。
+  - 需要回看历史时，只使用本任务/PR 明确冻结的目标 base；不得把 feature branch 的 `@{upstream}` tracking ref 当成 PR base，也不得无依据 fallback 到 `origin/main`。
+  - 触发 §16d/§16e 时，回读 accepted source，写 Finding Pattern Summary 或 failure-mode audit，说明根因模式、影响范围与可验证的方向调整；已有契约和测试直接引用，只补缺失 delta。
+  - > **根因（2026-06-05 反思 + LL-020）**：F719 的大量 fix/refactor/test-fix 是方向异常的线索，但数字本身不能区分正常迭代与坐标系错误。要刹住的是重复 failure mode，不是机械累计 commit。
+
 Step 2.5: CLOSE GATE MATRIX + FOLLOW-UP TAIL SCAN（F177 Phase A）🔴
   - **下面 CloseGateReport / unmet AC 处置 / tail scan / cvo_signoff 四项仅在本次交付声称关闭 Feature（feat close）时执行；普通 PR / Phase 内交付跳过这四项、不生成 CloseGateReport。本步其余按作者触发的检查（包装未做作者的 close 复核）不受此门线影响，仍按各自条件执行**
   - 检查 CloseGateReport 是否已生成（schema: `../.cat-cafe-shared-refs/close-gate.md`）
