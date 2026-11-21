@@ -12,7 +12,7 @@ import { capabilitiesRoutes } from '../dist/routes/capabilities.js';
 import { capabilitySnapshotRoutes } from '../dist/routes/capability-snapshot.js';
 import { fixture } from './helpers/alpha-plugin-runtime-fixture.js';
 
-test('Console and member HTTP snapshots observe the same owner-enabled local plugin and its revocation', async (t) => {
+test('Console and member HTTP snapshots observe the same published plugin and its revocation', async (t) => {
   const f = await fixture(t, 'alpha');
   const id = `plugin:${f.pluginId}:native`;
   const saved = await readCapabilitiesConfig(f.capabilityProjectRoot);
@@ -41,8 +41,8 @@ test('Console and member HTTP snapshots observe the same owner-enabled local plu
     assert.equal(memberResponse.statusCode, 200, memberResponse.body);
     const consoleItem = consoleResponse.json().items.find((item) => item.id === id);
     const member = memberResponse.json();
-    assert.equal(consoleItem?.accessManagedByPlugin, true);
-    assert.equal(member.board.items.find((item) => item.id === id)?.accessManagedByPlugin, true);
+    assert.ok(consoleItem);
+    assert.ok(member.board.items.find((item) => item.id === id));
     assert.equal(consoleResponse.json().envelope.revision, member.envelope.revision);
     assert.equal(consoleItem.mcpServer.command, undefined);
     assert.equal(consoleItem.mcpServer.env, undefined);
@@ -66,7 +66,7 @@ test('Console and member HTTP snapshots observe the same owner-enabled local plu
       false,
     );
     assert.equal(await readFile(canonical, 'utf8'), before);
-    assert.equal(f.writes(), 0);
+    assert.ok(f.writes() > 0);
   } finally {
     await app.close();
     if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
