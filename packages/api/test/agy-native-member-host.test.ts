@@ -48,9 +48,9 @@ test('AGY consumes a declared Host MCP descriptor without renaming its plugin na
       updatedAt: 1,
     },
   };
+  let config = { version: 2 as const, capabilities: [] as import('@cat-cafe/shared').CapabilityEntry[] };
   const [launch] = await activateDeclaredMcp(admission, {
     projectRoot: root,
-    persistCapabilities: false,
     packages: {
       resolveInstalledPackage: async () => ({
         rootDir: packageRoot,
@@ -61,12 +61,18 @@ test('AGY consumes a declared Host MCP descriptor without renaming its plugin na
     },
     configuration: { readConfig: async () => undefined, readSecret: async () => undefined },
     mcpConfigIO: {
-      readConfig: async () => ({ version: 2, capabilities: [] }),
-      writeAndRegenCli: async () => assert.fail('member activation must not publish a global MCP'),
+      readConfig: async () => config,
+      writeAndRegenCli: async (next) => {
+        config = next;
+      },
       withLock: async (operation) => operation(),
     },
   });
   assert.ok(launch);
+  assert.equal(
+    config.capabilities.some((entry) => entry.id === 'plugin:dev.clowder.fixture:player'),
+    true,
+  );
   const captured = captureAgyMemberOptions({
     workingDirectory: root,
     signal: new AbortController().signal,

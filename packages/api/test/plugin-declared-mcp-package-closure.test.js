@@ -99,11 +99,17 @@ for (const shipped of [true, false]) {
         await writeDependency(cwd, 'publisher-locked dependency');
       },
     });
+    let config = { version: 2, capabilities: [] };
     const launches = await activateDeclaredMcp(admission, {
       projectRoot: root,
       resourcesRoot: join(root, 'resources'),
-      persistCapabilities: false,
-      mcpConfigIO: {},
+      mcpConfigIO: {
+        readConfig: async () => config,
+        withLock: async (operation) => operation(),
+        writeAndRegenCli: async (next) => {
+          config = next;
+        },
+      },
       packages: {
         resolveInstalledPackage: async () => assert.fail('named archive must use its verified materializer'),
       },
@@ -112,6 +118,10 @@ for (const shipped of [true, false]) {
     });
     assert.equal(installs, shipped ? 0 : 1);
     assert.equal(launches.length, 1);
+    assert.equal(
+      config.capabilities.some((entry) => entry.pluginId === installed.pluginId),
+      true,
+    );
     const { server } = launches[0];
     const { stdout } = await execFileAsync(server.command, server.args, {
       cwd: server.workingDirectory,

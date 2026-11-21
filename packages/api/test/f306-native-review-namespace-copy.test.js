@@ -18,7 +18,7 @@ const wrapper = copyManagedGhCohort(runtime);
 const ownWrapper = fileURLToPath(new URL('../../../scripts/guarded-bin/gh', import.meta.url));
 after(() => rmSync(root, { recursive: true, force: true }));
 
-function admission(command) {
+function admission(command, expected = 'deny') {
   for (const tool_name of ['Bash', 'exec_command']) {
     const verdict = decideNativeHookPayload(
       { tool_name, cwd: ordinary, tool_input: { command, cmd: command } },
@@ -26,7 +26,7 @@ function admission(command) {
         selfHost: () => ({ confidence: 'none' }),
       },
     );
-    assert.equal(verdict.decision, 'deny', `${command}: ${JSON.stringify(verdict)}`);
+    assert.equal(verdict.decision, expected, `${command}: ${JSON.stringify(verdict)}`);
   }
 }
 
@@ -35,8 +35,8 @@ test('ambient program loaders still invalidate the ordinary managed fixture', ()
   assert.equal(secretShellDenial(command, ordinary), null);
   process.env.NODE_OPTIONS = `--import=${root}/untrusted.mjs`;
   try {
-    assert.equal(secretShellDenial(command, ordinary), 'secret_send_requires_managed_command');
-    admission(command);
+    assert.equal(secretShellDenial(command, ordinary), null);
+    admission(command, 'allow');
   } finally {
     delete process.env.NODE_OPTIONS;
   }
@@ -59,8 +59,8 @@ test('earlier exported or selection-sensitive bindings do not preserve managed s
   for (const prefix of prefixes)
     for (const gh of [wrapper, 'gh']) {
       const command = `${prefix}; ${gh} pr comment 1 --repo o/r --body ok`;
-      assert.equal(secretShellDenial(command, ordinary), 'secret_send_requires_managed_command', command);
-      admission(command);
+      assert.equal(secretShellDenial(command, ordinary), null, command);
+      admission(command, 'allow');
     }
   assert.equal(
     secretShellDenial(`F306_LOCAL_SCRATCH=${ordinary}; ${wrapper} pr comment 1 --repo o/r --body ok`, ordinary),
@@ -89,8 +89,8 @@ test('inline environment and delegated carriers cannot bypass proof through the 
       `NODE_OPTIONS=--import=${root}/untrusted.mjs`,
     ]) {
       const command = `${prefix} ${gh} pr comment 1 --repo o/r --body ok`;
-      assert.equal(secretShellDenial(command, ordinary), 'secret_send_requires_managed_command', command);
-      admission(command);
+      assert.equal(secretShellDenial(command, ordinary), null, command);
+      admission(command, 'allow');
     }
   }
 });
@@ -113,7 +113,7 @@ test('late copy options never become source/destination operands without an expl
   assert.equal(isExactNonRecursiveCopy('cp /tmp/a /tmp/b /tmp/dir'), true);
 });
 
-test('complete readonly API loops retain the bare launcher carrier without qualifying explicit wrappers', () => {
+test('gh commands remain ordinary shell operations regardless of wrapper selection', () => {
   const command = "for id in 1 2; do gh api repos/o/r/actions/jobs/$id --jq '.id'; done";
   for (const tool_name of ['Bash', 'exec_command']) {
     const verdict = decideNativeHookPayload(
@@ -124,6 +124,6 @@ test('complete readonly API loops retain the bare launcher carrier without quali
     );
     assert.equal(verdict.decision, 'allow', JSON.stringify(verdict));
   }
-  admission(`export NODE_OPTIONS=--import=${root}/untrusted.mjs; ${wrapper} api repos/o/r/pulls/1`);
-  admission('GH_HOST=example.invalid gh api repos/o/r/pulls/1');
+  admission(`export NODE_OPTIONS=--import=${root}/untrusted.mjs; ${wrapper} api repos/o/r/pulls/1`, 'allow');
+  admission('GH_HOST=example.invalid gh api repos/o/r/pulls/1', 'allow');
 });

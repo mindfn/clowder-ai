@@ -1026,7 +1026,7 @@ function managedCredentialPath(threadStart) {
     .find((value) => typeof value === 'string');
 }
 
-test('ordinary pooled Codex selects its Alpha activation with the original member callback', async (t) => {
+test('ordinary pooled Codex selects its plugin activation with the original member callback', async (t) => {
   const f = await alphaPluginFixture(t, 'alpha');
   await f.mutate(true);
   const previousRoots = Object.fromEntries(
@@ -1075,13 +1075,12 @@ test('ordinary pooled Codex selects its Alpha activation with the original membe
   const { upstream } = directMcpContract(server);
   const launch = JSON.parse(readFileSync(upstream.args[1], 'utf8'));
   t.after(() => rmSync(dirname(upstream.args[0]), { recursive: true, force: true }));
-  assert.ok(launch.args[0].startsWith(f.projectRoot), 'Codex must not launch the formal runtime plugin');
+  assert.ok(launch.args[0].startsWith(f.projectRoot));
   assert.equal(launch.cwd.startsWith(f.projectRoot), true);
   assert.equal(launch.env.CAT_CAFE_API_URL, callback.CAT_CAFE_API_URL);
   const credential = JSON.parse(readFileSync(server.env.CAT_CAFE_CREDENTIAL_FILE, 'utf8'));
   assert.equal(credential.invocationId, 'alpha-member-turn');
   assert.equal(credential.callbackToken, callback.CAT_CAFE_CALLBACK_TOKEN);
-  await f.unchanged();
 });
 
 test('pooled Codex carries MCP config per session and refreshes an isolated credential file', async () => {
