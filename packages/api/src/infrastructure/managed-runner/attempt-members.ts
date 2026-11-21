@@ -12,7 +12,7 @@ export function retainLiveManagedAttemptMembers(
     execFile(
       '/bin/ps',
       ['-p', [...known.keys()].join(','), '-o', 'pid=,lstart=,stat='],
-      { encoding: 'utf8', timeout: 2000, maxBuffer: 1024 * 1024 },
+      { encoding: 'utf8', timeout: 2000, maxBuffer: 1024 * 1024, env: { ...process.env, LC_ALL: 'C' } },
       (error, stdout, stderr) => {
         if (error && !(error.code === 1 && !stdout.trim() && !stderr.trim())) return resolve(null);
         if (stderr.trim()) return resolve(null);

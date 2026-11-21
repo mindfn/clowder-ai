@@ -8,6 +8,7 @@ import {
   createCodexSocketDirectory,
   removeCodexSocketDirectory,
 } from '../dist/domains/cats/services/agents/providers/CodexUnixWebSocketSession.js';
+import { retainLiveManagedAttemptMembers } from '../dist/infrastructure/managed-runner/attempt-members.js';
 import {
   buildUnixProcessSnapshotArgs,
   cliExecutionOwnerRefFromEnvironment,
@@ -469,3 +470,50 @@ test('owner service converts non-ENOENT manifest directory failures into control
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test(
+  'unix process snapshots and managed attempt member liveness force LC_ALL=C under non-English locales (#2025)',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const prevLang = process.env.LANG;
+    const prevLcAll = process.env.LC_ALL;
+    const prevLcTime = process.env.LC_TIME;
+    process.env.LANG = 'zh_CN.UTF-8';
+    delete process.env.LC_ALL;
+    process.env.LC_TIME = 'zh_CN.UTF-8';
+    try {
+      const syncSnap = readUnixProcessSnapshotSync({ pids: [process.pid] });
+      assert.ok(syncSnap, 'sync snapshot must succeed under zh_CN.UTF-8');
+      const syncEntry = syncSnap.get(process.pid);
+      assert.ok(syncEntry, 'sync snapshot must contain current pid');
+      assert.match(syncEntry.startedAt, /^[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}:\d{2} \d{4}$/);
+
+      const asyncSnap = await readUnixProcessSnapshot({ pids: [process.pid] });
+      assert.ok(asyncSnap, 'async snapshot must succeed under zh_CN.UTF-8');
+      const asyncEntry = asyncSnap.get(process.pid);
+      assert.ok(asyncEntry);
+      assert.equal(asyncEntry.startedAt, syncEntry.startedAt);
+
+      const envSnap = await readUnixProcessSnapshot({
+        pids: [process.pid],
+        includeEnvironment: true,
+        environmentMarkers: ['CAT_CAFE_NONEXISTENT_MARKER_2025'],
+      });
+      assert.ok(envSnap, 'environment snapshot must succeed under zh_CN.UTF-8');
+      assert.equal(envSnap.get(process.pid)?.startedAt, syncEntry.startedAt);
+
+      const known = new Map([[process.pid, syncEntry]]);
+      const retained = await retainLiveManagedAttemptMembers(known, []);
+      assert.ok(Array.isArray(retained), 'retainLiveManagedAttemptMembers must not fail closed under zh_CN.UTF-8');
+      assert.equal(retained.length, 1);
+      assert.equal(retained[0].pid, process.pid);
+    } finally {
+      if (prevLang === undefined) delete process.env.LANG;
+      else process.env.LANG = prevLang;
+      if (prevLcAll === undefined) delete process.env.LC_ALL;
+      else process.env.LC_ALL = prevLcAll;
+      if (prevLcTime === undefined) delete process.env.LC_TIME;
+      else process.env.LC_TIME = prevLcTime;
+    }
+  },
+);
