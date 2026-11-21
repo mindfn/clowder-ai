@@ -368,6 +368,7 @@ export function readUnixProcessSnapshotSync(
     encoding: 'utf8',
     timeout: CLI_PROCESS_SNAPSHOT_TIMEOUT_MS,
     maxBuffer: options.includeEnvironment ? 32 * 1024 * 1024 : 4 * 1024 * 1024,
+    env: { ...process.env, LC_ALL: 'C' },
   });
   if (typeof result.stdout !== 'string') return null;
   if (result.error || result.status !== 0) {
@@ -419,6 +420,7 @@ export function readUnixProcessSnapshot(
         encoding: 'utf8',
         timeout: CLI_PROCESS_SNAPSHOT_TIMEOUT_MS,
         maxBuffer: options.includeEnvironment ? 32 * 1024 * 1024 : 4 * 1024 * 1024,
+        env: { ...process.env, LC_ALL: 'C' },
       },
       async (error, stdout, stderr) => {
         if (typeof stdout !== 'string') {
