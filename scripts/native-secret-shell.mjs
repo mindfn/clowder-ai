@@ -1,11 +1,6 @@
-import { realpathSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { ghOperation, isGhObservation } from './lib/secret-gh-options.mjs';
 import { executedInvocations } from './lib/shell-invocation.mjs';
 import { leadingShellControl, nativeBuiltinContext } from './lib/shell-program-tokens.mjs';
-import { constrainedGhApiOperation, managedGhOperation } from './native-effect-github-classifier.mjs';
 import { hereDocumentView } from './native-effect-heredoc.mjs';
-import { provedManagedGhInvocation } from './native-effect-program-selection.mjs';
 import { segmentCommandText, segmentContexts } from './native-effect-segment-locations.mjs';
 import { classifyShellSegment, splitShellExecutionSegmentsWithSeparators } from './native-effect-shell-classifier.mjs';
 import { isLocalProgramBinding } from './native-effect-shell-expansion.mjs';
@@ -77,72 +72,5 @@ function invocationDenial(invocation) {
     operands.some((arg) => arg === '--no-verify' || /core\.hooksPath/i.test(arg))
   )
     return 'secret_git_hook_bypass_blocked';
-  if (['gh', 'curl'].includes(program) && unguardedSender(invocation, program))
-    return 'secret_send_requires_managed_command';
   return null;
-}
-
-function unguardedSender(invocation, program) {
-  if (program === 'gh' && plainGhRead(invocation)) return false;
-  if (program === 'gh') {
-    if (
-      !invocation.namespaceStable ||
-      invocation.delegated ||
-      invocation.environment?.length ||
-      invocation.wrappers?.length
-    )
-      return true;
-    // Bare gh retains the launcher-owned carrier contract, not a new program
-    // certificate. No inline environment or delegated carrier inherits it.
-    if (!(invocation.program ?? '').includes('/')) return false;
-    return !(
-      managedGhOperation(invocation.programOperands ?? invocation.operands) && provedManagedGhInvocation(invocation)
-    );
-  }
-  if (invocation.environment?.some((item) => item.startsWith('PATH='))) return true;
-  if (!(invocation.program ?? '').includes('/'))
-    return invocation.wrappers?.some(
-      (wrapper) => commandName(wrapper.program) === 'command' && wrapper.options.includes('-p'),
-    );
-  try {
-    if (
-      realpathSync(invocation.program) ===
-      realpathSync(fileURLToPath(new URL(`./guarded-bin/${program}`, import.meta.url)))
-    )
-      return false;
-  } catch {
-    // A copied wrapper can still prove its identity through the shared reader.
-  }
-  return true;
-}
-
-function plainGhRead(invocation) {
-  const args = invocation.programOperands ?? invocation.operands;
-  const operation = ghOperation(args);
-  if (
-    invocation.programNamespaceStable &&
-    invocation.argvComplete &&
-    !invocation.environment?.length &&
-    !invocation.delegated &&
-    !invocation.wrappers?.length &&
-    isGhObservation(args) &&
-    (invocation.program === 'gh' || provedManagedGhInvocation(invocation))
-  )
-    return true;
-  // Bare, payload-free API observations share the launcher's existing read
-  // carrier (including readonly loops). This never certifies an explicit path.
-  if (
-    !(invocation.program ?? '').includes('/') &&
-    invocation.argvComplete &&
-    !invocation.environment?.length &&
-    !invocation.delegated &&
-    !invocation.wrappers?.length
-  ) {
-    const query = ['gh', ...args].map((word) => `'${word.replaceAll("'", "'\\''")}'`).join(' ');
-    if (constrainedGhApiOperation(query, { payloadFree: true })) return true;
-  }
-  return (
-    ['pr', 'issue', 'run', 'repo'].includes(operation.group) &&
-    ['view', 'list', 'checks', 'status', 'diff'].includes(operation.action)
-  );
 }

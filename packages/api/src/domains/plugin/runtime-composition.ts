@@ -5,7 +5,6 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { DeliveryPresentationContext } from '@clowder-ai/plugin-contract';
 import { type PluginManifest } from '@clowder-ai/plugin-contract';
 import { fileBasedMcpIO, type McpConfigIO } from '../../config/capabilities/capability-mcp-service.js';
-import { allowsImplicitCapabilityWrites } from '../../config/capabilities/startup-cli-config.js';
 import { getCoCreatorMentionPatterns } from '../../config/cat-config-loader.js';
 import { createThreadDeepLinkUrl, resolveFrontendBaseUrl } from '../../config/frontend-origin.js';
 import type { IConnectorThreadBindingStore } from '../../infrastructure/connectors/ConnectorThreadBindingStore.js';
@@ -645,10 +644,6 @@ export function createDormantPluginRuntimeComposition(
     inventoryStore,
     {
       projectRoot: capabilityProjectRoot,
-      persistCapabilities: allowsImplicitCapabilityWrites(
-        process.env,
-        options.binaryProjectRoot ?? options.projectRoot,
-      ),
       packages,
       mcpPackages: builtinPackages,
       resourcesRoot: resolve(dirname(paths.inventorySnapshotPath), PLUGIN_HOST_ENTRIES.resources),

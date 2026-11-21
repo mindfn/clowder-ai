@@ -4370,7 +4370,7 @@ describe('unmodified runtime and project chat bindings', () => {
       dom.window.close();
     }
   });
-  it('renders r126 file media and generic Office metadata through the original file view', async () => {
+  it('keeps file media and Office metadata and opens the declared document surfaces', async () => {
     const media = {
       id: 'file:/project/owner.png',
       kind: 'image',
@@ -4423,11 +4423,35 @@ describe('unmodified runtime and project chat bindings', () => {
         },
       });
       await w.__settled();
-      expect(page().textContent).toContain(w.eval("tc('workbench.file.noPreview')"));
+      expect(page().querySelector('iframe')?.getAttribute('src')).toBe(
+        '/workspace-document?worktreeId=wt&path=owner.pptx',
+      );
       expect(page().textContent).toContain(w.eval("tc('workbench.fileInfoField.size')"));
       expect(page().textContent).toContain(w.eval("tc('workbench.fileInfoField.slides')"));
       expect(page().textContent).toContain('2 KB');
       expect(page().querySelector('pre,video,audio,img')).toBeNull();
+      await w.eval("A.wsFile({ p:'owner.docx',w:'wt'})");
+      w.clowderChat.pushProject({
+        workbench: {
+          ...bench,
+          opened: {
+            worktreeId: 'wt',
+            file: {
+              ...file,
+              path: 'owner.docx',
+              absolutePath: '/project/owner.docx',
+              mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            },
+          },
+        },
+      });
+      await w.__settled();
+      expect(page().querySelector('iframe')).toBeNull();
+      page().querySelector('[data-act="fileOffice"]').click();
+      await w.__settled();
+      expect(page().querySelector('iframe')?.getAttribute('src')).toBe(
+        '/workspace-document?worktreeId=wt&path=owner.docx',
+      );
       expect(errors).not.toHaveBeenCalled();
     } finally {
       dom.window.close();
@@ -6116,6 +6140,114 @@ describe('unmodified runtime and project chat bindings', () => {
       expect(reply.querySelector('[data-act="richRandom"]')).toBeNull();
       expect(reply.querySelector('[data-act="cafePick"][data-b="body"]')).not.toBeNull();
     } finally {
+      dom.window.close();
+    }
+  });
+
+  it('keeps an absent completion idle and still accepts and clears a matching completion', async () => {
+    const { dom, w } = await boot();
+    try {
+      const input = w.document.getElementById('chat-input');
+      const ghost = input.parentElement.querySelector('.ta-ghost');
+      w.eval("TA_COMPLETE['chat-input']=['continue']");
+      const observer = new w.MutationObserver(() => {});
+      observer.observe(ghost, { childList: true, subtree: true });
+      input.value = 'unmatched';
+      input.setSelectionRange(input.value.length, input.value.length);
+      w.eval("taGhost(document.getElementById('chat-input'))");
+      expect(ghost.textContent).toBe('');
+      expect(observer.takeRecords()).toHaveLength(0);
+      input.focus();
+      input.value = 'co';
+      input.setSelectionRange(2, 2);
+      w.eval("taGhost(document.getElementById('chat-input'))");
+      expect(ghost.children[1].textContent).toBe('ntinue');
+      expect(input.dataset.ghost).toBe('continue');
+      input.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+      expect(input.value).toBe('continue');
+      expect(ghost.textContent).toBe('');
+      expect(input.dataset.ghost).toBeUndefined();
+      observer.disconnect();
+    } finally {
+      await w.__settled();
+      dom.window.close();
+    }
+  });
+
+  it('preserves the other-choice input during IME composition and further typing', async () => {
+    const { dom, w, ui, data, push } = await boot(undefined, (data, state) => {
+      data.messages[1].extra = {
+        rich: {
+          v: 1,
+          blocks: [
+            {
+              id: 'ime-choice',
+              v: 1,
+              kind: 'interactive',
+              interactiveType: 'select',
+              options: [{ id: 'other', label: 'Other', customInput: true }],
+            },
+          ],
+        },
+      };
+      state.f['pick:reply-1:ime-choice'] = ['other'];
+    });
+    try {
+      const id = 'pick-reply-1:ime-choice-t';
+      const input = w.document.getElementById(id);
+      const submit = () => w.document.querySelector('[data-act="richSubmit"]');
+      expect(input).not.toBeNull();
+      expect(submit().disabled).toBe(true);
+      input.focus();
+      input.dispatchEvent(new w.CompositionEvent('compositionstart', { bubbles: true }));
+      input.value = 'y';
+      input.dispatchEvent(new w.InputEvent('input', { bubbles: true, data: 'y', isComposing: true }));
+      expect(w.document.getElementById(id) === input).toBe(true);
+      expect(w.document.activeElement === input).toBe(true);
+      await w.__settled();
+      w.eval(
+        'window.cardInputRenders=0; var cardRender=render; render=function(){window.cardInputRenders++;return cardRender.apply(this,arguments);}; window.cardStreamReads=0; var cardStream=VM.chatStream; VM.chatStream=function(){window.cardStreamReads++;return cardStream.apply(this,arguments);};',
+      );
+      const changes: unknown[] = [];
+      const observer = new w.MutationObserver((items: unknown[]) => changes.push(...items));
+      observer.observe(w.document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+      input.value = 'yu';
+      input.dispatchEvent(new w.InputEvent('input', { bubbles: true, data: 'u', isComposing: true }));
+      input.value = '语';
+      input.dispatchEvent(new w.InputEvent('input', { bubbles: true, data: '语', isComposing: true }));
+      input.dispatchEvent(new w.CompositionEvent('compositionend', { bubbles: true, data: '语' }));
+      expect(ui.f[id]).toBe('语');
+      expect(submit().disabled).toBe(false);
+      const committed = w.document.getElementById(id);
+      committed.value = '语音';
+      committed.dispatchEvent(new w.InputEvent('input', { bubbles: true, data: '音', isComposing: false }));
+      expect(ui.f[id]).toBe('语音');
+      expect(w.document.getElementById(id) === committed).toBe(true);
+      await w.__settled();
+      observer.disconnect();
+      expect(w.cardInputRenders).toBe(0);
+      expect(w.cardStreamReads).toBe(0);
+      expect(changes).toHaveLength(0);
+      const next = w.document.getElementById(id);
+      next.focus();
+      next.dispatchEvent(new w.CompositionEvent('compositionstart', { bubbles: true }));
+      next.value = '语音y';
+      next.dispatchEvent(new w.InputEvent('input', { bubbles: true, data: 'y', isComposing: true }));
+      data.messages[0].content += ' new push';
+      push();
+      await w.__settled();
+      expect(w.document.getElementById(id) === next).toBe(true);
+      expect(next.value).toBe('语音y');
+      next.value = '语音语';
+      next.dispatchEvent(new w.InputEvent('input', { bubbles: true, data: '语', isComposing: true }));
+      next.dispatchEvent(new w.CompositionEvent('compositionend', { bubbles: true, data: '语' }));
+      expect(ui.f[id]).toBe('语音语');
+      const cleared = w.document.getElementById(id);
+      cleared.value = '';
+      cleared.dispatchEvent(new w.InputEvent('input', { bubbles: true }));
+      expect(submit().disabled).toBe(true);
+    } finally {
+      await w.__settled();
       dom.window.close();
     }
   });
