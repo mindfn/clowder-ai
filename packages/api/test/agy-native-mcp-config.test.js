@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
-const { materializeAgyNativeMcpConfig } = await import(
+const { agyNativeMcpServerName, materializeAgyNativeMcpConfig } = await import(
   '../dist/domains/cats/services/agents/providers/agy-native/agy-native-mcp-config.js'
 );
 
@@ -35,6 +35,48 @@ function fixture() {
 }
 
 describe('F325 host-owned AGY MCP config', () => {
+  test('maps plugin MCP servers to stable Antigravity-safe tool namespaces', () => {
+    const rsi = agyNativeMcpServerName('plugin__official.rsi__rsi-native');
+    const github = agyNativeMcpServerName('plugin__official.github-operations__github-tracking');
+    const other = agyNativeMcpServerName('plugin__official.github-operations__github-source');
+
+    assert.match(`mcp_${rsi}_rsi_task`, /^[a-zA-Z0-9_-]{1,64}$/);
+    for (const tool of [
+      'cat_cafe_register_pr_tracking',
+      'cat_cafe_register_issue_tracking',
+      'github_record_external_review_verdict',
+    ]) {
+      assert.match(`mcp_${github}_${tool}`, /^[a-zA-Z0-9_-]{1,64}$/);
+    }
+    assert.equal(agyNativeMcpServerName('plugin__official.rsi__rsi-native'), rsi);
+    assert.notEqual(github, other);
+    assert.equal(agyNativeMcpServerName('cat-cafe-collab'), 'cat-cafe-collab');
+  });
+
+  test('writes AGY-only plugin aliases without changing the resolved server entry', () => {
+    const f = fixture();
+    try {
+      const sourceName = 'plugin__official.github-operations__github-tracking';
+      const entry = { type: 'http', url: 'http://127.0.0.1:3012/api/plugin-mcp/github-tracking' };
+      const path = materializeAgyNativeMcpConfig({
+        profileHome: f.home,
+        runtimeRoot: f.runtimeRoot,
+        serverNames: [sourceName],
+        resolvedServers: { [sourceName]: entry },
+        callback: { apiUrl: 'http://127.0.0.1:3012', credentialFile: f.credentialFile },
+      });
+      const parsed = JSON.parse(readFileSync(path, 'utf8'));
+      const alias = agyNativeMcpServerName(sourceName);
+      assert.deepEqual(Object.keys(parsed.mcpServers), [alias]);
+      assert.deepEqual(parsed.mcpServers[alias], {
+        serverUrl: 'http://127.0.0.1:3012/api/plugin-mcp/github-tracking',
+      });
+      assert.ok(!Object.hasOwn(parsed.mcpServers, sourceName));
+    } finally {
+      f.cleanup();
+    }
+  });
+
   test('replaces the official CLI zero-byte MCP placeholder with a host-owned config', () => {
     const f = fixture();
     try {
