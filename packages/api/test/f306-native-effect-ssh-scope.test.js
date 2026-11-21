@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
+import { decideAgyNativeHookPayload } from '../../../scripts/agy-native-effect-guard.mjs';
 import { decideNativeHookPayload } from '../../../scripts/native-effect-target-guard.mjs';
 import { nativeHookPrograms, nativeHookTestEnv } from './helpers/native-hook-programs.js';
 import { reportSystemSshRunnerInputs } from './helpers/system-ssh-runner-inputs.js';
@@ -176,5 +177,117 @@ test('both real hook CLIs use remote attribution and keep denial audit in a priv
       assert.equal(result.status, 0, result.stderr);
       assert.equal(result.stdout.includes('"permissionDecision":"deny"'), denied, result.stdout);
     }
+  }
+});
+
+test('controlled SSH config with remote ProxyJump and isolated ControlMaster allows remote commands and -O check', () => {
+  const config = join(root, 'ascend-ssh-config');
+  writeFileSync(
+    config,
+    [
+      'Host jump-ali',
+      '  HostName 203.0.113.8',
+      '  User root',
+      '  IdentityFile ~/.ssh/aliyun',
+      'Host ascend',
+      '  HostName 127.0.0.1',
+      '  Port 2222',
+      '  User root',
+      '  ProxyJump jump-ali',
+      '  ControlMaster auto',
+      '  ControlPath ~/.ssh/cm-%C',
+      '  ControlPersist 7d',
+      '  ServerAliveInterval 30',
+      '  ServerAliveCountMax 3',
+      'Host direct-remote',
+      '  HostName 203.0.113.9',
+      'Host local-only',
+      '  HostName 127.0.0.1',
+      '  ControlMaster auto',
+      '  ControlPath ~/.ssh/cm-%C',
+      'Host local-jump',
+      '  HostName 127.0.0.1',
+      '  ProxyJump 127.0.0.1',
+      'Host bad-cm',
+      '  HostName 203.0.113.9',
+      '  ControlMaster auto',
+      '  ControlPath ~/.ssh/shared.sock',
+      'Host loop',
+      '  ProxyCommand none',
+      '  ProxyJump 8.8.8.8',
+      '  HostName 127.0.0.1',
+      'Host lanback',
+      '  ProxyJump 8.8.8.8',
+      '  HostName 192.168.1.50',
+      'Host lanback-hop',
+      '  ProxyJump 8.8.8.8,192.168.1.50',
+      '  HostName 127.0.0.1',
+    ].join('\n'),
+  );
+  const extra = { sshScope: { configFiles: [config], localAddresses: ['127.0.0.1', '192.168.1.50'], homeDir: root } };
+
+  for (const provider of ['Bash', 'exec_command']) {
+    for (const command of [
+      "ssh ascend 'npu-smi info'",
+      'ssh ascend "cd /workspace && python3 train.py"',
+      "ssh ascend 'bash -s' <<'EOF'\nnpu-smi info\nEOF\n",
+      'ssh -O check ascend',
+    ]) {
+      const result = decideNativeHookPayload(payload(command, provider, main), { ...options, ...extra });
+      assert.equal(result.decision, 'allow', `${provider}: ${command} => ${JSON.stringify(result)}`);
+      assert.equal(result.reasonCode, 'remote_ssh_policy_deferred');
+      assert.equal(result.target.value, 'ssh://root@ascend:2222');
+    }
+  }
+
+  const agyAllow = decideAgyNativeHookPayload(
+    { toolCall: { name: 'run_command', args: { CommandLine: "ssh ascend 'npu-smi info'" } }, workspacePaths: [main] },
+    { ...options, ...extra },
+  );
+  assert.equal(agyAllow.decision, 'allow', JSON.stringify(agyAllow));
+
+  const direct = decide('ssh direct-remote hostname', main, extra);
+  assert.equal(direct.decision, 'allow', JSON.stringify(direct));
+  assert.equal(direct.target.value, 'ssh://203.0.113.9:22');
+  assert.equal(
+    decide('ssh direct-remote hostname', main, {
+      sshScope: { configFiles: [config], localAddresses: ['203.0.113.9'], homeDir: root },
+    }).decision,
+    'allow',
+    'harmless local command still runs through local policy when no ControlMaster/ProxyJump is present',
+  );
+  assert.equal(
+    decide("ssh direct-remote 'kill -TERM 4242'", main, {
+      sshScope: { configFiles: [config], localAddresses: ['203.0.113.9'], homeDir: root },
+    }).decision,
+    'deny',
+    'alias resolving to a local interface address never gets remote scope',
+  );
+
+  for (const deniedCommand of [
+    `ssh ascend true > '${runtime}/.env'`,
+    'ssh ascend "$(kill -TERM 4242)"',
+    'ssh -O exit ascend',
+    'ssh -O stop ascend',
+    'ssh -O forward ascend',
+    'ssh -O check ascend hostname',
+    'ssh -O check local-only',
+    'ssh -o ControlMaster=auto ascend true',
+    'ssh -o ControlPath=~/.ssh/cm-%C ascend true',
+    'ssh -S ~/.ssh/cm-%C ascend true',
+    'ssh -J jump-ali ascend true',
+    'ssh -o ProxyJump=jump-ali ascend true',
+    'ssh local-only true',
+    "ssh local-only 'kill -TERM 4242'",
+    'ssh local-jump true',
+    'ssh bad-cm true',
+    `ssh loop 'rm -rf ${runtime}/.env'`,
+    'ssh loop true',
+    `ssh lanback 'rm -rf ${runtime}/.env'`,
+    'ssh lanback true',
+    'ssh lanback-hop true',
+  ]) {
+    const result = decide(deniedCommand, runtime, extra);
+    assert.equal(result.decision, 'deny', `${deniedCommand} => ${JSON.stringify(result)}`);
   }
 });
