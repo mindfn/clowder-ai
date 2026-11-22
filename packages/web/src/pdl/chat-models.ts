@@ -16,7 +16,7 @@ import { projectMessagePartsForImage } from '@/components/message-export-parts';
 import { selectMessagesForExport } from '@/components/message-export-selection';
 import type { ReplyOutputProjection } from '@/components/reply-layers/reply-output';
 import { projectReplySubexecutions, type ReplySubexecution } from '@/components/reply-layers/reply-subexecution';
-import { scheduleEffect, scheduleTask } from '@/components/rich/read-schedule-approval';
+import { formatScheduleFields, scheduleEffect, scheduleTask } from '@/components/rich/read-schedule-approval';
 import { adaptServiceState } from '@/components/settings/service-ui-adapter';
 import { projectDisplayName } from '@/components/ThreadSidebar/thread-utils';
 import { projectTargetReply } from '@/components/target-response-projection';
@@ -803,43 +803,56 @@ export function chatModels(data: ChatData, ui: ChatUiState, input?: ChatProjecti
             : memory
               ? memoryMessageView(memory, ui.f)
               : scheduleRecord
-                ? {
-                    title: scheduleTask(scheduleRecord).display.label,
-                    schedule: scheduleRecord,
-                    task: scheduleTask(scheduleRecord),
-                    load: schedule!.current || scheduleSettled ? '' : 'loading',
-                    canApproveSchedule: !scheduleSettled && !schedule!.blocked && !schedule!.drifted,
-                    changes: (() => {
-                      const mutation = scheduleRecord.mutation;
-                      if (mutation.kind !== 'update') return [];
-                      const template = schedule!.templates?.find(
-                        (entry) => entry.templateId === mutation.taskSnapshot.templateId,
-                      );
-                      return Object.keys({ ...mutation.taskSnapshot.params, ...mutation.params })
-                        .filter(
-                          (key) =>
-                            JSON.stringify(mutation.taskSnapshot.params[key]) !== JSON.stringify(mutation.params[key]),
-                        )
-                        .map((key) => ({
-                          key,
-                          description: template?.paramSchema[key]?.description,
-                          before: mutation.taskSnapshot.params[key],
-                          after: mutation.params[key],
-                        }));
-                    })(),
-                    effect: scheduleEffect(scheduleRecord) !== null,
-                    scheduleError: schedule!.error || schedule!.templateError,
-                    canEditInPlace: false,
-                    canRequestChange: false,
-                    decided: scheduleSettled,
-                    result: scheduleSettled
-                      ? {
-                          key: scheduleRecord.proposalId,
-                          status: scheduleRecord.status,
-                          reason: scheduleRecord.status,
-                        }
-                      : null,
-                  }
+                ? (() => {
+                    const task = scheduleTask(scheduleRecord);
+                    const language = ui.lang === 'en' ? 'en' : 'zh';
+                    const threadTitle = task.deliveryThreadId
+                      ? (data.threads.find((entry) => entry.id === task.deliveryThreadId)?.title ?? undefined)
+                      : undefined;
+                    const fields = formatScheduleFields(scheduleRecord, {
+                      language,
+                      threadTitle,
+                    });
+                    return {
+                      title: task.display.label,
+                      schedule: scheduleRecord,
+                      task,
+                      ...(fields ? { fields } : {}),
+                      load: schedule!.current || scheduleSettled ? '' : 'loading',
+                      canApproveSchedule: !scheduleSettled && !schedule!.blocked && !schedule!.drifted,
+                      changes: (() => {
+                        const mutation = scheduleRecord.mutation;
+                        if (mutation.kind !== 'update') return [];
+                        const template = schedule!.templates?.find(
+                          (entry) => entry.templateId === mutation.taskSnapshot.templateId,
+                        );
+                        return Object.keys({ ...mutation.taskSnapshot.params, ...mutation.params })
+                          .filter(
+                            (key) =>
+                              JSON.stringify(mutation.taskSnapshot.params[key]) !==
+                              JSON.stringify(mutation.params[key]),
+                          )
+                          .map((key) => ({
+                            key,
+                            description: template?.paramSchema[key]?.description,
+                            before: mutation.taskSnapshot.params[key],
+                            after: mutation.params[key],
+                          }));
+                      })(),
+                      effect: scheduleEffect(scheduleRecord) !== null,
+                      scheduleError: schedule!.error || schedule!.templateError,
+                      canEditInPlace: false,
+                      canRequestChange: false,
+                      decided: scheduleSettled,
+                      result: scheduleSettled
+                        ? {
+                            key: scheduleRecord.proposalId,
+                            status: scheduleRecord.status,
+                            reason: scheduleRecord.status,
+                          }
+                        : null,
+                    };
+                  })()
                 : proposal
                   ? proposalView(
                       proposal,
@@ -1382,6 +1395,7 @@ export function chatModels(data: ChatData, ui: ChatUiState, input?: ChatProjecti
                   });
                 })(),
                 queued: q.status === 'queued',
+                recallable: q.status === 'queued' && (!q.from || q.from.kind === 'user'),
                 orderable: q.status === 'queued',
               })),
             }
