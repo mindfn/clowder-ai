@@ -124,6 +124,7 @@ export interface ChatPort {
 
 declare global {
   interface Window {
+    __pdlPerf?: import('./perf').ConsolePerfController;
     clowderChat: {
       start: (port: ChatPort, projections: typeof import('./chat-models').chatModels) => Promise<void>;
       update: (port?: ChatPort) => void;

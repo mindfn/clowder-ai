@@ -1597,6 +1597,26 @@ window.clowderChat = {
     bindSetup();
     bindChatOwners();
     bindPlacement();
+    if (window.__pdlPerf) {
+      const perf = window.__pdlPerf;
+      const snapCtx = function (keep, includeChanged) {
+        return {
+          route: S.route || '',
+          param: S.param != null ? String(S.param) : null,
+          thread: S.thread || null,
+          panel: S.panel || null,
+          settle: SETTLE.n,
+          keep: !!keep,
+          changed: includeChanged && Array.isArray(RENDER_CHANGED) ? RENDER_CHANGED.slice(0, 12) : null,
+        };
+      };
+      beforeRender(function (keep) {
+        perf._renderStart(snapCtx(keep, false));
+      });
+      onRender(function (keep) {
+        perf._renderEnd(snapCtx(keep, true));
+      });
+    }
     onStart('pdl', pdlNodeSlots);
     let bootDone;
     const booted = new Promise(function (resolve) {
