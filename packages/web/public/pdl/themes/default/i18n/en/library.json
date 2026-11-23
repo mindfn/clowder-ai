@@ -1,4 +1,7 @@
 {
+ "control": {
+  "colorLight": "Lightness"
+ },
  "fold": {
   "viewMore": "View more",
   "moreHtml": "{0} more"

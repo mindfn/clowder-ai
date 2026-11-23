@@ -127,8 +127,18 @@ describe('generic page: full layout contract across all PDL containers', () => {
     );
     expect(v2Css).toContain(':root[data-shell="v2"] .layer-covered { display:block; position:absolute; inset:0; }');
     expect(v2bCss).toContain(
+      '[data-shell="v2"] .v2-confirm-dialog.v2-dialog-viewport { display:flex; flex-direction:column; width:min(calc(1.5 * var(--span-9)), 100cqw); max-width:100%;',
+    );
+    expect(v2bCss).toContain(
+      '[data-shell="v2"] .v2-confirm-dialog.v2-dialog-fill { display:flex; flex-direction:column; width:var(--span-12); max-width:100%; height:100%; min-height:0; margin-inline:auto; }',
+    );
+    expect(v2bCss).toContain(
+      '[data-shell="v2"] .v2-confirm-dialog.v2-dialog-full { width:100%; min-width:0; max-width:100%; margin:0; }',
+    );
+    expect(v2bCss).toContain(
       '[data-shell="v2"] .v2-confirm-dialog:has(> .v2-dialog-body > .vw-page-full.page) { display:flex; flex-direction:column; padding-bottom:0; }',
     );
+    expect(v2bCss).not.toMatch(/:has\(> \.v2-dialog-body > \.vw-page-full\.page\)\s*\{[^}]*(?:width|height)\s*:/);
   });
 
   for (const themeId of ['default', 'v2'] as const) {
@@ -187,11 +197,15 @@ describe('generic page: full layout contract across all PDL containers', () => {
         w.document.querySelector(`.plugin-float > .scroll > .vw-view.page.vw-page-full ${frameSel}`),
       ).not.toBeNull();
 
-      // 5. Fill dialog (.dialog > .dialog-body > .vw-page-full.page)
+      // 5. Dialogs: fill, viewport without span, and viewport with explicit span: 'full'
       evalIn(`
         S.popOn.testFloat = false;
         PDL_POPUPS['test.dlgFill'] = { at: 'fill', exit: ['x'], focus: true, close: 'close', closeArgs: { path: 's.popOn.testDlgFill' } };
         POPUPS['test.dlgFill'] = () => (S.popOn.testDlgFill ? dialogHtml({ key: 'test.dlgFill', title: 'Fill Dialog', layout: 'fill', body: pdlView('test.wb.full') }) : '');
+        PDL_POPUPS['test.dlgVp'] = { at: 'center', exit: ['x'], focus: true, close: 'close', closeArgs: { path: 's.popOn.testDlgVp' } };
+        POPUPS['test.dlgVp'] = () => (S.popOn.testDlgVp ? dialogHtml({ key: 'test.dlgVp', title: 'Viewport Dialog', layout: 'viewport', body: pdlView('test.wb.full') }) : '');
+        PDL_POPUPS['test.dlgVpFull'] = { at: 'center', exit: ['x'], focus: true, close: 'close', closeArgs: { path: 's.popOn.testDlgVpFull' } };
+        POPUPS['test.dlgVpFull'] = () => (S.popOn.testDlgVpFull ? dialogHtml({ key: 'test.dlgVpFull', title: 'Viewport Span Full', layout: 'viewport', span: 'full', body: pdlView('test.wb.full') }) : '');
         S.popOn.testDlgFill = true;
         render(true);
       `);
@@ -201,18 +215,53 @@ describe('generic page: full layout contract across all PDL containers', () => {
         ),
       ).not.toBeNull();
 
-      // 6. Theme Calculator renders translated labels (no raw i18n keys) & contrast rows without throwing
+      evalIn(`S.popOn.testDlgFill = false; S.popOn.testDlgVp = true; render(true);`);
+      const vpDlg = w.document.querySelector('.dialog:is(.dialog-viewport, .v2-dialog-viewport)');
+      expect(vpDlg).not.toBeNull();
+      expect(vpDlg?.matches('.dialog-full, .v2-dialog-full')).toBe(false);
+      expect(vpDlg?.querySelector(`.dialog-body > .vw-view.page.vw-page-full ${frameSel}`)).not.toBeNull();
+
+      evalIn(`S.popOn.testDlgVp = false; S.popOn.testDlgVpFull = true; render(true);`);
+      const vpFullDlg = w.document.querySelector('.dialog:is(.dialog-viewport, .v2-dialog-viewport)');
+      expect(vpFullDlg).not.toBeNull();
+      expect(vpFullDlg?.matches('.dialog-full, .v2-dialog-full')).toBe(true);
+      expect(vpFullDlg?.querySelector(`.dialog-body > .vw-view.page.vw-page-full ${frameSel}`)).not.toBeNull();
+
+      // 6. Theme Calculator renders concrete zh & en translations (no raw keys, no zh fallback in en)
       evalIn(`
-        S.popOn.testDlgFill = false;
+        S.popOn.testDlgVpFull = false;
+        S.lang = 'zh';
         S.calc.open = true;
         S.calc.tab = 'colors';
         render(true);
       `);
-      const calcHost = w.document.querySelector('.pop-host[data-pop="calc"]');
-      expect(calcHost).not.toBeNull();
-      const calcText = calcHost?.textContent ?? '';
-      expect(calcText).not.toMatch(/\b(?:themeCalc|theme|control|structure|v2f)\.[a-zA-Z]/);
-      expect(calcHost?.querySelectorAll('#calc-contrast > *').length).toBeGreaterThanOrEqual(8);
+      const calcZh = w.document.querySelector('.pop-host[data-pop="calc"]');
+      expect(calcZh).not.toBeNull();
+      const zhText = calcZh?.textContent ?? '';
+      expect(zhText).not.toMatch(/\b(?:themeCalc|theme|control|structure|v2f)\.[a-zA-Z]/);
+      expect(zhText).toContain('对比度');
+      if (themeId === 'default') {
+        expect(zhText).toContain('底色层次');
+        expect(zhText).toContain('明度');
+        expect(zhText).toContain('二级栏');
+      } else {
+        expect(zhText).toContain('侧栏');
+      }
+      expect(calcZh?.querySelectorAll('#calc-contrast > *').length).toBeGreaterThanOrEqual(8);
+
+      evalIn(`S.lang = 'en'; render(true);`);
+      const calcEn = w.document.querySelector('.pop-host[data-pop="calc"]');
+      const enText = calcEn?.textContent ?? '';
+      expect(enText).not.toMatch(/\b(?:themeCalc|theme|control|structure|v2f)\.[a-zA-Z]/);
+      expect(enText).toContain('Contrast');
+      expect(enText).toContain('Sidebar');
+      expect(enText).not.toContain('对比度');
+      if (themeId === 'default') {
+        expect(enText).toContain('Surface layers');
+        expect(enText).toContain('Lightness');
+        expect(enText).not.toContain('底色层次');
+      }
+      expect(calcEn?.querySelectorAll('#calc-contrast > *').length).toBeGreaterThanOrEqual(8);
     });
   }
 });
