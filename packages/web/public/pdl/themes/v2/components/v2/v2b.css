@@ -29,6 +29,11 @@
 .v2-shell .v2-confirm-dialog.v2-dialog-viewport { height:calc(100dvh - 48px); max-width:calc(100vw - 48px); }
 .v2-shell .v2-confirm-dialog.v2-dialog-fill, .v2-shell .v2-confirm-dialog.v2-dialog-full { width:calc(100vw - 48px); max-width:calc(100vw - 48px); }
 .v2-shell .v2-confirm-dialog.v2-dialog-viewport > .v2-dialog-body { height:calc(100% - 48px); max-height:none; }
+[data-shell="v2"] .v2-confirm-dialog:has(> .v2-dialog-body > .vw-page-full.page) { display:flex; flex-direction:column; padding-bottom:0; }
+[data-shell="v2"] .v2-confirm-dialog:is(.v2-dialog-viewport, .v2-dialog-fill):has(> .v2-dialog-body > .vw-page-full.page) { width:calc(100vw - 48px); max-width:calc(100vw - 48px); height:100%; }
+[data-shell="v2"] .v2-confirm-dialog:has(> .v2-dialog-body > .vw-page-full.page) > .v2-dialog-body { flex:1 1 auto; min-height:0; margin:0 -24px; border-radius:0 0 12px 12px; }
+[data-shell="v2"] .v2-confirm-dialog:is(.v2-dialog-viewport, .v2-dialog-fill):has(> .v2-dialog-body > .vw-page-full.page) > .v2-dialog-body { height:auto; max-height:none; }
+[data-shell="v2"] .v2-confirm-dialog:is(.v2-dialog-viewport, .v2-dialog-fill) > .v2-dialog-body > .vw-page-full.page { flex:1 1 0; block-size:100%; min-block-size:0; }
 .v2-shell .v2-confirm-dialog > header { flex:none; padding:0; border:0; }
 [data-shell="v2"] #scrim { background:var(--console-overlay-backdrop); backdrop-filter:blur(4px); }
 [data-shell="v2"] .ui-tip { border:1px solid var(--shell-hairline); border-radius:12px; background:var(--shell-popover-bg); color:var(--shell-ink); padding:12px; font-size:12px; line-height:1.6; box-shadow:0 10px 30px rgba(43,33,26,.12); }
