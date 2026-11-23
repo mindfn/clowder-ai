@@ -112,7 +112,7 @@ describe('generic page: full layout contract across all PDL containers', () => {
     expect(pageCss).toContain('.page:not(.vw-page-split, .vw-page-full,');
 
     expect(blocksCss).toContain(
-      ':is(.cover-in, .panel-body, .main-col, .main, .float-body, .plugin-float > .scroll, .dialog-body):not(.layer-covered):has(> .vw-page-full.page, > .pdl-inpanel > .vw-page-full.page, > .layer:not(.layer-covered) > .vw-page-full.page, > .layer:not(.layer-covered) > .layer:not(.layer-covered) > .vw-page-full.page) { display: flex; flex-direction: column; position: relative; padding: 0; gap: 0; overflow: hidden; }',
+      ':is(.cover-in, .panel-body, .main-col, .main, .float-body, .plugin-float > .scroll, .dialog-body):not(.layer-covered):has(> .vw-page-full.page, > :is(.pdl-inpanel, .page) > .vw-page-full.page, > .layer:not(.layer-covered) > .vw-page-full.page, > .layer:not(.layer-covered) > :is(.pdl-inpanel, .page) > .vw-page-full.page, > .layer:not(.layer-covered) > .layer:not(.layer-covered) > .vw-page-full.page, > .layer:not(.layer-covered) > .layer:not(.layer-covered) > :is(.pdl-inpanel, .page) > .vw-page-full.page) { display: flex; flex-direction: column; position: relative; padding: 0; gap: 0; overflow: hidden; }',
     );
     expect(blocksCss).toContain(
       '.vw-page-full.page { flex: 1 1 0; min-block-size: 0; block-size: 100%; inline-size: 100%; max-inline-size: none; margin: 0; padding: 0; gap: 0; display: flex; flex-direction: column; }',
@@ -200,6 +200,19 @@ describe('generic page: full layout contract across all PDL containers', () => {
           `.dialog:is(.dialog-fill, .v2-dialog-fill) > .dialog-body > .vw-view.page.vw-page-full ${frameSel}`,
         ),
       ).not.toBeNull();
+
+      // 6. Theme Calculator renders translated labels (no raw i18n keys) & contrast rows without throwing
+      evalIn(`
+        S.popOn.testDlgFill = false;
+        S.calc.open = true;
+        S.calc.tab = 'colors';
+        render(true);
+      `);
+      const calcHost = w.document.querySelector('.pop-host[data-pop="calc"]');
+      expect(calcHost).not.toBeNull();
+      const calcText = calcHost?.textContent ?? '';
+      expect(calcText).not.toMatch(/\b(?:themeCalc|theme|control|structure|v2f)\.[a-zA-Z]/);
+      expect(calcHost?.querySelectorAll('#calc-contrast > *').length).toBeGreaterThanOrEqual(8);
     });
   }
 });

@@ -50,11 +50,11 @@ function toHex(c) { if (/^#[0-9a-f]{6}$/i.test(c)) return c; if (/^#[0-9a-f]{3}$
 /* 字体组：[名字, 正文, 标题, 等宽]；空 = 用系统那一组。bundled 用内置字体素材（font.inter / font.sc / font.mono，见 font-assets.js），是默认；
    字体栈最后都是系统字体：内置字体加载失败、或者某个字不在子集里，就落到系统字体 */
 const SYS_MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
-const FONT_SETS = {
+function fontSets() { return {
   bundled: [tc('theme.fontOptions.bundled'), '"Inter", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif', null, '"JetBrains Mono", ' + SYS_MONO],
   system: [tc('theme.fontOptions.system'), '-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif', null, SYS_MONO]
-};
-const RADIUS_SETS = { tight: [tc('theme.compact'), [4, 6, 8, 10]], normal: [tc('theme.radiusOptions.normal'), [6, 8, 12, 16]], round: [tc('theme.radiusOptions.round'), [8, 10, 16, 20]] };
+}; }
+function radiusSets() { return { tight: [tc('theme.compact'), [4, 6, 8, 10]], normal: [tc('theme.radiusOptions.normal'), [6, 8, 12, 16]], round: [tc('theme.radiusOptions.round'), [8, 10, 16, 20]] }; }
 const STYLE_DEFAULT = { font: 'bundled', readSize: '15', uiScale: '1', radius: 'normal', motion: 'system' };
 /* 字体、字号、圆角、动态效果是主题的一部分：存在当前主题文档的 style 里（系统主题就是默认值）。
    读：S.style 由主题文档推出来；改：styleSet——在系统主题上会先复制出自定义主题（和编辑布局、配色同一套） */
@@ -62,15 +62,16 @@ Object.defineProperty(S, 'style', { configurable: true, get: function () { retur
 function styleSet(patch) { pdlDocEdit(function (full) { full.style = patch ? Object.assign({}, full.style || {}, patch) : {}; }); applyStyle(); render(true); }
 PDL_THEME_SYNC.push(function () { applyStyle(); });
 /* 文字大小：用户层的 token 覆盖——正文字号直接给阅读那一档（--fs-read → --fs-xl），界面字号是其余各档和展示字号的倍数（--fs-scale）；控件高度、间距不跟着变 */
-const READ_SIZES = ['14', '15', '16', '17', '18'], UI_SCALES = [['0.93', tc('theme.scale.text')], ['1', tc('theme.scale.standard')], ['1.07', tc('theme.scale.large')]];
+const READ_SIZES = ['14', '15', '16', '17', '18'];
+function uiScales() { return [['0.93', tc('theme.scale.text')], ['1', tc('theme.scale.standard')], ['1.07', tc('theme.scale.large')]]; }
 function applyStyle() {
-  const de = document.documentElement, st = S.style, f = FONT_SETS[st.font] || FONT_SETS[STYLE_DEFAULT.font], base = FONT_SETS.system[1];
+  const de = document.documentElement, st = S.style, fonts = fontSets(), f = fonts[st.font] || fonts[STYLE_DEFAULT.font], base = fonts.system[1], radii = radiusSets();
   de.style.setProperty('--font-text', f[1] || base);
   de.style.setProperty('--font-display', f[2] || f[1] || base);
-  de.style.setProperty('--font-mono', f[3] || FONT_SETS.system[3]);
+  de.style.setProperty('--font-mono', f[3] || fonts.system[3]);
   de.style.setProperty('--fs-read', (READ_SIZES.indexOf(st.readSize) >= 0 ? st.readSize : '15') + 'px');
-  de.style.setProperty('--fs-scale', UI_SCALES.some(function (x) { return x[0] === st.uiScale; }) ? st.uiScale : '1');
-  const r = (RADIUS_SETS[st.radius] || RADIUS_SETS.normal)[1];
+  de.style.setProperty('--fs-scale', uiScales().some(function (x) { return x[0] === st.uiScale; }) ? st.uiScale : '1');
+  const r = (radii[st.radius] || radii.normal)[1];
   ['--r-s', '--r-m', '--r-l', '--r-xl'].forEach(function (k, i) { de.style.setProperty(k, r[i] + 'px'); });
   /* 动态效果：跟随系统（prefers-reduced-motion）/ 减少 / 正常。减少 = 时长 token 归零（见 core.css），状态信号不受影响 */
   const sys = matchMedia('(prefers-reduced-motion: reduce)').matches;

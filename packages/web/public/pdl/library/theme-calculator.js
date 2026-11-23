@@ -12,15 +12,15 @@ TOKENS.push('bg-rail', 'bg-nav', 'bg-page', 'bg-group', 'bg-field', 'bg-hover', 
 [1, 2, 3, 4, 5, 6].forEach(function (n) { TOKENS.push('tint-' + n, 'name-' + n); });
 LAYER_DERIVED.push('bg-hover', 'bg-selected', 'bg-field', 'bg-code', 'line', 'line-strong');
 
-/* ── 参数 ⇄ token ── */
-const CALC_GROUPS = [
+/* ── 参数 ⇄ token（文案在画的时候取：文案包在组件库之后加载，切换语言也会即时生效） ── */
+function calcGroups() { return [
   ['accent', tc('themeCalc.group.text'), tc('themeCalc.group.accentHelp'), [['aH', tc('themeCalc.group.hue'), 0, 360, 1], ['aC', tc('themeCalc.group.chroma'), 0, 0.3, 0.005], ['aL', tc('control.colorLight'), 0.3, 0.9, 0.005]]],
   ['layers', tc('themeCalc.group.surfaces'), tc('themeCalc.group.surfacesHelp'), [['nH', tc('themeCalc.group.hue'), 0, 360, 1], ['nC', tc('themeCalc.group.chroma'), 0, 0.05, 0.001], ['rail', tc('theme.tokens.rail'), 0, 1, 0.005], ['nav', tc('theme.tokens.sidebar'), 0, 1, 0.005], ['page', tc('theme.tokens.page'), 0, 1, 0.005], ['group', tc('themeCalc.group.groupSurface'), 0, 1, 0.005], ['dHover', tc('themeCalc.group.hoverOverlay'), 0, 0.3, 0.005], ['dSelected', tc('themeCalc.group.selectedOverlay'), 0, 0.3, 0.005], ['dInset', tc('themeCalc.group.inputOverlay'), 0, 0.3, 0.005]]],
   ['bubble', tc('themeCalc.group.messageAndCode'), tc('themeCalc.group.messageAndCodeHelp'), [['uH', tc('themeCalc.group.bubbleHue'), 0, 360, 1], ['uC', tc('themeCalc.group.bubbleChroma'), 0, 0.1, 0.002], ['uL', tc('themeCalc.group.bubbleLightness'), 0, 1, 0.005], ['dCode', tc('themeCalc.group.inlineCodeOverlay'), 0, 0.3, 0.005]]],
   ['text', tc('themeCalc.group.typographyAndLines'), tc('themeCalc.group.typographyAndLinesHelp'), [['tC', tc('themeCalc.group.textChroma'), 0, 0.03, 0.001], ['strong', tc('themeCalc.group.primaryText'), 0, 1, 0.005], ['fg', tc('themeCalc.group.secondaryText'), 0, 1, 0.005], ['muted', tc('common.note'), 0, 1, 0.005], ['faint', tc('themeCalc.group.placeholderAndDisabled'), 0, 1, 0.005], ['dLine', tc('themeCalc.group.dividerOverlay'), 0, 0.4, 0.005], ['dLineS', tc('themeCalc.group.emphasisLineOverlay'), 0, 0.4, 0.005]]],
   ['names', tc('themeCalc.group.memberColors'), tc('themeCalc.group.memberColorsHelp'), [['mL', tc('themeCalc.group.identityLightness'), 0.3, 0.9, 0.005], ['mC', tc('themeCalc.group.identityChroma'), 0, 0.2, 0.005], ['tL', tc('themeCalc.group.avatarLightness'), 0, 1, 0.005], ['tTC', tc('themeCalc.group.avatarChroma'), 0, 0.1, 0.002]]],
   ['status', tc('theme.tokens.status'), tc('themeCalc.group.statusHelp'), [['sL', tc('control.colorLight'), 0.3, 0.9, 0.005], ['sC', tc('themeCalc.group.chroma'), 0, 0.25, 0.005], ['okH', tc('themeCalc.group.normalHue'), 0, 360, 1], ['warnH', tc('themeCalc.group.warningHue'), 0, 360, 1], ['dangerH', tc('themeCalc.group.dangerHue'), 0, 360, 1], ['dangerL', tc('themeCalc.group.dangerL'), 0.3, 0.9, 0.005], ['infoH', tc('themeCalc.group.informationHue'), 0, 360, 1], ['softL', tc('themeCalc.group.hintBackgroundLightness'), 0, 1, 0.005]]]
-];
+]; }
 function calcRead() {
   const cs = getComputedStyle(document.documentElement), t = function (k) { return hexOk(cs.getPropertyValue('--' + k).trim()); };
   const page = t('bg-page'), acc = t('accent'), ub = t('bg-bubble'), w = t('warn'), n1 = t('name-1'), t1 = t('tint-1'), fs = t('fg-strong');
@@ -94,7 +94,7 @@ function calcReadoutsRaw() {
     const r = contrast(fgc, g(p[2])), layer = p[3] < 2, ok = r >= p[3];
     return '<div class="calc-pair"><span class="calc-sw" style="background:' + g(p[2]) + ';color:' + fgc + (tc('themeCalc.readouts.previewMarkup')) + h(p[0]) + '</span><span class="num ' + (ok ? '' : 'calc-bad') + '">' + r.toFixed(2) + '</span><span class="calc-mark">' + (layer ? (ok ? tc('themeCalc.readouts.noticeable') : tc('themeCalc.readouts.tooClose')) : (r >= 4.5 ? 'AA' : r >= 3 ? tc('themeCalc.readouts.largeText') : tc('themeCalc.readouts.insufficient'))) + '</span></div>';
   }).join('');
-  CALC_GROUPS.forEach(function (gr) { const sw = document.getElementById('calc-sw-' + gr[0]); if (sw) sw.innerHTML = calcSwatches(gr[0]); });
+  calcGroups().forEach(function (gr) { const sw = document.getElementById('calc-sw-' + gr[0]); if (sw) sw.innerHTML = calcSwatches(gr[0]); });
 }
 function calcSwatches(k) {
   const cs = getComputedStyle(document.documentElement), list = { accent: ['accent', 'accent-hover', 'accent-soft', 'accent-fg'], layers: ['bg-rail', 'bg-nav', 'bg-page', 'bg-group', 'bg-field', 'bg-selected'], bubble: ['bg-bubble', 'bg-code'], text: ['fg-strong', 'fg', 'fg-muted', 'fg-faint', 'line', 'line-strong'], names: ['name-1', 'name-2', 'name-3', 'name-4', 'name-5', 'name-6'], status: ['ok', 'warn', 'danger', 'info', 'warn-soft', 'danger-soft'] }[k];
@@ -117,7 +117,7 @@ function calcHtml() {
 function calcColorsHtml() {
   const P = S.calc.P;
   return '<div class="calc-sec"><div class="calc-sec-h">' + h(tc('themeCalc.contrast')) + '</div><div id="calc-contrast"></div></div>' +
-    CALC_GROUPS.map(function (g) {
+    calcGroups().map(function (g) {
       const fold = S.calc.fold[g[0]];
       return '<div class="calc-sec"><button type="button" class="calc-sec-h" data-act="toggle" data-path="s.calc.fold.' + g[0] + '" aria-expanded="' + !fold + '">' + twisty(!(fold)) + h(g[1]) + '<span class="calc-sws" id="calc-sw-' + g[0] + '"></span></button>' +
         (fold ? '' : '<p class="calc-help">' + h(g[2]) + '</p>' + g[3].map(function (s) {
