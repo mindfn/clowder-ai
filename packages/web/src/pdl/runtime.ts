@@ -1,6 +1,7 @@
 import loadOrder from '../../public/pdl/load-order.json';
 import { chatModels } from './chat-models';
 import { frameRequest } from './frame-bridge';
+import { installConsolePerf } from './perf';
 import type { ChatPort } from './types';
 
 const { scripts, styles } = loadOrder;
@@ -49,12 +50,15 @@ export function mountChat(port: ChatPort): Promise<void> {
 }
 
 async function startChat(port: ChatPort): Promise<void> {
+  const perf = installConsolePerf();
+  const bootT0 = performance.now();
   window.clowderFrameRequest = frameRequest;
   if (document.readyState === 'loading')
     await new Promise<void>((resolve) =>
       document.addEventListener('DOMContentLoaded', () => resolve(), { once: true }),
     );
   for (const path of styles) {
+    const t0 = performance.now();
     const link = document.createElement('link');
     link.rel = 'stylesheet';
     link.href = ofBuild(`/pdl/${path}`);
@@ -63,8 +67,10 @@ async function startChat(port: ChatPort): Promise<void> {
       link.onerror = () => reject(new Error(`Failed to load ${path}`));
       document.head.append(link);
     });
+    perf.recordBootAsset('style', path, performance.now() - t0);
   }
   for (const path of scriptSources) {
+    const t0 = performance.now();
     await new Promise<void>((resolve, reject) => {
       const script = document.createElement('script');
       script.src = ofBuild(path);
@@ -72,6 +78,11 @@ async function startChat(port: ChatPort): Promise<void> {
       script.onerror = () => reject(new Error(`Failed to load ${path}`));
       document.body.append(script);
     });
+    perf.recordBootAsset('script', path, performance.now() - t0);
   }
-  await window.clowderChat.start(port, chatModels);
+  perf.instrumentClowderChat(window.clowderChat);
+  const startT0 = performance.now();
+  await window.clowderChat.start(perf.instrumentPort(port), perf.instrumentChatModels(chatModels));
+  perf.recordBootStart(performance.now() - startT0);
+  perf.finishBoot(performance.now() - bootT0);
 }
