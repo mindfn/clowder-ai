@@ -59,5 +59,154 @@
         "cliManaged": "CLI-managed sign-in"
       }
     }
+  },
+  "pdlDoc": {
+    "editing": "Edit layout"
+  },
+  "structure": {
+    "add": "Add child container",
+    "dir": "Direction",
+    "dirCol": "Column",
+    "dirRow": "Row",
+    "empty": "Empty",
+    "followContainer": "Follow container",
+    "force": "Force",
+    "helpDir": "Arrange child containers horizontally or vertically",
+    "helpHideEmpty": "Hide the container when all its items are hidden or moved; stays visible while editing layout.",
+    "helpName": "Display label only; changing it does not affect layout.",
+    "helpOpenPolicy": "Default target container for triggers inside this container. When forced, individual trigger settings are ignored.",
+    "helpOpensHere": "Triggers whose views open in this container. You can rebind any trigger individually.",
+    "helpSpan": "Share of width / height in the parent container; Fit sizes to content.",
+    "helpTriggersHere": "Where each trigger inside this container opens: follow the container policy or pick a specific container.",
+    "hideEmpty": "Hide when empty",
+    "name": "Name",
+    "openPolicy": "Open policy",
+    "openTo": "Open in",
+    "openUnset": "Default (main window)",
+    "opensHere": "Opens here",
+    "props": "Properties",
+    "span": "Share",
+    "spanOptions": {
+      "1": "1×",
+      "2": "2×",
+      "3": "3×",
+      "fit": "Fit"
+    },
+    "surface": {
+      "absolute": "Absolute",
+      "help": "Relative 0% inherits the parent opacity; higher values layer on top. Absolute ignores parent opacity. Affects only the surface, not text or controls.",
+      "label": "Surface",
+      "relative": "Relative"
+    },
+    "tab": "Structure",
+    "tabColors": "Colors",
+    "triggersHere": "Triggers here",
+    "whyBuiltinProps": "Built-in container direction and share are determined by its content",
+    "whyForced": "Target is enforced by its container",
+    "whyLocked": "Locked: holds settings entries or space structure",
+    "whyNoKids": "This container holds built-in content and cannot contain child containers"
+  },
+  "theme": {
+    "calculator": "Theme calculator",
+    "compact": "Compact",
+    "fontOptions": {
+      "bundled": "Bundled (Inter + Noto Sans SC)",
+      "system": "System font"
+    },
+    "radiusOptions": {
+      "normal": "Normal",
+      "round": "Rounded"
+    },
+    "scale": {
+      "large": "Large",
+      "standard": "Standard",
+      "text": "Small"
+    },
+    "tokens": {
+      "page": "Page",
+      "rail": "Rail",
+      "sidebar": "Sidebar",
+      "status": "Status"
+    }
+  },
+  "themeBackground": {
+    "blur": "Background blur",
+    "opacity": "Opacity"
+  },
+  "themeCalc": {
+    "contrast": "Contrast",
+    "contrastPairs": {
+      "buttonOnAccent": "Button label / Accent",
+      "dangerOnGroup": "Danger / Group",
+      "descriptionOnGroup": "Note / Group",
+      "groupOnPage": "Group / Page (surface step)",
+      "linkOnPage": "Link / Page",
+      "memberOnPage": "Member name (lowest) / Page",
+      "placeholderOnInput": "Placeholder / Input",
+      "secondaryOnGroup": "Secondary text / Group",
+      "text": "Title & body / Page",
+      "textOnBubble": "Body / Your bubble",
+      "warningOnGroup": "Warning / Group"
+    },
+    "controls": {
+      "copyParameters": "Copy parameters",
+      "reset": "Reset",
+      "switchDark": "Switch to dark",
+      "switchLight": "Switch to light"
+    },
+    "group": {
+      "accentHelp": "Primary buttons, links, mentions, and focus rings. Hover, soft surface, and link text are derived from it.",
+      "avatarChroma": "Avatar tint chroma",
+      "avatarLightness": "Avatar tint lightness",
+      "bubbleChroma": "Your bubble chroma",
+      "bubbleHue": "Your bubble hue",
+      "bubbleLightness": "Your bubble lightness",
+      "chroma": "Chroma",
+      "dangerHue": "Danger hue",
+      "dangerL": "Danger lightness",
+      "dividerOverlay": "Divider overlay",
+      "emphasisLineOverlay": "Strong line overlay",
+      "groupSurface": "Group & card",
+      "hintBackgroundLightness": "Hint surface lightness",
+      "hoverOverlay": "Hover overlay",
+      "hue": "Hue",
+      "identityChroma": "Name & stripe chroma",
+      "identityLightness": "Name & stripe lightness",
+      "informationHue": "Info hue",
+      "inlineCodeOverlay": "Inline code overlay",
+      "inputOverlay": "Input overlay",
+      "memberColors": "Member colors",
+      "memberColorsHelp": "All members share lightness and chroma; each member picks its own hue in member settings. Names and message stripes use the name set; avatar backgrounds use the tint set.",
+      "messageAndCode": "Your messages & code",
+      "messageAndCodeHelp": "Member messages use a left stripe with no fill; your messages use a bubble with its own hue.",
+      "normalHue": "OK hue",
+      "placeholderAndDisabled": "Placeholder & disabled",
+      "primaryText": "Title & body",
+      "secondaryText": "Secondary text",
+      "selectedOverlay": "Selected overlay",
+      "statusHelp": "Used only for status signals. All four share chroma; OK, warning, and info share lightness while danger keeps a deeper lightness.",
+      "surfaces": "Surface layers",
+      "surfacesHelp": "Absolute surface steps: rail → sidebar → page → group. Hover, selected, and input layers overlay ink on whichever surface they sit on.",
+      "text": "Accent",
+      "textChroma": "Text chroma",
+      "typographyAndLines": "Typography & lines",
+      "typographyAndLinesHelp": "Four text lightness steps plus two line overlays. Low chroma follows the neutral surface hue.",
+      "warningHue": "Warning hue"
+    },
+    "notifications": {
+      "toast": "Defaults restored"
+    },
+    "readouts": {
+      "insufficient": "Low",
+      "largeText": "Large",
+      "noticeable": "Clear",
+      "previewMarkup": "\">Aa</span><span class=\"grow\">",
+      "tooClose": "Too close"
+    }
+  },
+  "themeEntries": {
+    "resetLayout": "Reset layout",
+    "resetOff": "Already using default layout",
+    "viewPdl": "View PDL"
   }
 }

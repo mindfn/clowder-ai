@@ -1,5 +1,10 @@
 {
  "common": {
+  "cancel": "Cancel",
+  "close": "Close",
+  "delete": "Delete",
+  "moreActions": "More actions",
+  "note": "Note",
   "viewError": "Failed to load. Reopen or refresh to try again.",
   "viewMode": {
    "list": "List",
