@@ -128,6 +128,11 @@ interface RenderFrame {
 const VERBOSE_KEY = 'pdl:perf:verbose';
 const MAX_EVENTS = 500;
 const MAX_SAMPLES = 200;
+export const MAX_BUCKETS = 64;
+export const MAX_MEASURES = 50;
+const MAX_BOOT_ASSETS = 200;
+const MAX_TRANSITION_API_PATHS = 8;
+const OVERFLOW_BUCKET = '(other)';
 const SLOW_RENDER_MS = 16;
 const VERBOSE_RENDER_MS = 32;
 const SLOW_API_MS = 150;
@@ -137,6 +142,11 @@ const VERBOSE_VM_MS = 16;
 const VERBOSE_TRANSITION_MS = 200;
 const SLOW_INTERACTION_MS = 40;
 const TRANSITION_TIMEOUT_MS = 10_000;
+
+const SAFE_SLUG_RE = /^[a-z][a-z0-9._-]{0,23}$/i;
+const ENTITY_PREFIX_RE =
+  /^(?:thread|msg|message|cat|p|plugin|exec|run|task|inv|sess|session|work|grp|group|file|doc|art|mem|sig|usr|user|req|attempt)[_-].+/i;
+const DYNAMIC_ID_RE = /^(?:[0-9a-f]{8}-[0-9a-f-]{27,}|[0-9a-f]{16,}|\d{5,}|(?=.*\d)(?=.*[a-z])[a-z0-9_-]{12,})$/i;
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
@@ -152,10 +162,11 @@ function p95(samples: number[]): number {
 }
 
 function addSample(map: Map<string, Bucket>, name: string, ms: number, error = false): void {
-  let bucket = map.get(name);
+  const key = map.has(name) || map.size < MAX_BUCKETS ? name : OVERFLOW_BUCKET;
+  let bucket = map.get(key);
   if (!bucket) {
     bucket = { count: 0, totalMs: 0, maxMs: 0, errors: 0, samples: [] };
-    map.set(name, bucket);
+    map.set(key, bucket);
   }
   bucket.count += 1;
   bucket.totalMs += ms;
@@ -180,38 +191,88 @@ function summarizeBuckets(map: Map<string, Bucket>, limit = 15, includeErrors = 
     .slice(0, limit);
 }
 
-function normalizeApiPath(path: string): string {
-  const clean = path.split('?')[0] ?? path;
-  return clean
-    .replace(/\/thread_[a-zA-Z0-9_-]+/g, '/:threadId')
-    .replace(/\/cat-[a-zA-Z0-9_-]+/g, '/:catId')
-    .replace(/\/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, '/:uuid')
-    .replace(/\/[0-9a-f]{20,}/gi, '/:id')
-    .replace(/\/\d{6,}/g, '/:num');
+function sanitizeSlug(raw: string | null | undefined, fallback: string): string {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) return fallback;
+  if (!SAFE_SLUG_RE.test(trimmed)) return fallback;
+  if (ENTITY_PREFIX_RE.test(trimmed) || DYNAMIC_ID_RE.test(trimmed)) return fallback;
+  return trimmed;
+}
+
+function normalizePathSegment(seg: string): string {
+  if (!seg) return '';
+  if (/^thread_[a-zA-Z0-9_-]+$/i.test(seg)) return ':threadId';
+  if (/^cat[-_][a-zA-Z0-9_-]+$/i.test(seg)) return ':catId';
+  if (/^(?:msg|message)[_-][a-zA-Z0-9_-]+$/i.test(seg)) return ':msgId';
+  if (/^(?:p|plugin)[_-][a-zA-Z0-9_-]+$/i.test(seg)) return ':pluginId';
+  if (/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(seg)) return ':uuid';
+  if (ENTITY_PREFIX_RE.test(seg) || DYNAMIC_ID_RE.test(seg)) return ':id';
+  if (/^\d+$/.test(seg)) return ':num';
+  return SAFE_SLUG_RE.test(seg) ? seg : ':param';
+}
+
+export function normalizeApiPath(path: string): string {
+  const noHash = path.split('#')[0] ?? path;
+  const clean = noHash.split('?')[0] ?? noHash;
+  if (!clean) return '/';
+  const leading = clean.startsWith('/');
+  const parts = clean
+    .split('/')
+    .filter(Boolean)
+    .map((seg) => normalizePathSegment(seg));
+  return (leading ? '/' : '') + parts.join('/');
+}
+
+function sanitizeChangedKeys(changed?: string[] | null): string[] | undefined {
+  if (!changed?.length) return undefined;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of changed) {
+    if (out.length >= 8) break;
+    const head = raw.split('|')[0] ?? '';
+    let clean: string;
+    if (head.startsWith('~vm:')) {
+      const vmParts = head
+        .slice(4)
+        .split(':')
+        .slice(0, 2)
+        .map((part) => sanitizeSlug(part, ':vm'));
+      clean = `~vm:${vmParts.join(':')}`;
+    } else if (head.startsWith('~S.') || head.startsWith('~CS.')) {
+      const dot = head.indexOf('.');
+      const prefix = head.slice(0, dot + 1);
+      const top = head.slice(dot + 1).split(/[.:/]/)[0] ?? '';
+      clean = `${prefix}${sanitizeSlug(top, ':field')}`;
+    } else {
+      clean = sanitizeSlug(head.replace(/^~/, ''), ':key');
+    }
+    if (!seen.has(clean)) {
+      seen.add(clean);
+      out.push(clean);
+    }
+  }
+  return out.length ? out : undefined;
 }
 
 function formatRoute(ctx: Pick<RenderHookContext, 'route' | 'param' | 'panel'>): string {
-  const base = ctx.route || 'unknown';
-  const withParam = ctx.param ? `${base}:${ctx.param}` : base;
-  return ctx.panel ? `${withParam}[${ctx.panel}]` : withParam;
+  const base = sanitizeSlug(ctx.route, 'unknown');
+  const withParam = ctx.param ? `${base}:${sanitizeSlug(ctx.param, ':param')}` : base;
+  return ctx.panel ? `${withParam}[${sanitizeSlug(ctx.panel, ':panel')}]` : withParam;
 }
 
 function formatRouteKey(ctx: Pick<RenderHookContext, 'route' | 'param' | 'thread' | 'panel'>): string {
   return `${ctx.route || ''}|${ctx.param || ''}|${ctx.thread || ''}|${ctx.panel || ''}`;
 }
 
-function describeTarget(target: EventTarget | null): string {
+export function describeTarget(target: EventTarget | null): string {
   if (!target || typeof target !== 'object' || !('tagName' in target)) return 'unknown';
   const el = target as Element;
-  const tag = el.tagName.toLowerCase();
+  const tag = sanitizeSlug(el.tagName.toLowerCase(), 'el');
   const act = el.getAttribute?.('data-act');
-  if (act) return `${tag}[data-act="${act}"]`;
-  const id = el.id ? `#${el.id}` : '';
-  const cls =
-    typeof el.className === 'string' && el.className.trim()
-      ? `.${el.className.trim().split(/\s+/).slice(0, 2).join('.')}`
-      : '';
-  return `${tag}${id}${cls}`;
+  if (act) return `${tag}[data-act="${sanitizeSlug(act, ':act')}"]`;
+  const view = el.getAttribute?.('data-view');
+  if (view) return `${tag}[data-view="${sanitizeSlug(view, ':view')}"]`;
+  return tag;
 }
 
 function readVerboseFlag(): boolean {
@@ -266,6 +327,8 @@ export class ConsolePerfTracker {
   private interactionBuckets = new Map<string, Bucket>();
 
   private observers: PerformanceObserver[] = [];
+  private measureNames = new Set<string>();
+  private measureCount = 0;
   private verboseEnabled = readVerboseFlag();
   private wrappedPorts = new WeakMap<ChatPort, ChatPort>();
 
@@ -294,7 +357,10 @@ export class ConsolePerfTracker {
 
   recordBootAsset(kind: 'style' | 'script', path: string, ms: number): void {
     const rounded = round1(ms);
-    this.bootAssets.push({ kind, path, ms: rounded });
+    if (this.bootAssets.length < MAX_BOOT_ASSETS) {
+      const cleanPath = (path.split('?')[0] ?? path).split('#')[0] ?? path;
+      this.bootAssets.push({ kind, path: cleanPath, ms: rounded });
+    }
     if (kind === 'style') {
       this.bootStylesMs += ms;
       this.bootStylesCount += 1;
@@ -392,7 +458,7 @@ export class ConsolePerfTracker {
           route,
           detail: {
             keep: frame.keep,
-            changed: ctx.changed ? ctx.changed.slice(0, 8) : undefined,
+            changed: sanitizeChangedKeys(ctx.changed),
           },
         },
         ms >= VERBOSE_RENDER_MS,
@@ -454,10 +520,14 @@ export class ConsolePerfTracker {
     }
     const settleMs = Math.max(0, nowMs() - transition.startedAt);
     const firstRenderMs = transition.firstRenderMs ?? 0;
-    let bucket = this.transitionBuckets.get(transition.to);
+    const bucketKey =
+      this.transitionBuckets.has(transition.to) || this.transitionBuckets.size < MAX_BUCKETS
+        ? transition.to
+        : OVERFLOW_BUCKET;
+    let bucket = this.transitionBuckets.get(bucketKey);
     if (!bucket) {
       bucket = { count: 0, firstRenderTotal: 0, firstRenderMax: 0, settleTotal: 0, settleMax: 0, apiTotal: 0 };
-      this.transitionBuckets.set(transition.to, bucket);
+      this.transitionBuckets.set(bucketKey, bucket);
     }
     bucket.count += 1;
     bucket.firstRenderTotal += firstRenderMs;
@@ -522,14 +592,14 @@ export class ConsolePerfTracker {
     route: string,
     ms: number,
     failed: boolean,
-    detailPath?: string,
+    safePath?: string,
     transition?: ActiveTransition | null,
   ): void {
     addSample(this.apiBuckets, key, ms, failed);
     if (ms >= SLOW_API_MS || failed) {
       const detail =
-        detailPath !== undefined
-          ? { path: detailPath, ...(failed ? { error: true } : {}) }
+        safePath !== undefined
+          ? { path: safePath, ...(failed ? { error: true } : {}) }
           : failed
             ? { error: true }
             : undefined;
@@ -551,24 +621,22 @@ export class ConsolePerfTracker {
     }
   }
 
-  private trackPortCall<R>(
-    key: string,
-    run: () => R,
-    options?: { detailPath?: string; attachTransition?: boolean },
-  ): R {
+  private trackPortCall<R>(key: string, run: () => R, options?: { safePath?: string; attachTransition?: boolean }): R {
     const t0 = nowMs();
     const route = this.lastRoute;
     const transition =
       options?.attachTransition && this.activeTransition && !this.activeTransition.settled
         ? this.activeTransition
         : null;
-    if (transition && options?.detailPath) {
+    if (transition && options?.safePath) {
       transition.pendingGets += 1;
       transition.apiCount += 1;
-      transition.apiPaths.push(normalizeApiPath(options.detailPath));
+      if (transition.apiPaths.length < MAX_TRANSITION_API_PATHS) {
+        transition.apiPaths.push(options.safePath);
+      }
     }
     const done = (failed: boolean) => {
-      this.finishPortCall(key, route, Math.max(0, nowMs() - t0), failed, options?.detailPath, transition);
+      this.finishPortCall(key, route, Math.max(0, nowMs() - t0), failed, options?.safePath, transition);
     };
     let result: R;
     try {
@@ -599,21 +667,25 @@ export class ConsolePerfTracker {
     const proxy = new Proxy(port, {
       get: (target, prop, receiver) => {
         if (prop === 'get') {
-          return (path: string, params?: Record<string, string>, options?: { afterCurrentGet?: boolean }) =>
-            this.trackPortCall(`GET ${normalizeApiPath(path)}`, () => target.get(path, params, options), {
-              detailPath: path,
+          return (path: string, params?: Record<string, string>, options?: { afterCurrentGet?: boolean }) => {
+            const safePath = normalizeApiPath(path);
+            return this.trackPortCall(`GET ${safePath}`, () => target.get(path, params, options), {
+              safePath,
               attachTransition: true,
             });
+          };
         }
         if (prop === 'post') {
-          return (path: string, params: Record<string, string>, body: unknown) =>
-            this.trackPortCall(`POST ${normalizeApiPath(path)}`, () => target.post(path, params, body), {
-              detailPath: path,
+          return (path: string, params: Record<string, string>, body: unknown) => {
+            const safePath = normalizeApiPath(path);
+            return this.trackPortCall(`POST ${safePath}`, () => target.post(path, params, body), {
+              safePath,
             });
+          };
         }
         if (prop === 'action') {
           return (name: string, args: Record<string, string>, el?: HTMLElement) =>
-            this.trackPortCall(`ACT ${name}`, () => target.action(name, args, el));
+            this.trackPortCall(`ACT ${sanitizeSlug(name, ':act')}`, () => target.action(name, args, el));
         }
         const value = Reflect.get(target, prop, receiver);
         return typeof value === 'function' ? value.bind(target) : value;
@@ -625,7 +697,7 @@ export class ConsolePerfTracker {
   }
 
   instrumentChatModels<T extends (...args: never[]) => unknown>(fn: T): T {
-    const record = (slice: string, ms: number) => this.recordVm(`chatModels:${slice}`, ms);
+    const record = (slice: string, ms: number) => this.recordVm(`chatModels:${sanitizeSlug(slice, ':slice')}`, ms);
     const raw = fn as unknown as (...args: unknown[]) => unknown;
     const wrapped = function (this: unknown, ...args: unknown[]) {
       const t0 = nowMs();
@@ -712,20 +784,7 @@ export class ConsolePerfTracker {
       try {
         const obs = new PerformanceObserver((list) => {
           for (const entry of list.getEntries()) {
-            if (entry.duration < SLOW_INTERACTION_MS) continue;
-            const target = describeTarget((entry as PerformanceEventTiming).target ?? null);
-            const name = `${entry.name} ${target}`;
-            addSample(this.interactionBuckets, name, entry.duration);
-            this.pushEvent(
-              {
-                at: Date.now(),
-                kind: 'interaction',
-                name,
-                ms: round1(entry.duration),
-                route: this.lastRoute,
-              },
-              entry.duration >= 100,
-            );
+            this.recordInteraction(entry.name, (entry as PerformanceEventTiming).target ?? null, entry.duration);
           }
         });
         obs.observe({
@@ -740,17 +799,52 @@ export class ConsolePerfTracker {
     }
   }
 
+  recordInteraction(eventName: string, target: EventTarget | null, durationMs: number): void {
+    if (durationMs < SLOW_INTERACTION_MS) return;
+    const name = `${sanitizeSlug(eventName, 'event')} ${describeTarget(target)}`;
+    addSample(this.interactionBuckets, name, durationMs);
+    this.pushEvent(
+      {
+        at: Date.now(),
+        kind: 'interaction',
+        name,
+        ms: round1(durationMs),
+        route: this.lastRoute,
+      },
+      durationMs >= 100,
+    );
+  }
+
+  private clearMeasures(): void {
+    if (typeof performance !== 'undefined' && typeof performance.clearMeasures === 'function') {
+      for (const name of this.measureNames) {
+        try {
+          performance.clearMeasures(name);
+        } catch {
+          // Ignore unsupported runtime implementations
+        }
+      }
+    }
+    this.measureNames.clear();
+    this.measureCount = 0;
+  }
+
   dispose(): void {
     for (const obs of this.observers) obs.disconnect();
     this.observers = [];
     if (this.activeTransition?.settleTimer) clearTimeout(this.activeTransition.settleTimer);
     this.activeTransition = null;
+    this.clearMeasures();
   }
 
   private emitMeasure(name: string, start: number, end: number): void {
+    if (!this.verboseEnabled) return;
     if (typeof performance === 'undefined' || typeof performance.measure !== 'function') return;
+    if (this.measureCount >= MAX_MEASURES) this.clearMeasures();
     try {
       performance.measure(name, { start, end });
+      this.measureNames.add(name);
+      this.measureCount += 1;
     } catch {
       // Ignore browsers that only accept mark names
     }
@@ -815,7 +909,7 @@ export class ConsolePerfTracker {
     return JSON.stringify(
       {
         capturedAt: new Date().toISOString(),
-        url: typeof location !== 'undefined' ? location.href : '',
+        path: typeof location !== 'undefined' ? normalizeApiPath(location.pathname) : '',
         summary: this.summary(false),
         recent: this.recent(100),
       },
@@ -826,6 +920,7 @@ export class ConsolePerfTracker {
 
   reset(includeBoot = false): void {
     this.events = [];
+    this.clearMeasures();
     this.renderBuckets.clear();
     this.renderAllBucket = { count: 0, totalMs: 0, maxMs: 0, errors: 0, samples: [] };
     this.renderPainted = 0;
@@ -858,6 +953,7 @@ export class ConsolePerfTracker {
     if (typeof enabled === 'boolean') {
       this.verboseEnabled = enabled;
       writeVerboseFlag(enabled);
+      if (!enabled) this.clearMeasures();
     }
     return this.verboseEnabled;
   }

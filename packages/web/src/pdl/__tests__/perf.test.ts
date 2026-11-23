@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ConsolePerfTracker } from '../perf';
+import { ConsolePerfTracker, MAX_BUCKETS, MAX_MEASURES } from '../perf';
 import type { ChatPort } from '../types';
 
 function makePort(overrides?: Partial<ChatPort>): ChatPort {
@@ -141,6 +141,146 @@ describe('ConsolePerfTracker', () => {
     expect(recent.some((e) => e.kind === 'api' && e.name === 'GET /api/threads/:threadId/members')).toBe(true);
     expect(recent.some((e) => e.kind === 'transition' && e.name === 'chat -> members')).toBe(true);
     tracker.dispose();
+  });
+
+  it('redacts URLs, raw API paths, entity params, DOM ids, and VM args before writing or exporting', async () => {
+    let clock = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
+    window.history.replaceState({}, '', '/thread/thread_SENTINEL_URL_ID?token=SENTINEL_QUERY_SECRET#SENTINEL_HASH');
+
+    const tracker = new ConsolePerfTracker();
+    const rawPort = makePort({
+      get: vi.fn(async () => {
+        clock += 210;
+        return { ok: true };
+      }),
+      post: vi.fn(async () => {
+        clock += 220;
+        return { ok: true };
+      }),
+    });
+    const port = tracker.instrumentPort(rawPort);
+
+    tracker.onRenderStart({
+      route: 'chat',
+      param: 'thread_SENTINEL_PARAM_ID',
+      thread: 'thread_SENTINEL_THREAD_ID',
+      panel: 'file:/Users/SENTINEL_USER/secret.ts',
+      settle: 1,
+      keep: false,
+    });
+    await port.get('/api/threads/thread_SENTINEL_API_ID/messages/msg_SENTINEL_MSG_ID?q=SENTINEL_API_QUERY');
+    await port.post('/api/cats/cat-SENTINEL_CAT_ID/plugins/p_SENTINEL_PLUGIN_ID?secret=SENTINEL_POST_SECRET', {}, {});
+    clock += 30;
+    tracker.onRenderEnd({
+      route: 'chat',
+      param: 'thread_SENTINEL_PARAM_ID',
+      thread: 'thread_SENTINEL_THREAD_ID',
+      panel: 'file:/Users/SENTINEL_USER/secret.ts',
+      settle: 2,
+      keep: false,
+      changed: ['~vm:chatStream|{"threadId":"SENTINEL_VM_ARG","body":"SENTINEL_BODY"}', '~S.draft.SENTINEL_DRAFT_KEY'],
+    });
+
+    const btn = document.createElement('button');
+    btn.id = 'msg-SENTINEL_DOM_ID';
+    btn.className = 'SENTINEL_CLASS_NAME';
+    btn.setAttribute('data-act', 'thread_SENTINEL_ACT_ID');
+    tracker.recordInteraction('click', btn, 85);
+
+    const exported = tracker.exportJson();
+    const sentinels = [
+      'SENTINEL_URL_ID',
+      'SENTINEL_QUERY_SECRET',
+      'SENTINEL_HASH',
+      'SENTINEL_PARAM_ID',
+      'SENTINEL_THREAD_ID',
+      'SENTINEL_USER',
+      'SENTINEL_API_ID',
+      'SENTINEL_MSG_ID',
+      'SENTINEL_API_QUERY',
+      'SENTINEL_CAT_ID',
+      'SENTINEL_PLUGIN_ID',
+      'SENTINEL_POST_SECRET',
+      'SENTINEL_VM_ARG',
+      'SENTINEL_BODY',
+      'SENTINEL_DRAFT_KEY',
+      'SENTINEL_DOM_ID',
+      'SENTINEL_CLASS_NAME',
+      'SENTINEL_ACT_ID',
+    ];
+    for (const s of sentinels) {
+      expect(exported).not.toContain(s);
+    }
+
+    const parsed = JSON.parse(exported);
+    expect(parsed.url).toBeUndefined();
+    expect(parsed.path).toBe('/thread/:threadId');
+    expect(parsed.summary.currentRoute).toBe('chat::param[:panel]');
+    expect(parsed.recent.find((e: { kind: string }) => e.kind === 'render')?.detail?.changed).toEqual([
+      '~vm:chatStream',
+      '~S.draft',
+    ]);
+    expect(parsed.recent.find((e: { kind: string }) => e.kind === 'api')?.detail?.path).toBe(
+      '/api/threads/:threadId/messages/:msgId',
+    );
+    window.history.replaceState({}, '', '/');
+    tracker.dispose();
+  });
+
+  it('bounds all bucket maps under high cardinality and caps/clears performance.measure entries', async () => {
+    let clock = 2000;
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
+    const measureSpy = vi.spyOn(performance, 'measure').mockImplementation(() => ({}) as PerformanceMeasure);
+    const clearSpy = vi.spyOn(performance, 'clearMeasures').mockImplementation(() => {});
+
+    const tracker = new ConsolePerfTracker();
+    const port = tracker.instrumentPort(makePort());
+
+    // Default (verbose=false): slow renders must not accumulate performance.measure entries
+    for (let i = 0; i < MAX_BUCKETS + 40; i += 1) {
+      const route = `view${i}`;
+      tracker.onRenderStart({ route, settle: i, keep: false });
+      clock += 20;
+      tracker.onRenderEnd({ route, settle: i + 1, keep: false });
+      await port.get(`/api/ep${i}`);
+      tracker.recordInteraction('click', document.createElement('button'), 50);
+    }
+    expect(measureSpy).not.toHaveBeenCalled();
+
+    // Verify internal maps are strictly capped at MAX_BUCKETS + 1 (overflow bucket)
+    const internals = tracker as unknown as {
+      renderBuckets: Map<string, unknown>;
+      apiBuckets: Map<string, unknown>;
+      transitionBuckets: Map<string, unknown>;
+      interactionBuckets: Map<string, unknown>;
+    };
+    expect(internals.renderBuckets.size).toBeLessThanOrEqual(MAX_BUCKETS + 1);
+    expect(internals.renderBuckets.has('(other)')).toBe(true);
+    expect(internals.apiBuckets.size).toBeLessThanOrEqual(MAX_BUCKETS + 1);
+    expect(internals.apiBuckets.has('(other)')).toBe(true);
+    expect(internals.transitionBuckets.size).toBeLessThanOrEqual(MAX_BUCKETS + 1);
+
+    // Verbose mode: measures are emitted, rolled/cleared at MAX_MEASURES, and cleared on reset/dispose
+    tracker.verbose(true);
+    for (let i = 0; i < MAX_MEASURES + 15; i += 1) {
+      tracker.onRenderStart({ route: 'chat', settle: i, keep: true });
+      clock += 20;
+      tracker.onRenderEnd({ route: 'chat', settle: i + 1, keep: true });
+    }
+    expect(measureSpy).toHaveBeenCalledTimes(MAX_MEASURES + 15);
+    expect(clearSpy).toHaveBeenCalled();
+
+    clearSpy.mockClear();
+    tracker.reset(false);
+    expect(clearSpy).toHaveBeenCalledWith('pdl:render:chat');
+
+    tracker.onRenderStart({ route: 'members', settle: 1, keep: true });
+    clock += 20;
+    tracker.onRenderEnd({ route: 'members', settle: 2, keep: true });
+    clearSpy.mockClear();
+    tracker.dispose();
+    expect(clearSpy).toHaveBeenCalledWith('pdl:render:members');
   });
 
   it('instruments chatModels, clowderChat pushes/update, export JSON, verbose flag, and reset', async () => {
