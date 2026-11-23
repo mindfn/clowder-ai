@@ -3,7 +3,14 @@
   "colorLight": "Lightness"
  },
  "fold": {
-  "viewMore": "View more"
+  "viewMore": "View more",
+  "moreHtml": "{0} more"
+ },
+ "threadRow": {
+  "groupAttention": "{0} to see",
+  "meta": {
+   "repliedGeneric": "Replied"
+  }
  },
  "queue": {
   "targets": {
