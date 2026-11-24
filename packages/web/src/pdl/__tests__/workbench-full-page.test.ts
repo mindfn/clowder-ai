@@ -117,6 +117,10 @@ describe('generic page: full layout contract across all PDL containers', () => {
     expect(blocksCss).toContain(
       '.vw-page-full.page { flex: 1 1 0; min-block-size: 0; block-size: 100%; inline-size: 100%; max-inline-size: none; margin: 0; padding: 0; gap: 0; display: flex; flex-direction: column; }',
     );
+    expect(blocksCss).toContain('.vw-page-full.page > .toolbar:first-child { padding: 0 var(--sp-s); }');
+    expect(blocksCss).toContain(
+      '.vw-page-full.page > .toolbar:first-child > .back { align-self: center; margin-left: 0; }',
+    );
     expect(blocksCss).toContain(
       '.vw-page-full.page :is(.vw-widget, .frame.tall) { flex: 1 1 0; min-height: 0; height: auto; border-radius: 0; }',
     );
@@ -262,6 +266,73 @@ describe('generic page: full layout contract across all PDL containers', () => {
         expect(enText).not.toContain('底色层次');
       }
       expect(calcEn?.querySelectorAll('#calc-contrast > *').length).toBeGreaterThanOrEqual(8);
+    });
+
+    it(`folds page back button into leading toolbar on page: full views without floating .back-head (${themeId})`, async () => {
+      const { w, evalIn } = await bootTheme(themeId);
+      const frameSel = themeId === 'v2' ? 'iframe.v2-frame' : 'iframe.vw-widget';
+      evalIn(`
+        VM.testFullBar = () => ({ showBar: false });
+        PDL_VIEWS['test.wb.fullBar'] = {
+          vm: 'testFullBar',
+          page: 'full',
+          blocks: [
+            { type: 'toolbar', right: [{ type: 'button', icon: 'refresh', iconOnly: true, label: 'Refresh', act: 'noop' }] },
+            { type: 'frame', key: 'wb-full-bar', title: 'Full Bar', src: 'https://example.invalid/app', tall: true },
+          ],
+        };
+        PDL_VIEWS['test.wb.fullItems'] = {
+          vm: 'testFullBar',
+          page: 'full',
+          blocks: [
+            { type: 'toolbar', items: [{ type: 'button', icon: 'refresh', iconOnly: true, label: 'Refresh', act: 'noop' }] },
+            { type: 'frame', key: 'wb-full-items', title: 'Full Items', src: 'https://example.invalid/app', tall: true },
+          ],
+        };
+        PDL_VIEWS['test.wb.fullHiddenBar'] = {
+          vm: 'testFullBar',
+          page: 'full',
+          blocks: [
+            { type: 'toolbar', when: '@showBar', right: [{ type: 'button', icon: 'refresh', iconOnly: true, label: 'Refresh', act: 'noop' }] },
+            { type: 'frame', key: 'wb-full-hidden', title: 'Full Hidden', src: 'https://example.invalid/app', tall: true },
+          ],
+        };
+      `);
+
+      // 1. Main window (into: 'main') with leading right-aligned toolbar (e.g. 小黑笔记)
+      evalIn(`navOpen({ f: 'node:test.wb.fullBar', into: 'main', push: true, backLabel: true });`);
+      const mainLayer = w.document.querySelector('.main-col > .layer:not(.layer-covered)');
+      expect(mainLayer).not.toBeNull();
+      expect(mainLayer?.querySelector(':scope > .back-head')).toBeNull();
+      const mainView = mainLayer?.querySelector('.vw-view.page.vw-page-full');
+      const mainBar = mainView?.firstElementChild;
+      expect(mainBar?.querySelector('[data-act="back"]')).not.toBeNull();
+      expect(mainBar?.querySelector('[data-act="noop"]')).not.toBeNull();
+      expect(mainView?.querySelector(frameSel)).not.toBeNull();
+
+      // 2. Shell cover (into: 'shell') with leading right-aligned toolbar
+      evalIn(`navBack('main'); navOpen({ f: 'node:test.wb.fullBar', into: 'shell', push: true, backLabel: true });`);
+      const cover = w.document.querySelector('.cover-in');
+      expect(cover).not.toBeNull();
+      expect(cover?.querySelector(':scope > .back-head')).toBeNull();
+      const coverBar = cover?.querySelector('.vw-view.page.vw-page-full')?.firstElementChild;
+      expect(coverBar?.querySelector('[data-act="back"]')).not.toBeNull();
+      expect(coverBar?.querySelector('[data-act="noop"]')).not.toBeNull();
+
+      // 3. Leading items-based toolbar also takes page back button
+      evalIn(`navBack('shell'); navOpen({ f: 'node:test.wb.fullItems', into: 'shell', push: true, backLabel: true });`);
+      const itemsCover = w.document.querySelector('.cover-in');
+      expect(itemsCover?.querySelector(':scope > .back-head')).toBeNull();
+      const itemsBar = itemsCover?.querySelector('.vw-view.page.vw-page-full')?.firstElementChild;
+      expect(itemsBar?.querySelector('[data-act="back"]')).not.toBeNull();
+      expect(itemsBar?.querySelector('[data-act="noop"]')).not.toBeNull();
+
+      // 4. Hidden leading toolbar (when: '@showBar' === false) falls back to floating .back-head
+      evalIn(
+        `navBack('shell'); navOpen({ f: 'node:test.wb.fullHiddenBar', into: 'shell', push: true, backLabel: true });`,
+      );
+      const hiddenCover = w.document.querySelector('.cover-in');
+      expect(hiddenCover?.querySelector(':scope > .back-head > [data-act="back"]')).not.toBeNull();
     });
   }
 });

@@ -47,6 +47,8 @@
 :is(.cover-in, .main-col, .main, .layer:not(.layer-covered)):not(.layer-covered):has(> .vw-page-full.page, > .page > .vw-page-full.page) > .back-head { position: absolute; z-index: var(--z-raised); top: var(--page-gap); left: var(--page-gap); }
 :is(.cover-in, .main-col, .main, .layer:not(.layer-covered)):not(.layer-covered):has(> .vw-page-full.page, > .page > .vw-page-full.page) > .back-head > .back { margin-left: 0; background: var(--surf-float); box-shadow: var(--shadow-float); }   /* 盖在别人画的页面上（框里的页面什么底色都有）：返回自己带浮层的面，不是一条横带 */   /* 它没有标题行：返回（图标 + 名字）浮在左上角，不另占一行 */
 .vw-page-full.page { flex: 1 1 0; min-block-size: 0; block-size: 100%; inline-size: 100%; max-inline-size: none; margin: 0; padding: 0; gap: 0; display: flex; flex-direction: column; }
+.vw-page-full.page > .toolbar:first-child { padding: 0 var(--sp-s); }
+.vw-page-full.page > .toolbar:first-child > .back { align-self: center; margin-left: 0; }
 .vw-page-full.page > .page-head { padding: var(--sp-m) var(--g-pad); }
 .vw-page-full.page > .notice { margin: 0 var(--g-pad) var(--sp-s); }
 :is(.float-body, .plugin-float > .scroll, .dialog:not(.dialog-viewport, .dialog-fill) > .dialog-body) > .vw-page-full.page { flex: 1 1 auto; block-size: calc(var(--row-h-1) * 14); min-block-size: calc(var(--row-h-1) * 6); }   /* 浮窗与自适应高度对话框没有固定高度：给整页视图一个弹性高度，窗口放不下时自动收缩 */

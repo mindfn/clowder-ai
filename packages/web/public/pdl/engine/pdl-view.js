@@ -216,15 +216,15 @@ function pdlView(id) {
   if (!root) return v.empty ? PV_DRAW.state('empty', { text: pvText(v.empty, {}, {}) }) : '';
   if (v.type === 'frame') { const prev = PV.viewId; PV.viewId = id; try { return pvBlocks([Object.assign({}, v, { sources: null })], root, root); } finally { PV.viewId = prev; } }
   const placed = backPlaced(v.blocks, root);   /* 视图自己声明了返回放在哪（back 控件）：标题行不取返回 */
-  const prevId = PV.viewId, load = root.load || PV.load || '', prevSaid = PV.said;   /* 视图的读取状态：视图模型给的（数据层），或者所在工作台标签的 */
-  PV.viewId = id; PV.load = ''; PV.said = pvHeadStatuses(v.blocks, root);
+  const prevId = PV.viewId, load = root.load || PV.load || '', prevSaid = PV.said, prevFullHead = PV.fullHeadBar;   /* 视图的读取状态：视图模型给的（数据层），或者所在工作台标签的 */
+  PV.viewId = id; PV.load = ''; PV.said = pvHeadStatuses(v.blocks, root); PV.fullHeadBar = v.page === 'full' && Array.isArray(v.blocks) && !!(v.blocks[0] && v.blocks[0].type === 'toolbar' && pvOk(v.blocks[0].when, root, root));
   if (v.readonly) PV.ro++;
   if (placed) BACK.placed++;
   try {
     const body = PV_DRAW.toc(function () { return backIn('detail', pdlDrillOf(v, root), function () { return load ? PV_DRAW.viewLoad(v, load, root) : pvBlocks(v.blocks, root, root); }); });
     if (v.bare) return body;   /* 不包外层：直接放进现有布局的一段（如对话页头部） */
     return '<div class="vw-view' + (v.page ? ' page' + (typeof v.page === 'string' ? ' vw-page-' + v.page : '') : '') + (v.readonly ? ' readonly' : '') + '" data-view="' + id + '">' + body + '</div>';
-  } finally { if (v.readonly) PV.ro--; if (placed) BACK.placed--; PV.viewId = prevId; PV.said = prevSaid; }
+  } finally { if (v.readonly) PV.ro--; if (placed) BACK.placed--; PV.viewId = prevId; PV.said = prevSaid; PV.fullHeadBar = prevFullHead; }
 }
 
 /* ───────── 视图树：导出和按层级查询（agent 不看前端代码也能知道页面长什么样） ─────────

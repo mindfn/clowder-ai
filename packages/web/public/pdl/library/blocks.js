@@ -635,7 +635,9 @@ Object.assign(PDL_BLOCKS, {
     let inner;
     if ((b.ordered || b.kind === 'actions') && b.key) {   /* 操作组（kind: 'actions'）默认就是一排格子，用户可以在组内编排（不用逐个开启）。grow 之前的项默认从起始端排，之后的从结束端排；每项按种类占 span 个格子；固定的（locked，比如发送）不动 */
       let anchor = 'start';
-      const bk = v === 'head' ? backTake('page') : '';   /* 作为容器头的工具条：返回是它最前面固定的一格 */
+      const takeOrdered = v === 'head' || PV.fullHeadBar;
+      if (PV.fullHeadBar) PV.fullHeadBar = false;
+      const bk = takeOrdered ? backTake('page') : '';   /* 作为容器头的工具条：返回是它最前面固定的一格 */
       const items = (bk ? [{ key: 'back', html: bk, span: 's', anchor: 'start', locked: true }] : []).concat((b.items || []).map(function (c) {
         if (c.type === 'grow') { anchor = 'end'; return null; }
         const html = pvControl(c, sc, root); if (!html) return null;
@@ -643,8 +645,11 @@ Object.assign(PDL_BLOCKS, {
       })).filter(Boolean);
       return cellsHtml({ key: b.key, axis: 'row', items: items, saved: pdlCells(b.key), edit: S.editLayout, cls: BAR[v] });
     }
-    if (b.left || b.right) { const right = pvControls(b.right, sc, root); inner = pvControls(b.left, sc, root) + pvParts(b.parts, sc, root) + (right ? '<span class="grow"></span>' + right : ''); }
-    else inner = (v === 'head' && !b.key ? backTake('page') : '') + pvControls(b.items, sc, root) + pvParts(b.parts, sc, root);
+    const takeHead = (v === 'head' && !b.key) || PV.fullHeadBar;
+    if (PV.fullHeadBar) PV.fullHeadBar = false;
+    const bk = takeHead ? backTake('page') : '';
+    if (b.left || b.right) { const right = pvControls(b.right, sc, root); inner = bk + pvControls(b.left, sc, root) + pvParts(b.parts, sc, root) + (right ? '<span class="grow"></span>' + right : ''); }
+    else inner = bk + pvControls(b.items, sc, root) + pvParts(b.parts, sc, root);
     if (!inner.replace(/<span class="grow"><\/span>/g, '') && b.id == null) return '';   /* 里面只剩撑开的空白（按钮都按条件藏了）：整条不画 */
     const tone = pv(b.tone, sc, root), tag = b.form ? 'form' : 'div', cls = BAR[v] + (tone ? ' vw-t-' + tone : '');
     /* id / hidden：保存栏这类由别处按 id 显示、隐藏的条 */
