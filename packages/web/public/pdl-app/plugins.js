@@ -681,33 +681,45 @@ function bindPluginSpaces() {
     const source = projectData('workbench');
     return source && source.projectPicker;
   }
-  async function browsePluginDir(path, selectCurrent) {
-    const receipt = await chatPort.action('projectBrowse', { path: path || '' });
-    if (!receipt || !receipt.directory) return false;
+  function pluginDirCurrent(pd, seq) {
+    return !!(pd && S.dialog && S.dialog.kind === 'pluginDir' && S.pluginDir === pd && pd.seq === seq);
+  }
+  async function browsePluginDir(path, selectCurrent, showError) {
     const pd = S.pluginDir;
     if (!pd) return false;
-    pd.root = receipt.directory.current;
-    pd.parent = receipt.directory.parent || '';
-    pd.query = null;
-    if (selectCurrent) pd.selected = receipt.directory.current;
-    S.folds['tree:pdTree'] = {};
-    S.treeLoaded.pdTree = {};
-    render(true);
-    return true;
+    const seq = ++pd.seq;
+    try {
+      const receipt = await chatPort.action('projectBrowse', { path: path || '' });
+      if (!pluginDirCurrent(pd, seq) || !receipt || !receipt.directory) return false;
+      pd.root = receipt.directory.current;
+      pd.parent = receipt.directory.parent || '';
+      pd.query = null;
+      if (selectCurrent) pd.selected = receipt.directory.current;
+      S.folds['tree:pdTree'] = {};
+      S.treeLoaded.pdTree = {};
+      render(true);
+      return true;
+    } catch (error) {
+      if (showError && pluginDirCurrent(pd, seq)) {
+        fieldErr('pd-path', error && error.message ? error.message : tc('composerPop.folderNotFound', path));
+      }
+      if (!showError) throw error;
+      return false;
+    }
   }
   A.installDir = function () {
     let last = '';
     try {
       last = window.localStorage.getItem(LAST_PLUGIN_DIR_KEY) || '';
     } catch {}
-    S.pluginDir = { root: last, parent: '', selected: '', query: null };
+    const pd = (S.pluginDir = { root: last, parent: '', selected: '', query: null, seq: 0 });
     S.folds['tree:pdTree'] = {};
     S.treeLoaded.pdTree = {};
     dialog({
       kind: 'pluginDir',
       on: async function () {
-        const pd = S.pluginDir || {};
-        const path = (pd.selected || val('pd-path') || '').trim();
+        const cur = S.pluginDir || {};
+        const path = (cur.selected || (cur.query != null ? cur.query : val('pd-path')) || '').trim();
         if (!path) throw new Error(tc('ext.installDirRequired'));
         const installed = await chatPort.action('settingsPluginInstall', {
           value: JSON.stringify({ source: { kind: 'local-directory', path: path } }),
@@ -725,38 +737,34 @@ function bindPluginSpaces() {
         if (installed && installed.pluginId) go('extItem-' + installed.pluginId);
       },
     });
+    const initSeq = pd.seq + 1;
     settleHold(
-      browsePluginDir(last, false).catch(function () {
-        return last ? browsePluginDir('', false).catch(function () {}) : undefined;
+      browsePluginDir(last, false, false).catch(function () {
+        if (last && pluginDirCurrent(pd, initSeq)) return browsePluginDir('', false, false).catch(function () {});
+        return undefined;
       }),
     );
   };
   A.pluginDirSelect = function (d) {
     if (!S.pluginDir || !d || !d.path) return;
+    S.pluginDir.seq++;
     S.pluginDir.selected = d.path;
     render(true);
   };
   A.pluginDirGo = async function (d) {
     const v = ((d && d.v) || val('pd-path') || '').trim();
     if (!v) return;
-    try {
-      await browsePluginDir(v, true);
-    } catch (error) {
-      fieldErr('pd-path', error && error.message ? error.message : tc('composerPop.folderNotFound', v));
-    }
+    await browsePluginDir(v, true, true);
   };
   A.pluginDirPick = async function (d) {
     if (!d || !d.path) return;
-    try {
-      await browsePluginDir(d.path, true);
-    } catch (error) {
-      fieldErr('pd-path', error && error.message ? error.message : tc('composerPop.folderNotFound', d.path));
-    }
+    await browsePluginDir(d.path, true, true);
   };
   INPUTS.pluginDirComplete = function (e) {
     const pd = S.pluginDir;
     if (!pd) return;
     const prefix = e.target.value;
+    pd.seq++;
     pd.selected = '';
     pd.query = prefix;
     return chatPort.action('cafePathComplete', { prefix: prefix, cwd: pd.root || '' });
