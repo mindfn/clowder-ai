@@ -115,7 +115,12 @@ describe('generic page: full layout contract across all PDL containers', () => {
       ':is(.cover-in, .panel-body, .main-col, .main, .float-body, .plugin-float > .scroll, .dialog-body):not(.layer-covered):has(> .vw-page-full.page, > :is(.pdl-inpanel, .page) > .vw-page-full.page, > .layer:not(.layer-covered) > .vw-page-full.page, > .layer:not(.layer-covered) > :is(.pdl-inpanel, .page) > .vw-page-full.page, > .layer:not(.layer-covered) > .layer:not(.layer-covered) > .vw-page-full.page, > .layer:not(.layer-covered) > .layer:not(.layer-covered) > :is(.pdl-inpanel, .page) > .vw-page-full.page) { display: flex; flex-direction: column; position: relative; padding: 0; gap: 0; overflow: hidden; }',
     );
     expect(blocksCss).toContain(
-      '.vw-page-full.page { flex: 1 1 0; min-block-size: 0; block-size: 100%; inline-size: 100%; max-inline-size: none; margin: 0; padding: 0; gap: 0; display: flex; flex-direction: column; }',
+      '.vw-page-full.page { position: relative; flex: 1 1 0; min-block-size: 0; block-size: 100%; inline-size: 100%; max-inline-size: none; margin: 0; padding: 0; gap: 0; display: flex; flex-direction: column; }',
+    );
+    expect(blocksCss).toContain('.vw-page-full.page > .chat-head { position: absolute; z-index: var(--z-raised);');
+    expect(blocksCss).toContain('.vw-page-full.page > .chat-head > .grow { display: none; }');
+    expect(blocksCss).toContain(
+      ':is(.back-head, .vw-page-full.page > .chat-head)[data-dragged] { translate: var(--drag-x) var(--drag-y); }',
     );
     expect(blocksCss).toContain(
       '.vw-page-full.page :is(.vw-widget, .frame.tall) { flex: 1 1 0; min-height: 0; height: auto; border-radius: 0; }',
@@ -262,6 +267,67 @@ describe('generic page: full layout contract across all PDL containers', () => {
         expect(enText).not.toContain('底色层次');
       }
       expect(calcEn?.querySelectorAll('#calc-contrast > *').length).toBeGreaterThanOrEqual(8);
+    });
+
+    it(`unifies page: full head toolbar and back-head into a draggable floating capsule with persisted position (${themeId})`, async () => {
+      const { w, evalIn } = await bootTheme(themeId);
+      const frameSel = themeId === 'v2' ? 'iframe.v2-frame' : 'iframe.vw-widget';
+      evalIn(`
+        VM.testFullFloat = () => ({});
+        PDL_VIEWS['test.wb.fullHead'] = {
+          vm: 'testFullFloat',
+          page: 'full',
+          blocks: [
+            { type: 'toolbar', variant: 'head', right: [{ type: 'button', icon: 'refresh', iconOnly: true, label: 'Refresh', act: 'noop' }] },
+            { type: 'frame', key: 'wb-full-head', title: 'Full Head', src: 'https://example.invalid/app', tall: true },
+          ],
+        };
+        PDL_VIEWS['test.wb.fullCanvas'] = {
+          vm: 'testFullFloat',
+          page: 'full',
+          blocks: [
+            { type: 'frame', key: 'wb-full-canvas', title: 'Full Canvas', src: 'https://example.invalid/app', tall: true },
+          ],
+        };
+      `);
+
+      // 1. page: full with toolbar variant: head folds back + action into .chat-head without floating .back-head
+      evalIn(`navOpen({ f: 'node:test.wb.fullHead', into: 'shell', push: true, backLabel: true });`);
+      const cover = w.document.querySelector('.cover-in');
+      expect(cover).not.toBeNull();
+      expect(cover?.querySelector(':scope > .back-head')).toBeNull();
+      const capsule = cover?.querySelector('.vw-page-full.page > .chat-head') as HTMLElement | null;
+      expect(capsule).not.toBeNull();
+      expect(capsule?.querySelector('[data-act="back"]')).not.toBeNull();
+      expect(capsule?.querySelector('[data-act="noop"]')).not.toBeNull();
+      expect(cover?.querySelector(`.vw-page-full.page ${frameSel}`)).not.toBeNull();
+
+      // 2. Dragging via shared EDGE_DRAG updates --drag-x/--drag-y and persists per-view position across reopen
+      capsule?.dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 40, clientY: 40 }));
+      w.document.dispatchEvent(new w.MouseEvent('mousemove', { bubbles: true, clientX: 160, clientY: 90 }));
+      w.document.dispatchEvent(new w.MouseEvent('mouseup', { bubbles: true, clientX: 160, clientY: 90 }));
+      expect(capsule?.hasAttribute('data-dragged')).toBe(true);
+      expect(capsule?.style.getPropertyValue('--drag-x')).toBe('120px');
+      expect(capsule?.style.getPropertyValue('--drag-y')).toBe('50px');
+
+      evalIn(`navBack('shell'); navOpen({ f: 'node:test.wb.fullHead', into: 'shell', push: true, backLabel: true });`);
+      const reopened = w.document.querySelector('.cover-in .vw-page-full.page > .chat-head') as HTMLElement | null;
+      expect(reopened?.hasAttribute('data-dragged')).toBe(true);
+      expect(reopened?.style.getPropertyValue('--drag-x')).toBe('120px');
+      expect(reopened?.style.getPropertyValue('--drag-y')).toBe('50px');
+
+      // 3. Canvas-only page: full keeps .back-head and shares the exact same EDGE_DRAG + persistence
+      evalIn(
+        `navBack('shell'); navOpen({ f: 'node:test.wb.fullCanvas', into: 'shell', push: true, backLabel: true });`,
+      );
+      const backHead = w.document.querySelector('.cover-in > .back-head') as HTMLElement | null;
+      expect(backHead).not.toBeNull();
+      backHead?.dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 30, clientY: 30 }));
+      w.document.dispatchEvent(new w.MouseEvent('mousemove', { bubbles: true, clientX: 110, clientY: 70 }));
+      w.document.dispatchEvent(new w.MouseEvent('mouseup', { bubbles: true, clientX: 110, clientY: 70 }));
+      expect(backHead?.hasAttribute('data-dragged')).toBe(true);
+      expect(backHead?.style.getPropertyValue('--drag-x')).toBe('80px');
+      expect(backHead?.style.getPropertyValue('--drag-y')).toBe('40px');
     });
   }
 });
