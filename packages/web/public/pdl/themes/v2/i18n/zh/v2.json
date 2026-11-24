@@ -2353,6 +2353,13 @@
     "installing": "安装中…",
     "version": "版本",
     "offlineInstall": "离线安装",
+    "installDir": "从本地目录安装",
+    "installDirTitle": "从本地目录安装插件",
+    "installDirHelp": "选择运行 Hub 本机上已构建的插件包目录；安装成功后仍需手动启用。",
+    "installDirBrowse": "前往路径",
+    "installDirParent": "上一级目录",
+    "installDirSelected": "已选目录：",
+    "installDirRequired": "请先选择一个插件目录。",
     "address": {
       "title": "在对话中",
       "help": "在对话里用 @别名 找到这个插件，头像显示在它的消息和收件人里。改了马上生效，插件不用重启；已发出和排队中的消息照旧送到它。",

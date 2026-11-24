@@ -2353,6 +2353,13 @@
     "installing": "Installing",
     "version": "Version",
     "offlineInstall": "Offline installation",
+    "installDir": "Install from local directory",
+    "installDirTitle": "Install plugin from local directory",
+    "installDirHelp": "Select a built plugin package directory on the Hub machine; enable it after installation.",
+    "installDirBrowse": "Go to path",
+    "installDirParent": "Parent directory",
+    "installDirSelected": "Selected directory: ",
+    "installDirRequired": "Select a plugin directory first.",
     "address": {
       "title": "In conversations",
       "help": "Use @alias to address this plugin in chat. Its avatar appears on messages and recipients. Changes apply immediately without restarting; sent and queued messages still reach it.",
