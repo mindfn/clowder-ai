@@ -1499,6 +1499,9 @@ function bindMembers() {
     if (S.popOn.nativeSetup && !S.nativeSetup) A.nativeDetect({ refresh: false });
     if (!S.popOn.nativeSetup) S.nativeSetup = null;
   });
+  function nativePartnerAdjustable(p) {
+    return !!(p && p.runtime && p.runtime.installed && !p.existingId && !p.identityConflict);
+  }
   A.nativeDetect = function (data) {
     const previous = S.nativeSetup;
     if (previous && previous.busy) return;
@@ -1515,7 +1518,7 @@ function bindMembers() {
           function (partners) {
             if (S.nativeSetup === setup) {
               setup.partners = partners.map(function (p) {
-                if (p.runtime && p.runtime.agyCarrier && p.selectable && !p.existingId && !p.form.defaultModel.trim()) {
+                if (nativePartnerAdjustable(p) && p.runtime.agyCarrier && p.selectable && !p.form.defaultModel.trim()) {
                   p.adjusting = true;
                 }
                 return p;
@@ -1539,6 +1542,7 @@ function bindMembers() {
       items: g.partners.map(function (p) {
         const agyCarrier = (p.runtime && p.runtime.agyCarrier) || '';
         const agyAccounts = p.agyAccounts || [];
+        const adjustable = nativePartnerAdjustable(p);
         return {
           id: p.id,
           name: p.form.displayName,
@@ -1549,7 +1553,7 @@ function bindMembers() {
           selected: p.selected,
           existingId: p.existingId,
           selectable: p.selectable && !p.existingId && !p.identityConflict,
-          adjustable: !!(p.runtime && p.runtime.installed && !p.existingId && !p.identityConflict),
+          adjustable: adjustable,
           payload: {
             defaultModel: p.form.defaultModel,
             cliEffort: p.form.cliEffort,
@@ -1568,7 +1572,7 @@ function bindMembers() {
             agyRoot: 'probe-' + p.id + '-agyRoot',
             agyDirs: 'probe-' + p.id + '-agyDirs',
           },
-          adjusting: !!p.adjusting,
+          adjusting: adjustable && !!p.adjusting,
           get preferences() {
             return memberPreferences(p.form, runtimeCatalogState(p.form, '', p.runtime), p.runtime.acpMaxDefault);
           },
@@ -1610,8 +1614,7 @@ function bindMembers() {
     const partner = S.nativeSetup.partners.find(function (p) {
       return p.id === d.id;
     });
-    if (!partner || !(partner.runtime && partner.runtime.installed) || partner.existingId || partner.identityConflict)
-      return;
+    if (!nativePartnerAdjustable(partner)) return;
     partner.adjusting = !partner.adjusting;
     render(true);
   };
@@ -1619,6 +1622,7 @@ function bindMembers() {
     const partner = S.nativeSetup.partners.find(function (p) {
       return p.id === e.target.dataset.id;
     });
+    if (!nativePartnerAdjustable(partner)) return;
     const k = e.target.dataset.k;
     if (k === 'agyPerm') {
       partner.form.agyAutoApprove = e.target.value === 'true';
@@ -1698,6 +1702,7 @@ function bindMembers() {
           partner.creationForm = await act('nativePrepare', { value: JSON.stringify(partner) });
         const cat = await act('nativeCreate', { journeyId: setup.journeyId, value: JSON.stringify(partner) });
         partner.existingId = cat.id;
+        partner.adjusting = false;
       }
       await read();
     } catch (error) {

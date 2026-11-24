@@ -85,6 +85,9 @@ async function bootNativeSetup(themeId: 'default' | 'v2') {
   const evalIn = (code: string) => runInContext(code, ctx);
   await new Promise<void>((resolve) => w.document.addEventListener('DOMContentLoaded', resolve, { once: true }));
   w.document.timeline = { currentTime: 0 };
+  w.requestAnimationFrame = ((fn: FrameRequestCallback) =>
+    setTimeout(() => fn(Date.now()), 0) as unknown as number) as typeof w.requestAnimationFrame;
+  w.cancelAnimationFrame = ((id: number) => clearTimeout(id)) as typeof w.cancelAnimationFrame;
   w.matchMedia = () => ({ matches: false, addEventListener() {} });
   w.CSS = { escape: (s: string) => s, supports: () => true };
   w.HTMLElement.prototype.getAnimations = () => [];
@@ -123,6 +126,13 @@ async function bootNativeSetup(themeId: 'default' | 'v2') {
     '/api/plugin-manager/pdl': { fragments: {} },
     '/api/accounts': { providers: [], accounts: [], selection: { members: [] } },
   };
+  const action = vi.fn(async (name: string): Promise<unknown> => {
+    if (name === 'membersRead')
+      return { accounts: [], templates: [], runtimes: [], clients: [], strategies: [], libraries: [] };
+    if (name === 'memberRuntimeModels') return { status: 'live', models: [], effortOptions: [] };
+    if (name === 'nativeCreate') return { id: 'cat-created-1' };
+    return {};
+  });
   const port = {
     get threadId() {
       return data.threadId;
@@ -146,20 +156,20 @@ async function bootNativeSetup(themeId: 'default' | 'v2') {
     post: vi.fn(async () => ({})),
     file: (p: string) => `/api/file/${p}`,
     attach: vi.fn(),
-    action: vi.fn(async () => ({})),
+    action,
     richRender: vi.fn(),
     terminal: vi.fn(),
     navResize: { min: 200, max: () => 400, width: () => 260, preview: vi.fn(), commit: vi.fn(), reset: vi.fn() },
   } as unknown as ChatPort;
 
   await w.clowderChat.start(port, chatModels);
-  return { w, evalIn };
+  return { w, evalIn, action };
 }
 
 describe('nativeSetup adjust button visibility and state priority', () => {
   for (const themeId of ['default', 'v2'] as const) {
-    it(`shows adjust only on adjustable rows and prioritizes unavailable over conflict (${themeId})`, async () => {
-      const { w, evalIn } = await bootNativeSetup(themeId);
+    it(`shows adjust only on adjustable rows, collapses after create, and skips conflict auto-expand (${themeId})`, async () => {
+      const { w, evalIn, action } = await bootNativeSetup(themeId);
       const partners = makePartnerFixtures();
 
       evalIn(
@@ -187,9 +197,82 @@ describe('nativeSetup adjust button visibility and state priority', () => {
       expect(evalIn("VM.nativeSetup().items.find((x) => x.id === 'conflict-installed').adjusting")).toBe(false);
       expect(evalIn("VM.nativeSetup().items.find((x) => x.id === 'created-row').adjusting")).toBe(false);
 
-      // Ready row still toggles adjust cleanly
+      // Expand ready row, then run real nativeCreate -> row collapses and parameter inputs disappear
       evalIn("A.nativeAdjust({ id: 'ready-row' });");
       expect(evalIn("VM.nativeSetup().items.find((x) => x.id === 'ready-row').adjusting")).toBe(true);
+      expect(w.document.getElementById('probe-ready-row-model')).not.toBeNull();
+
+      await evalIn('A.nativeCreate()');
+      expect(evalIn("VM.nativeSetup().items.find((x) => x.id === 'ready-row').adjustable")).toBe(false);
+      expect(evalIn("VM.nativeSetup().items.find((x) => x.id === 'ready-row').adjusting")).toBe(false);
+      expect(w.document.getElementById('probe-ready-row-model')).toBeNull();
+
+      // Even if a stale adjusting flag exists on a non-adjustable partner, VM keeps adjusting false
+      evalIn("S.nativeSetup.partners.find((p) => p.id === 'conflict-installed').adjusting = true; render(true);");
+      expect(evalIn("VM.nativeSetup().items.find((x) => x.id === 'conflict-installed').adjusting")).toBe(false);
+      expect(w.document.getElementById('probe-conflict-installed-model')).toBeNull();
+
+      // Real nativeDetect auto-expand: expands ready AGY row with empty model, but does NOT expand conflict AGY row
+      const detectedPartners = [
+        {
+          id: 'agy-ready',
+          runtime: {
+            id: 'agy-native',
+            label: 'AGY Native',
+            installed: true,
+            agyCarrier: 'native',
+            models: [],
+            efforts: [],
+          },
+          form: {
+            displayName: 'AgyFresh',
+            defaultModel: '',
+            cliEffort: '',
+            cliConfigArgs: [],
+            accountRef: 'acc-1',
+            catId: 'agy-fresh',
+          },
+          agyAccounts: [{ id: 'acc-1', name: 'Main', kind: 'builtin' }],
+          selected: true,
+          selectable: true,
+        },
+        {
+          id: 'agy-conflict',
+          runtime: {
+            id: 'agy-native-2',
+            label: 'AGY Conflict',
+            installed: true,
+            agyCarrier: 'native',
+            models: [],
+            efforts: [],
+          },
+          form: {
+            displayName: 'AgyDup',
+            defaultModel: '',
+            cliEffort: '',
+            cliConfigArgs: [],
+            accountRef: 'acc-1',
+            catId: 'agy-dup',
+          },
+          agyAccounts: [{ id: 'acc-1', name: 'Main', kind: 'builtin' }],
+          identityConflict: true,
+          selected: false,
+          selectable: true,
+        },
+      ];
+      action.mockImplementation(async (name: string) => {
+        if (name === 'membersRead')
+          return { accounts: [], templates: [], runtimes: [], clients: [], strategies: [], libraries: [] };
+        if (name === 'memberRuntimeModels') return { status: 'live', models: [], effortOptions: [] };
+        if (name === 'nativeDetect') return detectedPartners;
+        return {};
+      });
+      await evalIn('A.nativeDetect({ refresh: true })');
+      expect(evalIn("VM.nativeSetup().items.find((x) => x.id === 'agy-ready').adjusting")).toBe(true);
+      expect(w.document.getElementById('probe-agy-ready-model')).not.toBeNull();
+      expect(evalIn("VM.nativeSetup().items.find((x) => x.id === 'agy-conflict').adjustable")).toBe(false);
+      expect(evalIn("VM.nativeSetup().items.find((x) => x.id === 'agy-conflict').adjusting")).toBe(false);
+      expect(w.document.getElementById('probe-agy-conflict-model')).toBeNull();
     });
   }
 });
