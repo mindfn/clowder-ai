@@ -1549,6 +1549,7 @@ function bindMembers() {
           selected: p.selected,
           existingId: p.existingId,
           selectable: p.selectable && !p.existingId && !p.identityConflict,
+          adjustable: !!(p.runtime && p.runtime.installed && !p.existingId && !p.identityConflict),
           payload: {
             defaultModel: p.form.defaultModel,
             cliEffort: p.form.cliEffort,
@@ -1573,15 +1574,17 @@ function bindMembers() {
           },
           state: p.existingId
             ? 'created'
-            : p.identityConflict
-              ? 'conflict'
-              : p.accountRequired
-                ? 'accountRequired'
-                : p.selectable
-                  ? p.runtime.dshDesktop
-                    ? 'dshAuto'
-                    : 'ready'
-                  : 'unavailable',
+            : !(p.runtime && p.runtime.installed)
+              ? 'unavailable'
+              : p.identityConflict
+                ? 'conflict'
+                : p.accountRequired
+                  ? 'accountRequired'
+                  : p.selectable
+                    ? p.runtime.dshDesktop
+                      ? 'dshAuto'
+                      : 'ready'
+                    : 'unavailable',
         };
       }),
       createDisabled:
@@ -1607,6 +1610,8 @@ function bindMembers() {
     const partner = S.nativeSetup.partners.find(function (p) {
       return p.id === d.id;
     });
+    if (!partner || !(partner.runtime && partner.runtime.installed) || partner.existingId || partner.identityConflict)
+      return;
     partner.adjusting = !partner.adjusting;
     render(true);
   };
