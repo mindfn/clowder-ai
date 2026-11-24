@@ -278,4 +278,98 @@ describe('local directory plugin installation across default and v2 themes', () 
       expect(w.localStorage.getItem('clowder.plugin-install.last-directory')).toBe('/Users/dev/plugins/my-plugin');
     });
   }
+
+  it('ignores out-of-order browse responses, preserves typing while browsing, and drops stale errors', async () => {
+    const { w, evalIn, action, flush } = await bootPluginDirConsole('default');
+
+    type BrowseResult = { directory: DirFixture };
+    const pending = new Map<string, { resolve: (v: BrowseResult) => void; reject: (e: Error) => void }>();
+    const submittedPaths: string[] = [];
+
+    action.mockImplementation(async (name: string, args: Record<string, string>) => {
+      if (name === 'projectBrowse') {
+        const key = args.path ?? '';
+        if (key === '') {
+          return {
+            directory: {
+              current: '/plugins',
+              parent: '/',
+              entries: [
+                { name: 'old', path: '/plugins/old', isDirectory: true },
+                { name: 'new', path: '/plugins/new', isDirectory: true },
+              ],
+            },
+          };
+        }
+        return new Promise<BrowseResult>((resolve, reject) => {
+          pending.set(key, { resolve, reject });
+        });
+      }
+      if (name === 'cafePathComplete') return true;
+      if (name === 'settingsPluginInstall') {
+        submittedPaths.push(JSON.parse(args.value ?? '{}').source.path);
+        return { pluginId: 'local.race-ok', pluginInstanceId: 'inst-race-1' };
+      }
+      return {};
+    });
+
+    evalIn("S.lang = 'zh'; go('ext'); render(true); A.installDir();");
+    await flush();
+
+    // 1. Out-of-order browse: start /plugins/old, then /plugins/new; resolve new first, old second
+    evalIn("A.pluginDirGo({ v: '/plugins/old' }); A.pluginDirGo({ v: '/plugins/new' });");
+    pending.get('/plugins/new')?.resolve({
+      directory: { current: '/plugins/new', parent: '/plugins', entries: [] },
+    });
+    await flush();
+    pending.get('/plugins/old')?.resolve({
+      directory: { current: '/plugins/old', parent: '/plugins', entries: [] },
+    });
+    await flush();
+    expect(evalIn('VM.pluginDir().selected')).toBe('/plugins/new');
+    expect(evalIn('VM.pluginDir().root')).toBe('/plugins/new');
+
+    // Submit sends /plugins/new, not /plugins/old
+    (w.document.querySelector('.pop-host[data-pop="dialog"] form button[type="submit"]') as HTMLButtonElement).click();
+    await flush();
+    expect(submittedPaths).toEqual(['/plugins/new']);
+
+    // 2. Typing while browse is in flight: stale resolve and stale reject must not clobber typed input or show error
+    evalIn('A.installDir();');
+    await flush();
+    evalIn("A.pluginDirGo({ v: '/plugins/slow-ok' });");
+    const pathInput = w.document.getElementById('pd-path') as HTMLInputElement;
+    pathInput.value = '/plugins/typed';
+    pathInput.dispatchEvent(new w.Event('input', { bubbles: true }));
+    pending.get('/plugins/slow-ok')?.resolve({
+      directory: { current: '/plugins/slow-ok', parent: '/plugins', entries: [] },
+    });
+    await flush();
+    expect(evalIn('VM.pluginDir().root')).toBe('/plugins/typed');
+    expect(evalIn('VM.pluginDir().selected')).toBe('');
+
+    evalIn("A.pluginDirGo({ v: '/plugins/slow-err' });");
+    const pathInput2 = w.document.getElementById('pd-path') as HTMLInputElement;
+    pathInput2.value = '/plugins/typed-after-err';
+    pathInput2.dispatchEvent(new w.Event('input', { bubbles: true }));
+    pending.get('/plugins/slow-err')?.reject(new Error('stale folder error'));
+    await flush();
+    expect(evalIn('VM.pluginDir().root')).toBe('/plugins/typed-after-err');
+    expect(w.document.querySelector('.pop-host[data-pop="dialog"]')?.textContent).not.toContain('stale folder error');
+
+    (w.document.querySelector('.pop-host[data-pop="dialog"] form button[type="submit"]') as HTMLButtonElement).click();
+    await flush();
+    expect(submittedPaths).toEqual(['/plugins/new', '/plugins/typed-after-err']);
+
+    // 3. Close & reopen dialog while older browse is in flight: late error/response must not affect reopened dialog
+    evalIn('A.installDir();');
+    await flush();
+    evalIn("A.pluginDirGo({ v: '/plugins/from-closed-err' });");
+    evalIn('S.dialog = null; A.installDir();');
+    await flush();
+    pending.get('/plugins/from-closed-err')?.reject(new Error('closed dialog error'));
+    await flush();
+    expect(evalIn('VM.pluginDir().root')).toBe('/plugins/typed-after-err');
+    expect(w.document.querySelector('.pop-host[data-pop="dialog"]')?.textContent).not.toContain('closed dialog error');
+  });
 });
