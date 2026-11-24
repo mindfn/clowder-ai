@@ -643,8 +643,9 @@ Object.assign(PDL_BLOCKS, {
       })).filter(Boolean);
       return cellsHtml({ key: b.key, axis: 'row', items: items, saved: pdlCells(b.key), edit: S.editLayout, cls: BAR[v] });
     }
-    if (b.left || b.right) { const right = pvControls(b.right, sc, root); inner = pvControls(b.left, sc, root) + pvParts(b.parts, sc, root) + (right ? '<span class="grow"></span>' + right : ''); }
-    else inner = (v === 'head' && !b.key ? backTake('page') : '') + pvControls(b.items, sc, root) + pvParts(b.parts, sc, root);
+    const bk = v === 'head' && !b.key ? backTake('page') : '';
+    if (b.left || b.right) { const right = pvControls(b.right, sc, root); inner = bk + pvControls(b.left, sc, root) + pvParts(b.parts, sc, root) + (right ? '<span class="grow"></span>' + right : ''); }
+    else inner = bk + pvControls(b.items, sc, root) + pvParts(b.parts, sc, root);
     if (!inner.replace(/<span class="grow"><\/span>/g, '') && b.id == null) return '';   /* 里面只剩撑开的空白（按钮都按条件藏了）：整条不画 */
     const tone = pv(b.tone, sc, root), tag = b.form ? 'form' : 'div', cls = BAR[v] + (tone ? ' vw-t-' + tone : '');
     /* id / hidden：保存栏这类由别处按 id 显示、隐藏的条 */
@@ -980,3 +981,40 @@ function pvOpened(l, key, cover) {
   return '<div class="opened" data-opened="' + h(key) + '">' + (cover ? engineBack({ act: 'back', data: ' data-c="' + h(key) + '"' }) : '') + body + '</div>';
 }
 Object.assign(PV_DRAW, { node: pvNode, control: pvControl, load: pvLoad, toc: pvWithToc, viewLoad: pvViewLoad, state: viewState, opened: pvOpened });
+/* 铺满页的浮动胶囊（纯画布的 .back-head，以及声明为 variant: head 的工具条 .chat-head）：
+   复用组件库唯一的拖动机制（EDGE_DRAG，整块可拖，轻点照常触发按钮）；偏移按视图记在本地存储里，容器缩放时夹在可视区内 */
+const FULL_FLOAT_SEL = '.vw-page-full.page > .chat-head, :is(.cover-in, .main-col, .main, .layer:not(.layer-covered)):not(.layer-covered):has(> .vw-page-full.page, > .page > .vw-page-full.page) > .back-head';
+const FULL_FLOAT_POS = store.get('fullFloatPos', {}) || {};
+function fullFloatKey(el) {
+  const vw = el.closest('.vw-page-full') || (el.parentElement && el.parentElement.querySelector(':scope > .vw-page-full, :scope > .page > .vw-page-full'));
+  return vw && vw.dataset.view ? vw.dataset.view : '';
+}
+function clampFullFloat(el, p) {
+  const host = el.offsetParent; if (!host) return p;
+  const hr = host.getBoundingClientRect(), r = el.getBoundingClientRect();
+  if (!hr.width || !hr.height) return p;
+  const cx = parseFloat(el.style.getPropertyValue('--drag-x')) || 0, cy = parseFloat(el.style.getPropertyValue('--drag-y')) || 0;
+  const baseL = r.left - cx - hr.left, baseT = r.top - cy - hr.top, pad = 4;
+  const minX = pad - baseL, maxX = Math.max(minX, hr.width - r.width - pad - baseL);
+  const minY = pad - baseT, maxY = Math.max(minY, hr.height - r.height - pad - baseT);
+  return { x: Math.round(Math.min(maxX, Math.max(minX, p.x))), y: Math.round(Math.min(maxY, Math.max(minY, p.y))) };
+}
+EDGE_DRAG.push({
+  find: function (t) { const el = t && t.closest && t.closest(FULL_FLOAT_SEL); return el ? { el: el, whole: true } : null; },
+  start: function (el, e0) {
+    const k = fullFloatKey(el), cur = clampFullFloat(el, FULL_FLOAT_POS[k] || { x: 0, y: 0 }), sx = e0.clientX, sy = e0.clientY;
+    let last = cur;
+    return {
+      move: function (e) { last = clampFullFloat(el, { x: cur.x + e.clientX - sx, y: cur.y + e.clientY - sy }); dragOffset(el, last); },
+      end: function () { if (k) { FULL_FLOAT_POS[k] = last; store.set('fullFloatPos', FULL_FLOAT_POS); } }
+    };
+  }
+});
+function restoreFullFloatPos() {
+  document.querySelectorAll(FULL_FLOAT_SEL).forEach(function (el) {
+    const k = fullFloatKey(el), p = k && FULL_FLOAT_POS[k];
+    if (p) dragOffset(el, clampFullFloat(el, p));
+  });
+}
+onRender(restoreFullFloatPos);
+window.addEventListener('resize', restoreFullFloatPos);
