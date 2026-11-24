@@ -23462,6 +23462,60 @@ pdl:
         - text: $.key
       ok: t:placement.disconnect
       danger: true
+    dlg.pluginDir:
+      vm: pluginDir
+      title: t:ext.installDirTitle
+      help: t:ext.installDirHelp
+      wide: true
+      noFieldFocus: true
+      ok: t:common.install
+      blocks:
+        - type: toolbar
+          items:
+            - type: button
+              iconOnly: true
+              icon: up
+              label: t:ext.installDirParent
+              act: pluginDirPick
+              args:
+                path: $.parent
+              disabled: $.noParent
+            - type: input
+              id: pd-path
+              grow: true
+              mono: true
+              placeholder: t:composerPop.pathPlaceholder
+              value: $.root
+              input: pluginDirComplete
+              go: pluginDirGo
+              icon: right
+              goLabel: t:ext.installDirBrowse
+        - type: opts
+          from: $.completions
+          item:
+            title: "@name"
+            sub: "@path"
+            act: pluginDirPick
+            args:
+              path: "@path"
+          when: $.hasCompletions
+        - type: tree
+          id: pdTree
+          nodes: $.nodes
+          item:
+            cur: "@selected"
+          row: file.row
+          select:
+            act: pluginDirSelect
+            args:
+              path: "@path"
+        - type: text
+          variant: meta
+          parts:
+            - text: t:ext.installDirSelected
+            - text: $.selected
+              mono: true
+          when: $.selected
     dlg.pluginFile:
       title: t:ext.offlineInstall
       fields:
