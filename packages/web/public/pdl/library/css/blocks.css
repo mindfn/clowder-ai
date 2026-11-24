@@ -48,7 +48,7 @@
 .vw-page-full.page > .chat-head { position: absolute; z-index: var(--z-raised); top: var(--page-gap); left: var(--page-gap); width: auto; height: auto; padding: var(--sp-xs); gap: var(--sp-xs); border-radius: var(--r-l); background: var(--surf-float); box-shadow: var(--shadow-float); flex-wrap: nowrap; }   /* 盖在别人画的页面上（框里的页面什么底色都有）：返回与页头工具条统一收成浮层胶囊，不另占一行，支持拖动挪开 */
 :is(.cover-in, .main-col, .main, .layer:not(.layer-covered)):not(.layer-covered):has(> .vw-page-full.page, > .page > .vw-page-full.page) > .back-head > .back,
 .vw-page-full.page > .chat-head > .back { margin-left: 0; }
-.vw-page-full.page > .chat-head > :is(.grow, .flex-1) { display: none; }
+.vw-page-full.page > .chat-head > .grow { display: none; }
 :is(.back-head, .vw-page-full.page > .chat-head)[data-dragged] { translate: var(--drag-x) var(--drag-y); }
 .vw-page-full.page { position: relative; flex: 1 1 0; min-block-size: 0; block-size: 100%; inline-size: 100%; max-inline-size: none; margin: 0; padding: 0; gap: 0; display: flex; flex-direction: column; }
 .vw-page-full.page > .page-head { padding: var(--sp-m) var(--g-pad); }

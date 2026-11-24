@@ -994,7 +994,7 @@ function clampFullFloat(el, p) {
   const hr = host.getBoundingClientRect(), r = el.getBoundingClientRect();
   if (!hr.width || !hr.height) return p;
   const cx = parseFloat(el.style.getPropertyValue('--drag-x')) || 0, cy = parseFloat(el.style.getPropertyValue('--drag-y')) || 0;
-  const baseL = r.left - cx - hr.left, baseT = r.top - cy - hr.top, pad = 4;
+  const baseL = r.left - cx - hr.left, baseT = r.top - cy - hr.top, pad = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sp-xs')) || 4;
   const minX = pad - baseL, maxX = Math.max(minX, hr.width - r.width - pad - baseL);
   const minY = pad - baseT, maxY = Math.max(minY, hr.height - r.height - pad - baseT);
   return { x: Math.round(Math.min(maxX, Math.max(minX, p.x))), y: Math.round(Math.min(maxY, Math.max(minY, p.y))) };
