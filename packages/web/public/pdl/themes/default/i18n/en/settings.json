@@ -29,7 +29,8 @@
       "seven_day": "Week (all models)",
       "fable": "Week (Fable)"
     },
-    "quotaResets": "Resets {0}", "quotaRefreshAll": "Refresh all usage"
+    "quotaResets": "Resets {0}",
+    "quotaRefreshAll": "Refresh all usage"
   },
   "pluginFrameClose": {
     "title": "Close plugin panel",
@@ -208,5 +209,14 @@
     "resetLayout": "Reset layout",
     "resetOff": "Already using default layout",
     "viewPdl": "View PDL"
+  },
+  "ext": {
+    "installDir": "Install from local directory",
+    "installDirTitle": "Install plugin from local directory",
+    "installDirHelp": "Select a built plugin package directory on the Hub machine; enable it after installation.",
+    "installDirBrowse": "Go to path",
+    "installDirParent": "Parent directory",
+    "installDirSelected": "Selected directory: ",
+    "installDirRequired": "Select a plugin directory first."
   }
 }
