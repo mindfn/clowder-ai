@@ -118,7 +118,7 @@ describe('generic page: full layout contract across all PDL containers', () => {
       '.vw-page-full.page { position: relative; flex: 1 1 0; min-block-size: 0; block-size: 100%; inline-size: 100%; max-inline-size: none; margin: 0; padding: 0; gap: 0; display: flex; flex-direction: column; }',
     );
     expect(blocksCss).toContain('.vw-page-full.page > .chat-head { position: absolute; z-index: var(--z-raised);');
-    expect(blocksCss).toContain('.vw-page-full.page > .chat-head > :is(.grow, .flex-1) { display: none; }');
+    expect(blocksCss).toContain('.vw-page-full.page > .chat-head > .grow { display: none; }');
     expect(blocksCss).toContain(
       ':is(.back-head, .vw-page-full.page > .chat-head)[data-dragged] { translate: var(--drag-x) var(--drag-y); }',
     );
