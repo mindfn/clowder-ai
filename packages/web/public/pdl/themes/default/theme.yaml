@@ -217,8 +217,7 @@ pdl:
                           act: nativeAdjust
                           args:
                             id: "@id"
-                          disabled: "@existingId"
-                          when: "@runtime.installed"
+                          when: "@adjustable"
                     moreWhen: "@adjusting"
                     more:
                       - type: settings
