@@ -3152,6 +3152,8 @@ pdl:
     THREAD_SECTION_ITEM:
       key: "@key"
       rows: "@rows"
+      peek: "@peek"
+      peekMore: "@peekMore"
       collapsed:
         of: "@head.kind"
         map:
@@ -3191,6 +3193,7 @@ pdl:
         warn: "@head.warn"
         fixed: "@head.fixed"
         peek: "@head.peek"
+        attention: "@head.attention"
         sort: "@head.sort"
         open:
           of: "@head.kind"
@@ -18981,6 +18984,8 @@ pdl:
           item:
             key: "@key"
             rows: "@rows"
+            peek: "@peek"
+            peekMore: "@peekMore"
             rowDrop:
               of: "@key"
               map:
@@ -19029,6 +19034,7 @@ pdl:
               warn: "@head.warn"
               fixed: "@head.fixed"
               peek: "@head.peek"
+              attention: "@head.attention"
               sort: "@head.sort"
               open:
                 of: "@head.kind"
@@ -27504,7 +27510,7 @@ pdl:
               when: $.documentEditor
               items:
                 - type: button
-                  label: 协作编辑
+                  label: t:workbench.file.collabEdit
                   act: fileOffice
                   when: "!$.documentFrame"
                 - type: button
