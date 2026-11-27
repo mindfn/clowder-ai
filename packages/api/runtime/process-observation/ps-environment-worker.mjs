@@ -17,8 +17,9 @@ export async function streamMacProcessEnvironments(
   if (pids?.length === 0) return 0;
   const selection = pids ? ['-p', pids.join(',')] : ['-ax'];
   const child = spawnImpl('/bin/ps', ['eww', ...selection, '-o', 'pid=,ppid=,pgid=,lstart=,command='], {
-    stdio: ['ignore', 'pipe', 'pipe'],
+    // lstart is locale-formatted; identity text must match the C-locale readers.
     env: { ...process.env, LC_ALL: 'C' },
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
   const decoder = new StringDecoder('utf8');
   const patterns = markers.map(
