@@ -12,11 +12,17 @@ export interface RenderHookContext {
 
 export interface PerfEvent {
   at: number;
-  kind: 'boot' | 'transition' | 'render' | 'api' | 'vm' | 'push' | 'longtask' | 'interaction';
+  kind: 'boot' | 'transition' | 'render' | 'api' | 'vm' | 'push' | 'longtask' | 'interaction' | 'diagnostic';
   name: string;
   ms: number;
   route: string;
   detail?: Record<string, unknown>;
+}
+
+export interface InteractionPhases {
+  inputDelayMs: number;
+  processingMs: number;
+  presentationDelayMs: number;
 }
 
 export interface BucketSummary {
@@ -71,8 +77,10 @@ export interface ConsolePerfSummary {
     totalBlockingMs: number;
     maxMs: number;
     byRoute: BucketSummary[];
+    byTrigger: BucketSummary[];
   };
   interactions: BucketSummary[];
+  diagnostics: BucketSummary[];
 }
 
 export interface ConsolePerfController {
@@ -84,6 +92,7 @@ export interface ConsolePerfController {
   _renderStart: (ctx: RenderHookContext) => void;
   _renderEnd: (ctx: RenderHookContext) => void;
   _push: (kind: string, ms: number) => void;
+  _diag: (name: string, ms: number, detail?: Record<string, unknown>, error?: boolean) => void;
 }
 
 interface Bucket {
@@ -141,6 +150,7 @@ const SLOW_VM_MS = 8;
 const VERBOSE_VM_MS = 16;
 const VERBOSE_TRANSITION_MS = 200;
 const SLOW_INTERACTION_MS = 40;
+const LONGTASK_ATTRIBUTION_WINDOW_MS = 2000;
 const TRANSITION_TIMEOUT_MS = 10_000;
 
 const SAFE_SLUG_RE = /^[a-z][a-z0-9._-]{0,23}$/i;
@@ -264,6 +274,30 @@ function formatRouteKey(ctx: Pick<RenderHookContext, 'route' | 'param' | 'thread
   return `${ctx.route || ''}|${ctx.param || ''}|${ctx.thread || ''}|${ctx.panel || ''}`;
 }
 
+function sanitizeDiagnosticDetail(
+  detail?: Record<string, unknown>,
+): Record<string, string | number | boolean> | undefined {
+  if (!detail) return undefined;
+  const out: Record<string, string | number | boolean> = {};
+  let count = 0;
+  for (const [rawKey, value] of Object.entries(detail)) {
+    if (count >= 8) break;
+    const key = sanitizeSlug(rawKey, '');
+    if (!key) continue;
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      out[key] = round1(value);
+      count += 1;
+    } else if (typeof value === 'boolean') {
+      out[key] = value;
+      count += 1;
+    } else if (typeof value === 'string') {
+      out[key] = sanitizeSlug(value, ':redacted');
+      count += 1;
+    }
+  }
+  return count ? out : undefined;
+}
+
 export function describeTarget(target: EventTarget | null): string {
   if (!target || typeof target !== 'object' || !('tagName' in target)) return 'unknown';
   const el = target as Element;
@@ -321,10 +355,13 @@ export class ConsolePerfTracker {
   private vmBuckets = new Map<string, Bucket>();
   private apiBuckets = new Map<string, Bucket>();
   private longtaskBuckets = new Map<string, Bucket>();
+  private longtaskTriggerBuckets = new Map<string, Bucket>();
   private longtaskCount = 0;
   private longtaskBlockingMs = 0;
   private longtaskMaxMs = 0;
   private interactionBuckets = new Map<string, Bucket>();
+  private diagnosticBuckets = new Map<string, Bucket>();
+  private lastTrigger: { kind: string; name: string; at: number } | null = null;
 
   private observers: PerformanceObserver[] = [];
   private measureNames = new Set<string>();
@@ -344,7 +381,12 @@ export class ConsolePerfTracker {
       _renderStart: (ctx) => this.onRenderStart(ctx),
       _renderEnd: (ctx) => this.onRenderEnd(ctx),
       _push: (kind, ms) => this.recordPush(kind, ms),
+      _diag: (name, ms, detail, error) => this.recordDiagnostic(name, ms, detail, error),
     };
+  }
+
+  private noteTrigger(kind: string, name: string): void {
+    this.lastTrigger = { kind, name, at: nowMs() };
   }
 
   private pushEvent(event: PerfEvent, logVerbose = false): void {
@@ -399,6 +441,7 @@ export class ConsolePerfTracker {
     const t = nowMs();
     const route = formatRoute(ctx);
     const routeKey = formatRouteKey(ctx);
+    this.noteTrigger('render', route);
     this.renderStack.push({
       startedAt: t,
       route,
@@ -556,13 +599,15 @@ export class ConsolePerfTracker {
   }
 
   recordPush(kind: string, ms: number): void {
-    addSample(this.pushBuckets, kind, ms);
+    const safeKind = sanitizeSlug(kind, 'push');
+    this.noteTrigger('push', safeKind);
+    addSample(this.pushBuckets, safeKind, ms);
     if (ms >= SLOW_RENDER_MS) {
       this.pushEvent(
         {
           at: Date.now(),
           kind: 'push',
-          name: kind,
+          name: safeKind,
           ms: round1(ms),
           route: this.lastRoute,
         },
@@ -572,6 +617,7 @@ export class ConsolePerfTracker {
   }
 
   recordVm(name: string, ms: number): void {
+    this.noteTrigger('vm', name);
     addSample(this.vmBuckets, name, ms);
     if (ms >= SLOW_VM_MS) {
       this.pushEvent(
@@ -583,6 +629,25 @@ export class ConsolePerfTracker {
           route: this.lastRoute,
         },
         ms >= VERBOSE_VM_MS,
+      );
+    }
+  }
+
+  recordDiagnostic(name: string, ms: number, detail?: Record<string, unknown>, error = false): void {
+    const safeName = sanitizeSlug(name, 'diag');
+    this.noteTrigger('diagnostic', safeName);
+    addSample(this.diagnosticBuckets, safeName, ms, error);
+    if (error || ms >= SLOW_API_MS) {
+      this.pushEvent(
+        {
+          at: Date.now(),
+          kind: 'diagnostic',
+          name: safeName,
+          ms: round1(ms),
+          route: this.lastRoute,
+          detail: sanitizeDiagnosticDetail(detail),
+        },
+        error || ms >= VERBOSE_API_MS,
       );
     }
   }
@@ -624,6 +689,7 @@ export class ConsolePerfTracker {
   private trackPortCall<R>(key: string, run: () => R, options?: { safePath?: string; attachTransition?: boolean }): R {
     const t0 = nowMs();
     const route = this.lastRoute;
+    this.noteTrigger('api', key);
     const transition =
       options?.attachTransition && this.activeTransition && !this.activeTransition.settled
         ? this.activeTransition
@@ -757,21 +823,7 @@ export class ConsolePerfTracker {
       try {
         const obs = new PerformanceObserver((list) => {
           for (const entry of list.getEntries()) {
-            const ms = entry.duration;
-            this.longtaskCount += 1;
-            this.longtaskBlockingMs += Math.max(0, ms - 50);
-            if (ms > this.longtaskMaxMs) this.longtaskMaxMs = ms;
-            addSample(this.longtaskBuckets, this.lastRoute, ms);
-            this.pushEvent(
-              {
-                at: Date.now(),
-                kind: 'longtask',
-                name: entry.name || 'self',
-                ms: round1(ms),
-                route: this.lastRoute,
-              },
-              true,
-            );
+            this.recordLongtask(entry.name || 'self', entry.duration);
           }
         });
         obs.observe({ type: 'longtask', buffered: true });
@@ -784,7 +836,21 @@ export class ConsolePerfTracker {
       try {
         const obs = new PerformanceObserver((list) => {
           for (const entry of list.getEntries()) {
-            this.recordInteraction(entry.name, (entry as PerformanceEventTiming).target ?? null, entry.duration);
+            const ev = entry as PerformanceEventTiming;
+            let phases: InteractionPhases | undefined;
+            if (
+              typeof ev.processingStart === 'number' &&
+              typeof ev.processingEnd === 'number' &&
+              ev.processingStart >= ev.startTime &&
+              ev.processingEnd >= ev.processingStart
+            ) {
+              phases = {
+                inputDelayMs: round1(Math.max(0, ev.processingStart - ev.startTime)),
+                processingMs: round1(Math.max(0, ev.processingEnd - ev.processingStart)),
+                presentationDelayMs: round1(Math.max(0, ev.duration - (ev.processingEnd - ev.startTime))),
+              };
+            }
+            this.recordInteraction(ev.name, ev.target ?? null, ev.duration, phases);
           }
         });
         obs.observe({
@@ -799,10 +865,49 @@ export class ConsolePerfTracker {
     }
   }
 
-  recordInteraction(eventName: string, target: EventTarget | null, durationMs: number): void {
+  recordLongtask(name: string, ms: number): void {
+    this.longtaskCount += 1;
+    this.longtaskBlockingMs += Math.max(0, ms - 50);
+    if (ms > this.longtaskMaxMs) this.longtaskMaxMs = ms;
+    addSample(this.longtaskBuckets, this.lastRoute, ms);
+    const now = nowMs();
+    const trig =
+      this.lastTrigger && now - this.lastTrigger.at <= LONGTASK_ATTRIBUTION_WINDOW_MS ? this.lastTrigger : null;
+    const triggerKey = trig ? `${trig.kind}:${trig.name}` : 'unknown';
+    addSample(this.longtaskTriggerBuckets, triggerKey, ms);
+    const detail = trig
+      ? { lastKind: trig.kind, lastName: trig.name, ageMs: round1(Math.max(0, now - trig.at)) }
+      : undefined;
+    this.pushEvent(
+      {
+        at: Date.now(),
+        kind: 'longtask',
+        name: sanitizeSlug(name, 'self'),
+        ms: round1(ms),
+        route: this.lastRoute,
+        ...(detail ? { detail } : {}),
+      },
+      true,
+    );
+  }
+
+  recordInteraction(
+    eventName: string,
+    target: EventTarget | null,
+    durationMs: number,
+    phases?: InteractionPhases,
+  ): void {
     if (durationMs < SLOW_INTERACTION_MS) return;
     const name = `${sanitizeSlug(eventName, 'event')} ${describeTarget(target)}`;
+    this.noteTrigger('interaction', name);
     addSample(this.interactionBuckets, name, durationMs);
+    const detail = phases
+      ? {
+          inputDelayMs: round1(Math.max(0, phases.inputDelayMs)),
+          processingMs: round1(Math.max(0, phases.processingMs)),
+          presentationDelayMs: round1(Math.max(0, phases.presentationDelayMs)),
+        }
+      : undefined;
     this.pushEvent(
       {
         at: Date.now(),
@@ -810,6 +915,7 @@ export class ConsolePerfTracker {
         name,
         ms: round1(durationMs),
         route: this.lastRoute,
+        ...(detail ? { detail } : {}),
       },
       durationMs >= 100,
     );
@@ -892,8 +998,10 @@ export class ConsolePerfTracker {
         totalBlockingMs: round1(this.longtaskBlockingMs),
         maxMs: round1(this.longtaskMaxMs),
         byRoute: summarizeBuckets(this.longtaskBuckets, 10),
+        byTrigger: summarizeBuckets(this.longtaskTriggerBuckets, 10),
       },
       interactions: summarizeBuckets(this.interactionBuckets, 10),
+      diagnostics: summarizeBuckets(this.diagnosticBuckets, 15, true),
     };
     if (print && typeof console !== 'undefined') {
       printPerfSummary(out);
@@ -934,10 +1042,13 @@ export class ConsolePerfTracker {
     this.vmBuckets.clear();
     this.apiBuckets.clear();
     this.longtaskBuckets.clear();
+    this.longtaskTriggerBuckets.clear();
     this.longtaskCount = 0;
     this.longtaskBlockingMs = 0;
     this.longtaskMaxMs = 0;
     this.interactionBuckets.clear();
+    this.diagnosticBuckets.clear();
+    this.lastTrigger = null;
     if (includeBoot) {
       this.bootAssets = [];
       this.bootStylesMs = 0;
@@ -995,8 +1106,10 @@ function printPerfSummary(out: ConsolePerfSummary): void {
       maxMs: out.longtasks.maxMs,
     });
     console.table(out.longtasks.byRoute);
+    printTable('longtasks by trigger:', out.longtasks.byTrigger);
   }
   printTable('slow interactions:', out.interactions);
+  printTable('diagnostics:', out.diagnostics);
   console.groupEnd();
 }
 

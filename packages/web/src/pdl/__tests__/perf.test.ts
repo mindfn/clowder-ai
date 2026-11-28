@@ -340,4 +340,93 @@ describe('ConsolePerfTracker', () => {
     expect(tracker.summary(false).boot.startMs).toBe(0);
     tracker.dispose();
   });
+
+  it('attributes longtasks to the most recent trigger within 2s and falls back to unknown when stale', () => {
+    let clock = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
+    const tracker = new ConsolePerfTracker();
+
+    tracker.onRenderStart({ route: 'chat', settle: 1, keep: true });
+    clock += 12;
+    tracker.onRenderEnd({ route: 'chat', settle: 2, keep: true });
+
+    clock += 80;
+    tracker.recordLongtask('self', 120);
+
+    clock += 2500;
+    tracker.recordLongtask('self', 90);
+
+    const summary = tracker.summary(false);
+    expect(summary.longtasks.count).toBe(2);
+    expect(summary.longtasks.totalBlockingMs).toBe(110);
+    expect(summary.longtasks.byTrigger).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'render:chat', count: 1, maxMs: 120 }),
+        expect.objectContaining({ name: 'unknown', count: 1, maxMs: 90 }),
+      ]),
+    );
+
+    const events = tracker.recent(5).filter((e) => e.kind === 'longtask');
+    expect(events[0].detail).toEqual({ lastKind: 'render', lastName: 'chat', ageMs: 92 });
+    expect(events[1].detail).toBeUndefined();
+
+    tracker.reset(false);
+    expect(tracker.summary(false).longtasks.byTrigger).toEqual([]);
+    tracker.dispose();
+  });
+
+  it('records 3-phase input timing breakdown and redacts diagnostic probes with bounded buckets', () => {
+    let clock = 3000;
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
+    const tracker = new ConsolePerfTracker();
+
+    const textarea = document.createElement('textarea');
+    tracker.recordInteraction('keydown', textarea, 95, {
+      inputDelayMs: 42.34,
+      processingMs: 18.62,
+      presentationDelayMs: 34.04,
+    });
+    const interactionEvent = tracker.recent(5).find((e) => e.kind === 'interaction');
+    expect(interactionEvent?.detail).toEqual({
+      inputDelayMs: 42.3,
+      processingMs: 18.6,
+      presentationDelayMs: 34,
+    });
+
+    tracker.controller._diag(
+      'sidebar.owner_degraded',
+      210.4,
+      {
+        attentionMs: 25.1,
+        labelsMs: 205.7,
+        failed: 'labels',
+        rawSecret: 'thread_SENTINEL_DIAG_SECRET',
+        nested: { leak: 'SENTINEL_NESTED' },
+      },
+      true,
+    );
+    const exported = tracker.exportJson();
+    expect(exported).not.toContain('SENTINEL_DIAG_SECRET');
+    expect(exported).not.toContain('SENTINEL_NESTED');
+
+    const parsed = JSON.parse(exported);
+    expect(parsed.summary.diagnostics).toContainEqual(
+      expect.objectContaining({ name: 'sidebar.owner_degraded', count: 1, errors: 1, maxMs: 210.4 }),
+    );
+    const diagEvent = parsed.recent.find((e: { kind: string }) => e.kind === 'diagnostic');
+    expect(diagEvent.detail).toEqual({
+      attentionMs: 25.1,
+      labelsMs: 205.7,
+      failed: 'labels',
+      rawSecret: ':redacted',
+    });
+
+    for (let i = 0; i < MAX_BUCKETS + 20; i += 1) {
+      tracker.recordDiagnostic(`probe.${i}`, 10);
+    }
+    const internals = tracker as unknown as { diagnosticBuckets: Map<string, unknown> };
+    expect(internals.diagnosticBuckets.size).toBeLessThanOrEqual(MAX_BUCKETS + 1);
+    expect(internals.diagnosticBuckets.has('(other)')).toBe(true);
+    tracker.dispose();
+  });
 });

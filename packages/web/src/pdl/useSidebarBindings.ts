@@ -70,15 +70,42 @@ export function useSidebarBindings(data: ChatData, needed: boolean | number = fa
   const load = useCallback(async (fresh = true) => {
     const ticket = ++sequence.current;
     const identity = apiSessionIdentity.getSnapshot();
+    const startedAt = performance.now();
+    const timings: { attentionMs?: number; labelsMs?: number; snapshotMs?: number; failed?: string } = {};
+    const measure = <T>(key: 'attention' | 'labels' | 'snapshot', run: () => Promise<T>): Promise<T> => {
+      const t0 = performance.now();
+      return run().then(
+        (value) => {
+          timings[`${key}Ms`] = performance.now() - t0;
+          return value;
+        },
+        (err) => {
+          timings[`${key}Ms`] = performance.now() - t0;
+          timings.failed ??= key;
+          throw err;
+        },
+      );
+    };
     try {
       const [preferences, labels] = await Promise.all([
-        request<SidebarOwner['preferences']>('/api/config/thread-attention', undefined, { afterCurrentGet: true }),
-        request<ThreadLabel[]>('/api/labels', undefined, { afterCurrentGet: true }),
-        fresh ? invalidateSidebarProjection() : refreshSidebarThreadSnapshot(),
+        measure('attention', () =>
+          request<SidebarOwner['preferences']>('/api/config/thread-attention', undefined, { afterCurrentGet: true }),
+        ),
+        measure('labels', () => request<ThreadLabel[]>('/api/labels', undefined, { afterCurrentGet: true })),
+        measure('snapshot', () => (fresh ? invalidateSidebarProjection() : refreshSidebarThreadSnapshot())),
       ]);
-      if (ticket === sequence.current && identity === apiSessionIdentity.getSnapshot()) accept({ preferences, labels });
+      const totalMs = Math.max(0, performance.now() - startedAt);
+      const stale = ticket !== sequence.current || identity !== apiSessionIdentity.getSnapshot();
+      window.__pdlPerf?._diag('sidebar.load', totalMs, { ...timings, fresh, stale });
+      if (!stale) accept({ preferences, labels });
     } catch (error) {
-      if (ticket !== sequence.current || identity !== apiSessionIdentity.getSnapshot()) return;
+      const totalMs = Math.max(0, performance.now() - startedAt);
+      const stale = ticket !== sequence.current || identity !== apiSessionIdentity.getSnapshot();
+      if (stale) {
+        window.__pdlPerf?._diag('sidebar.load', totalMs, { ...timings, fresh, stale: true }, true);
+        return;
+      }
+      window.__pdlPerf?._diag('sidebar.owner_degraded', totalMs, { ...timings, fresh }, true);
       read.current = { owner: null, error };
       publish();
       throw error;
