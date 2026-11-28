@@ -12,7 +12,7 @@ export interface RenderHookContext {
 
 export interface PerfEvent {
   at: number;
-  kind: 'boot' | 'transition' | 'render' | 'api' | 'vm' | 'push' | 'longtask' | 'interaction' | 'diagnostic';
+  kind: 'boot' | 'transition' | 'render' | 'api' | 'http' | 'vm' | 'push' | 'longtask' | 'interaction';
   name: string;
   ms: number;
   route: string;
@@ -72,6 +72,7 @@ export interface ConsolePerfSummary {
   pushes: BucketSummary[];
   vms: BucketSummary[];
   api: BucketSummary[];
+  http: BucketSummary[];
   longtasks: {
     count: number;
     totalBlockingMs: number;
@@ -80,7 +81,6 @@ export interface ConsolePerfSummary {
     byTrigger: BucketSummary[];
   };
   interactions: BucketSummary[];
-  diagnostics: BucketSummary[];
 }
 
 export interface ConsolePerfController {
@@ -92,7 +92,7 @@ export interface ConsolePerfController {
   _renderStart: (ctx: RenderHookContext) => void;
   _renderEnd: (ctx: RenderHookContext) => void;
   _push: (kind: string, ms: number) => void;
-  _diag: (name: string, ms: number, detail?: Record<string, unknown>, error?: boolean) => void;
+  _http: (method: string, path: string, ms: number, status?: number, failed?: boolean) => void;
 }
 
 interface Bucket {
@@ -274,30 +274,6 @@ function formatRouteKey(ctx: Pick<RenderHookContext, 'route' | 'param' | 'thread
   return `${ctx.route || ''}|${ctx.param || ''}|${ctx.thread || ''}|${ctx.panel || ''}`;
 }
 
-function sanitizeDiagnosticDetail(
-  detail?: Record<string, unknown>,
-): Record<string, string | number | boolean> | undefined {
-  if (!detail) return undefined;
-  const out: Record<string, string | number | boolean> = {};
-  let count = 0;
-  for (const [rawKey, value] of Object.entries(detail)) {
-    if (count >= 8) break;
-    const key = sanitizeSlug(rawKey, '');
-    if (!key) continue;
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      out[key] = round1(value);
-      count += 1;
-    } else if (typeof value === 'boolean') {
-      out[key] = value;
-      count += 1;
-    } else if (typeof value === 'string') {
-      out[key] = sanitizeSlug(value, ':redacted');
-      count += 1;
-    }
-  }
-  return count ? out : undefined;
-}
-
 export function describeTarget(target: EventTarget | null): string {
   if (!target || typeof target !== 'object' || !('tagName' in target)) return 'unknown';
   const el = target as Element;
@@ -354,13 +330,13 @@ export class ConsolePerfTracker {
   private pushBuckets = new Map<string, Bucket>();
   private vmBuckets = new Map<string, Bucket>();
   private apiBuckets = new Map<string, Bucket>();
+  private httpBuckets = new Map<string, Bucket>();
   private longtaskBuckets = new Map<string, Bucket>();
   private longtaskTriggerBuckets = new Map<string, Bucket>();
   private longtaskCount = 0;
   private longtaskBlockingMs = 0;
   private longtaskMaxMs = 0;
   private interactionBuckets = new Map<string, Bucket>();
-  private diagnosticBuckets = new Map<string, Bucket>();
   private lastTrigger: { kind: string; name: string; at: number } | null = null;
 
   private observers: PerformanceObserver[] = [];
@@ -381,7 +357,7 @@ export class ConsolePerfTracker {
       _renderStart: (ctx) => this.onRenderStart(ctx),
       _renderEnd: (ctx) => this.onRenderEnd(ctx),
       _push: (kind, ms) => this.recordPush(kind, ms),
-      _diag: (name, ms, detail, error) => this.recordDiagnostic(name, ms, detail, error),
+      _http: (method, path, ms, status, failed) => this.recordHttp(method, path, ms, status, failed),
     };
   }
 
@@ -633,21 +609,27 @@ export class ConsolePerfTracker {
     }
   }
 
-  recordDiagnostic(name: string, ms: number, detail?: Record<string, unknown>, error = false): void {
-    const safeName = sanitizeSlug(name, 'diag');
-    this.noteTrigger('diagnostic', safeName);
-    addSample(this.diagnosticBuckets, safeName, ms, error);
-    if (error || ms >= SLOW_API_MS) {
+  recordHttp(method: string, path: string, ms: number, status = 0, failed = false): void {
+    const safeMethod = sanitizeSlug(method.toUpperCase(), 'HTTP');
+    const safePath = normalizeApiPath(path);
+    const key = `${safeMethod} ${safePath}`;
+    this.noteTrigger('http', key);
+    addSample(this.httpBuckets, key, ms, failed);
+    if (failed || ms >= SLOW_API_MS) {
       this.pushEvent(
         {
           at: Date.now(),
-          kind: 'diagnostic',
-          name: safeName,
+          kind: 'http',
+          name: key,
           ms: round1(ms),
           route: this.lastRoute,
-          detail: sanitizeDiagnosticDetail(detail),
+          detail: {
+            path: safePath,
+            ...(status ? { status } : {}),
+            ...(failed ? { error: true } : {}),
+          },
         },
-        error || ms >= VERBOSE_API_MS,
+        failed || ms >= VERBOSE_API_MS,
       );
     }
   }
@@ -993,6 +975,7 @@ export class ConsolePerfTracker {
       pushes: summarizeBuckets(this.pushBuckets, 10),
       vms: summarizeBuckets(this.vmBuckets, 15),
       api: summarizeBuckets(this.apiBuckets, 20, true),
+      http: summarizeBuckets(this.httpBuckets, 20, true),
       longtasks: {
         count: this.longtaskCount,
         totalBlockingMs: round1(this.longtaskBlockingMs),
@@ -1001,7 +984,6 @@ export class ConsolePerfTracker {
         byTrigger: summarizeBuckets(this.longtaskTriggerBuckets, 10),
       },
       interactions: summarizeBuckets(this.interactionBuckets, 10),
-      diagnostics: summarizeBuckets(this.diagnosticBuckets, 15, true),
     };
     if (print && typeof console !== 'undefined') {
       printPerfSummary(out);
@@ -1041,13 +1023,13 @@ export class ConsolePerfTracker {
     this.pushBuckets.clear();
     this.vmBuckets.clear();
     this.apiBuckets.clear();
+    this.httpBuckets.clear();
     this.longtaskBuckets.clear();
     this.longtaskTriggerBuckets.clear();
     this.longtaskCount = 0;
     this.longtaskBlockingMs = 0;
     this.longtaskMaxMs = 0;
     this.interactionBuckets.clear();
-    this.diagnosticBuckets.clear();
     this.lastTrigger = null;
     if (includeBoot) {
       this.bootAssets = [];
@@ -1099,6 +1081,7 @@ function printPerfSummary(out: ConsolePerfSummary): void {
   printTable('pushes:', out.pushes);
   printTable('vms:', out.vms);
   printTable('api:', out.api);
+  printTable('http:', out.http);
   if (out.longtasks.count) {
     console.log('longtasks:', {
       count: out.longtasks.count,
@@ -1109,7 +1092,6 @@ function printPerfSummary(out: ConsolePerfSummary): void {
     printTable('longtasks by trigger:', out.longtasks.byTrigger);
   }
   printTable('slow interactions:', out.interactions);
-  printTable('diagnostics:', out.diagnostics);
   console.groupEnd();
 }
 

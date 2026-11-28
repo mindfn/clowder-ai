@@ -118,9 +118,21 @@ function notifySessionFailure() {
  * here so that whichever response completes first can reveal a runtime deploy (F294).
  */
 async function apiTransport(path: string, init: RequestInit, timeoutMs: number): Promise<Response> {
-  const res = await diagnosticFetch(API_URL, path, init, timeoutMs);
-  observeDeploymentRevisionHeader(res);
-  return res;
+  const t0 = performance.now();
+  const method = (init.method ?? 'GET').toUpperCase();
+  try {
+    const res = await diagnosticFetch(API_URL, path, init, timeoutMs);
+    observeDeploymentRevisionHeader(res);
+    if (typeof window !== 'undefined') {
+      window.__pdlPerf?._http(method, path, Math.max(0, performance.now() - t0), res.status, res.status >= 400);
+    }
+    return res;
+  } catch (err) {
+    if (typeof window !== 'undefined') {
+      window.__pdlPerf?._http(method, path, Math.max(0, performance.now() - t0), 0, true);
+    }
+    throw err;
+  }
 }
 
 function ensureSession(): Promise<void> {

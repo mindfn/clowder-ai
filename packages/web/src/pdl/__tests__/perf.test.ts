@@ -375,8 +375,8 @@ describe('ConsolePerfTracker', () => {
     tracker.dispose();
   });
 
-  it('records 3-phase input timing breakdown and redacts diagnostic probes with bounded buckets', () => {
-    let clock = 3000;
+  it('records 3-phase input timing breakdown and redacts unified http transport telemetry with bounded buckets', () => {
+    const clock = 3000;
     vi.spyOn(performance, 'now').mockImplementation(() => clock);
     const tracker = new ConsolePerfTracker();
 
@@ -393,40 +393,47 @@ describe('ConsolePerfTracker', () => {
       presentationDelayMs: 34,
     });
 
-    tracker.controller._diag(
-      'sidebar.owner_degraded',
+    tracker.controller._http(
+      'get',
+      '/api/threads/thread_SENTINEL_HTTP_ID/messages?token=SENTINEL_HTTP_SECRET',
       210.4,
-      {
-        attentionMs: 25.1,
-        labelsMs: 205.7,
-        failed: 'labels',
-        rawSecret: 'thread_SENTINEL_DIAG_SECRET',
-        nested: { leak: 'SENTINEL_NESTED' },
-      },
+      503,
       true,
     );
+    tracker.controller._http('GET', '/api/labels', 24.5, 200, false);
     const exported = tracker.exportJson();
-    expect(exported).not.toContain('SENTINEL_DIAG_SECRET');
-    expect(exported).not.toContain('SENTINEL_NESTED');
+    expect(exported).not.toContain('SENTINEL_HTTP_ID');
+    expect(exported).not.toContain('SENTINEL_HTTP_SECRET');
 
     const parsed = JSON.parse(exported);
-    expect(parsed.summary.diagnostics).toContainEqual(
-      expect.objectContaining({ name: 'sidebar.owner_degraded', count: 1, errors: 1, maxMs: 210.4 }),
+    expect(parsed.summary.http).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'GET /api/threads/:threadId/messages',
+          count: 1,
+          errors: 1,
+          maxMs: 210.4,
+        }),
+        expect.objectContaining({ name: 'GET /api/labels', count: 1, errors: 0, maxMs: 24.5 }),
+      ]),
     );
-    const diagEvent = parsed.recent.find((e: { kind: string }) => e.kind === 'diagnostic');
-    expect(diagEvent.detail).toEqual({
-      attentionMs: 25.1,
-      labelsMs: 205.7,
-      failed: 'labels',
-      rawSecret: ':redacted',
+    const httpEvent = parsed.recent.find((e: { kind: string }) => e.kind === 'http');
+    expect(httpEvent).toMatchObject({
+      kind: 'http',
+      name: 'GET /api/threads/:threadId/messages',
+      ms: 210.4,
+      detail: { path: '/api/threads/:threadId/messages', status: 503, error: true },
     });
 
     for (let i = 0; i < MAX_BUCKETS + 20; i += 1) {
-      tracker.recordDiagnostic(`probe.${i}`, 10);
+      tracker.recordHttp('GET', `/api/ep${i}`, 10, 200, false);
     }
-    const internals = tracker as unknown as { diagnosticBuckets: Map<string, unknown> };
-    expect(internals.diagnosticBuckets.size).toBeLessThanOrEqual(MAX_BUCKETS + 1);
-    expect(internals.diagnosticBuckets.has('(other)')).toBe(true);
+    const internals = tracker as unknown as { httpBuckets: Map<string, unknown> };
+    expect(internals.httpBuckets.size).toBeLessThanOrEqual(MAX_BUCKETS + 1);
+    expect(internals.httpBuckets.has('(other)')).toBe(true);
+
+    tracker.reset(false);
+    expect(tracker.summary(false).http).toEqual([]);
     tracker.dispose();
   });
 });
