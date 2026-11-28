@@ -38,10 +38,20 @@ Why: {一句话}
 - 是否新建了并行 `Store` / `Queue` / `Router` / `Adapter` / `Dispatcher` / `Binding`
 - 若修改 `docs/architecture/ownership/cells/*.md`，是否确实改变了 owner / boundary / extension point / canonical anchor
 
+## State / Invariant Delta（按需）
+<!-- 只补本次变化且现有契约未覆盖的真相源、消费方或不变量；可直接引用已有契约与验证。图、表、列表均可，缺少某种表格本身不是拒审理由。无 delta 可省略本节。 -->
+{现有契约引用 + 本次 delta + 对应验证}
+
+## E2E User Path Evidence（涉及用户可感知功能时必填）
+<!-- 引用 quality-gate Step 4.5 Dogfood-Your-Slice 输出即可，不需要重跑。 -->
+<!-- 若 quality-gate 中该项为"可豁免"，此处写"可豁免（理由：xxx）"。 -->
+{端到端路径 + 命令/截图}
+
 ## Open Questions
 
 ### 技术 OQ（给 reviewer）
 {需要 reviewer 特别关注的实现正确性/安全性/性能问题}
+请 reviewer 核对本次 State / Invariant Delta 与所引用的已有契约是否被代码和验证证据保持；无 delta 时不要求另造表格。
 
 ### 价值 OQ（给 operator，如有）
 {需要 operator 判断的价值取舍——必须附 Decision Packet（格式见 `refs/decision-matrix.md`）}
@@ -128,6 +138,8 @@ git diff --check                      # 结果
 
 - **附原始需求摘录（≤5 行）**，否则 reviewer 不审
 - **附 Architecture Ownership 三字段**，否则 reviewer 不审
+- **涉及跨层状态同步/级联时引用已有契约、只补实际 State / Invariant Delta**；表达形式可选，无 delta 或缺少某种表格本身不构成停审理由
+- **涉及用户可感知功能时附 E2E User Path Evidence**（引用 quality-gate Dogfood 输出）
 - 自检报告必须附上（从 quality-gate skill 输出）
 - 前端功能由 author 自跑 preview，附 URL / 关键交互 / 结果；截图、录屏或浏览器测试输出是可选证据载体，不得要求 operator 代采
 - 前端 review 需要起 dev 时，**必须附 review 沙盒 Path + Start Command + 实际端口**
