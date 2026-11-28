@@ -6158,6 +6158,9 @@ pdl:
               title: t:wsSessions.runtime
               keep: true
               blocks:
+                - type: view
+                  id: member.runtime.dsh-check
+                  data: $.form.runtime
                 - type: component
                   use: v2SettingsFields
                   props:
@@ -6495,6 +6498,9 @@ pdl:
               title: t:wsSessions.runtime
               keep: true
               blocks:
+                - type: view
+                  id: member.runtime.dsh-check
+                  data: $.form.runtime
                 - type: component
                   use: v2SettingsFields
                   props:
@@ -7440,7 +7446,7 @@ pdl:
           use: v2Select
           props:
             id: f-client
-            value: $.form.d.client
+            value: $.form.clientChoice
             change: md
             args:
               k: client
@@ -7538,6 +7544,7 @@ pdl:
           gte: 2
       - kind: field
         label: t:memberForm.fields.account
+        when: "!$.form.dsh"
         id: f-acc
         control:
           type: component
@@ -7914,6 +7921,9 @@ pdl:
                     account_config: t:memberForm.runtime.source.account_config
                 - $.form.preferences.catalog.defaultModelLabel
             when: $.form.preferences.catalog.defaultModelLabel
+          - text: $.form.dshSetupError
+            tone: danger
+            when: $.form.dshSetupError
       - kind: field
         label: t:memberForm.fields.collaborationTools
         help: t:memberForm.fields.collaborationHelp
@@ -17131,6 +17141,21 @@ pdl:
                 when: $.home
             field:
               - type: component
+                use: v2Each
+                props:
+                  from: $.notices
+                  control:
+                    type: component
+                    use: v2Action
+                    props:
+                      label: "@text"
+                      link: true
+                      act: "@act"
+                      args: {threadId: "@args.threadId"}
+                    when:
+                      of: "@id"
+                      map: {legacy-draft: true}
+              - type: component
                 use: v2Chip
                 props:
                   icon: reply
@@ -17164,8 +17189,8 @@ pdl:
                               map: {image: draftAttachment, _: ""}
                             args: "@preview"
                             x:
-                              act: listOp
-                              args: {path: cs.att, op: del, i: "@index"}
+                              act: remove
+                              args: {entity: att, id: "@index"}
                               label: t:common.remove
                 when: $.input.draft.att
               - type: component
@@ -21846,6 +21871,10 @@ pdl:
               - type: component
                 use: v2Media
                 props: "@media"
+    dlg.legacyDraftRestore:
+      title: t:chat.legacyDraftRestore.title
+      text: t:chat.legacyDraftRestore.text
+      ok: t:chat.legacyDraftRestore.ok
     dlg.queueRecallAppend:
       title: t:chat.queueRecallAppend.title
       text: t:chat.queueRecallAppend.text
@@ -22594,6 +22623,8 @@ pdl:
                 use: v2MemberListPage
                 props:
                   heading:
+                    - type: slot
+                      slot: members.actions
                     - type: component
                       use: v2SettingsButton
                       props:

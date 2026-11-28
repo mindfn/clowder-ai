@@ -340,4 +340,100 @@ describe('ConsolePerfTracker', () => {
     expect(tracker.summary(false).boot.startMs).toBe(0);
     tracker.dispose();
   });
+
+  it('attributes longtasks to the most recent trigger within 2s and falls back to unknown when stale', () => {
+    let clock = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
+    const tracker = new ConsolePerfTracker();
+
+    tracker.onRenderStart({ route: 'chat', settle: 1, keep: true });
+    clock += 12;
+    tracker.onRenderEnd({ route: 'chat', settle: 2, keep: true });
+
+    clock += 80;
+    tracker.recordLongtask('self', 120);
+
+    clock += 2500;
+    tracker.recordLongtask('self', 90);
+
+    const summary = tracker.summary(false);
+    expect(summary.longtasks.count).toBe(2);
+    expect(summary.longtasks.totalBlockingMs).toBe(110);
+    expect(summary.longtasks.byTrigger).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'render:chat', count: 1, maxMs: 120 }),
+        expect.objectContaining({ name: 'unknown', count: 1, maxMs: 90 }),
+      ]),
+    );
+
+    const events = tracker.recent(5).filter((e) => e.kind === 'longtask');
+    expect(events[0].detail).toEqual({ lastKind: 'render', lastName: 'chat', ageMs: 92 });
+    expect(events[1].detail).toBeUndefined();
+
+    tracker.reset(false);
+    expect(tracker.summary(false).longtasks.byTrigger).toEqual([]);
+    tracker.dispose();
+  });
+
+  it('records 3-phase input timing breakdown and redacts unified http transport telemetry with bounded buckets', () => {
+    const clock = 3000;
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
+    const tracker = new ConsolePerfTracker();
+
+    const textarea = document.createElement('textarea');
+    tracker.recordInteraction('keydown', textarea, 95, {
+      inputDelayMs: 42.34,
+      processingMs: 18.62,
+      presentationDelayMs: 34.04,
+    });
+    const interactionEvent = tracker.recent(5).find((e) => e.kind === 'interaction');
+    expect(interactionEvent?.detail).toEqual({
+      inputDelayMs: 42.3,
+      processingMs: 18.6,
+      presentationDelayMs: 34,
+    });
+
+    tracker.controller._http(
+      'get',
+      '/api/threads/thread_SENTINEL_HTTP_ID/messages?token=SENTINEL_HTTP_SECRET',
+      210.4,
+      503,
+      true,
+    );
+    tracker.controller._http('GET', '/api/labels', 24.5, 200, false);
+    const exported = tracker.exportJson();
+    expect(exported).not.toContain('SENTINEL_HTTP_ID');
+    expect(exported).not.toContain('SENTINEL_HTTP_SECRET');
+
+    const parsed = JSON.parse(exported);
+    expect(parsed.summary.http).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'GET /api/threads/:threadId/messages',
+          count: 1,
+          errors: 1,
+          maxMs: 210.4,
+        }),
+        expect.objectContaining({ name: 'GET /api/labels', count: 1, errors: 0, maxMs: 24.5 }),
+      ]),
+    );
+    const httpEvent = parsed.recent.find((e: { kind: string }) => e.kind === 'http');
+    expect(httpEvent).toMatchObject({
+      kind: 'http',
+      name: 'GET /api/threads/:threadId/messages',
+      ms: 210.4,
+      detail: { path: '/api/threads/:threadId/messages', status: 503, error: true },
+    });
+
+    for (let i = 0; i < MAX_BUCKETS + 20; i += 1) {
+      tracker.recordHttp('GET', `/api/ep${i}`, 10, 200, false);
+    }
+    const internals = tracker as unknown as { httpBuckets: Map<string, unknown> };
+    expect(internals.httpBuckets.size).toBeLessThanOrEqual(MAX_BUCKETS + 1);
+    expect(internals.httpBuckets.has('(other)')).toBe(true);
+
+    tracker.reset(false);
+    expect(tracker.summary(false).http).toEqual([]);
+    tracker.dispose();
+  });
 });

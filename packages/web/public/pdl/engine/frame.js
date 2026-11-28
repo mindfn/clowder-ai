@@ -370,8 +370,8 @@ function patchEl(live, next) {
   if (own && live.getAttribute('data-own') === own && OWN[own]) { syncAttrs(live, next); OWN[own](live, next); return true; }
   if (next.hasAttribute('data-kept') && live.getAttribute('data-view') === next.getAttribute('data-view')) return true;   /* 这次没重画的子视图（ctLeaf 交回上一次的结果）：整棵留着，不往里比 */
   /* 输入框的值以渲染为准（和整页重画一样）：输入时值已经写进状态、渲染又画回来，所以不同就是应用改了它（发送后清空、换了对话的草稿）；值一样就不碰（光标不动） */
-  if (live.tagName === 'TEXTAREA') { syncAttrs(live, next); const v = next.defaultValue; if (live.defaultValue !== v) live.defaultValue = v; if (live.value !== v) live.value = v; return true; }
-  if (live.tagName === 'INPUT') { syncAttrs(live, next); if (live.type === 'checkbox' || live.type === 'radio') { if (live.checked !== next.hasAttribute('checked')) live.checked = next.hasAttribute('checked'); } else if (live.type !== 'file' && live.value !== (next.getAttribute('value') || '')) live.value = next.getAttribute('value') || ''; return true; }
+  if (live.tagName === 'TEXTAREA') { syncAttrs(live, next); if (COMPOSING_FIELDS.has(live)) return true; const v = next.defaultValue; if (live.defaultValue !== v) live.defaultValue = v; if (live.value !== v) live.value = v; return true; }
+  if (live.tagName === 'INPUT') { syncAttrs(live, next); if (COMPOSING_FIELDS.has(live)) return true; if (live.type === 'checkbox' || live.type === 'radio') { if (live.checked !== next.hasAttribute('checked')) live.checked = next.hasAttribute('checked'); } else if (live.type !== 'file' && live.value !== (next.getAttribute('value') || '')) live.value = next.getAttribute('value') || ''; return true; }
   syncAttrs(live, next);
   patchKids(live, next);
   return true;
@@ -805,13 +805,29 @@ function projSlots(ls) { return ls.filter(function (l) { return LAYER_DOM[l.id];
 function projCover(c, l) {
   const fr = navNodeOf(l);
   if (fr && fr.focus) PROJ_FOCUS = true;
-  const html = navWith(c, l, function () { const bk = navBackOf(c); return backIn(bk ? bk.role : 'page', bk, function () { return ENGINE_PARTS.layerExit(c, l) + projFrame(l); }); });
+  const html = navWith(c, l, function () { const bk = navBackOf(c); return backIn(bk ? bk.role : 'page', bk, function () { return ENGINE_PARTS.layerExit(c, l) + projFrame(c, l); }); });
   /* 覆盖层的面就是主窗口的面：同一张全局图 + 页面容器的不透明度（--bg-veil），不是另一种不透明的底。
      面（底色 + 背景图）画在容器上，滚动层在它里面：滚动的边缘渐隐透出的是容器自己的面，不是后面外壳的背景图 */
   return { key: 'cover:' + c, html: '<section class="cover' + (fr && fr.focus ? ' occ' : '') + '" data-bg-owner="' + h(ctPages()) + '" data-layer="' + l.id + '" data-lc="' + h(c) + '"' + (fr ? ' data-occ="' + h(l.f.slice(5)) + '"' : '') + '><div class="scroll cover-in"' + ctGridAttr(c) + '>' + html + '</div></section>', col: 'minmax(0, 1fr)' };
 }
 /* 一层的内容：页面（路由）或插件界面框（它声明的路由） */
-function projFrame(l) { const nd = navNodeOf(l); if (nd && nd.type !== 'frame') return pdlView(l.f.slice(5)); const r = navRouteOf(l); return r && PAGES[r] ? PAGES[r]() : ''; }   /* 帧声明了视图就画视图，否则是路由对应的页面 */
+const FRAME_ERR = new Map();
+function projFrame(c, l) {
+  try {
+    const nd = navNodeOf(l);
+    const html = nd && nd.type !== 'frame' ? pdlView(l.f.slice(5)) : PAGES[navRouteOf(l)]?.() ?? '';
+    FRAME_ERR.delete(c);
+    return html;
+  } catch (err) {
+    const message = String((err && err.message) || err);
+    if (FRAME_ERR.get(c) !== message) {
+      FRAME_ERR.set(c, message);
+      console.error(err);
+    }
+    CT_UP.forEach(function (k) { LEAF_DIRTY.add(k); });
+    return PV_DRAW.state('error', { text: tc('common.viewError') });
+  }
+}
 /* 画之前：记下 DOM 里每一层（缓存）；这一次要被盖住的层记下滚动位置（它的滚动区和它所在的滚动容器）。返回新出现的层 */
 function navVisible() {
   const out = {};
