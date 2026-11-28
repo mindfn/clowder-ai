@@ -120,19 +120,20 @@ function notifySessionFailure() {
 async function apiTransport(path: string, init: RequestInit, timeoutMs: number): Promise<Response> {
   const t0 = performance.now();
   const method = (init.method ?? 'GET').toUpperCase();
+  let res: Response;
   try {
-    const res = await diagnosticFetch(API_URL, path, init, timeoutMs);
+    res = await diagnosticFetch(API_URL, path, init, timeoutMs);
     observeDeploymentRevisionHeader(res);
-    if (typeof window !== 'undefined') {
-      window.__pdlPerf?._http(method, path, Math.max(0, performance.now() - t0), res.status, res.status >= 400);
-    }
-    return res;
   } catch (err) {
     if (typeof window !== 'undefined') {
       window.__pdlPerf?._http(method, path, Math.max(0, performance.now() - t0), 0, true);
     }
     throw err;
   }
+  if (typeof window !== 'undefined') {
+    window.__pdlPerf?._http(method, path, Math.max(0, performance.now() - t0), res.status, res.status >= 400);
+  }
+  return res;
 }
 
 function ensureSession(): Promise<void> {

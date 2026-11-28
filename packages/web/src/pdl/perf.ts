@@ -1080,8 +1080,8 @@ function printPerfSummary(out: ConsolePerfSummary): void {
   printTable(null, out.renders.byRoute);
   printTable('pushes:', out.pushes);
   printTable('vms:', out.vms);
-  printTable('api:', out.api);
-  printTable('http:', out.http);
+  printTable('api (PDL port):', out.api);
+  printTable('http (physical transport):', out.http);
   if (out.longtasks.count) {
     console.log('longtasks:', {
       count: out.longtasks.count,
