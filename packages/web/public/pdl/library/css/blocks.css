@@ -36,14 +36,25 @@
 /* 列表的组标题、可单独滚动的列表、左右分栏页、栏头、折叠、步骤 */
 .lr-list > .lr-section-label { height: auto; margin: 0; padding: var(--sp-s) var(--sp-m) var(--sp-xs); }   /* 分组列表里一组的标题：同一个组标签，贴着列表底的内边距 */
 .vw-scroll { min-height: 0; }
-.vw-page-split, .page:has(> .vw-split), .page:has(> .frame.tall), .page:has(> .vw-widget[src].tall) { max-inline-size: none; margin: 0; padding: var(--sp-l) var(--g-pad) calc(30 * var(--unit)); }   /* 分栏是应用布局的两列，不是阅读页：铺满容器（列表从左边距开始，详情一直到右边距），不居中。页里是分栏就是这样（分栏组件自己的样子，视图不声明） */
-.page:is(:has(> .frame.tall), :has(> .vw-widget[src].tall)) { display: flex; flex-direction: column; min-block-size: 100%; padding-block-end: var(--sp-l); }   /* 整页的插件 / 内置空间：框占满这一层剩下的高度 */
+.vw-page-split, .page:where(:has(> .vw-split), :has(> .frame.tall), :has(> .vw-widget[src].tall)) { max-inline-size: none; margin: 0; padding: var(--sp-l) var(--g-pad) calc(30 * var(--unit)); }   /* 分栏是应用布局的两列，不是阅读页：铺满容器（列表从左边距开始，详情一直到右边距），不居中。页里是分栏就是这样（分栏组件自己的样子，视图不声明） */
+.page:where(:has(> .frame.tall), :has(> .vw-widget[src].tall)) { display: flex; flex-direction: column; min-block-size: 100%; padding-block-end: var(--sp-l); }   /* 整页的插件 / 内置空间：框占满这一层剩下的高度 */
 .page > :is(.frame.tall, .vw-widget[src].tall) { flex: 1; }
-.cover-in:has(> .vw-page-full) { display: flex; flex-direction: column; position: relative; }   /* 铺满的页（page: full，比如猫猫星球）：整块都是它，不留边距、不留圆角、不超出窗口 */
-.cover-in:has(> .vw-page-full) > .back-head { position: absolute; z-index: var(--z-raised); top: var(--page-gap); left: var(--page-gap); }
-.cover-in:has(> .vw-page-full) > .back-head > .back { margin-left: 0; background: var(--surf-float); box-shadow: var(--shadow-float); }   /* 盖在别人画的页面上（框里的页面什么底色都有）：返回自己带浮层的面，不是一条横带 */   /* 它没有标题行：返回（图标 + 名字）浮在左上角，不另占一行 */
-.cover-in > .vw-page-full.page:has(> .vw-widget[src]) { flex: 1; min-block-size: 0; padding: 0; }
-.vw-page-full > .vw-widget[src] { border-radius: 0; }
+/* 铺满的页（page: full）：通用规则，不限所在容器（覆盖层、主窗口、工作台、浮窗、对话框）——整块贴边铺满、不留外边距与圆角、不超出容器 */
+:is(.cover-in, .panel-body, .main-col, .main, .float-body, .plugin-float > .scroll, .dialog-body):not(.layer-covered):has(> .vw-page-full.page, > :is(.pdl-inpanel, .page) > .vw-page-full.page, > .layer:not(.layer-covered) > .vw-page-full.page, > .layer:not(.layer-covered) > :is(.pdl-inpanel, .page) > .vw-page-full.page, > .layer:not(.layer-covered) > .layer:not(.layer-covered) > .vw-page-full.page, > .layer:not(.layer-covered) > .layer:not(.layer-covered) > :is(.pdl-inpanel, .page) > .vw-page-full.page) { display: flex; flex-direction: column; position: relative; padding: 0; gap: 0; overflow: hidden; }
+:is(.pdl-inpanel, .page):has(> .vw-page-full.page), .layer.occ:not(.layer-covered):has(> .vw-page-full.page, > .page > .vw-page-full.page) { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; height: 100%; max-inline-size: none; margin: 0; padding: 0; gap: 0; }
+.dialog:has(> .dialog-body > .vw-page-full.page) { padding-bottom: 0; }
+.plugin-float > :is(.float-body, .scroll):has(> .vw-page-full.page) { border-radius: 0 0 var(--r-xl) var(--r-xl); }
+:is(.cover-in, .main-col, .main, .layer:not(.layer-covered)):not(.layer-covered):has(> .vw-page-full.page, > .page > .vw-page-full.page) > .back-head,
+.vw-page-full.page > .chat-head { position: absolute; z-index: var(--z-raised); top: var(--page-gap); left: var(--page-gap); width: auto; height: auto; padding: var(--sp-xs); gap: var(--sp-xs); border-radius: var(--r-l); background: var(--surf-float); box-shadow: var(--shadow-float); flex-wrap: nowrap; }   /* 盖在别人画的页面上（框里的页面什么底色都有）：返回与页头工具条统一收成浮层胶囊，不另占一行，支持拖动挪开 */
+:is(.cover-in, .main-col, .main, .layer:not(.layer-covered)):not(.layer-covered):has(> .vw-page-full.page, > .page > .vw-page-full.page) > .back-head > .back,
+.vw-page-full.page > .chat-head > .back { margin-left: 0; }
+.vw-page-full.page > .chat-head > .grow { display: none; }
+:is(.back-head, .vw-page-full.page > .chat-head)[data-dragged] { translate: var(--drag-x) var(--drag-y); }
+.vw-page-full.page { position: relative; flex: 1 1 0; min-block-size: 0; block-size: 100%; inline-size: 100%; max-inline-size: none; margin: 0; padding: 0; gap: 0; display: flex; flex-direction: column; }
+.vw-page-full.page > .page-head { padding: var(--sp-m) var(--g-pad); }
+.vw-page-full.page > .notice { margin: 0 var(--g-pad) var(--sp-s); }
+:is(.float-body, .plugin-float > .scroll, .dialog:not(.dialog-viewport, .dialog-fill) > .dialog-body) > .vw-page-full.page { flex: 1 1 auto; block-size: calc(var(--row-h-1) * 14); min-block-size: calc(var(--row-h-1) * 6); }   /* 浮窗与自适应高度对话框没有固定高度：给整页视图一个弹性高度，窗口放不下时自动收缩 */
+.vw-page-full.page :is(.vw-widget, .frame.tall) { flex: 1 1 0; min-height: 0; height: auto; border-radius: 0; }
 .page > .vw-split > .vw-split-r > * { max-inline-size: var(--g-w); }   /* 阅读宽度只限详情栏里的内容（靠左），不限分栏本身 */
 .page > .vw-split > .vw-split-r > .page-head:first-child { margin-top: 0; }
 /* 并排的分栏占满页面的高度，两栏各自滚动：页面本身不滚（详情栏是 .scroll，列表栏里的列表是 .scroll） */

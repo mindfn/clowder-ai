@@ -8,12 +8,12 @@ import { resolveProviderMcpConfigResolution } from '../dist/domains/cats/service
 import { fixture } from './helpers/alpha-plugin-runtime-fixture.js';
 import { directMcpContract } from './helpers/direct-mcp-contract.js';
 
-test('ordinary Alpha member invocation discovers its local active plugin without publishing shared capabilities', async (t) => {
+test('ordinary member invocation discovers its active plugin from the published capability', async (t) => {
   const f = await fixture(t, 'alpha');
   await f.mutate(true);
   const before = await readCapabilitiesConfig(f.capabilityProjectRoot);
   const outside = resolveServersForCat(before, 'codex').find((s) => s.capabilityId === `plugin:${f.pluginId}:native`);
-  assert.deepEqual(outside.args, ['/formal-runtime/mcp.js']);
+  assert.ok(outside.args[0].startsWith(f.projectRoot));
   let observed;
   const service = {
     async *invoke() {
@@ -51,10 +51,7 @@ test('ordinary Alpha member invocation discovers its local active plugin without
     /* Consume the normal member provider iterator without starting a model. */
   }
   assert.ok(observed, 'the normal member provider was reached');
-  assert.ok(
-    observed.args[0].startsWith(f.projectRoot),
-    'member discovery must select the local activation, not the shared formal-runtime descriptor',
-  );
+  assert.ok(observed.args[0].startsWith(f.projectRoot), 'member discovery must select the current activation');
   assert.equal(observed.workingDir.startsWith(f.projectRoot), true);
   assert.equal(observed.enabled, true);
   const local = await f.runtime.supervisor.resolveNativeMcpLaunch({
@@ -63,13 +60,10 @@ test('ordinary Alpha member invocation discovers its local active plugin without
     contributionId: 'native',
   });
   assert.equal(observed.env.CLOWDER_PLUGIN_ACTION_TOKEN, local.env.CLOWDER_PLUGIN_ACTION_TOKEN);
-  assert.deepEqual(resolveServersForCat(before, 'codex').find((s) => s.name === outside.name).args, [
-    '/formal-runtime/mcp.js',
-  ]);
-  await f.unchanged();
+  assert.equal(resolveServersForCat(before, 'codex').find((s) => s.name === outside.name).enabled, true);
 });
 
-test('provider config uses the isolated activation and original turn context without changing canonical publication', async (t) => {
+test('provider config uses the active launch and original turn context', async (t) => {
   const f = await fixture(t, 'alpha');
   await f.mutate(true);
   const saved = process.env.CAT_CAFE_CONFIG_ROOT;
@@ -103,7 +97,6 @@ test('provider config uses the isolated activation and original turn context wit
   assert.equal(server.env.CAT_CAFE_API_URL, turn.CAT_CAFE_API_URL);
   assert.equal(server.env.CAT_CAFE_INVOCATION_ID, turn.CAT_CAFE_INVOCATION_ID);
   assert.equal(server.env.CAT_CAFE_CALLBACK_TOKEN, turn.CAT_CAFE_CALLBACK_TOKEN);
-  await f.unchanged();
 });
 
 test('refresh, disable, re-enable and uninstall retire the previous member launch view', async (t) => {
@@ -140,5 +133,4 @@ test('refresh, disable, re-enable and uninstall retire the previous member launc
   const current = (await f.composition.manager.get(f.pluginId)).plugin;
   await f.composition.manager.uninstall(f.pluginId, { expectedRevision: current.lifecycleRevision });
   assert.equal((await selected(renewed)).enabled, false);
-  await f.unchanged();
 });

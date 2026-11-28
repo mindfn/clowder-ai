@@ -21757,7 +21757,11 @@ font-weight: 500;
 .v2-shell #stream.stick-end { display:flex; flex-direction:column-reverse; width:100%; }
 .v2-shell #stream.stick-end > * { width:100%; max-width:720px; }
 .v2-shell .v2-workbench { position:relative; background:var(--shell-work); border-left:1px solid var(--shell-hairline); }
+.v2-shell .split.wide > .v2-workbench { position:absolute; inset:0; border-left:0; }
+.v2-shell .split.wide .v2-resize { display:none; }
 .v2-shell .v2-workbench > .panel-body:has(.home-v2, .v2-works-panel) { padding:0; gap:0; overflow:hidden; }
+:root[data-shell="v2"] .vw-page-full.page .v2-frame { flex:1 1 0; min-height:0; height:auto; width:100%; border-radius:0; }
+:root[data-shell="v2"] .layer-covered { display:block; position:absolute; inset:0; }
 .v2-shell .v2-workbench .home-v2 { width:100%; }
 .v2-shell .v2-resize { position:absolute; z-index:40; top:0; bottom:0; width:4px; cursor:col-resize; }
 .v2-resize[data-side="end"] { right:-2px; }

@@ -26,7 +26,7 @@ body, [data-grid] > *, .chat > .stream { --g-w: min(100cqi - var(--g-pad) - max(
 .back-head { display: flex; align-items: center; }   /* 没有标题行的容器：引擎在顶上画一行只放返回的头 */
 /* 返回与小节目录共用两列旁注区及同一个中心。文字只改变按钮宽度，不改变定位。
    旁注区放不下时，两者都回到内容内的布局；不再另算一个只够放箭头的窄留白区。 */
-@container style(--back-float: 1) { .page:not(.vw-page-split, :has(> .vw-split), :has(> .frame.tall), :has(> .vw-widget[src].tall)) :is(.page-head, .ws-dhead, .back-head) > .back { position: fixed; z-index: var(--z-raised); position-anchor: --ct-box; top: calc(anchor(top) + var(--page-gap)); left: calc(anchor(center) - var(--g-w) / 2 - var(--g-gap) - var(--span-2) / 2); translate: -50% 0; margin-left: 0; max-width: min(var(--span-2) + var(--g-gap), anchor-size(inline) - var(--g-w) - 2 * var(--g-pad) - 2 * var(--g-gap) - var(--span-2)); } }
+@container style(--back-float: 1) { .page:not(.vw-page-split, .vw-page-full, :has(> .vw-split), :has(> .frame.tall), :has(> .vw-widget[src].tall)) :is(.page-head, .ws-dhead, .back-head) > .back { position: fixed; z-index: var(--z-raised); position-anchor: --ct-box; top: calc(anchor(top) + var(--page-gap)); left: calc(anchor(center) - var(--g-w) / 2 - var(--g-gap) - var(--span-2) / 2); translate: -50% 0; margin-left: 0; max-width: min(var(--span-2) + var(--g-gap), anchor-size(inline) - var(--g-w) - 2 * var(--g-pad) - 2 * var(--g-gap) - var(--span-2)); } }
 .page:has(:is(.page-head, .ws-dhead, .back-head) > .back) { --gutter-top: calc(var(--page-gap) + var(--ctl-s)); }   /* 先在共同父容器留出返回那一行，目录再按自己的布局停靠；样式查询不能查询元素自己。 */
 .section { display: flex; flex-direction: column; gap: var(--sp-s); }
 .section-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--sp-m); padding-inline: 0; min-height: var(--ctl-s); }   /* 小节标题行一个控件高；窄容器里操作自然换行。 */

@@ -51,7 +51,7 @@ async function select(f, view, other) {
 }
 
 test('real member views isolate inventory, package and declaration drift from healthy plugins', async (t) => {
-  const f = await fixture(t, { persistCapabilities: false });
+  const f = await fixture(t);
   await f.ready();
   const healthy = await addInstance(f);
   const baseline = structuredClone(f.snapshot);
@@ -90,11 +90,11 @@ test('real member views isolate inventory, package and declaration drift from he
     assert.equal(servers[2].enabled, true);
     await assert.rejects(f.router.resolveNativeMcpLaunch(policy()));
   }
-  assert.deepEqual(f.config().capabilities, [], 'the isolated Host has never published shared capabilities');
+  assert.equal(f.config().capabilities.length, 2, 'both started plugins publish their declared capabilities');
 });
 
 test('admission read errors deny only that member activation and preserve unrelated discovery', async (t) => {
-  const f = await fixture(t, { persistCapabilities: false });
+  const f = await fixture(t);
   await f.ready();
   const healthy = await addInstance(f);
   let reads = 0;
@@ -107,7 +107,7 @@ test('admission read errors deny only that member activation and preserve unrela
 });
 
 test('a drifted same-plugin instance retains ambiguity with the other healthy instance', async (t) => {
-  const f = await fixture(t, { persistCapabilities: false });
+  const f = await fixture(t);
   await f.ready();
   await addInstance(f, true);
   f.instance.configReadiness = 'missing';
@@ -134,7 +134,7 @@ function barrier(f) {
 }
 
 test('concurrent stop during real member admission omits the stopped instance without failing other discovery', async (t) => {
-  const f = await fixture(t, { persistCapabilities: false });
+  const f = await fixture(t);
   await f.ready();
   const healthy = await addInstance(f);
   const gate = barrier(f);
@@ -150,7 +150,7 @@ test('concurrent stop during real member admission omits the stopped instance wi
 });
 
 test('concurrent refresh cannot adopt a replacement activation inside an already-started member snapshot', async (t) => {
-  const f = await fixture(t, { persistCapabilities: false });
+  const f = await fixture(t);
   await f.ready();
   const gate = barrier(f);
   const pending = f.router.resolveMemberMcpView();

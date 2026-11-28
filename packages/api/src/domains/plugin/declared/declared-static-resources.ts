@@ -1,4 +1,4 @@
-import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { CapabilityEntry } from '@cat-cafe/shared';
@@ -9,7 +9,7 @@ import {
   writeCapabilitiesConfig,
 } from '../../../config/capabilities/capability-orchestrator.js';
 import { readMountRules } from '../../../config/mount/mount-rules-store.js';
-import { addSkill, removeSkill } from '../../../skills/skill-manage.js';
+import { addSkill, cascadeToProjects, removeSkill } from '../../../skills/skill-manage.js';
 import type { PluginRuntimeAdmission } from '../carrier/runtime-carrier.js';
 import { packageDirectoryName } from '../external-runtime/filesystem-package-locator.js';
 import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from '../external-runtime/types.js';
@@ -21,8 +21,6 @@ import type { DeclaredMcpLaunch } from './native-mcp-launches.js';
 
 export interface DeclaredStaticResourceHost {
   readonly projectRoot: string;
-  /** Read-only deployments keep local resources/launches without publishing to shared clients. */
-  readonly persistCapabilities?: boolean;
   readonly packages: VerifiedPluginPackageLocator;
   readonly mcpPackages?: BuiltinPluginPackageMaterializer;
   readonly resourcesRoot?: string;
@@ -58,7 +56,7 @@ export async function restoreDeclaredSkillPolicy(
   host: DeclaredStaticResourceHost | undefined,
   previous: readonly CapabilityEntry[],
 ): Promise<void> {
-  if (!host || host.persistCapabilities === false || previous.length === 0) return;
+  if (!host || previous.length === 0) return;
   await withCapabilityLock(host.projectRoot, async () => {
     const config = await readCapabilitiesConfig(host.projectRoot);
     await writeCapabilitiesConfig(host.projectRoot, {
@@ -124,7 +122,6 @@ export async function activateDeclaredSkills(
     await located.release();
   }
 
-  if (host.persistCapabilities === false) return;
   const mountRules = await readMountRules(host.projectRoot, host.projectRoot);
   await withCapabilityLock(host.projectRoot, async () => {
     for (const skillName of materialized.names) {
@@ -143,10 +140,11 @@ export async function activateDeclaredSkills(
       }
     }
   });
+  await cascadeToProjects(host.projectRoot, join(host.projectRoot, 'cat-cafe-skills'));
 }
 
 export async function removeDeclaredSkills(pluginId: string, host: DeclaredStaticResourceHost | undefined) {
-  if (!host || host.persistCapabilities === false) return;
+  if (!host) return;
   const mountRules = await readMountRules(host.projectRoot, host.projectRoot);
   await withCapabilityLock(host.projectRoot, async () => {
     const config = await readCapabilitiesConfig(host.projectRoot);
@@ -170,6 +168,7 @@ export async function removeDeclaredSkills(pluginId: string, host: DeclaredStati
       throw new AggregateError(failures, `Failed to remove all persisted skills for ${pluginId}`);
     }
   });
+  await cascadeToProjects(host.projectRoot, join(host.projectRoot, 'cat-cafe-skills'));
 }
 
 async function materializeSkills(

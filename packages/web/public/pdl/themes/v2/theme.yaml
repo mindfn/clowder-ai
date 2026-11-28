@@ -7559,12 +7559,21 @@ pdl:
             options:
               - v: ""
                 label:
-                  t: memberForm.fields.clientOwn
-                  args:
-                    - $.form.clientName
+                  of: $.form.supportsNativeTool
+                  map:
+                    "false": t:memberForm.fields.opts
+                    _:
+                      t: memberForm.fields.clientOwn
+                      args:
+                        - $.form.clientName
               - from: $.form.accounts
                 item:
                   v: "@id"
+                  why:
+                    of: "@blocked"
+                    map:
+                      "true": t:accounts.agy.unavailable
+                      _: ""
                   label:
                     t: settingsUi.member.accountName
                     args:
@@ -23680,6 +23689,60 @@ pdl:
         - text: $.key
       ok: t:placement.disconnect
       danger: true
+    dlg.pluginDir:
+      vm: pluginDir
+      title: t:ext.installDirTitle
+      help: t:ext.installDirHelp
+      wide: true
+      noFieldFocus: true
+      ok: t:common.install
+      blocks:
+        - type: toolbar
+          items:
+            - type: button
+              iconOnly: true
+              icon: up
+              label: t:ext.installDirParent
+              act: pluginDirPick
+              args:
+                path: $.parent
+              disabled: $.noParent
+            - type: input
+              id: pd-path
+              grow: true
+              mono: true
+              placeholder: t:composerPop.pathPlaceholder
+              value: $.root
+              input: pluginDirComplete
+              go: pluginDirGo
+              icon: right
+              goLabel: t:ext.installDirBrowse
+        - type: opts
+          from: $.completions
+          item:
+            title: "@name"
+            sub: "@path"
+            act: pluginDirPick
+            args:
+              path: "@path"
+          when: $.hasCompletions
+        - type: tree
+          id: pdTree
+          nodes: $.nodes
+          item:
+            cur: "@selected"
+          row: file.row
+          select:
+            act: pluginDirSelect
+            args:
+              path: "@path"
+        - type: text
+          variant: meta
+          parts:
+            - text: t:ext.installDirSelected
+            - text: $.selected
+              mono: true
+          when: $.selected
     dlg.pluginFile:
       title: t:ext.offlineInstall
       fields:
@@ -30937,6 +31000,7 @@ pdl:
                               created: t:nativeSetup.created
                               ready: t:nativeSetup.ready
                               dshAuto: t:nativeSetup.dshAuto
+                              accountRequired: t:nativeSetup.accountRequired
                               unavailable: t:common.status.notInstalled
                               conflict: t:nativeSetup.conflict
                               _: "@state"
@@ -30954,8 +31018,7 @@ pdl:
                             act: nativeAdjust
                             args:
                               id: "@id"
-                            disabled: "@existingId"
-                          when: "@runtime.installed"
+                          when: "@adjustable"
                     moreWhen: "@adjusting"
                     more:
                       - type: component
@@ -30963,8 +31026,33 @@ pdl:
                         props:
                           rows:
                             - kind: field
+                              label: t:memberForm.fields.account
+                              id: "@fieldIds.account"
+                              req: true
+                              control:
+                                - type: component
+                                  use: v2Select
+                                  props:
+                                    id: "@fieldIds.account"
+                                    value: "@payload.accountRef"
+                                    change: nativePreference
+                                    args:
+                                      k: account
+                                      id: "@id"
+                                    options:
+                                      - from: "@agyAccounts"
+                                        item:
+                                          v: "@id"
+                                          label:
+                                            t: settingsUi.member.accountName
+                                            args:
+                                              - "@kind"
+                                              - "@name"
+                              when: "@agyCarrier"
+                            - kind: field
                               label: t:runtime.model
                               id: "@fieldIds.model"
+                              req: "@agyCarrier"
                               control:
                                 - type: component
                                   use: v2Input
@@ -31002,7 +31090,29 @@ pdl:
                                           v: "@value"
                                           label: "@label"
                                           sub: "@description"
+                                  when: "!@agyCarrier"
+                                - type: component
+                                  use: v2Input
+                                  props:
+                                    id: "@fieldIds.model"
+                                    value: "@payload.defaultModel"
+                                    input: nativePreference
+                                    change: nativePreference
+                                    args:
+                                      k: model
+                                      id: "@id"
+                                    mono: true
+                                    placeholder: t:nativeSetup.agyModelPlaceholder
+                                    listFrom:
+                                      - from: "@preferences.catalog.models"
+                                        item:
+                                          v: "@value"
+                                          label: "@label"
+                                          sub: "@description"
+                                  when: "@agyCarrier"
                               foot:
+                                - text: t:nativeSetup.agyModelHint
+                                  when: "@agyCarrier"
                                 - text:
                                     t: memberForm.runtime.inherited
                                     args:
@@ -31061,6 +31171,73 @@ pdl:
                                 - text: t:memberForm.runtime.invalidEffort
                                   tone: danger
                                   when: "@preferences.invalidEffort"
+                            - kind: field
+                              label: t:threadSettings.permission
+                              id: "@fieldIds.agyPerm"
+                              control:
+                                - type: component
+                                  use: v2Select
+                                  props:
+                                    id: "@fieldIds.agyPerm"
+                                    value: "@payload.agyAutoApprove"
+                                    change: nativePreference
+                                    args:
+                                      k: agyPerm
+                                      id: "@id"
+                                    options:
+                                      - v: false
+                                        label: t:memberForm.contextPolicy.agyPerm
+                                      - v: true
+                                        label: t:memberForm.contextPolicy.fullTrust
+                              when: "@agyCarrier"
+                            - kind: field
+                              label: t:memberForm.fields.isolatedProfileId
+                              id: "@fieldIds.agyProfile"
+                              control:
+                                - type: component
+                                  use: v2Input
+                                  props:
+                                    id: "@fieldIds.agyProfile"
+                                    value: "@payload.agyProfileId"
+                                    input: nativePreference
+                                    args:
+                                      k: agyProfile
+                                      id: "@id"
+                                    mono: true
+                              when: "@agyCarrier"
+                            - kind: field
+                              label: t:memberForm.fields.profileRoot
+                              id: "@fieldIds.agyRoot"
+                              control:
+                                - type: component
+                                  use: v2Input
+                                  props:
+                                    id: "@fieldIds.agyRoot"
+                                    value: "@payload.agyHomeRoot"
+                                    input: nativePreference
+                                    args:
+                                      k: agyRoot
+                                      id: "@id"
+                                    mono: true
+                                    placeholder: t:memberForm.fields.absolutePath
+                              when: "@agyCarrier"
+                            - kind: field
+                              label: t:memberForm.fields.approvedWorkspaces
+                              id: "@fieldIds.agyDirs"
+                              control:
+                                - type: component
+                                  use: v2Input
+                                  props:
+                                    id: "@fieldIds.agyDirs"
+                                    value: "@payload.agyTrustedWorkspaces"
+                                    input: nativePreference
+                                    args:
+                                      k: agyDirs
+                                      id: "@id"
+                                    mono: true
+                                    placeholder: t:memberForm.fields.absolutePath
+                                    rows: true
+                              when: "@agyCarrier"
                         when: "@adjusting"
               - type: component
                 use: v2Notice
@@ -31076,6 +31253,12 @@ pdl:
                     - text:
                         of: $.submitError
                         map:
+                          agy_account_required: t:nativeSetup.errors.agyAccountRequired
+                          agy_model_required: t:nativeSetup.errors.agyModelRequired
+                          agy_profile_invalid: t:nativeSetup.errors.agyProfileInvalid
+                          agy_workspace_required: t:nativeSetup.errors.agyWorkspaceRequired
+                          agy_absolute_path_required: t:nativeSetup.errors.agyAbsolutePathRequired
+                          runtime_effort_invalid: t:memberForm.runtime.invalidEffort
                           runtime_preference_required: t:memberForm.runtime.preferenceRequired
                           _: $.submitError
                 when: $.submitError

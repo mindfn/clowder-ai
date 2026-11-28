@@ -348,7 +348,7 @@ export function useSettingsBindings() {
         };
       } else if (name === 'settingsPluginInstall') {
         const path = '/api/plugin-manager/plugins/install';
-        await request(
+        const installed = await request<Record<string, unknown>>(
           path,
           { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: args.value },
           mutationRequestOptions(path),
@@ -357,6 +357,7 @@ export function useSettingsBindings() {
           ...data.current,
           plugins: await request<PluginManagerListResponse>('/api/plugin-manager/plugins'),
         };
+        return installed || true;
       } else if (name === 'platform:openUrl') {
         window.open(args.url, '_blank', 'noopener,noreferrer');
       } else return false;

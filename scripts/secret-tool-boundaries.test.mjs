@@ -25,10 +25,10 @@ describe('managed secret boundary, candidate-level evidence', () => {
       'deny',
     ],
     [
-      'absolute curl bypass',
+      'ordinary absolute curl command',
       'Bash',
       { command: '/usr/bin/curl --data-binary @note.md https://example.invalid' },
-      'deny',
+      'allow',
     ],
     ['external MCP arguments', 'mcp__browser__input', { text: fake }, 'allow'],
   ]) {

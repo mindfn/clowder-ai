@@ -676,6 +676,142 @@ function bindPluginSpaces() {
       },
     });
   };
+  const LAST_PLUGIN_DIR_KEY = 'clowder.plugin-install.last-directory';
+  function pluginDirPicker() {
+    const source = projectData('workbench');
+    return source && source.projectPicker;
+  }
+  function pluginDirCurrent(pd, seq) {
+    return !!(pd && S.dialog && S.dialog.kind === 'pluginDir' && S.pluginDir === pd && pd.seq === seq);
+  }
+  async function browsePluginDir(path, selectCurrent, showError) {
+    const pd = S.pluginDir;
+    if (!pd) return false;
+    const seq = ++pd.seq;
+    try {
+      const receipt = await chatPort.action('projectBrowse', { path: path || '' });
+      if (!pluginDirCurrent(pd, seq) || !receipt || !receipt.directory) return false;
+      pd.root = receipt.directory.current;
+      pd.parent = receipt.directory.parent || '';
+      pd.query = null;
+      if (selectCurrent) pd.selected = receipt.directory.current;
+      S.folds['tree:pdTree'] = {};
+      S.treeLoaded.pdTree = {};
+      render(true);
+      return true;
+    } catch (error) {
+      if (showError && pluginDirCurrent(pd, seq)) {
+        fieldErr('pd-path', error && error.message ? error.message : tc('composerPop.folderNotFound', path));
+      }
+      if (!showError) throw error;
+      return false;
+    }
+  }
+  A.installDir = function () {
+    let last = '';
+    try {
+      last = window.localStorage.getItem(LAST_PLUGIN_DIR_KEY) || '';
+    } catch {}
+    const pd = (S.pluginDir = { root: last, parent: '', selected: '', query: null, seq: 0 });
+    S.folds['tree:pdTree'] = {};
+    S.treeLoaded.pdTree = {};
+    dialog({
+      kind: 'pluginDir',
+      on: async function () {
+        const cur = S.pluginDir || {};
+        const path = (cur.selected || (cur.query != null ? cur.query : val('pd-path')) || '').trim();
+        if (!path) throw new Error(tc('ext.installDirRequired'));
+        const installed = await chatPort.action('settingsPluginInstall', {
+          value: JSON.stringify({ source: { kind: 'local-directory', path: path } }),
+        });
+        try {
+          window.localStorage.setItem(LAST_PLUGIN_DIR_KEY, path);
+        } catch {}
+        const updated =
+          chatDataSnapshot &&
+          chatDataSnapshot.project &&
+          chatDataSnapshot.project.settings &&
+          chatDataSnapshot.project.settings.plugins;
+        if (updated && updated.plugins) receivePlugins(updated.plugins);
+        else await read();
+        if (installed && installed.pluginId) go('extItem-' + installed.pluginId);
+      },
+    });
+    const initSeq = pd.seq + 1;
+    settleHold(
+      browsePluginDir(last, false, false).catch(function () {
+        if (last && pluginDirCurrent(pd, initSeq)) return browsePluginDir('', false, false).catch(function () {});
+        return undefined;
+      }),
+    );
+  };
+  A.pluginDirSelect = function (d) {
+    if (!S.pluginDir || !d || !d.path) return;
+    S.pluginDir.seq++;
+    S.pluginDir.selected = d.path;
+    render(true);
+  };
+  A.pluginDirGo = async function (d) {
+    const v = ((d && d.v) || val('pd-path') || '').trim();
+    if (!v) return;
+    await browsePluginDir(v, true, true);
+  };
+  A.pluginDirPick = async function (d) {
+    if (!d || !d.path) return;
+    await browsePluginDir(d.path, true, true);
+  };
+  INPUTS.pluginDirComplete = function (e) {
+    const pd = S.pluginDir;
+    if (!pd) return;
+    const prefix = e.target.value;
+    pd.seq++;
+    pd.selected = '';
+    pd.query = prefix;
+    return chatPort.action('cafePathComplete', { prefix: prefix, cwd: pd.root || '' });
+  };
+  VM.pluginDir = function () {
+    const pd = S.pluginDir || { root: '', parent: '', selected: '', query: '' };
+    const picker = pluginDirPicker();
+    const nodes = {};
+    Object.entries(S.folds['tree:pdTree'] || {}).forEach(function (entry) {
+      if (entry[1] && projectionNeeded) projectionNeeded.add('projectDirectory:' + entry[0]);
+    });
+    const root = pd.root || (picker && picker.browse ? picker.browse.current : '');
+    const parent =
+      pd.parent || (picker && picker.browse && picker.browse.current === root ? picker.browse.parent || '' : '');
+    if (picker && picker.browse) {
+      Object.keys(picker.directories).forEach(function (path) {
+        nodes[path] = picker.directories[path].entries.map(function (entry) {
+          return { name: entry.name, path: entry.path, dir: true, selected: pd.selected === entry.path };
+        });
+      });
+      const base = nodes[root] || nodes[picker.browse.current] || [];
+      nodes[''] = base.concat(
+        (picker.drives || []).map(function (drive) {
+          return { name: drive.label, path: drive.path, dir: true, selected: pd.selected === drive.path };
+        }),
+      );
+    }
+    const completions =
+      picker && pd.query && picker.completions.prefix === pd.query
+        ? picker.completions.entries
+            .filter(function (entry) {
+              return entry.isDirectory;
+            })
+            .map(function (entry) {
+              return { path: entry.path, name: entry.name };
+            })
+        : [];
+    return {
+      root: pd.query != null ? pd.query : root,
+      parent: parent,
+      noParent: !parent,
+      selected: pd.selected || '',
+      nodes: nodes,
+      completions: completions,
+      hasCompletions: completions.length > 0,
+    };
+  };
 
   A.togglePlugin = async function (data) {
     const plugin = pluginRows().find(function (item) {

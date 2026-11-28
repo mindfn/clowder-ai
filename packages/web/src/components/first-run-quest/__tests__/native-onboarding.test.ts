@@ -197,4 +197,125 @@ describe('native onboarding recommendations', () => {
       form: { nickname: '宪宪', defaultModel: 'keep-my-model', avatar: '/custom-ragdoll.png' },
     });
   });
+
+  it('builds a managed_account draft for AGY Native only when an eligible Google OAuth account exists and recognizes it after creation', () => {
+    const agyRuntime = {
+      id: 'agy-native',
+      label: 'AGY Native',
+      clientId: 'google' as const,
+      agyCarrier: 'native' as const,
+      installed: true,
+      models: [],
+    };
+    const withoutAccount = recommendNativePartners([agyRuntime], templates, [], 'journey-agy', {
+      accounts: [
+        {
+          id: 'google-env',
+          name: 'Env Google',
+          displayName: 'Env Google',
+          authType: 'oauth',
+          kind: 'oauth',
+          builtin: false,
+          mode: 'subscription',
+          clientId: 'google',
+          envVars: { GEMINI_API_KEY: 'override' },
+          hasApiKey: false,
+          createdAt: '',
+          updatedAt: '',
+        },
+        {
+          id: 'agy-not-ready',
+          name: 'AGY',
+          displayName: 'AGY',
+          authType: 'oauth',
+          kind: 'oauth',
+          builtin: false,
+          mode: 'subscription',
+          clientId: 'google',
+          agy: { storage: 'cli_file', credentialHome: '/tmp/agy' },
+          agyLoginStatus: 'unreadable',
+          hasApiKey: false,
+          createdAt: '',
+          updatedAt: '',
+        },
+      ],
+      projectPath: '/workspace/demo',
+    });
+    expect(withoutAccount[0].selected).toBe(false);
+    expect(withoutAccount[0].accountRequired).toBe(true);
+    expect(withoutAccount[0].form.configurationSource).toBe('managed_account');
+    expect(withoutAccount[0].form.accountRef).toBe('');
+
+    const withReadyAgy = recommendNativePartners([agyRuntime], templates, [], 'journey-agy', {
+      accounts: [
+        {
+          id: 'work-google',
+          name: 'Work Google',
+          displayName: 'Work Google',
+          authType: 'oauth',
+          kind: 'oauth',
+          builtin: false,
+          mode: 'subscription',
+          clientId: 'google',
+          hasApiKey: false,
+          createdAt: '',
+          updatedAt: '',
+        },
+        {
+          id: 'agy-personal',
+          name: 'AGY Personal',
+          displayName: 'AGY Personal',
+          authType: 'oauth',
+          kind: 'oauth',
+          builtin: false,
+          mode: 'subscription',
+          clientId: 'google',
+          agy: { storage: 'cli_file', credentialHome: '/tmp/agy-personal' },
+          agyLoginStatus: 'refreshable',
+          hasApiKey: false,
+          createdAt: '',
+          updatedAt: '',
+        },
+      ],
+      projectPath: '/workspace/demo',
+    });
+    expect(withReadyAgy[0].selected).toBe(true);
+    expect(withReadyAgy[0].accountRequired).toBeUndefined();
+    expect(withReadyAgy[0].form.configurationSource).toBe('managed_account');
+    expect(withReadyAgy[0].form.accountRef).toBe('agy-personal');
+    expect(withReadyAgy[0].form.agyAutoApprove).toBe(false);
+    expect(withReadyAgy[0].form.agyTrustedWorkspaces).toBe('/workspace/demo');
+    expect(withReadyAgy[0].agyAccounts?.map((a) => a.id)).toEqual(['work-google', 'agy-personal']);
+
+    const createdCat = {
+      id: withReadyAgy[0].form.catId,
+      carrier: 'cli' as const,
+      displayName: withReadyAgy[0].form.displayName,
+      clientId: 'google',
+      accountRef: 'agy-personal',
+      defaultModel: 'gemini-3.8-flash-high',
+      avatar: '',
+      color: { primary: '#123456', secondary: '#abcdef' },
+      roleDescription: '',
+      personality: '',
+      configurationSource: 'managed_account' as const,
+      mentionPatterns: ['@agy-native'],
+      agyProfile: {
+        enabled: true,
+        carrier: 'native' as const,
+        profileId: withReadyAgy[0].form.catId,
+        model: 'gemini-3.8-flash-high',
+        autoApprove: false,
+        trustedWorkspaces: ['/workspace/demo'],
+      },
+      roster: { available: true, family: 'google', roles: ['assistant'], lead: false, evaluation: '' },
+    } satisfies CatData;
+    const afterRefresh = recommendNativePartners([agyRuntime], templates, [createdCat], 'journey-agy', {
+      accounts: [],
+      projectPath: '/workspace/demo',
+    });
+    expect(afterRefresh[0].existingId).toBe(createdCat.id);
+    expect(afterRefresh[0].form.defaultModel).toBe('gemini-3.8-flash-high');
+    expect(afterRefresh[0].form.accountRef).toBe('agy-personal');
+  });
 });
